@@ -1,0 +1,99 @@
+import os from "node:os";
+import process from "node:process";
+import { WebSocketServer } from "ws";
+import type WebSocket from "ws";
+import type { Server as HttpServer } from "node:http";
+import pty from "node-pty";
+import type { TerminalClientMessage, TerminalServerMessage, WorktreeRuntime } from "../../shared/types.js";
+
+interface TerminalServiceOptions {
+  server: HttpServer;
+  getRuntime(branch: string): WorktreeRuntime | undefined;
+}
+
+function send(socket: WebSocket, message: TerminalServerMessage): void {
+  socket.send(JSON.stringify(message));
+}
+
+export function createTerminalService(options: TerminalServiceOptions): WebSocketServer {
+  const wss = new WebSocketServer({ server: options.server, path: "/ws/terminal" });
+
+  wss.on("connection", (socket, request) => {
+    const url = new URL(request.url ?? "", "http://localhost");
+    const branch = url.searchParams.get("branch");
+
+    if (!branch) {
+      send(socket, { type: "error", message: "Missing branch query parameter." });
+      socket.close();
+      return;
+    }
+
+    const runtime = options.getRuntime(branch);
+    if (!runtime) {
+      send(socket, { type: "error", message: `No active runtime for branch ${branch}. Start the environment first.` });
+      socket.close();
+      return;
+    }
+
+    // Inject the host env, root config env, and dynamic Docker-derived env directly
+    // into the pty process so the tmux session inherits everything in memory.
+    const env = {
+      ...process.env,
+      ...runtime.env,
+      WORKTREE_BRANCH: runtime.branch,
+      WORKTREE_PATH: runtime.worktreePath,
+      TMUX_SESSION_NAME: runtime.tmuxSession,
+    };
+
+    const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "bash");
+    const shellArgs = process.platform === "win32"
+      ? ["-Command", `tmux new-session -A -s ${runtime.tmuxSession}`]
+      : ["-lc", `tmux new-session -A -s ${runtime.tmuxSession}`];
+
+    const term = pty.spawn(shell, shellArgs, {
+      name: "xterm-256color",
+      cols: 120,
+      rows: 30,
+      cwd: runtime.worktreePath,
+      env,
+    });
+
+    send(socket, { type: "ready", session: runtime.tmuxSession });
+
+    term.onData((data) => {
+      send(socket, { type: "output", data });
+    });
+
+    term.onExit(({ exitCode }) => {
+      send(socket, { type: "exit", exitCode });
+      socket.close();
+    });
+
+    socket.on("message", (raw) => {
+      try {
+        const message = JSON.parse(String(raw)) as TerminalClientMessage;
+        if (message.type === "input") {
+          term.write(message.data);
+        } else if (message.type === "resize") {
+          term.resize(message.cols, message.rows);
+        }
+      } catch (error) {
+        send(socket, { type: "error", message: error instanceof Error ? error.message : "Invalid terminal payload." });
+      }
+    });
+
+    socket.on("close", () => {
+      term.kill();
+    });
+  });
+
+  return wss;
+}
+
+export function defaultTerminalInfo(): { shell: string; platform: string; home: string } {
+  return {
+    shell: process.env.SHELL || "bash",
+    platform: process.platform,
+    home: os.homedir(),
+  };
+}

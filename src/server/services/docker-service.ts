@@ -1,0 +1,112 @@
+import process from "node:process";
+import type { DockerPortMapping, PortBinding, WorktreeManagerConfig, WorktreeRuntime } from "../../shared/types.js";
+import { renderDerivedEnv } from "./config-service.js";
+import { runCommand } from "../utils/process.js";
+import { sanitizeBranchName } from "../utils/paths.js";
+
+export async function runStartupCommands(
+  commands: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  for (const command of commands) {
+    await runCommand(process.env.SHELL || "bash", ["-lc", command], { cwd, env });
+  }
+}
+
+function parseHostPort(raw: string): number {
+  const line = raw.split(/\r?\n/).find(Boolean)?.trim();
+  if (!line) {
+    throw new Error(`Unable to parse docker port output: ${raw}`);
+  }
+
+  const match = line.match(/:(\d+)$/);
+  if (!match) {
+    throw new Error(`Unable to extract host port from docker output: ${line}`);
+  }
+
+  return Number(match[1]);
+}
+
+async function inspectPort(projectName: string, mapping: DockerPortMapping, cwd: string): Promise<PortBinding> {
+  const protocol = mapping.protocol ?? "tcp";
+  const { stdout: containerIdStdout } = await runCommand(
+    "docker",
+    ["compose", "-p", projectName, "ps", "-q", mapping.service],
+    { cwd },
+  );
+
+  const containerId = containerIdStdout.split(/\r?\n/).find(Boolean)?.trim();
+  if (!containerId) {
+    throw new Error(`No running container found for service ${mapping.service} in project ${projectName}.`);
+  }
+
+  const { stdout } = await runCommand("docker", ["port", containerId, `${mapping.containerPort}/${protocol}`], { cwd });
+  const hostPort = parseHostPort(stdout);
+
+  return {
+    envName: mapping.envName,
+    service: mapping.service,
+    containerPort: mapping.containerPort,
+    hostPort,
+    protocol,
+  };
+}
+
+export async function ensureDockerRuntime(
+  config: WorktreeManagerConfig,
+  branch: string,
+  worktreePath: string,
+): Promise<WorktreeRuntime> {
+  const composeProject = `${config.docker.projectPrefix ?? "wt"}-${sanitizeBranchName(branch)}`;
+  const composeArgs = ["compose", "-p", composeProject];
+
+  if (config.docker.composeFile) {
+    composeArgs.push("-f", config.docker.composeFile);
+  }
+
+  composeArgs.push("up", "-d");
+  await runCommand("docker", composeArgs, { cwd: worktreePath });
+
+  const ports = await Promise.all(
+    (config.docker.portMappings ?? []).map((mapping) => inspectPort(composeProject, mapping, worktreePath)),
+  );
+
+  const baseEnv = {
+    ...config.env,
+    ...Object.fromEntries(ports.map((binding) => [binding.envName, String(binding.hostPort)])),
+  };
+
+  const env = {
+    ...baseEnv,
+    ...renderDerivedEnv(config.docker.derivedEnv ?? {}, baseEnv),
+  };
+
+  const injectedEnv = {
+    ...process.env,
+    ...env,
+  };
+
+  await runStartupCommands(config.startupCommands, worktreePath, injectedEnv);
+
+  return {
+    branch,
+    worktreePath,
+    composeProject,
+    env,
+    ports,
+    tmuxSession: `wt-${sanitizeBranchName(branch)}`,
+    dockerStartedAt: new Date().toISOString(),
+  };
+}
+
+export async function stopDockerRuntime(runtime: WorktreeRuntime, config: WorktreeManagerConfig): Promise<void> {
+  const args = ["compose", "-p", runtime.composeProject];
+
+  if (config.docker.composeFile) {
+    args.push("-f", config.docker.composeFile);
+  }
+
+  args.push("down", "--remove-orphans");
+  await runCommand("docker", args, { cwd: runtime.worktreePath });
+}
