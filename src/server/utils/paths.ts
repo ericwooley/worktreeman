@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const CONFIG_CANDIDATES = ["worktree.yml", "worktree.yaml", "worktreemanager.yml", "worktreemanager.yaml"];
+export const CONFIG_CANDIDATES = ["worktree.yml", "worktree.yaml", "worktreemanager.yml", "worktreemanager.yaml"];
 
 export interface RepoContext {
   repoRoot: string;
@@ -18,30 +18,41 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-export async function findRepoContext(startDir: string): Promise<RepoContext> {
+export async function fileExists(filePath: string): Promise<boolean> {
+  return exists(filePath);
+}
+
+export async function findGitRoot(startDir: string): Promise<string> {
   let current = path.resolve(startDir);
 
   while (true) {
     const gitDir = path.join(current, ".git");
     if (await exists(gitDir)) {
-      for (const candidate of CONFIG_CANDIDATES) {
-        const configPath = path.join(current, candidate);
-        if (await exists(configPath)) {
-          return { repoRoot: current, gitDir, configPath };
-        }
-      }
-
-      throw new Error(
-        `Git repository found at ${current}, but no worktree config was present. Expected one of: ${CONFIG_CANDIDATES.join(", ")}`,
-      );
+      return current;
     }
 
     const parent = path.dirname(current);
     if (parent === current) {
-      throw new Error("Unable to locate a git repository with a worktree config from the current directory.");
+      throw new Error("Unable to locate a git repository from the current directory.");
     }
     current = parent;
   }
+}
+
+export async function findRepoContext(startDir: string): Promise<RepoContext> {
+  const repoRoot = await findGitRoot(startDir);
+  const gitDir = path.join(repoRoot, ".git");
+
+  for (const candidate of CONFIG_CANDIDATES) {
+    const configPath = path.join(repoRoot, candidate);
+    if (await exists(configPath)) {
+      return { repoRoot, gitDir, configPath };
+    }
+  }
+
+  throw new Error(
+    `Git repository found at ${repoRoot}, but no worktree config was present. Expected one of: ${CONFIG_CANDIDATES.join(", ")}`,
+  );
 }
 
 export function sanitizeBranchName(branch: string): string {

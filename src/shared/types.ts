@@ -5,6 +5,11 @@ export interface DockerPortMapping {
   envName: string;
 }
 
+export type InitEnvNameStyle =
+  | "service-port-number"
+  | "service-port-suffix"
+  | "service-port";
+
 export interface DockerConfig {
   composeFile?: string;
   projectPrefix?: string;

@@ -1,24 +1,9 @@
 env:
   NODE_ENV: development
-  APP_NAME: worktree-manager
-
 worktrees:
   baseDir: .worktrees
-
 docker:
-  composeFile: docker-compose.yml
   projectPrefix: wt
-  portMappings:
-    - service: postgres
-      containerPort: 5432
-      envName: DATABASE_PORT
-    - service: redis
-      containerPort: 6379
-      envName: REDIS_PORT
-  derivedEnv:
-    DATABASE_URL: postgres://postgres:postgres@localhost:${DATABASE_PORT}/app
-    REDIS_URL: redis://localhost:${REDIS_PORT}
-
-startupCommands:
-  - npm install
-  - npm run db:migrate
+  portMappings: []
+  derivedEnv: {}
+startupCommands: []
