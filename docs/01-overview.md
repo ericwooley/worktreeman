@@ -24,8 +24,18 @@ Instead of manually juggling:
 
 Worktree Manager coordinates those pieces together and keeps the wiring visible in one place.
 
-## What ships where
+## Typical workflow
 
-- the CLI and local app are the real operator interface
-- the standalone docs site is a separate static artifact built from Markdown files in `docs/`
-- the local app stays focused on filesystem access, Git, Docker, and tmux integration
+1. Create a worktree for the branch you want to work on.
+2. Start that branch runtime from the UI.
+3. Let Worktree Manager discover real host ports and assemble runtime env values.
+4. Open the browser terminal and work inside the tmux-backed session for that branch.
+5. Stop the runtime and delete the worktree when you are done.
+
+## What the app manages for you
+
+- branch-specific worktree paths
+- branch-scoped Docker Compose project names
+- resolved host ports for services that publish dynamically
+- runtime environment variables passed directly into startup commands and terminals
+- persistent tmux sessions you can reconnect to from the browser

@@ -43,38 +43,10 @@ export function DocsSite() {
   return (
     <main className="docs-shell relative min-h-screen overflow-hidden text-ink">
       <AmbientCanvasBackground palette={docsAmbientPalette} />
-
-      <section className="relative z-10 overflow-hidden border-b border-ink/10">
-        <div className="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-10">
-          <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
-            <div className="docs-hero-panel reveal-up">
-              <p className="docs-kicker">Standalone docs website</p>
-              <h1 className="mt-4 max-w-4xl text-5xl tracking-tight sm:text-6xl lg:text-7xl">Worktree Manager Field Guide</h1>
-              <p className="mt-5 max-w-3xl text-base leading-8 text-ink/72 sm:text-lg">
-                A publishable reference site generated entirely from Markdown in `docs/`, with each source file rendered as its own static page.
-              </p>
-              <div className="mt-8 flex flex-wrap gap-3 text-sm">
-                <a href={toDocHref(docs[0]?.slug)} className="docs-pill docs-pill-solid">
-                  Start with overview
-                </a>
-                <a href={toDocHref("publishing-docs")} className="docs-pill docs-pill-ghost">
-                  Publishing notes
-                </a>
-              </div>
-            </div>
-
-            <div className="grid gap-4 reveal-up-delayed sm:grid-cols-2 lg:grid-cols-1">
-              <InfoTile eyebrow="Source" title="Markdown only" body="Every doc page comes from `docs/*.md`. The site layer only handles layout and navigation." />
-              <InfoTile eyebrow="Output" title="Static pages" body="Each markdown file is emitted as its own publishable page under `dist/docs/<slug>/index.html`." />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-[19rem_minmax(0,1fr)] lg:px-8">
+      <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[19rem_minmax(0,1fr)] lg:px-8 lg:py-10">
         <aside className="docs-rail h-fit lg:sticky lg:top-6">
           <div className="docs-rail-card">
-            <p className="docs-kicker text-ink/55">Pages</p>
+            <p className="docs-kicker text-ink/55">Guide</p>
             <nav className="mt-4 flex flex-col gap-2 text-sm">
               {docs.map((doc) => {
                 const isCurrent = doc.slug === currentDoc.slug;
@@ -93,38 +65,16 @@ export function DocsSite() {
           </div>
 
           <div className="docs-rail-note">
-            <p className="docs-kicker text-ink/55">Publishing model</p>
+            <p className="docs-kicker text-ink/55">Use the tool</p>
             <p className="mt-3 text-sm leading-6 text-ink/68">
-              The CLI serves the local app. This docs site is a separate static artifact built for publishing.
+              Start with Overview, then Getting Started, then keep Configuration and Runtime open while you wire your repository.
             </p>
           </div>
         </aside>
 
-        <div className="space-y-6">
-          <section className="grid gap-4 md:grid-cols-3">
-            {docs.map((doc) => (
-              <a key={`${doc.slug}-card`} href={toDocHref(doc.slug)} className={`docs-summary-card reveal-up ${doc.slug === currentDoc.slug ? "docs-summary-card-current" : ""}`}>
-                <div className="flex items-start justify-between gap-4">
-                  <span className="docs-summary-index">{doc.index}</span>
-                  <span className="text-xs uppercase tracking-[0.24em] text-ink/40">Page</span>
-                </div>
-                <h2 className="mt-4 text-2xl text-ink">{doc.title}</h2>
-                <p className="mt-3 text-sm leading-6 text-ink/68">{doc.excerpt}</p>
-              </a>
-            ))}
-          </section>
-
-          <section className="docs-article-shell reveal-up">
-            <div className="flex flex-col gap-4 border-b border-ink/10 pb-6 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <p className="docs-kicker text-ink/50">Page {currentDoc.index}</p>
-                <h2 className="mt-3 text-4xl tracking-tight text-ink sm:text-5xl">{currentDoc.title}</h2>
-              </div>
-              <div className="docs-meta-chip">{currentDoc.slug}</div>
-            </div>
-            <article className="docs-prose" dangerouslySetInnerHTML={{ __html: currentDoc.html }} />
-          </section>
-        </div>
+        <section className="docs-article-shell reveal-up">
+          <article className="docs-prose" dangerouslySetInnerHTML={{ __html: currentDoc.html }} />
+        </section>
       </section>
     </main>
   );
@@ -157,7 +107,7 @@ function extractExcerpt(markdown: string): string {
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("```"));
 
   const paragraph = lines.find((line) => !line.startsWith("-") && !/^\d+\./.test(line));
-  return paragraph ? stripMarkdown(paragraph) : "Documentation generated from Markdown source.";
+  return paragraph ? stripMarkdown(paragraph) : "Worktree Manager usage guide.";
 }
 
 function stripMarkdown(markdown: string): string {
@@ -172,22 +122,4 @@ function stripMarkdown(markdown: string): string {
     .replace(/[>*_~]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function InfoTile({
-  eyebrow,
-  title,
-  body,
-}: {
-  eyebrow: string;
-  title: string;
-  body: string;
-}) {
-  return (
-    <article className="docs-info-tile">
-      <p className="docs-kicker text-ink/45">{eyebrow}</p>
-      <h2 className="mt-3 text-3xl tracking-tight text-ink">{title}</h2>
-      <p className="mt-3 text-sm leading-6 text-ink/68">{body}</p>
-    </article>
-  );
 }

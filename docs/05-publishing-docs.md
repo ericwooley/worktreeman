@@ -1,61 +1,51 @@
-# Publishing the Docs Site
+# Operating Worktree Manager Across a Team
 
-The standalone docs site is built from the Markdown files in `docs/`.
+If multiple developers will use Worktree Manager in the same repository, the most important thing is to make the repo-level setup predictable.
 
-## Build the docs site
+## Keep `worktree.yml` in the repository
+
+Treat `worktree.yml` as part of the project setup so everyone gets the same:
+
+- worktree base directory
+- Docker Compose file path
+- service port mappings
+- derived env values
+- startup commands
+
+## Check the full workflow before asking teammates to use it
+
+Run through the normal flow yourself:
+
+1. create a fresh worktree
+2. start the runtime
+3. confirm service ports resolve correctly
+4. confirm derived env values match what the app expects
+5. confirm the browser terminal attaches to the correct tmux session
+
+## Tell teammates what happens when they click Start env
+
+Developers should know whether the runtime will:
+
+- install dependencies
+- run migrations
+- seed databases
+- boot background services
+- take extra time on first run
+
+## Commands teammates will use most
 
 ```bash
-npm run build:docs
+worktreemanager init
+worktreemanager serve
+worktreemanager --help
 ```
 
-## Preview the docs site locally
+## What Worktree Manager helps standardize
 
-```bash
-npm run preview:docs
-```
+Using Worktree Manager across a team helps standardize:
 
-That serves the generated site over HTTP at:
-
-```text
-http://127.0.0.1:4174
-```
-
-Output:
-
-```text
-dist/docs
-```
-
-## Full project build
-
-```bash
-npm run build
-```
-
-That produces:
-
-- `dist/web` for the local app frontend used by the CLI server
-- `dist/docs` for the standalone documentation website
-- `dist` server output for the CLI itself
-
-## Recommended publishing model
-
-Publish `dist/docs` to any static host such as:
-
-- Netlify
-- Vercel
-- GitHub Pages
-- Cloudflare Pages
-
-## Important distinction
-
-The docs site is static and publishable by itself.
-
-The local app is different. It depends on:
-
-- machine-local Git access
-- Docker commands
-- tmux
-- the Node API and WebSocket server
-
-So the docs site should explain the product, while the CLI-served app remains the real local operator interface.
+- where disposable branch environments live
+- how branch-specific Docker runtimes are named
+- how ports are discovered after Docker starts
+- how runtime env values get injected into terminals
+- how developers reconnect to the same tmux-backed shell

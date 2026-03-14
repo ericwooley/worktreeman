@@ -19,7 +19,7 @@ npm install
 From the repository you want to manage:
 
 ```bash
-node --import tsx src/cli.ts init
+worktreemanager init
 ```
 
 That command:
@@ -31,13 +31,13 @@ That command:
 If you want to regenerate it:
 
 ```bash
-node --import tsx src/cli.ts init --force
+worktreemanager init --force
 ```
 
 ## Start the local app
 
 ```bash
-npm run dev
+worktreemanager serve
 ```
 
 Then open:
@@ -50,12 +50,22 @@ http://127.0.0.1:4312
 
 ```bash
 npm run build
-node dist/cli.js serve
+worktreemanager serve
 ```
 
 Useful help output:
 
 ```bash
-node --import tsx src/cli.ts --help
-node --import tsx src/cli.ts init --help
+worktreemanager --help
+worktreemanager init --help
 ```
+
+## First run in the UI
+
+After the app opens:
+
+1. Enter a branch name and create a worktree.
+2. Select that worktree from the list.
+3. Click Start env.
+4. Wait for Docker, port discovery, and startup commands to finish.
+5. Use the terminal panel to work inside the branch session.
