@@ -12,10 +12,10 @@ import {
   string,
   subcommands,
 } from "cmd-ts";
-import type { InitEnvNameStyle } from "./shared/types";
-import { findRepoContext } from "./server/utils/paths";
+import type { InitEnvNameStyle } from "./shared/types.js";
+import { findRepoContext } from "./server/utils/paths.js";
 import { startServer } from "./server/app.js";
-import { initRepository } from "./server/services/init-service";
+import { initRepository } from "./server/services/init-service.js";
 
 const initEnvNameStyle = {
   async from(value: string): Promise<InitEnvNameStyle> {

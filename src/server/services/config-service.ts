@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { WorktreeManagerConfig } from "../../shared/types.js";
+import type { NamedServicePort, WorktreeManagerConfig } from "../../shared/types.js";
 
 function ensureRecord(value: unknown, label: string): Record<string, string> {
   if (value == null) {
@@ -19,6 +19,35 @@ function ensureRecord(value: unknown, label: string): Record<string, string> {
       }
 
       return [key, String(entry)];
+    }),
+  );
+}
+
+function parseNamedServicePorts(value: unknown): Record<string, NamedServicePort> {
+  if (value == null) {
+    return {};
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("docker.servicePorts must be a mapping/object.");
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([name, entry]) => {
+      if (typeof entry !== "object" || !entry || Array.isArray(entry)) {
+        throw new Error(`docker.servicePorts.${name} must be a mapping/object.`);
+      }
+
+      const servicePort = entry as Record<string, unknown>;
+      return [
+        name,
+        {
+          service: String(servicePort.service),
+          containerPort: Number(servicePort.containerPort),
+          protocol: (servicePort.protocol as "tcp" | "udp" | undefined) ?? "tcp",
+          envName: servicePort.envName == null ? undefined : String(servicePort.envName),
+        },
+      ];
     }),
   );
 }
@@ -60,6 +89,7 @@ export async function loadConfig(configPath: string): Promise<WorktreeManagerCon
             };
           }) ?? [])
         : [],
+      servicePorts: parseNamedServicePorts((docker as { servicePorts?: unknown }).servicePorts),
       derivedEnv: ensureRecord((docker as { derivedEnv?: unknown }).derivedEnv, "docker.derivedEnv"),
     },
   };

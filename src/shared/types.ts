@@ -5,6 +5,13 @@ export interface DockerPortMapping {
   envName: string;
 }
 
+export interface NamedServicePort {
+  service: string;
+  containerPort: number;
+  protocol?: "tcp" | "udp";
+  envName?: string;
+}
+
 export type InitEnvNameStyle =
   | "service-port-number"
   | "service-port-suffix"
@@ -14,6 +21,7 @@ export interface DockerConfig {
   composeFile?: string;
   projectPrefix?: string;
   portMappings?: DockerPortMapping[];
+  servicePorts?: Record<string, NamedServicePort>;
   derivedEnv?: Record<string, string>;
 }
 
@@ -27,6 +35,7 @@ export interface WorktreeManagerConfig {
 }
 
 export interface PortBinding {
+  name?: string;
   envName: string;
   service: string;
   containerPort: number;
@@ -40,6 +49,7 @@ export interface WorktreeRuntime {
   composeProject: string;
   env: Record<string, string>;
   ports: PortBinding[];
+  servicePorts: Record<string, PortBinding>;
   tmuxSession: string;
   dockerStartedAt?: string;
 }

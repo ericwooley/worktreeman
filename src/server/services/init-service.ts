@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { InitEnvNameStyle } from "../../shared/types";
-import { CONFIG_CANDIDATES, fileExists, findGitRoot } from "../utils/paths";
+import type { InitEnvNameStyle } from "../../shared/types.js";
+import { CONFIG_CANDIDATES, fileExists, findGitRoot } from "../utils/paths.js";
 
 const COMPOSE_CANDIDATES = [
   "docker-compose.yml",
@@ -179,6 +179,7 @@ async function buildConfigYaml(
       composeFile: compose?.relativePath,
       projectPrefix: "wt",
       portMappings,
+      servicePorts: {},
       derivedEnv: {},
     },
     startupCommands: [],
@@ -200,14 +201,14 @@ export async function initRepository(
   const repoRoot = await findGitRoot(startDir);
 
   const existingConfig = await Promise.all(
-    CONFIG_CANDIDATES.map(async (candidate) => {
+    CONFIG_CANDIDATES.map(async (candidate: string) => {
       const absolutePath = path.join(repoRoot, candidate);
       return (await fileExists(absolutePath)) ? absolutePath : null;
     }),
   );
 
   const existingConfigPath = existingConfig.find(
-    (entry): entry is string => entry !== null,
+    (entry: string | null): entry is string => entry !== null,
   );
   const configPath = path.join(repoRoot, "worktree.yml");
   if (existingConfigPath && !force) {

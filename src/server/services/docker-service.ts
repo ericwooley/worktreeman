@@ -1,5 +1,11 @@
 import process from "node:process";
-import type { DockerPortMapping, PortBinding, WorktreeManagerConfig, WorktreeRuntime } from "../../shared/types.js";
+import type {
+  DockerPortMapping,
+  NamedServicePort,
+  PortBinding,
+  WorktreeManagerConfig,
+  WorktreeRuntime,
+} from "../../shared/types.js";
 import { renderDerivedEnv } from "./config-service.js";
 import { runCommand } from "../utils/process.js";
 import { sanitizeBranchName } from "../utils/paths.js";
@@ -53,6 +59,33 @@ async function inspectPort(projectName: string, mapping: DockerPortMapping, cwd:
   };
 }
 
+function defaultServicePortEnvName(name: string): string {
+  return `${name.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase() || "SERVICE"}_PORT`;
+}
+
+async function inspectNamedServicePort(
+  projectName: string,
+  name: string,
+  servicePort: NamedServicePort,
+  cwd: string,
+): Promise<PortBinding> {
+  const binding = await inspectPort(
+    projectName,
+    {
+      service: servicePort.service,
+      containerPort: servicePort.containerPort,
+      protocol: servicePort.protocol,
+      envName: servicePort.envName ?? defaultServicePortEnvName(name),
+    },
+    cwd,
+  );
+
+  return {
+    ...binding,
+    name,
+  };
+}
+
 export async function ensureDockerRuntime(
   config: WorktreeManagerConfig,
   branch: string,
@@ -72,9 +105,19 @@ export async function ensureDockerRuntime(
     (config.docker.portMappings ?? []).map((mapping) => inspectPort(composeProject, mapping, worktreePath)),
   );
 
+  const namedServicePortEntries = await Promise.all(
+    Object.entries(config.docker.servicePorts ?? {}).map(async ([name, servicePort]) => [
+      name,
+      await inspectNamedServicePort(composeProject, name, servicePort, worktreePath),
+    ] as const),
+  );
+
+  const servicePorts = Object.fromEntries(namedServicePortEntries);
+
   const baseEnv = {
     ...config.env,
     ...Object.fromEntries(ports.map((binding) => [binding.envName, String(binding.hostPort)])),
+    ...Object.fromEntries(Object.values(servicePorts).map((binding) => [binding.envName, String(binding.hostPort)])),
   };
 
   const env = {
@@ -94,7 +137,8 @@ export async function ensureDockerRuntime(
     worktreePath,
     composeProject,
     env,
-    ports,
+    ports: [...ports, ...Object.values(servicePorts)],
+    servicePorts,
     tmuxSession: `wt-${sanitizeBranchName(branch)}`,
     dockerStartedAt: new Date().toISOString(),
   };
