@@ -35,11 +35,12 @@ export const appAmbientPalette: AmbientPalette = {
 };
 
 export const docsAmbientPalette: AmbientPalette = {
-  backgroundColor: "hsla(36, 42%, 92%, 1)",
-  baseHue: 24,
-  rangeHue: 28,
+  backgroundColor: "hsla(130, 42%, 3%, 1)",
+  baseHue: 120,
+  rangeHue: 36,
   blur: 16,
-  overlayClassName: "bg-[radial-gradient(circle_at_top,rgba(255,251,246,0.3),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.16),rgba(255,255,255,0.02)_28%,rgba(255,255,255,0.12))]",
+  overlayClassName:
+    "bg-[radial-gradient(circle_at_top,rgba(74,255,122,0.12),transparent_42%),linear-gradient(180deg,rgba(0,0,0,0.18),rgba(0,0,0,0.02)_28%,rgba(0,0,0,0.3))]",
 };
 
 export function AmbientCanvasBackground({ palette }: { palette: AmbientPalette }) {

@@ -27,6 +27,7 @@ export interface DockerConfig {
 
 export interface WorktreeManagerConfig {
   env: Record<string, string>;
+  runtimePorts: string[];
   startupCommands: string[];
   worktrees: {
     baseDir: string;
@@ -48,6 +49,7 @@ export interface WorktreeRuntime {
   worktreePath: string;
   composeProject: string;
   env: Record<string, string>;
+  allocatedPorts: Record<string, number>;
   ports: PortBinding[];
   servicePorts: Record<string, PortBinding>;
   tmuxSession: string;

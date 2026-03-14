@@ -2,6 +2,10 @@ env:
   NODE_ENV: development
   APP_NAME: worktree-manager
 
+runtimePorts:
+  - PORT
+  - VITE_PORT
+
 worktrees:
   baseDir: .worktrees
 
@@ -22,6 +26,7 @@ docker:
   derivedEnv:
     DATABASE_URL: postgres://postgres:postgres@localhost:${DATABASE_PORT}/app
     REDIS_URL: redis://localhost:${REDIS_PORT}
+    APP_URL: http://127.0.0.1:${PORT}
 
 startupCommands:
   - npm install

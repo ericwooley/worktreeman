@@ -16,7 +16,12 @@ export interface StartServerOptions {
 }
 
 export async function startServer(options: StartServerOptions): Promise<{ port: number; close: () => Promise<void> }> {
-  const config = await loadConfig(options.repo.configPath);
+  const config = await loadConfig({
+    path: options.repo.configPath,
+    repoRoot: options.repo.repoRoot,
+    gitRef: options.repo.configRef === "WORKTREE" ? undefined : options.repo.configRef,
+    gitFile: options.repo.configFile,
+  });
   const runtimes = new RuntimeStore();
   const app = express();
   const server = http.createServer(app);

@@ -41,13 +41,21 @@ export function DocsSite() {
   const currentDoc = docsBySlug.get(currentSlug) ?? docs[0];
 
   return (
-    <main className="docs-shell relative min-h-screen overflow-hidden text-ink">
+    <main className="docs-shell relative min-h-screen overflow-hidden text-[#d7ffd7]">
       <AmbientCanvasBackground palette={docsAmbientPalette} />
-      <section className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[19rem_minmax(0,1fr)] lg:px-8 lg:py-10">
+
+      <div className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:px-8 lg:py-8">
         <aside className="docs-rail h-fit lg:sticky lg:top-6">
           <div className="docs-rail-card">
-            <p className="docs-kicker text-ink/55">Guide</p>
-            <nav className="mt-4 flex flex-col gap-2 text-sm">
+            <div className="docs-terminal-mark">worktreemanager docs</div>
+            <p className="docs-rail-title">Install, configure, and run branch-scoped local environments.</p>
+            <div className="docs-command-block">
+              <span>$ npm install -g worktreemanager</span>
+              <span>$ worktreemanager init</span>
+              <span>$ worktreemanager serve</span>
+            </div>
+
+            <nav className="mt-5 flex flex-col gap-2 text-sm">
               {docs.map((doc) => {
                 const isCurrent = doc.slug === currentDoc.slug;
 
@@ -55,8 +63,8 @@ export function DocsSite() {
                   <a key={doc.slug} href={toDocHref(doc.slug)} className={`docs-toc-item ${isCurrent ? "docs-toc-item-current" : ""}`}>
                     <span className="docs-toc-index">{doc.index}</span>
                     <span>
-                      <strong className="block font-medium text-ink">{doc.title}</strong>
-                      <span className="mt-1 block text-xs leading-5 text-ink/55">{doc.excerpt}</span>
+                      <strong className="block font-medium text-current">{doc.title}</strong>
+                      <span className="mt-1 block text-xs leading-5 text-[#8fd18f]">{doc.excerpt}</span>
                     </span>
                   </a>
                 );
@@ -65,9 +73,9 @@ export function DocsSite() {
           </div>
 
           <div className="docs-rail-note">
-            <p className="docs-kicker text-ink/55">Use the tool</p>
-            <p className="mt-3 text-sm leading-6 text-ink/68">
-              Start with Overview, then Getting Started, then keep Configuration and Runtime open while you wire your repository.
+            <p className="docs-kicker">Suggested order</p>
+            <p className="mt-3 text-sm leading-6 text-[#9cd99c]">
+              Start with Overview, run the install steps in Getting Started, then keep Configuration and Runtime open while you wire the repo.
             </p>
           </div>
         </aside>
@@ -75,7 +83,7 @@ export function DocsSite() {
         <section className="docs-article-shell reveal-up">
           <article className="docs-prose" dangerouslySetInnerHTML={{ __html: currentDoc.html }} />
         </section>
-      </section>
+      </div>
     </main>
   );
 }
@@ -107,7 +115,7 @@ function extractExcerpt(markdown: string): string {
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("```"));
 
   const paragraph = lines.find((line) => !line.startsWith("-") && !/^\d+\./.test(line));
-  return paragraph ? stripMarkdown(paragraph) : "Worktree Manager usage guide.";
+  return paragraph ? stripMarkdown(paragraph) : "Install and use worktreemanager.";
 }
 
 function stripMarkdown(markdown: string): string {

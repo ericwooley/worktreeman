@@ -1,8 +1,8 @@
 # Runtime and Terminal Flow
 
-## Creating a worktree
+## Worktree creation
 
-When you create a branch worktree from the UI, the backend runs the Git worktree flow for that branch.
+When you create a worktree from the UI, `worktreemanager` runs the Git worktree flow for that branch.
 
 Conceptually:
 
@@ -10,54 +10,57 @@ Conceptually:
 git worktree add <path> -b <branch>
 ```
 
-## Starting a runtime
+The resulting path is tracked by the UI so each branch has a visible local workspace.
 
-When you click Start env, Worktree Manager:
+## Runtime startup
 
-1. loads `worktree.yml`
-2. starts Docker Compose with a branch-scoped project name
-3. inspects published host ports from Docker
-4. resolves named service ports
-5. renders derived environment variables
-6. runs startup commands in the worktree
-7. stores runtime metadata for the UI and terminal
+When you click `Start env`, `worktreemanager` performs this sequence:
 
-Compose projects are launched with a project name like:
+1. load `worktree.yml`
+2. start Docker Compose with a branch-scoped project name
+3. inspect the published host ports for configured services
+4. resolve named service ports
+5. render derived environment variables
+6. run any configured startup commands in the worktree
+7. store runtime metadata for the UI and terminal session
+
+Compose is started with a branch-specific project name similar to:
 
 ```bash
-docker compose -p wt-feature-search-redesign up -d
+docker compose -p wt-feature-search up -d
 ```
 
 ## In-memory environment injection
 
-Worktree Manager merges:
+`worktreemanager` builds the runtime environment from:
 
-1. static `env` values
-2. discovered `portMappings`
-3. discovered `servicePorts`
-4. rendered `derivedEnv` values
+1. static `env`
+2. allocated `runtimePorts`
+3. discovered `portMappings`
+4. discovered `servicePorts`
+5. rendered `derivedEnv`
 
 That merged environment is passed directly into:
 
 - startup commands
-- the `node-pty` shell
-- the tmux session launched for the browser terminal
+- the shell created by `node-pty`
+- the tmux session used by the browser terminal
 
-No `.env` files are written during that flow.
+No `.env` files are written as part of this flow.
 
-## tmux-backed browser terminal
+## Browser terminal
 
-The inline terminal attaches to a tmux session named from the branch.
+The browser terminal attaches to a tmux session named for the branch.
 
 Conceptually:
 
 ```bash
-tmux new-session -A -s wt-feature-search-redesign
+tmux new-session -A -s wt-feature-search
 ```
 
-This gives the browser terminal a persistent shell that survives reconnects while still inheriting the runtime environment created for that worktree.
+That gives you a persistent shell session you can reconnect to from the UI while keeping the runtime environment for the selected worktree.
 
-## Stopping and cleaning up
+## Runtime shutdown
 
-- Stop env runs Docker Compose down for that branch runtime
-- Delete removes the Git worktree so finished branch environments are easy to clean up
+- `Stop env` runs `docker compose down` for that branch runtime
+- `Delete` removes the Git worktree when the branch environment is no longer needed

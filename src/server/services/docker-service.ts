@@ -7,8 +7,14 @@ import type {
   WorktreeRuntime,
 } from "../../shared/types.js";
 import { renderDerivedEnv } from "./config-service.js";
+import { reserveRuntimePorts, type ReservedPort } from "./runtime-port-service.js";
 import { runCommand } from "../utils/process.js";
 import { sanitizeBranchName } from "../utils/paths.js";
+
+export interface DockerRuntimeResult {
+  runtime: WorktreeRuntime;
+  reservedPorts: ReservedPort[];
+}
 
 export async function runStartupCommands(
   commands: string[],
@@ -90,58 +96,72 @@ export async function ensureDockerRuntime(
   config: WorktreeManagerConfig,
   branch: string,
   worktreePath: string,
-): Promise<WorktreeRuntime> {
-  const composeProject = `${config.docker.projectPrefix ?? "wt"}-${sanitizeBranchName(branch)}`;
-  const composeArgs = ["compose", "-p", composeProject];
+): Promise<DockerRuntimeResult> {
+  let reservedPorts: ReservedPort[] = [];
 
-  if (config.docker.composeFile) {
-    composeArgs.push("-f", config.docker.composeFile);
+  try {
+    reservedPorts = await reserveRuntimePorts(config.runtimePorts);
+    const composeProject = `${config.docker.projectPrefix ?? "wt"}-${sanitizeBranchName(branch)}`;
+    const composeArgs = ["compose", "-p", composeProject];
+
+    if (config.docker.composeFile) {
+      composeArgs.push("-f", config.docker.composeFile);
+    }
+
+    composeArgs.push("up", "-d");
+    await runCommand("docker", composeArgs, { cwd: worktreePath });
+
+    const ports = await Promise.all(
+      (config.docker.portMappings ?? []).map((mapping) => inspectPort(composeProject, mapping, worktreePath)),
+    );
+
+    const namedServicePortEntries = await Promise.all(
+      Object.entries(config.docker.servicePorts ?? {}).map(async ([name, servicePort]) => [
+        name,
+        await inspectNamedServicePort(composeProject, name, servicePort, worktreePath),
+      ] as const),
+    );
+
+    const servicePorts = Object.fromEntries(namedServicePortEntries);
+    const allocatedPorts = Object.fromEntries(reservedPorts.map((entry) => [entry.envName, entry.port]));
+
+    const baseEnv = {
+      ...config.env,
+      ...Object.fromEntries(Object.entries(allocatedPorts).map(([key, value]) => [key, String(value)])),
+      ...Object.fromEntries(ports.map((binding) => [binding.envName, String(binding.hostPort)])),
+      ...Object.fromEntries(Object.values(servicePorts).map((binding) => [binding.envName, String(binding.hostPort)])),
+    };
+
+    const env = {
+      ...baseEnv,
+      ...renderDerivedEnv(config.docker.derivedEnv ?? {}, baseEnv),
+    };
+
+    const injectedEnv = {
+      ...process.env,
+      ...env,
+    };
+
+    await runStartupCommands(config.startupCommands, worktreePath, injectedEnv);
+
+    return {
+      runtime: {
+        branch,
+        worktreePath,
+        composeProject,
+        env,
+        allocatedPorts,
+        ports: [...ports, ...Object.values(servicePorts)],
+        servicePorts,
+        tmuxSession: `wt-${sanitizeBranchName(branch)}`,
+        dockerStartedAt: new Date().toISOString(),
+      },
+      reservedPorts,
+    };
+  } catch (error) {
+    await Promise.allSettled(reservedPorts.map((entry) => entry.release()));
+    throw error;
   }
-
-  composeArgs.push("up", "-d");
-  await runCommand("docker", composeArgs, { cwd: worktreePath });
-
-  const ports = await Promise.all(
-    (config.docker.portMappings ?? []).map((mapping) => inspectPort(composeProject, mapping, worktreePath)),
-  );
-
-  const namedServicePortEntries = await Promise.all(
-    Object.entries(config.docker.servicePorts ?? {}).map(async ([name, servicePort]) => [
-      name,
-      await inspectNamedServicePort(composeProject, name, servicePort, worktreePath),
-    ] as const),
-  );
-
-  const servicePorts = Object.fromEntries(namedServicePortEntries);
-
-  const baseEnv = {
-    ...config.env,
-    ...Object.fromEntries(ports.map((binding) => [binding.envName, String(binding.hostPort)])),
-    ...Object.fromEntries(Object.values(servicePorts).map((binding) => [binding.envName, String(binding.hostPort)])),
-  };
-
-  const env = {
-    ...baseEnv,
-    ...renderDerivedEnv(config.docker.derivedEnv ?? {}, baseEnv),
-  };
-
-  const injectedEnv = {
-    ...process.env,
-    ...env,
-  };
-
-  await runStartupCommands(config.startupCommands, worktreePath, injectedEnv);
-
-  return {
-    branch,
-    worktreePath,
-    composeProject,
-    env,
-    ports: [...ports, ...Object.values(servicePorts)],
-    servicePorts,
-    tmuxSession: `wt-${sanitizeBranchName(branch)}`,
-    dockerStartedAt: new Date().toISOString(),
-  };
 }
 
 export async function stopDockerRuntime(runtime: WorktreeRuntime, config: WorktreeManagerConfig): Promise<void> {

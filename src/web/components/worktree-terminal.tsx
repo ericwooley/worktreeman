@@ -93,6 +93,11 @@ export function WorktreeTerminal({ worktree }: { worktree: WorktreeRecord | null
               </div>
             ))}
           </div>
+          {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
+            <p className="mb-4 text-xs text-ink/55">
+              Reserved local ports are held for this runtime and injected into the tmux-backed shell.
+            </p>
+          ) : null}
           <div ref={hostRef} className="h-[24rem] overflow-hidden rounded-[1.5rem] border border-ink/10 bg-ink p-3" />
         </>
       ) : (

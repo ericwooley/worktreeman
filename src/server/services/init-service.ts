@@ -172,6 +172,7 @@ async function buildConfigYaml(
     env: {
       NODE_ENV: "development",
     },
+    runtimePorts: [],
     worktrees: {
       baseDir: ".worktrees",
     },

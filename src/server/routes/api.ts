@@ -2,6 +2,7 @@ import express from "express";
 import type { ApiStateResponse, CreateWorktreeRequest, WorktreeManagerConfig } from "../../shared/types.js";
 import { createWorktree, listWorktrees, removeWorktree } from "../services/git-service.js";
 import { ensureDockerRuntime, stopDockerRuntime } from "../services/docker-service.js";
+import { releaseReservedPorts } from "../services/runtime-port-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 
 interface ApiRouterOptions {
@@ -59,8 +60,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await ensureDockerRuntime(options.config, worktree.branch, worktree.worktreePath);
-      options.runtimes.set(runtime);
+      const { runtime, reservedPorts } = await ensureDockerRuntime(options.config, worktree.branch, worktree.worktreePath);
+      options.runtimes.set(runtime, reservedPorts);
       res.json(runtime);
     } catch (error) {
       next(error);
@@ -76,7 +77,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       await stopDockerRuntime(runtime, options.config);
-      options.runtimes.delete(req.params.branch);
+      const deletedRuntime = options.runtimes.delete(req.params.branch);
+      await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -96,7 +98,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const runtime = options.runtimes.get(worktree.branch);
       if (runtime) {
         await stopDockerRuntime(runtime, options.config);
-        options.runtimes.delete(worktree.branch);
+        const deletedRuntime = options.runtimes.delete(worktree.branch);
+        await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
       }
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);

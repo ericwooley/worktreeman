@@ -1,41 +1,47 @@
 # Overview
 
-Worktree Manager is a local control plane for branch-based development.
+`worktreemanager` is a local CLI and browser UI for running branch-based development environments out of one repository.
 
-It gives you one browser interface for:
+It is built for repositories that already use:
 
-- creating and removing Git worktrees
-- starting branch-scoped Docker Compose environments
-- discovering real published host ports after Docker starts
-- injecting runtime environment variables in memory instead of writing `.env` files
-- attaching to tmux-backed terminals through the browser
+- `git worktree`
+- `docker compose`
+- `tmux`
 
-## What makes it different
+Instead of manually creating worktrees, starting Compose stacks, exporting ports, and keeping terminal sessions alive, `worktreemanager` wires those pieces together and exposes them in one local control panel.
 
-The core idea is that every branch can act like a small disposable environment.
+## What it does
 
-Instead of manually juggling:
+With `worktreemanager`, you can:
 
-- extra terminal tabs
-- shell exports
-- one-off Docker commands
-- local port collisions
-- detached tmux sessions
+- create and remove Git worktrees for branches
+- start a branch-scoped Docker Compose runtime for each worktree
+- resolve the real host ports Docker assigned after startup
+- inject runtime environment variables in memory instead of writing `.env` files
+- open a browser terminal attached to a tmux session for that branch
 
-Worktree Manager coordinates those pieces together and keeps the wiring visible in one place.
+## Why use it
 
-## Typical workflow
+The typical branch workflow usually turns into a mix of shell history, copied commands, and local setup notes.
 
-1. Create a worktree for the branch you want to work on.
-2. Start that branch runtime from the UI.
-3. Let Worktree Manager discover real host ports and assemble runtime env values.
-4. Open the browser terminal and work inside the tmux-backed session for that branch.
-5. Stop the runtime and delete the worktree when you are done.
+`worktreemanager` reduces that by standardizing:
 
-## What the app manages for you
+- where worktrees are created
+- how Compose projects are named per branch
+- how service ports are discovered
+- how derived environment variables are assembled
+- how developers reconnect to the same terminal session
 
-- branch-specific worktree paths
-- branch-scoped Docker Compose project names
-- resolved host ports for services that publish dynamically
-- runtime environment variables passed directly into startup commands and terminals
-- persistent tmux sessions you can reconnect to from the browser
+## Typical flow
+
+1. Install `worktreemanager` from npm.
+2. Run `worktreemanager init` in the repository you want to manage.
+3. Review the generated `worktree.yml`.
+4. Start the local UI with `worktreemanager serve`.
+5. Create a worktree, start its runtime, and use the terminal panel.
+
+## What it does not do
+
+`worktreemanager` does not replace your application stack. It does not define your Docker services, dependency graph, or startup logic.
+
+You keep those in your repository. `worktreemanager` orchestrates them consistently across disposable branch environments.

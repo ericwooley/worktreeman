@@ -2,6 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import type { NamedServicePort, WorktreeManagerConfig } from "../../shared/types.js";
+import { runCommand } from "../utils/process.js";
+
+export interface ConfigSource {
+  path: string;
+  repoRoot?: string;
+  gitRef?: string;
+  gitFile?: string;
+}
 
 function ensureRecord(value: unknown, label: string): Record<string, string> {
   if (value == null) {
@@ -52,8 +60,9 @@ function parseNamedServicePorts(value: unknown): Record<string, NamedServicePort
   );
 }
 
-export async function loadConfig(configPath: string): Promise<WorktreeManagerConfig> {
-  const raw = await fs.readFile(configPath, "utf8");
+export async function loadConfig(configSource: string | ConfigSource, repoRoot?: string): Promise<WorktreeManagerConfig> {
+  const source = typeof configSource === "string" ? { path: configSource, repoRoot } : configSource;
+  const raw = await readConfigContents(source);
   const parsed = (yaml.load(raw) as Record<string, unknown> | undefined) ?? {};
 
   const env = ensureRecord(parsed.env, "env");
@@ -71,6 +80,9 @@ export async function loadConfig(configPath: string): Promise<WorktreeManagerCon
 
   return {
     env,
+    runtimePorts: Array.isArray(parsed.runtimePorts)
+      ? parsed.runtimePorts.map((entry) => String(entry)).filter(Boolean)
+      : [],
     startupCommands,
     worktrees: {
       baseDir: String((worktrees as { baseDir?: string }).baseDir ?? ".worktrees"),
@@ -93,6 +105,21 @@ export async function loadConfig(configPath: string): Promise<WorktreeManagerCon
       derivedEnv: ensureRecord((docker as { derivedEnv?: unknown }).derivedEnv, "docker.derivedEnv"),
     },
   };
+}
+
+async function readConfigContents(source: ConfigSource): Promise<string> {
+  if (!source.gitRef || !source.gitFile) {
+    return fs.readFile(source.path, "utf8");
+  }
+
+  if (!source.repoRoot) {
+    throw new Error(`A repository root is required to load config from git ref ${source.gitRef}.`);
+  }
+
+  const result = await runCommand("git", ["show", `${source.gitRef}:${source.gitFile}`], {
+    cwd: source.repoRoot,
+  });
+  return result.stdout;
 }
 
 export function resolveWorktreeBaseDir(repoRoot: string, baseDir: string): string {
