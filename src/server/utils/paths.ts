@@ -12,6 +12,10 @@ export interface RepoContext {
   configFile: string;
 }
 
+export interface RepoContextOptions {
+  configRef?: string;
+}
+
 async function exists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -42,10 +46,10 @@ export async function findGitRoot(startDir: string): Promise<string> {
   }
 }
 
-export async function findRepoContext(startDir: string): Promise<RepoContext> {
+export async function findRepoContext(startDir: string, options: RepoContextOptions = {}): Promise<RepoContext> {
   const repoRoot = await findGitRoot(startDir);
   const gitDir = path.join(repoRoot, ".git");
-  const configRef = await resolveConfigRef(repoRoot);
+  const configRef = await resolveConfigRef(repoRoot, options.configRef);
 
   for (const candidate of CONFIG_CANDIDATES) {
     if (await gitObjectExists(repoRoot, `${configRef}:${candidate}`)) {
@@ -77,7 +81,17 @@ export async function findRepoContext(startDir: string): Promise<RepoContext> {
   );
 }
 
-async function resolveConfigRef(repoRoot: string): Promise<string> {
+async function resolveConfigRef(repoRoot: string, preferredRef?: string): Promise<string> {
+  const normalizedPreferredRef = preferredRef?.trim();
+  if (normalizedPreferredRef) {
+    return normalizedPreferredRef;
+  }
+
+  const configuredRef = await tryRunGit(repoRoot, ["config", "--local", "--get", "worktreemanager.configRef"]);
+  if (configuredRef) {
+    return configuredRef;
+  }
+
   const remoteHead = await tryRunGit(repoRoot, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
   if (remoteHead) {
     return remoteHead;

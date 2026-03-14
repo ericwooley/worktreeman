@@ -30,24 +30,25 @@ worktreemanager --help
 From the repository root:
 
 ```bash
-worktreemanager init
+worktreemanager init main
 ```
 
 That command will:
 
 - locate the Git root
-- look for a common Compose file
-- generate a starter `worktree.yml`
+- create or reuse the `main` branch worktree
+- look for a common Compose file in that worktree
+- generate a starter `worktree.yml` in that branch worktree
 
 If you want to regenerate the file:
 
 ```bash
-worktreemanager init --force
+worktreemanager init main --force
 ```
 
 ## Review `worktree.yml`
 
-Before you start the UI, open `worktree.yml` and confirm:
+Before you start the UI, open the generated `worktree.yml` in the target branch worktree and confirm:
 
 - the worktree base directory is correct
 - the Compose file path is correct
@@ -59,7 +60,7 @@ Before you start the UI, open `worktree.yml` and confirm:
 Run:
 
 ```bash
-worktreemanager serve
+worktreemanager start
 ```
 
 Then open:
@@ -82,5 +83,5 @@ http://127.0.0.1:4312
 ```bash
 worktreemanager --help
 worktreemanager init --help
-worktreemanager serve --help
+worktreemanager start --help
 ```

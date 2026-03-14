@@ -8,6 +8,7 @@ import {
   number,
   option,
   optional,
+  positional,
   run,
   string,
   subcommands,
@@ -33,8 +34,8 @@ const initEnvNameStyle = {
   },
 };
 
-const serveCommand = command({
-  name: "serve",
+const startCommand = command({
+  name: "start",
   description:
     "Start the local Worktree Manager server for the current git repository and open the browser UI.",
   version: "0.1.0",
@@ -54,6 +55,12 @@ const serveCommand = command({
       short: "p",
       description: "Port for the local web server. Defaults to PORT or 4312.",
     }),
+    configRef: option({
+      type: optional(string),
+      long: "config-ref",
+      description:
+        "Git ref to load worktree config from. Overrides WORKTREEMANAGER_CONFIG_REF and git config worktreemanager.configRef.",
+    }),
     open: flag({
       type: boolean,
       long: "open",
@@ -70,8 +77,10 @@ const serveCommand = command({
       defaultValueIsSerializable: true,
     }),
   },
-  handler: async ({ cwd, port, open, noOpen }) => {
-    const repo = await findRepoContext(cwd);
+  handler: async ({ cwd, port, configRef, open, noOpen }) => {
+    const repo = await findRepoContext(cwd, {
+      configRef: configRef ?? process.env.WORKTREEMANAGER_CONFIG_REF,
+    });
     const server = await startServer({
       repo,
       port,
@@ -95,8 +104,13 @@ const serveCommand = command({
 const initCommand = command({
   name: "init",
   description:
-    "Create a starter worktree.yml by inspecting the current repository and common Docker Compose files.",
+    "Create a starter worktree.yml in the specified branch worktree, creating that worktree first if needed.",
   args: {
+    branch: positional({
+      type: string,
+      displayName: "branch",
+      description: "Branch whose worktree should hold the shared worktree.yml config.",
+    }),
     cwd: option({
       type: string,
       long: "cwd",
@@ -111,7 +125,7 @@ const initCommand = command({
       long: "force",
       short: "f",
       description:
-        "Overwrite worktree.yml if an existing worktree config is already present.",
+        "Overwrite worktree.yml in the target branch worktree if an existing worktree config is already present.",
       defaultValue: () => false,
       defaultValueIsSerializable: true,
     }),
@@ -122,14 +136,20 @@ const initCommand = command({
         "Generated env var format: service-port-number, service-port-suffix, or service-port.",
     }),
   },
-  handler: async ({ cwd, force, envNameStyle }) => {
-    const result = await initRepository(cwd, { force, envNameStyle });
+  handler: async ({ branch, cwd, force, envNameStyle }) => {
+    const result = await initRepository(cwd, { branch, force, envNameStyle });
 
     if (!result.created) {
       process.stdout.write(
-        `Existing config found at ${result.configPath}. Use --force to overwrite it.\n`,
+        `Existing config found at ${result.configPath} for branch ${result.branch}. Use --force to overwrite it.\n`,
       );
       return;
+    }
+
+    if (result.createdWorktree) {
+      process.stdout.write(`Created worktree for branch ${result.branch} at ${result.worktreePath}\n`);
+    } else {
+      process.stdout.write(`Using existing worktree for branch ${result.branch} at ${result.worktreePath}\n`);
     }
 
     process.stdout.write(`Created ${result.configPath}\n`);
@@ -151,32 +171,12 @@ const cli = subcommands({
   description:
     "Manage git worktrees, Docker Compose runtimes, and tmux-backed terminals from one local UI.",
   cmds: {
-    serve: serveCommand,
+    start: startCommand,
     init: initCommand,
   },
 });
 
-function normalizeArgv(argv: string[]): string[] {
-  if (argv.length === 0) {
-    return ["serve"];
-  }
-
-  const [first] = argv;
-  const topLevelFlags = new Set(["--help", "-h", "--version", "-v"]);
-  const subcommands = new Set(["serve", "init"]);
-
-  if (subcommands.has(first) || topLevelFlags.has(first)) {
-    return argv;
-  }
-
-  if (first.startsWith("-")) {
-    return ["serve", ...argv];
-  }
-
-  return argv;
-}
-
-run(cli, normalizeArgv(process.argv.slice(2))).catch((error) => {
+run(cli, process.argv.slice(2)).catch((error) => {
   process.stderr.write(
     `${error instanceof Error ? error.message : String(error)}\n`,
   );

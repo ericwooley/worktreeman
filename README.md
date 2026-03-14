@@ -6,7 +6,7 @@ Worktree Manager is the local app for creating Git worktrees, starting branch-sc
 
 ```bash
 npm install
-node --import tsx src/cli.ts init
+node --import tsx src/cli.ts init main
 npm run dev
 ```
 

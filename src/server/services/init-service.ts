@@ -2,7 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import type { InitEnvNameStyle } from "../../shared/types.js";
-import { CONFIG_CANDIDATES, fileExists, findGitRoot } from "../utils/paths.js";
+import { CONFIG_CANDIDATES, fileExists, findGitRoot, sanitizeBranchName } from "../utils/paths.js";
+import { listWorktrees } from "./git-service.js";
+import { runCommand } from "../utils/process.js";
 
 const COMPOSE_CANDIDATES = [
   "docker-compose.yml",
@@ -12,13 +14,17 @@ const COMPOSE_CANDIDATES = [
 ];
 
 export interface InitResult {
+  branch: string;
   repoRoot: string;
+  worktreePath: string;
   configPath: string;
   composeFile?: string;
   created: boolean;
+  createdWorktree: boolean;
 }
 
 export interface InitOptions {
+  branch: string;
   force?: boolean;
   envNameStyle?: InitEnvNameStyle;
 }
@@ -195,15 +201,24 @@ async function buildConfigYaml(
 
 export async function initRepository(
   startDir: string,
-  options: InitOptions = {},
+  options: InitOptions,
 ): Promise<InitResult> {
+  const branch = options.branch.trim();
+  if (!branch) {
+    throw new Error("A branch name is required for init.");
+  }
+
   const force = options.force ?? false;
   const envNameStyle = options.envNameStyle ?? "service-port-number";
-  const repoRoot = await findGitRoot(startDir);
+  const currentRepoRoot = await findGitRoot(startDir);
+  const { worktreePath, createdWorktree } = await ensureBranchWorktree(currentRepoRoot, branch);
+  await runCommand("git", ["config", "--local", "worktreemanager.configRef", branch], {
+    cwd: worktreePath,
+  });
 
   const existingConfig = await Promise.all(
     CONFIG_CANDIDATES.map(async (candidate: string) => {
-      const absolutePath = path.join(repoRoot, candidate);
+      const absolutePath = path.join(worktreePath, candidate);
       return (await fileExists(absolutePath)) ? absolutePath : null;
     }),
   );
@@ -211,24 +226,72 @@ export async function initRepository(
   const existingConfigPath = existingConfig.find(
     (entry: string | null): entry is string => entry !== null,
   );
-  const configPath = path.join(repoRoot, "worktree.yml");
+  const configPath = path.join(worktreePath, "worktree.yml");
   if (existingConfigPath && !force) {
     return {
-      repoRoot,
+      branch,
+      repoRoot: worktreePath,
+      worktreePath,
       configPath: existingConfigPath,
       composeFile: undefined,
       created: false,
+      createdWorktree,
     };
   }
 
-  const compose = await detectComposeFile(repoRoot);
-  const contents = await buildConfigYaml(repoRoot, compose, envNameStyle);
+  const compose = await detectComposeFile(worktreePath);
+  const contents = await buildConfigYaml(worktreePath, compose, envNameStyle);
   await fs.writeFile(configPath, contents, "utf8");
 
   return {
-    repoRoot,
+    branch,
+    repoRoot: worktreePath,
+    worktreePath,
     configPath,
     composeFile: compose?.relativePath,
     created: true,
+    createdWorktree,
   };
+}
+
+async function ensureBranchWorktree(
+  repoRoot: string,
+  branch: string,
+): Promise<{ worktreePath: string; createdWorktree: boolean }> {
+  const existing = (await listWorktrees(repoRoot)).find((entry) => entry.branch === branch);
+  if (existing) {
+    return {
+      worktreePath: existing.worktreePath,
+      createdWorktree: false,
+    };
+  }
+
+  const targetPath = path.join(path.dirname(repoRoot), sanitizeBranchName(branch));
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+
+  if (await gitRefExists(repoRoot, `refs/heads/${branch}`)) {
+    await runCommand("git", ["worktree", "add", targetPath, branch], { cwd: repoRoot });
+  } else if (await gitRefExists(repoRoot, `refs/remotes/origin/${branch}`)) {
+    await runCommand("git", ["worktree", "add", "-b", branch, targetPath, `origin/${branch}`], {
+      cwd: repoRoot,
+    });
+  } else {
+    throw new Error(
+      `Branch ${branch} does not exist locally or on origin, so init cannot create a worktree for it.`,
+    );
+  }
+
+  return {
+    worktreePath: targetPath,
+    createdWorktree: true,
+  };
+}
+
+async function gitRefExists(repoRoot: string, ref: string): Promise<boolean> {
+  try {
+    await runCommand("git", ["show-ref", "--verify", "--quiet", ref], { cwd: repoRoot });
+    return true;
+  } catch {
+    return false;
+  }
 }

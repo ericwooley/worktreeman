@@ -16,7 +16,7 @@ Checking in `worktree.yml` helps the team share the same:
 
 Before asking the rest of the team to use the tool, verify the full path yourself:
 
-1. run `worktreemanager init`
+1. run `worktreemanager init main`
 2. create a fresh worktree
 3. start the runtime
 4. confirm the right ports are injected
@@ -39,7 +39,7 @@ Keep that behavior documented in the repository so startup is predictable.
 
 ```bash
 npm install -g worktreemanager
-worktreemanager init
-worktreemanager serve
+worktreemanager init main
+worktreemanager start
 worktreemanager --help
 ```
