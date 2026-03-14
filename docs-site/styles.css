@@ -1,0 +1,317 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --paper: #f6efe4;
+  --paper-strong: #efe4d3;
+  --ink: #161410;
+  --muted: rgba(22, 20, 16, 0.68);
+  --line: rgba(22, 20, 16, 0.12);
+  --olive: #36503c;
+  --rust: #b14f28;
+  --cream: rgba(255, 250, 242, 0.8);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: #f2eadf;
+  color: var(--ink);
+  font-family: "Newsreader", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: "Bricolage Grotesque", sans-serif;
+  font-weight: 700;
+}
+
+.docs-shell {
+  position: relative;
+}
+
+.docs-kicker {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+}
+
+.docs-hero-panel,
+.docs-info-tile,
+.docs-summary-card,
+.docs-article-shell,
+.docs-rail-card,
+.docs-rail-note {
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  background: rgba(255, 249, 242, 0.66);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 20px 64px rgba(43, 28, 16, 0.08);
+}
+
+.docs-hero-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 2.4rem;
+  padding: 2rem;
+}
+
+.docs-hero-panel::after {
+  content: "";
+  position: absolute;
+  right: -3rem;
+  top: -3rem;
+  width: 12rem;
+  height: 12rem;
+  border: 1px solid rgba(22, 20, 16, 0.1);
+  border-radius: 50%;
+}
+
+.docs-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.9rem 1.2rem;
+  font-family: "IBM Plex Mono", monospace;
+  letter-spacing: 0.04em;
+  transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease;
+}
+
+.docs-pill:hover,
+.docs-toc-item:hover,
+.docs-summary-card:hover {
+  transform: translateY(-2px);
+}
+
+.docs-pill-solid {
+  background: var(--ink);
+  color: #f8f1e6;
+}
+
+.docs-pill-ghost {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.docs-info-tile,
+.docs-summary-card,
+.docs-article-shell,
+.docs-rail-card,
+.docs-rail-note {
+  border-radius: 2rem;
+}
+
+.docs-info-tile,
+.docs-summary-card,
+.docs-rail-card,
+.docs-rail-note {
+  padding: 1.4rem;
+}
+
+.docs-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.docs-toc-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  align-items: start;
+  border-radius: 1.3rem;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.48);
+  padding: 0.9rem 1rem;
+  transition: transform 180ms ease, background-color 180ms ease;
+}
+
+.docs-toc-item-current {
+  border-color: rgba(177, 79, 40, 0.26);
+  background: rgba(255, 245, 236, 0.76);
+}
+
+.docs-toc-index,
+.docs-summary-index,
+.docs-meta-chip {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.docs-toc-index,
+.docs-summary-index {
+  color: var(--rust);
+}
+
+.docs-summary-index {
+  font-size: 0.9rem;
+  letter-spacing: 0.16em;
+}
+
+.docs-article-shell {
+  padding: 1.6rem;
+}
+
+.docs-summary-card-current {
+  border-color: rgba(177, 79, 40, 0.24);
+  background: rgba(255, 245, 236, 0.74);
+}
+
+.docs-meta-chip {
+  align-self: flex-start;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.5);
+  padding: 0.65rem 0.9rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.docs-prose {
+  color: rgba(22, 20, 16, 0.9);
+  font-size: 1.05rem;
+  line-height: 1.85;
+  padding-top: 1.75rem;
+}
+
+.docs-prose > :first-child {
+  margin-top: 0;
+}
+
+.docs-prose h1,
+.docs-prose h2,
+.docs-prose h3 {
+  font-family: "Bricolage Grotesque", sans-serif;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.docs-prose h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(2.3rem, 4vw, 3.8rem);
+}
+
+.docs-prose h2 {
+  margin: 2.4rem 0 0.9rem;
+  font-size: clamp(1.6rem, 2vw, 2.15rem);
+}
+
+.docs-prose h3 {
+  margin: 1.8rem 0 0.7rem;
+  font-size: 1.2rem;
+}
+
+.docs-prose p,
+.docs-prose ul,
+.docs-prose ol,
+.docs-prose pre,
+.docs-prose blockquote {
+  margin: 0 0 1rem;
+}
+
+.docs-prose ul,
+.docs-prose ol {
+  padding-left: 1.25rem;
+}
+
+.docs-prose li + li {
+  margin-top: 0.35rem;
+}
+
+.docs-prose code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.92em;
+  background: rgba(22, 20, 16, 0.06);
+  border-radius: 0.45rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.docs-prose pre {
+  overflow-x: auto;
+  border: 1px solid rgba(22, 20, 16, 0.08);
+  border-radius: 1.2rem;
+  background: linear-gradient(180deg, #161410 0%, #221d17 100%);
+  color: #f5e8d0;
+  padding: 1rem 1.1rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.docs-prose pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.docs-prose a {
+  color: var(--olive);
+  text-decoration: underline;
+  text-decoration-color: rgba(54, 80, 60, 0.28);
+  text-underline-offset: 0.16em;
+}
+
+.docs-prose blockquote {
+  border-left: 4px solid rgba(54, 80, 60, 0.28);
+  margin-left: 0;
+  padding: 0.2rem 0 0.2rem 1rem;
+  color: rgba(22, 20, 16, 0.68);
+}
+
+.docs-prose hr {
+  margin: 2rem 0;
+  border: 0;
+  border-top: 1px solid rgba(22, 20, 16, 0.1);
+}
+
+.reveal-up,
+.reveal-up-delayed {
+  animation: reveal-up 720ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.reveal-up-delayed {
+  animation-delay: 120ms;
+}
+
+@keyframes reveal-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .docs-hero-panel,
+  .docs-article-shell,
+  .docs-info-tile,
+  .docs-summary-card,
+  .docs-rail-card,
+  .docs-rail-note {
+    border-radius: 1.5rem;
+  }
+
+  .docs-prose {
+    font-size: 1rem;
+    line-height: 1.78;
+  }
+}

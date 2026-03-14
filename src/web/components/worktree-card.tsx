@@ -24,7 +24,9 @@ export function WorktreeCard({
   return (
     <article
       className={`rounded-[1.6rem] border p-4 transition ${
-        isSelected ? "border-ember bg-ember/5" : "border-ink/10 bg-white/60 hover:bg-white"
+        isSelected
+          ? "border-ember/60 bg-[rgba(255,247,240,0.74)] backdrop-blur-sm"
+          : "border-white/40 bg-[rgba(255,255,255,0.54)] backdrop-blur-sm hover:bg-[rgba(255,255,255,0.68)]"
       }`}
     >
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -39,7 +41,10 @@ export function WorktreeCard({
           {worktree.runtime ? (
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               {worktree.runtime.ports.map((binding) => (
-                <div key={`${binding.service}-${binding.hostPort}`} className="rounded-2xl bg-white px-3 py-2 text-xs shadow-sm">
+                <div
+                  key={`${binding.service}-${binding.hostPort}`}
+                  className="rounded-2xl border border-white/55 bg-[rgba(255,255,255,0.72)] px-3 py-2 text-xs shadow-sm"
+                >
                   <p className="font-semibold text-ink">{binding.envName}</p>
                   <p className="font-mono text-ink/60">localhost:{binding.hostPort}</p>
                 </div>

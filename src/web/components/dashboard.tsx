@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { WorktreeRecord } from "@shared/types";
 import { useDashboardState } from "../hooks/use-dashboard-state";
+import { AmbientCanvasBackground, appAmbientPalette } from "./ambient-canvas-background";
 import { WorktreeCard } from "./worktree-card";
 import { WorktreeDetail } from "./worktree-detail";
 
@@ -25,9 +26,10 @@ export function Dashboard() {
   };
 
   return (
-    <main className="min-h-screen bg-aurora px-4 py-6 text-ink sm:px-6 lg:px-8">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="rounded-[2rem] border border-white/60 bg-white/70 p-6 shadow-panel backdrop-blur">
+    <main className="relative min-h-screen overflow-hidden px-4 py-6 text-ink sm:px-6 lg:px-8">
+      <AmbientCanvasBackground palette={appAmbientPalette} />
+      <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-6">
+        <header className="rounded-[2rem] border border-white/45 bg-white/62 p-6 shadow-panel backdrop-blur-md">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl space-y-3">
               <p className="text-sm uppercase tracking-[0.28em] text-pine">Local orchestration cockpit</p>
@@ -37,25 +39,27 @@ export function Dashboard() {
               </p>
             </div>
 
-            <form className="flex w-full max-w-xl flex-col gap-3 sm:flex-row" onSubmit={onSubmit}>
-              <input
-                value={branch}
-                onChange={(event) => setBranch(event.target.value)}
-                placeholder="feature/branch-name"
-                className="h-12 flex-1 rounded-2xl border border-ink/10 bg-mist px-4 font-mono text-sm outline-none transition focus:border-ember"
-              />
-              <button
-                type="submit"
-                className="h-12 rounded-2xl bg-ink px-5 text-sm font-semibold text-white transition hover:bg-ink/90"
-              >
-                Create worktree
-              </button>
-            </form>
+            <div className="flex w-full max-w-xl flex-col gap-3">
+              <form className="flex w-full flex-col gap-3 sm:flex-row" onSubmit={onSubmit}>
+                <input
+                  value={branch}
+                  onChange={(event) => setBranch(event.target.value)}
+                  placeholder="feature/branch-name"
+                  className="h-12 flex-1 rounded-2xl border border-ink/10 bg-mist px-4 font-mono text-sm outline-none transition focus:border-ember"
+                />
+                <button
+                  type="submit"
+                  className="h-12 rounded-2xl bg-ink px-5 text-sm font-semibold text-white transition hover:bg-ink/90"
+                >
+                  Create worktree
+                </button>
+              </form>
+            </div>
           </div>
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-[2rem] border border-white/60 bg-white/75 p-5 shadow-panel backdrop-blur">
+          <div className="rounded-[2rem] border border-white/45 bg-white/66 p-5 shadow-panel backdrop-blur-md">
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-xl font-semibold">Active worktrees</h2>
@@ -107,7 +111,7 @@ function ConfigPanel({
   const runningCount = worktrees.filter((entry) => entry.runtime).length;
 
   return (
-    <section className="rounded-[2rem] border border-ink/10 bg-ink p-5 text-white shadow-panel">
+    <section className="rounded-[2rem] border border-black/10 bg-[rgba(17,24,27,0.88)] p-5 text-white shadow-panel backdrop-blur-sm">
       <p className="text-xs uppercase tracking-[0.28em] text-white/60">Workspace</p>
       <div className="mt-4 space-y-4 text-sm text-white/75">
         <div>

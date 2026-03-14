@@ -22,5 +22,5 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src/web", "src/shared", "vite.config.ts", "tailwind.config.ts"]
+  "include": ["src/web", "src/shared", "docs-site", "vite.config.ts", "vite.docs.config.ts", "tailwind.config.ts"]
 }

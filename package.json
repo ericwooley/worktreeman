@@ -8,11 +8,13 @@
   },
   "scripts": {
     "dev": "NODE_ENV=development tsx watch src/cli.ts",
-    "build": "npm run build:server && npm run build:web",
+    "build": "npm run build:server && npm run build:web && npm run build:docs",
     "build:server": "tsc -p tsconfig.node.json",
     "build:web": "vite build",
+    "build:docs": "vite build --config vite.docs.config.ts",
+    "preview:docs": "npm run build:docs && http-server dist/docs -p 4174 -c-1",
     "start": "node dist/cli.js",
-    "check": "tsc -p tsconfig.node.json --noEmit && vite build --mode production"
+    "check": "tsc -p tsconfig.node.json --noEmit && vite build --mode production && vite build --config vite.docs.config.ts --mode production"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -20,6 +22,7 @@
     "cmd-ts": "^0.14.1",
     "express": "^4.21.2",
     "js-yaml": "^4.1.0",
+    "marked": "^15.0.12",
     "node-pty": "^1.0.0",
     "open": "^10.1.0",
     "react": "^18.3.1",
@@ -35,6 +38,7 @@
     "@types/ws": "^8.5.14",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "http-server": "^14.1.1",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.3",
