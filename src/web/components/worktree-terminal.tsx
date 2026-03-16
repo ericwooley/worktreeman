@@ -1,16 +1,32 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import type { WorktreeRecord, TerminalClientMessage, TerminalServerMessage } from "@shared/types";
+import type {
+  WorktreeRecord,
+  TerminalClientMessage,
+  TerminalServerMessage,
+} from "@shared/types";
 import "@xterm/xterm/css/xterm.css";
 
-export function WorktreeTerminal({ worktree }: { worktree: WorktreeRecord | null }) {
+export function WorktreeTerminal({
+  worktree,
+}: {
+  worktree: WorktreeRecord | null;
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const sessionName = worktree?.runtime?.tmuxSession ?? null;
+  const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
+  const runtimeEnvEntries = useMemo(
+    () => (worktree?.runtime ? Object.entries(worktree.runtime.env) : []),
+    [worktree?.runtime],
+  );
 
   useEffect(() => {
-    if (!hostRef.current || !worktree?.runtime) {
+    if (!hostRef.current || !terminalBranch || !sessionName) {
       return;
     }
+
+    hostRef.current.replaceChildren();
 
     const terminal = new Terminal({
       cursorBlink: true,
@@ -23,13 +39,17 @@ export function WorktreeTerminal({ worktree }: { worktree: WorktreeRecord | null
         selectionBackground: "rgba(249, 115, 22, 0.28)",
       },
     });
+    console.log("render temrinal");
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
+    terminal.focus();
     fitAddon.fit();
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(`${protocol}//${window.location.host}/ws/terminal?branch=${encodeURIComponent(worktree.branch)}`);
+    const socket = new WebSocket(
+      `${protocol}//${window.location.host}/ws/terminal?branch=${encodeURIComponent(terminalBranch)}`,
+    );
 
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(event.data) as TerminalServerMessage;
@@ -40,7 +60,12 @@ export function WorktreeTerminal({ worktree }: { worktree: WorktreeRecord | null
         terminal.writeln(`\r\n[error] ${message.message}`);
       }
       if (message.type === "exit") {
-        terminal.writeln(`\r\n[session closed: ${message.exitCode ?? "unknown"}]`);
+        terminal.writeln(
+          `\r\n[session closed: ${message.exitCode ?? "unknown"}]`,
+        );
+      }
+      if (message.type === "ready") {
+        terminal.focus();
       }
     });
 
@@ -53,7 +78,11 @@ export function WorktreeTerminal({ worktree }: { worktree: WorktreeRecord | null
 
     const resize = () => {
       fitAddon.fit();
-      const payload: TerminalClientMessage = { type: "resize", cols: terminal.cols, rows: terminal.rows };
+      const payload: TerminalClientMessage = {
+        type: "resize",
+        cols: terminal.cols,
+        rows: terminal.rows,
+      };
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify(payload));
       }
@@ -62,14 +91,17 @@ export function WorktreeTerminal({ worktree }: { worktree: WorktreeRecord | null
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(hostRef.current);
 
+    const focusTerminal = () => terminal.focus();
     socket.addEventListener("open", resize);
+    hostRef.current.addEventListener("click", focusTerminal);
 
     return () => {
       resizeObserver.disconnect();
+      hostRef.current?.removeEventListener("click", focusTerminal);
       socket.close();
       terminal.dispose();
     };
-  }, [worktree?.branch, worktree?.runtime]);
+  }, [sessionName, terminalBranch]);
 
   return (
     <section className="rounded-[2rem] border border-ink/10 bg-white/75 p-5 shadow-panel backdrop-blur">
@@ -87,22 +119,31 @@ export function WorktreeTerminal({ worktree }: { worktree: WorktreeRecord | null
       {worktree?.runtime ? (
         <>
           <div className="mb-4 grid gap-2 sm:grid-cols-2">
-            {Object.entries(worktree.runtime.env).map(([key, value]) => (
-              <div key={key} className="rounded-2xl border border-ink/10 bg-mist px-3 py-2 font-mono text-xs text-ink/75">
-                <span className="text-ink">{key}</span>=<span className="break-all text-pine">{value}</span>
+            {runtimeEnvEntries.map(([key, value]) => (
+              <div
+                key={key}
+                className="rounded-2xl border border-ink/10 bg-mist px-3 py-2 font-mono text-xs text-ink/75"
+              >
+                <span className="text-ink">{key}</span>=
+                <span className="break-all text-pine">{value}</span>
               </div>
             ))}
           </div>
           {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
             <p className="mb-4 text-xs text-ink/55">
-              Reserved local ports are held for this runtime and injected into the tmux-backed shell.
+              Reserved local ports are held for this runtime and injected into
+              the tmux-backed shell.
             </p>
           ) : null}
-          <div ref={hostRef} className="h-[24rem] overflow-hidden rounded-[1.5rem] border border-ink/10 bg-ink p-3" />
+          <div
+            ref={hostRef}
+            className="h-[24rem] overflow-hidden rounded-[1.5rem] border border-ink/10 bg-ink p-3"
+          />
         </>
       ) : (
         <div className="rounded-[1.5rem] border border-dashed border-ink/15 bg-mist/70 p-8 text-sm text-ink/60">
-          Start a runtime to parse Docker ports, merge config env, and launch the tmux-backed shell.
+          Start a runtime to parse Docker ports, merge config env, and launch
+          the tmux-backed shell.
         </div>
       )}
     </section>
