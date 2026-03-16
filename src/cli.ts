@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import path from "node:path";
 import process from "node:process";
+import { confirm, input, select } from "@inquirer/prompts";
 import {
   boolean,
   command,
@@ -13,26 +15,11 @@ import {
   string,
   subcommands,
 } from "cmd-ts";
-import type { InitEnvNameStyle } from "./shared/types.js";
 import { findRepoContext } from "./server/utils/paths.js";
 import { startServer } from "./server/app.js";
+import { listWorktrees } from "./server/services/git-service.js";
 import { initRepository } from "./server/services/init-service.js";
-
-const initEnvNameStyle = {
-  async from(value: string): Promise<InitEnvNameStyle> {
-    if (
-      value === "service-port-number" ||
-      value === "service-port-suffix" ||
-      value === "service-port"
-    ) {
-      return value;
-    }
-
-    throw new Error(
-      "env-name-style must be one of: service-port-number, service-port-suffix, service-port",
-    );
-  },
-};
+import { findGitRoot } from "./server/utils/paths.js";
 
 const startCommand = command({
   name: "start",
@@ -104,12 +91,12 @@ const startCommand = command({
 const initCommand = command({
   name: "init",
   description:
-    "Create a starter worktree.yml in the specified branch worktree, creating that worktree first if needed.",
+    "Create a starter worktree.yml, prompting for branch, layout, and dynamic runtime port env vars when they are not provided.",
   args: {
     branch: positional({
-      type: string,
+      type: optional(string),
       displayName: "branch",
-      description: "Branch whose worktree should hold the shared worktree.yml config.",
+      description: "Branch whose worktree should hold the shared worktree.yml config. If omitted, init will ask.",
     }),
     cwd: option({
       type: string,
@@ -120,6 +107,12 @@ const initCommand = command({
       description:
         "Directory to start searching from when locating the repository root.",
     }),
+    baseDir: option({
+      type: optional(string),
+      long: "base-dir",
+      description:
+        "Value to write to worktrees.baseDir in worktree.yml. If omitted in a TTY session, init will ask.",
+    }),
     force: flag({
       type: boolean,
       long: "force",
@@ -129,15 +122,61 @@ const initCommand = command({
       defaultValue: () => false,
       defaultValueIsSerializable: true,
     }),
-    envNameStyle: option({
-      type: optional(initEnvNameStyle),
-      long: "env-name-style",
-      description:
-        "Generated env var format: service-port-number, service-port-suffix, or service-port.",
-    }),
   },
-  handler: async ({ branch, cwd, force, envNameStyle }) => {
-    const result = await initRepository(cwd, { branch, force, envNameStyle });
+  handler: async ({ branch, cwd, baseDir, force }) => {
+    const interactive = process.stdin.isTTY && process.stdout.isTTY;
+
+    if (interactive) {
+      process.stdout.write("\nworktreemanager init\n");
+      process.stdout.write("Create or reuse a branch worktree, then generate a shared worktree.yml.\n\n");
+    }
+
+    const resolvedBranch =
+      branch ??
+      (interactive
+        ? await promptForBranch()
+        : undefined);
+
+    if (!resolvedBranch?.trim()) {
+      throw new Error(
+        "Branch is required. Pass `worktreemanager init <branch>` or run `worktreemanager init` in an interactive terminal.",
+      );
+    }
+
+    const suggestedBaseDir = baseDir ?? (interactive ? await detectSuggestedBaseDir(cwd) : ".worktrees");
+    const resolvedBaseDir =
+      baseDir ??
+      (interactive ? await promptForBaseDir(suggestedBaseDir) : suggestedBaseDir);
+
+    const resolvedRuntimePorts = interactive ? await promptForRuntimePorts() : [];
+
+    let result = await initRepository(cwd, {
+      branch: resolvedBranch,
+      baseDir: resolvedBaseDir,
+      runtimePorts: resolvedRuntimePorts,
+      force,
+    });
+
+    if (!result.created && !force && interactive) {
+      const overwrite = await confirm({
+        message: `Config already exists at ${result.configPath} for branch ${result.branch}. Overwrite it?`,
+        default: false,
+      });
+
+      if (!overwrite) {
+        process.stdout.write(
+          `Keeping existing config at ${result.configPath} for branch ${result.branch}.\n`,
+        );
+        return;
+      }
+
+      result = await initRepository(cwd, {
+        branch: resolvedBranch,
+        baseDir: resolvedBaseDir,
+        runtimePorts: resolvedRuntimePorts,
+        force: true,
+      });
+    }
 
     if (!result.created) {
       process.stdout.write(
@@ -176,9 +215,118 @@ const cli = subcommands({
   },
 });
 
-run(cli, process.argv.slice(2)).catch((error) => {
+run(cli, normalizeArgv(process.argv.slice(2))).catch((error) => {
   process.stderr.write(
     `${error instanceof Error ? error.message : String(error)}\n`,
   );
   process.exit(1);
 });
+
+function normalizeArgv(argv: string[]): string[] {
+  return argv.filter((value) => value !== "--");
+}
+
+async function detectSuggestedBaseDir(startDir: string): Promise<string> {
+  try {
+    const repoRoot = await findGitRoot(startDir);
+    const worktrees = await listWorktrees(repoRoot);
+    const repoRootWithSeparator = `${repoRoot}${path.sep}`;
+    const siblingLayout = worktrees.some(
+      (worktree) =>
+        path.dirname(worktree.worktreePath) === path.dirname(repoRoot) &&
+        worktree.worktreePath !== repoRoot &&
+        !worktree.worktreePath.startsWith(repoRootWithSeparator),
+    );
+
+    return siblingLayout ? ".." : ".worktrees";
+  } catch {
+    return ".worktrees";
+  }
+}
+
+async function promptForBranch(): Promise<string> {
+  return input({
+    message: "Which branch should hold the shared worktree.yml config?",
+    default: "main",
+    validate: (value) => (value.trim() ? true : "Branch is required."),
+  });
+}
+
+async function promptForBaseDir(suggestedBaseDir: string): Promise<string> {
+  const defaultChoice = suggestedBaseDir === ".." ? "siblings" : suggestedBaseDir === ".worktrees" ? "nested" : "custom";
+
+  const layout = await select<string>({
+    message: "Where should new branch worktrees be created relative to the config worktree?",
+    default: defaultChoice,
+    choices: [
+      {
+        name: ".worktrees",
+        value: "nested",
+        description: "Nested layout, for example main/.worktrees/feature-x",
+      },
+      {
+        name: "..",
+        value: "siblings",
+        description: "Sibling layout, for example main/, feature-x/, bugfix-y/ under one parent",
+      },
+      {
+        name: "Custom path",
+        value: "custom",
+        description: "Write your own relative or absolute worktrees.baseDir value",
+      },
+    ],
+  });
+
+  if (layout === "nested") {
+    return ".worktrees";
+  }
+
+  if (layout === "siblings") {
+    return "..";
+  }
+
+  return input({
+    message: "Custom value for worktrees.baseDir",
+    default: suggestedBaseDir,
+    validate: (value) => (value.trim() ? true : "baseDir is required."),
+  });
+}
+
+async function promptForRuntimePorts(): Promise<string[]> {
+  const ports: string[] = [];
+
+  process.stdout.write("\nAdd environment variables that should get a free local port at runtime.\n");
+  process.stdout.write("Examples: PORT, VITE_PORT, WEBHOOK_PORT. Leave blank when you're done.\n\n");
+
+  while (true) {
+    if (ports.length > 0) {
+      process.stdout.write(`Current dynamic port env vars: ${ports.join(", ")}\n`);
+    }
+
+    const envName = (await input({
+      message: ports.length === 0 ? "Dynamic port env var (optional)" : "Another dynamic port env var (optional)",
+      validate: (value) => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return true;
+        }
+
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+          return "Use a valid environment variable name like PORT or WEBHOOK_PORT.";
+        }
+
+        if (ports.includes(trimmed)) {
+          return `${trimmed} is already in the list.`;
+        }
+
+        return true;
+      },
+    })).trim();
+
+    if (!envName) {
+      return ports;
+    }
+
+    ports.push(envName);
+  }
+}

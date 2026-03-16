@@ -1,8 +1,9 @@
 import os from "node:os";
 import process from "node:process";
+import type { IncomingMessage, Server as HttpServer } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
-import type { Server as HttpServer } from "node:http";
 import pty from "node-pty";
 import type { TerminalClientMessage, TerminalServerMessage, WorktreeRuntime } from "../../shared/types.js";
 
@@ -16,7 +17,25 @@ function send(socket: WebSocket, message: TerminalServerMessage): void {
 }
 
 export function createTerminalService(options: TerminalServiceOptions): WebSocketServer {
-  const wss = new WebSocketServer({ server: options.server, path: "/ws/terminal" });
+  const wss = new WebSocketServer({ noServer: true });
+
+  const handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const url = new URL(request.url ?? "", "http://localhost");
+
+    if (url.pathname !== "/ws/terminal") {
+      return;
+    }
+
+    wss.handleUpgrade(request, socket, head, (upgradedSocket) => {
+      wss.emit("connection", upgradedSocket, request);
+    });
+  };
+
+  options.server.on("upgrade", handleUpgrade);
+
+  wss.on("close", () => {
+    options.server.off("upgrade", handleUpgrade);
+  });
 
   wss.on("connection", (socket, request) => {
     const url = new URL(request.url ?? "", "http://localhost");

@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import open from "open";
 import { createApiRouter } from "./routes/api.js";
@@ -8,6 +9,7 @@ import { createTerminalService } from "./services/terminal-service.js";
 import { loadConfig } from "./services/config-service.js";
 import { RuntimeStore } from "./state/runtime-store.js";
 import type { RepoContext } from "./utils/paths.js";
+import type { WebSocketServer } from "ws";
 
 export interface StartServerOptions {
   repo: RepoContext;
@@ -16,6 +18,7 @@ export interface StartServerOptions {
 }
 
 export async function startServer(options: StartServerOptions): Promise<{ port: number; close: () => Promise<void> }> {
+  const appRoot = fileURLToPath(new URL("../../", import.meta.url));
   const config = await loadConfig({
     path: options.repo.configPath,
     repoRoot: options.repo.repoRoot,
@@ -25,6 +28,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const runtimes = new RuntimeStore();
   const app = express();
   const server = http.createServer(app);
+  let terminalService: WebSocketServer | undefined;
+  let vite: Awaited<ReturnType<typeof import("vite")["createServer"]>> | undefined;
 
   app.use(express.json());
   app.use("/api", createApiRouter({
@@ -34,22 +39,20 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     runtimes,
   }));
 
-  createTerminalService({
-    server,
-    getRuntime: (branch) => runtimes.get(branch),
-  });
-
   const isDevelopment = process.env.NODE_ENV === "development";
   if (isDevelopment) {
     const { createServer } = await import("vite");
-    const vite = await createServer({
-      root: options.repo.repoRoot,
-      server: { middlewareMode: true },
+    vite = await createServer({
+      root: appRoot,
+      server: {
+        middlewareMode: true,
+        hmr: { server },
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const webDistPath = path.resolve(options.repo.repoRoot, "dist/web");
+    const webDistPath = path.resolve(appRoot, "dist/web");
     app.use(express.static(webDistPath));
     app.get("*", async (_req, res, next) => {
       try {
@@ -69,18 +72,14 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
   const port = options.port ?? Number(process.env.PORT || 4312);
 
-  await new Promise<void>((resolve) => {
-    server.listen(port, "127.0.0.1", () => resolve());
-  });
+  const close = async () => {
+    if (terminalService) {
+      await new Promise<void>((resolve) => {
+        terminalService?.close(() => resolve());
+      });
+    }
 
-  const url = `http://127.0.0.1:${port}`;
-  if (options.openBrowser ?? true) {
-    await open(url);
-  }
-
-  return {
-    port,
-    close: async () => {
+    if (server.listening) {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) {
@@ -90,6 +89,46 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
           resolve();
         });
       });
-    },
+    }
+
+    if (vite) {
+      await vite.close();
+    }
+  };
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+
+      const onListening = () => {
+        server.off("error", onError);
+        resolve();
+      };
+
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, "127.0.0.1");
+    });
+
+    terminalService = createTerminalService({
+      server,
+      getRuntime: (branch) => runtimes.get(branch),
+    });
+
+    const url = `http://127.0.0.1:${port}`;
+    if (options.openBrowser ?? true) {
+      await open(url);
+    }
+  } catch (error) {
+    await close().catch(() => undefined);
+    throw error;
+  }
+
+  return {
+    port,
+    close,
   };
 }

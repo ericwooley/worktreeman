@@ -35,7 +35,7 @@ The typical branch workflow usually turns into a mix of shell history, copied co
 ## Typical flow
 
 1. Install `worktreemanager` from npm.
-2. Run `worktreemanager init main` in the repository you want to manage.
+2. Run `worktreemanager init` or `worktreemanager init main` in the repository you want to manage.
 3. Review the generated `worktree.yml`.
 4. Start the local UI with `worktreemanager start`.
 5. Create a worktree, start its runtime, and use the terminal panel.

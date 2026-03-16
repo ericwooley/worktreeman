@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { InitEnvNameStyle } from "../../shared/types.js";
 import { CONFIG_CANDIDATES, fileExists, findGitRoot, sanitizeBranchName } from "../utils/paths.js";
 import { listWorktrees } from "./git-service.js";
 import { runCommand } from "../utils/process.js";
+
+const DEFAULT_INIT_ENV_NAME_STYLE = "service-port-number" as const;
 
 const COMPOSE_CANDIDATES = [
   "docker-compose.yml",
@@ -25,8 +26,9 @@ export interface InitResult {
 
 export interface InitOptions {
   branch: string;
+  baseDir?: string;
+  runtimePorts?: string[];
   force?: boolean;
-  envNameStyle?: InitEnvNameStyle;
 }
 
 interface ComposeDetection {
@@ -37,40 +39,84 @@ interface ComposeDetection {
 function pickPortEnvName(
   serviceName: string,
   containerPort: number,
-  envNameStyle: InitEnvNameStyle,
 ): string {
   const normalized = serviceName
     .replace(/[^a-zA-Z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toUpperCase();
 
-  if (envNameStyle === "service-port") {
-    return `${normalized || "SERVICE"}_PORT`;
-  }
-
-  if (envNameStyle === "service-port-suffix") {
-    return `${normalized || "SERVICE"}_PORT_${containerPort}`;
-  }
-
   return `${normalized || "SERVICE"}_${containerPort}_PORT`;
+}
+
+function splitComposePortSpec(entry: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let braceDepth = 0;
+
+  for (const char of entry) {
+    if (char === "$" && current.endsWith("$")) {
+      current += char;
+      continue;
+    }
+
+    if (char === "{") {
+      braceDepth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === "}" && braceDepth > 0) {
+      braceDepth -= 1;
+      current += char;
+      continue;
+    }
+
+    if (char === ":" && braceDepth === 0) {
+      segments.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  segments.push(current);
+  return segments;
+}
+
+function extractEnvNameFromPortValue(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const interpolationMatch = value.match(/\$\{\s*([A-Za-z_][A-Za-z0-9_]*)[^}]*\}/);
+  if (interpolationMatch?.[1]) {
+    return interpolationMatch[1];
+  }
+
+  const directEnvMatch = value.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/);
+  return directEnvMatch?.[1];
 }
 
 function extractPortMappings(
   serviceName: string,
   service: Record<string, unknown>,
-  envNameStyle: InitEnvNameStyle,
 ) {
   const ports = Array.isArray(service.ports) ? service.ports : [];
 
   return ports
     .map((entry) => {
       if (typeof entry === "string") {
-        const segments = entry.split(":");
+        const segments = splitComposePortSpec(entry);
         const containerSegment = segments.at(-1)?.split("/")[0];
         const protocol =
           (segments.at(-1)?.split("/")[1] as "tcp" | "udp" | undefined) ??
           "tcp";
         const containerPort = Number(containerSegment);
+        const envName = segments
+          .slice(0, -1)
+          .map((segment) => extractEnvNameFromPortValue(segment))
+          .find((segment): segment is string => Boolean(segment));
 
         if (!Number.isFinite(containerPort)) {
           return null;
@@ -80,13 +126,14 @@ function extractPortMappings(
           service: serviceName,
           containerPort,
           protocol,
-          envName: pickPortEnvName(serviceName, containerPort, envNameStyle),
+          envName: envName ?? pickPortEnvName(serviceName, containerPort),
         };
       }
 
       if (typeof entry === "object" && entry && !Array.isArray(entry)) {
         const mapping = entry as Record<string, unknown>;
         const target = Number(mapping.target);
+        const envName = extractEnvNameFromPortValue(mapping.published);
         if (!Number.isFinite(target)) {
           return null;
         }
@@ -95,7 +142,7 @@ function extractPortMappings(
           service: serviceName,
           containerPort: target,
           protocol: (mapping.protocol as "tcp" | "udp" | undefined) ?? "tcp",
-          envName: pickPortEnvName(serviceName, target, envNameStyle),
+          envName: envName ?? pickPortEnvName(serviceName, target),
         };
       }
 
@@ -138,7 +185,8 @@ async function detectComposeFile(
 async function buildConfigYaml(
   repoRoot: string,
   compose: ComposeDetection | undefined,
-  envNameStyle: InitEnvNameStyle,
+  baseDir: string,
+  runtimePorts: string[],
 ): Promise<string> {
   const portMappings: Array<Record<string, unknown>> = [];
 
@@ -166,7 +214,6 @@ async function buildConfigYaml(
         for (const mapping of extractPortMappings(
           serviceName,
           serviceValue as Record<string, unknown>,
-          envNameStyle,
         )) {
           portMappings.push(mapping);
         }
@@ -178,9 +225,9 @@ async function buildConfigYaml(
     env: {
       NODE_ENV: "development",
     },
-    runtimePorts: [],
+    runtimePorts,
     worktrees: {
-      baseDir: ".worktrees",
+      baseDir,
     },
     docker: {
       composeFile: compose?.relativePath,
@@ -209,7 +256,14 @@ export async function initRepository(
   }
 
   const force = options.force ?? false;
-  const envNameStyle = options.envNameStyle ?? "service-port-number";
+  const baseDir = options.baseDir?.trim() || ".worktrees";
+  const runtimePorts = Array.from(
+    new Set(
+      (options.runtimePorts ?? [])
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  );
   const currentRepoRoot = await findGitRoot(startDir);
   const { worktreePath, createdWorktree } = await ensureBranchWorktree(currentRepoRoot, branch);
   await runCommand("git", ["config", "--local", "worktreemanager.configRef", branch], {
@@ -240,7 +294,7 @@ export async function initRepository(
   }
 
   const compose = await detectComposeFile(worktreePath);
-  const contents = await buildConfigYaml(worktreePath, compose, envNameStyle);
+  const contents = await buildConfigYaml(worktreePath, compose, baseDir, runtimePorts);
   await fs.writeFile(configPath, contents, "utf8");
 
   return {

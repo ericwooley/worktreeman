@@ -2,6 +2,15 @@
 
 `worktreemanager` reads `worktree.yml` from the repository root.
 
+For Docker Compose files, prefer host port declarations that use env interpolation with `0` as the default host port, for example:
+
+```yml
+ports:
+  - "${DB_PORT:-0}:5432"
+```
+
+That lets Docker choose an open host port while still giving `worktreemanager` a stable env var name to resolve and inject.
+
 Example:
 
 ```yml
@@ -22,19 +31,21 @@ docker:
   portMappings:
     - service: postgres
       containerPort: 5432
-      envName: DATABASE_PORT
+      envName: DB_PORT
   servicePorts:
     backendServer:
       service: api
       containerPort: 3000
       envName: BACKEND_SERVER_PORT
   derivedEnv:
-    DATABASE_URL: postgres://postgres:postgres@localhost:${DATABASE_PORT}/app
+    DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
 
 startupCommands:
   - npm install
   - npm run db:migrate
 ```
+
+During `worktreemanager init`, the wizard can ask for these `runtimePorts` entries in a loop so you can add names like `PORT`, `VITE_PORT`, or `WEBHOOK_PORT` before the file is written.
 
 ## `env`
 
@@ -82,6 +93,8 @@ For example, a branch named `feature/search` may produce a project name like `wt
 Use `portMappings` when you already know the service and container port you want to expose as an environment variable.
 
 After Docker starts, `worktreemanager` inspects the real published host port and injects it under `envName`.
+
+If your Compose file uses `ports:` entries like `"${DB_PORT:-0}:5432"`, `init` now detects `DB_PORT` directly and uses that as the generated `envName` instead of inventing a service-based name.
 
 ## `docker.servicePorts`
 

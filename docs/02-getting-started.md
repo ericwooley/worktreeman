@@ -27,7 +27,13 @@ worktreemanager --help
 
 ## Initialize a repository
 
-From the repository root:
+From the repository root, you can either let `init` ask you questions:
+
+```bash
+worktreemanager init
+```
+
+Or provide the branch up front:
 
 ```bash
 worktreemanager init main
@@ -36,7 +42,10 @@ worktreemanager init main
 That command will:
 
 - locate the Git root
-- create or reuse the `main` branch worktree
+- ask which branch should hold the shared config when needed
+- ask what `worktrees.baseDir` should be when needed
+- ask which environment variables should get dynamically reserved local ports, such as `PORT` or `VITE_PORT`
+- create or reuse the target branch worktree
 - look for a common Compose file in that worktree
 - generate a starter `worktree.yml` in that branch worktree
 
@@ -44,6 +53,12 @@ If you want to regenerate the file:
 
 ```bash
 worktreemanager init main --force
+```
+
+If you already know the worktree layout you want, you can also pass it directly:
+
+```bash
+worktreemanager init main --base-dir ..
 ```
 
 ## Review `worktree.yml`

@@ -6,11 +6,16 @@ Worktree Manager is the local app for creating Git worktrees, starting branch-sc
 
 ```bash
 npm install
-node --import tsx src/cli.ts init main
-npm run dev
+pnpm run dev -- init
+pnpm run dev:watch -- --cwd /path/to/repo
 ```
 
 Then open `http://127.0.0.1:4312`.
+
+- `pnpm run dev -- <subcommand>` runs the CLI once and exits
+- `pnpm run dev:watch -- --cwd /path/to/repo` starts the watched local server flow
+- `pnpm run dev -- init` prompts for branch, worktree layout, and optional dynamic runtime port env vars
+- `pnpm run dev -- init main --base-dir ..` keeps init non-interactive for sibling worktree layouts
 
 ## Build outputs
 

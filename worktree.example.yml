@@ -14,7 +14,7 @@ docker:
   portMappings:
     - service: postgres
       containerPort: 5432
-      envName: DATABASE_PORT
+      envName: DB_PORT
     - service: redis
       containerPort: 6379
       envName: REDIS_PORT
@@ -24,7 +24,7 @@ docker:
       containerPort: 3000
       envName: BACKEND_SERVER_PORT
   derivedEnv:
-    DATABASE_URL: postgres://postgres:postgres@localhost:${DATABASE_PORT}/app
+    DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
     REDIS_URL: redis://localhost:${REDIS_PORT}
     APP_URL: http://127.0.0.1:${PORT}
 
