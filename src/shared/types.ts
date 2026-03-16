@@ -51,6 +51,17 @@ export interface WorktreeRuntime {
   dockerStartedAt?: string;
 }
 
+export interface TmuxClientInfo {
+  id: string;
+  pid: number;
+  tty: string;
+  name: string;
+  sessionName: string;
+  createdAt?: string;
+  lastActiveAt?: string;
+  isControlMode: boolean;
+}
+
 export interface WorktreeRecord {
   branch: string;
   worktreePath: string;
@@ -81,5 +92,5 @@ export type TerminalClientMessage =
 export type TerminalServerMessage =
   | { type: "output"; data: string }
   | { type: "exit"; exitCode: number | null }
-  | { type: "ready"; session: string }
+  | { type: "ready"; session: string; clientId: string | null }
   | { type: "error"; message: string };

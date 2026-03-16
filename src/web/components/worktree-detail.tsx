@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { WorktreeRecord } from "@shared/types";
 import { WorktreeTerminal } from "./worktree-terminal";
 
@@ -17,6 +18,20 @@ export function WorktreeDetail({
   onDelete,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
+  const [copied, setCopied] = useState(false);
+  const attachCommand = worktree?.runtime
+    ? `tmux attach-session -t '${worktree.runtime.tmuxSession.replace(/'/g, `'\\''`)}'`
+    : null;
+
+  const copyAttachCommand = async () => {
+    if (!attachCommand) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(attachCommand);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
@@ -79,6 +94,24 @@ export function WorktreeDetail({
           <DetailField label="Compose project" value={worktree?.runtime?.composeProject ?? "-"} mono />
           <DetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
         </div>
+
+        {attachCommand ? (
+          <div className="mt-3 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Attach command</p>
+                <p className="mt-2 break-all font-mono text-sm text-[#d7ffd7]">{attachCommand}</p>
+              </div>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => void copyAttachCommand()}
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="min-w-0 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">

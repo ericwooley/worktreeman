@@ -5,7 +5,7 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
 import pty from "node-pty";
-import type { TerminalClientMessage, TerminalServerMessage, WorktreeRuntime } from "../../shared/types.js";
+import type { TerminalClientMessage, TerminalServerMessage, TmuxClientInfo, WorktreeRuntime } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
 interface TerminalServiceOptions {
@@ -69,6 +69,12 @@ async function ensureTmuxSession(runtime: WorktreeRuntime, shell: string): Promi
   }
 
   await setTmuxSessionEnvironment(runtime);
+  await runCommand("tmux", ["set-window-option", "-g", "-t", runtime.tmuxSession, "aggressive-resize", "on"], {
+    cwd: runtime.worktreePath,
+  });
+  await runCommand("tmux", ["set-window-option", "-t", `${runtime.tmuxSession}:0`, "aggressive-resize", "on"], {
+    cwd: runtime.worktreePath,
+  });
 
   if (!sessionExists) {
     await runCommand(
@@ -85,6 +91,57 @@ async function ensureTmuxSession(runtime: WorktreeRuntime, shell: string): Promi
       { cwd: runtime.worktreePath },
     );
   }
+}
+
+function parseTmuxTimestamp(value: string): string | undefined {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return undefined;
+  }
+
+  return new Date(timestamp * 1000).toISOString();
+}
+
+export async function listTmuxClients(runtime: WorktreeRuntime): Promise<TmuxClientInfo[]> {
+  if (!(await hasTmuxSession(runtime.tmuxSession, runtime.worktreePath))) {
+    return [];
+  }
+
+  const { stdout } = await runCommand(
+    "tmux",
+    [
+      "list-clients",
+      "-t",
+      runtime.tmuxSession,
+      "-F",
+      "#{client_tty}\t#{client_pid}\t#{client_name}\t#{session_name}\t#{client_created}\t#{client_activity}\t#{client_control_mode}",
+    ],
+    { cwd: runtime.worktreePath },
+  );
+
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [tty, pid, name, sessionName, createdAt, lastActiveAt, controlMode] = line.split("\t");
+      return {
+        id: tty,
+        tty,
+        pid: Number(pid),
+        name,
+        sessionName,
+        createdAt: parseTmuxTimestamp(createdAt),
+        lastActiveAt: parseTmuxTimestamp(lastActiveAt),
+        isControlMode: controlMode === "1",
+      } satisfies TmuxClientInfo;
+    });
+}
+
+export async function disconnectTmuxClient(runtime: WorktreeRuntime, clientId: string): Promise<void> {
+  await runCommand("tmux", ["detach-client", "-t", clientId], {
+    cwd: runtime.worktreePath,
+  });
 }
 
 export async function killTmuxSession(runtime: WorktreeRuntime): Promise<void> {
@@ -166,7 +223,22 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       env,
     });
 
-    send(socket, { type: "ready", session: runtime.tmuxSession });
+    const resolveCurrentClientId = async () => {
+      try {
+        const clients = await listTmuxClients(runtime);
+        const matchedClient = clients.find((client) => client.pid === term.pid);
+        if (!matchedClient) {
+          send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
+          return;
+        }
+
+        send(socket, { type: "ready", session: runtime.tmuxSession, clientId: matchedClient.id });
+      } catch {
+        send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
+      }
+    };
+
+    void resolveCurrentClientId();
 
     term.onData((data) => {
       send(socket, { type: "output", data });

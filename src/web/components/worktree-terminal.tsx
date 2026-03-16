@@ -5,7 +5,9 @@ import type {
   WorktreeRecord,
   TerminalClientMessage,
   TerminalServerMessage,
+  TmuxClientInfo,
 } from "@shared/types";
+import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
 import "@xterm/xterm/css/xterm.css";
 
 const MIN_TERMINAL_COLS = 80;
@@ -20,12 +22,21 @@ export function WorktreeTerminal({
   const sessionName = worktree?.runtime?.tmuxSession ?? null;
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [tmuxClients, setTmuxClients] = useState<TmuxClientInfo[]>([]);
+  const [currentClientId, setCurrentClientId] = useState<string | null>(null);
+  const [disconnectingClientId, setDisconnectingClientId] = useState<string | null>(null);
   const canFullscreen = typeof document !== "undefined" && document.fullscreenEnabled;
   const runtimeEnvEntries = useMemo(
     () => (worktree?.runtime ? Object.entries(worktree.runtime.env) : []),
     [worktree?.runtime],
   );
   const visibleEnvEntries = useMemo(() => runtimeEnvEntries.slice(0, 8), [runtimeEnvEntries]);
+
+  const refreshTmuxClients = async (branch: string) => {
+    const clients = await getTmuxClients(branch);
+    setTmuxClients(clients);
+    return clients;
+  };
 
   useEffect(() => {
     if (!containerRef.current || typeof document === "undefined" || !document.fullscreenEnabled) {
@@ -39,6 +50,37 @@ export function WorktreeTerminal({
     document.addEventListener("fullscreenchange", onFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
   }, []);
+
+  useEffect(() => {
+    if (!terminalBranch || !worktree?.runtime) {
+      setTmuxClients([]);
+      setCurrentClientId(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshClients = async () => {
+      try {
+        const clients = await refreshTmuxClients(terminalBranch);
+        if (!cancelled) {
+          setTmuxClients(clients);
+        }
+      } catch {
+        if (!cancelled) {
+          setTmuxClients([]);
+        }
+      }
+    };
+
+    void refreshClients();
+    const interval = window.setInterval(refreshClients, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [terminalBranch, worktree?.runtime]);
 
   useEffect(() => {
     if (!hostRef.current || !terminalBranch || !sessionName) {
@@ -111,6 +153,7 @@ export function WorktreeTerminal({
         terminal.writeln(`\r\n[session closed: ${message.exitCode ?? "unknown"}]`);
       }
       if (message.type === "ready") {
+        setCurrentClientId(message.clientId);
         terminal.focus();
       }
     });
@@ -227,6 +270,20 @@ export function WorktreeTerminal({
     await containerRef.current.requestFullscreen();
   };
 
+  const handleDisconnectClient = async (clientId: string) => {
+    if (!terminalBranch || clientId === currentClientId) {
+      return;
+    }
+
+    setDisconnectingClientId(clientId);
+    try {
+      await disconnectTmuxClient(terminalBranch, clientId);
+      await refreshTmuxClients(terminalBranch);
+    } finally {
+      setDisconnectingClientId(null);
+    }
+  };
+
   return (
     <section
       ref={containerRef}
@@ -256,7 +313,7 @@ export function WorktreeTerminal({
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {visibleEnvEntries.map(([key, value]) => (
               <div
@@ -275,15 +332,43 @@ export function WorktreeTerminal({
           </div>
 
           <div className="border border-[rgba(74,255,122,0.14)] bg-[rgba(0,0,0,0.24)] px-4 py-3 text-xs text-[#8fd18f]">
-            <p className="font-semibold uppercase tracking-[0.18em] text-[#6cb96c]">Terminal notes</p>
-            <p className="mt-2 leading-5">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-semibold uppercase tracking-[0.18em] text-[#6cb96c]">Attached tmux clients</p>
+              <span className="text-[#7fe19e]">{tmuxClients.length}</span>
+            </div>
+            <div className="mt-3 space-y-2">
+              {tmuxClients.length ? tmuxClients.map((client) => {
+                const isCurrent = client.id === currentClientId;
+
+                return (
+                  <div key={client.id} className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.24)] px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-mono text-[#d7ffd7]">{client.tty}</p>
+                        <p className="text-[11px] text-[#6cb96c]">pid {client.pid}{client.isControlMode ? " • control" : ""}</p>
+                      </div>
+                      {isCurrent ? (
+                        <span className="border border-[rgba(74,255,122,0.16)] px-2 py-1 text-[11px] text-[#4aff7a]">This session</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="matrix-button matrix-button-danger rounded-none px-2 py-1 text-[11px]"
+                          disabled={disconnectingClientId === client.id}
+                          onClick={() => void handleDisconnectClient(client.id)}
+                        >
+                          {disconnectingClientId === client.id ? "Disconnecting" : "Disconnect"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              }) : (
+                <p>No tmux clients attached.</p>
+              )}
+            </div>
+            <p className="mt-3 leading-5">
               Tap to focus. Fullscreen turns the shell into the dominant workspace, which is especially useful on smaller screens.
             </p>
-            {runtimeEnvEntries.length > visibleEnvEntries.length ? (
-              <p className="mt-2 text-[#7fe19e]">
-                Showing {visibleEnvEntries.length} of {runtimeEnvEntries.length} env vars in the header.
-              </p>
-            ) : null}
           </div>
         </div>
       </div>

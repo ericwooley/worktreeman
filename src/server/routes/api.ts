@@ -1,10 +1,10 @@
 import express from "express";
-import type { ApiStateResponse, CreateWorktreeRequest, WorktreeManagerConfig } from "../../shared/types.js";
+import type { ApiStateResponse, CreateWorktreeRequest, TmuxClientInfo, WorktreeManagerConfig } from "../../shared/types.js";
 import { createWorktree, listWorktrees, removeWorktree } from "../services/git-service.js";
 import { ensureDockerRuntime, stopDockerRuntime } from "../services/docker-service.js";
 import { loadConfig } from "../services/config-service.js";
 import { releaseReservedPorts } from "../services/runtime-port-service.js";
-import { killTmuxSession } from "../services/terminal-service.js";
+import { disconnectTmuxClient, killTmuxSession, listTmuxClients } from "../services/terminal-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 
 interface ApiRouterOptions {
@@ -95,6 +95,36 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       await killTmuxSession(runtime);
       const deletedRuntime = options.runtimes.delete(req.params.branch);
       await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
+      res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/worktrees/:branch/runtime/tmux-clients", async (req, res, next) => {
+    try {
+      const runtime = options.runtimes.get(req.params.branch);
+      if (!runtime) {
+        res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
+        return;
+      }
+
+      const clients: TmuxClientInfo[] = await listTmuxClients(runtime);
+      res.json(clients);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/runtime/tmux-clients/:clientId/disconnect", async (req, res, next) => {
+    try {
+      const runtime = options.runtimes.get(req.params.branch);
+      if (!runtime) {
+        res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
+        return;
+      }
+
+      await disconnectTmuxClient(runtime, decodeURIComponent(req.params.clientId));
       res.status(204).send();
     } catch (error) {
       next(error);

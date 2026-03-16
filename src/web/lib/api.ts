@@ -1,4 +1,4 @@
-import type { ApiStateResponse, WorktreeRuntime } from "@shared/types";
+import type { ApiStateResponse, TmuxClientInfo, WorktreeRuntime } from "@shared/types";
 
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
@@ -48,4 +48,17 @@ export function stopRuntime(branch: string): Promise<void> {
   return request<void>(`/api/worktrees/${encodeURIComponent(branch)}/runtime/stop`, {
     method: "POST",
   });
+}
+
+export function getTmuxClients(branch: string): Promise<TmuxClientInfo[]> {
+  return request<TmuxClientInfo[]>(`/api/worktrees/${encodeURIComponent(branch)}/runtime/tmux-clients`);
+}
+
+export function disconnectTmuxClient(branch: string, clientId: string): Promise<void> {
+  return request<void>(
+    `/api/worktrees/${encodeURIComponent(branch)}/runtime/tmux-clients/${encodeURIComponent(clientId)}/disconnect`,
+    {
+      method: "POST",
+    },
+  );
 }
