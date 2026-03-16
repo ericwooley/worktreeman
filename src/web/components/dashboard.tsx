@@ -81,7 +81,7 @@ export function Dashboard() {
               </div>
             </div>
 
-            <div className="flex w-full flex-col gap-3 xl:max-w-[44rem]">
+            <div className="flex w-full flex-col gap-3 pt-12 xl:max-w-[44rem]">
               <form className="flex w-full flex-col gap-2 sm:flex-row" onSubmit={onSubmit}>
                 <input
                   value={branch}

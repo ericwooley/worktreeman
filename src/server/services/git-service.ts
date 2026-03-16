@@ -67,7 +67,13 @@ function parsePorcelain(output: string): ParsedPorcelainEntry[] {
 
 export async function listWorktrees(repoRoot: string): Promise<WorktreeRecord[]> {
   const { stdout } = await runCommand("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot });
-  return parsePorcelain(stdout);
+  return parsePorcelain(stdout).filter((entry) => {
+    if (entry.isBare) {
+      return false;
+    }
+
+    return path.basename(entry.worktreePath) === sanitizeBranchName(entry.branch);
+  });
 }
 
 export async function createWorktree(
