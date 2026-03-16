@@ -3,7 +3,7 @@ import { WorktreeTerminal } from "./worktree-terminal";
 
 export function WorktreeDetail({ worktree }: { worktree: WorktreeRecord | null }) {
   return (
-    <section className="min-w-0 space-y-4 xl:h-[calc(100vh-2rem)] xl:min-h-[44rem] xl:space-y-4">
+    <section className="min-w-0 space-y-4 xl:space-y-4">
       <div className="matrix-panel rounded-[1.8rem] p-4 sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>

@@ -97,10 +97,10 @@ export function Dashboard() {
             <WorktreeDetail worktree={selected} />
           </div>
 
-          <aside className="order-2 min-w-0 space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-hidden">
+          <aside className="order-2 min-w-0 space-y-4 xl:sticky xl:top-4">
             <ConfigPanel repoRoot={state?.repoRoot} configPath={state?.configPath} worktrees={state?.worktrees ?? []} />
 
-            <section className="matrix-panel rounded-[1.8rem] p-4 xl:flex xl:max-h-[calc(100vh-17rem)] xl:flex-col">
+            <section className="matrix-panel rounded-[1.8rem] p-4">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <p className="matrix-kicker">Switchboard</p>
@@ -112,7 +112,7 @@ export function Dashboard() {
               {loading ? <p className="text-sm text-[#9cd99c]">Loading worktrees...</p> : null}
               {error ? <p className="rounded-2xl border border-[rgba(255,109,109,0.22)] bg-[rgba(76,10,10,0.55)] px-4 py-3 text-sm text-[#ffb4b4]">{error}</p> : null}
 
-              <div className="grid gap-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-1">
+              <div className="grid gap-3">
                 {state?.worktrees.map((worktree) => (
                   <WorktreeCard
                     key={worktree.worktreePath}

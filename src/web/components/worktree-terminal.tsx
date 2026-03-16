@@ -184,8 +184,16 @@ export function WorktreeTerminal({
     resizeObserver.observe(hostRef.current);
 
     const focusTerminal = () => terminal.focus();
+    const handleViewportResize = () => {
+      lastHostWidth = Math.round(hostRef.current?.clientWidth ?? 0);
+      lastHostHeight = Math.round(hostRef.current?.clientHeight ?? 0);
+      scheduleResize(true);
+    };
+
     socket.addEventListener("open", () => scheduleResize(true));
     hostRef.current.addEventListener("click", focusTerminal);
+    window.addEventListener("resize", handleViewportResize);
+    window.visualViewport?.addEventListener("resize", handleViewportResize);
 
     return () => {
       if (resizeFrame !== null) {
@@ -196,6 +204,8 @@ export function WorktreeTerminal({
       }
       resizeObserver.disconnect();
       hostRef.current?.removeEventListener("click", focusTerminal);
+      window.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener("resize", handleViewportResize);
       socket.close();
       if (outputBuffer) {
         terminal.write(outputBuffer);
@@ -220,7 +230,7 @@ export function WorktreeTerminal({
   return (
     <section
       ref={containerRef}
-      className={`matrix-panel terminal-shell min-w-0 overflow-hidden rounded-[1.8rem] ${isFullscreen ? "h-full rounded-none" : "xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[38rem] xl:flex-col"}`}
+      className={`matrix-panel terminal-shell min-w-0 overflow-hidden rounded-[1.8rem] ${isFullscreen ? "h-full rounded-none" : "xl:flex xl:flex-col"}`}
     >
       <div className="border-b border-[rgba(74,255,122,0.14)] px-4 py-4 sm:px-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -278,19 +288,25 @@ export function WorktreeTerminal({
         </div>
       </div>
 
-      <div className={`px-3 pb-3 pt-3 sm:px-4 sm:pb-4 ${isFullscreen ? "h-[calc(100%-11.5rem)]" : "xl:min-h-0 xl:flex-1"}`}>
+      <div className={`px-3 pb-3 pt-3 sm:px-4 sm:pb-4 ${isFullscreen ? "flex min-h-0 flex-1 flex-col" : "xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"}`}>
         {worktree?.runtime ? (
-          <div className="flex h-full min-h-[24rem] flex-col">
+          <div className="flex h-full min-h-[24rem] min-w-0 flex-1 flex-col">
             {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
               <p className="mb-3 text-xs text-[#8fd18f]">
                 Reserved local ports are held for this runtime and injected into the tmux-backed shell.
               </p>
             ) : null}
+
             <div
-              ref={hostRef}
-              className={`min-w-0 w-full max-w-full flex-1 overflow-hidden rounded-[1.5rem] border border-[rgba(74,255,122,0.18)] bg-[#020703] p-2 sm:p-3 shadow-[inset_0_1px_0_rgba(181,255,196,0.04)] ${isFullscreen ? "h-full" : "min-h-[22rem]"}`}
-              style={{ contain: "layout size" }}
-            />
+              className={`min-w-0 w-full max-w-full ${isFullscreen ? "min-h-0 flex-1" : "flex-none"}`}
+              style={isFullscreen ? undefined : { height: "calc(100vh - 50px)" }}
+            >
+              <div
+                ref={hostRef}
+                className="min-h-0 min-w-0 h-full w-full overflow-hidden border border-[rgba(74,255,122,0.18)] bg-[#020703] p-2 sm:p-3 shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
+                style={{ contain: "layout size" }}
+              />
+            </div>
           </div>
         ) : (
           <div className="flex h-full min-h-[22rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.22)] p-6 text-center text-sm text-[#8fd18f] sm:p-8">
