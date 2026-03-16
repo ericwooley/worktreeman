@@ -17,6 +17,7 @@ const BASE_TTL = 100;
 const RANGE_TTL = 300;
 const BASE_WIDTH = 2;
 const RANGE_WIDTH = 4;
+const RESET_INTERVAL_MS = 45_000;
 
 export interface AmbientPalette {
   backgroundColor: string;
@@ -70,6 +71,7 @@ export function AmbientCanvasBackground({ palette }: { palette: AmbientPalette }
     let centerY = 0;
     let tick = 0;
     let animationFrame = 0;
+    let lastResetAt = performance.now();
     let pipeProps = new Float32Array(PIPE_PROPS_LENGTH);
 
     const rand = (limit: number) => limit * Math.random();
@@ -103,6 +105,15 @@ export function AmbientCanvasBackground({ palette }: { palette: AmbientPalette }
       for (let index = 0; index < PIPE_PROPS_LENGTH; index += PIPE_PROP_COUNT) {
         initPipe(index);
       }
+    };
+
+    const resetScene = () => {
+      tick = 0;
+      lastResetAt = performance.now();
+      contextOffscreen.clearRect(0, 0, width, height);
+      contextVisible.clearRect(0, 0, width, height);
+      initPipes();
+      render();
     };
 
     const drawPipe = (x: number, y: number, life: number, ttl: number, lineWidth: number, hue: number) => {
@@ -222,13 +233,18 @@ export function AmbientCanvasBackground({ palette }: { palette: AmbientPalette }
       }
 
       if (!tick) {
-        initPipes();
+        resetScene();
+        return;
       }
 
       render();
     };
 
     const draw = () => {
+      if (performance.now() - lastResetAt >= RESET_INTERVAL_MS) {
+        resetScene();
+      }
+
       updatePipes();
       render();
 
