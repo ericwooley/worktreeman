@@ -10,8 +10,6 @@ import type {
 import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
 import "@xterm/xterm/css/xterm.css";
 
-const MIN_TERMINAL_COLS = 80;
-
 export function WorktreeTerminal({
   worktree,
 }: {
@@ -25,6 +23,8 @@ export function WorktreeTerminal({
   const [tmuxClients, setTmuxClients] = useState<TmuxClientInfo[]>([]);
   const [currentClientId, setCurrentClientId] = useState<string | null>(null);
   const [disconnectingClientId, setDisconnectingClientId] = useState<string | null>(null);
+  const scheduleResizeRef = useRef<((force?: boolean) => void) | null>(null);
+  const lastCopiedSelectionRef = useRef("");
   const canFullscreen = typeof document !== "undefined" && document.fullscreenEnabled;
   const runtimeEnvEntries = useMemo(
     () => (worktree?.runtime ? Object.entries(worktree.runtime.env) : []),
@@ -80,7 +80,11 @@ export function WorktreeTerminal({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [terminalBranch, worktree?.runtime]);
+  }, [sessionName, terminalBranch, worktree?.runtime]);
+
+  useEffect(() => {
+    scheduleResizeRef.current?.(true);
+  }, [isFullscreen]);
 
   useEffect(() => {
     if (!hostRef.current || !terminalBranch || !sessionName) {
@@ -168,7 +172,7 @@ export function WorktreeTerminal({
     const resize = (force = false) => {
       fitAddon.fit();
 
-      const nextCols = Math.max(terminal.cols, MIN_TERMINAL_COLS);
+      const nextCols = terminal.cols;
       const nextRows = terminal.rows;
 
       if (nextCols !== terminal.cols || nextRows !== terminal.rows) {
@@ -203,6 +207,8 @@ export function WorktreeTerminal({
       });
     };
 
+    scheduleResizeRef.current = scheduleResize;
+
     const resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) {
@@ -226,19 +232,43 @@ export function WorktreeTerminal({
     });
     resizeObserver.observe(hostRef.current);
 
-    const focusTerminal = () => terminal.focus();
+    const focusTerminal = () => {
+      terminal.focus();
+      scheduleResize(true);
+    };
+    const copySelection = () => {
+      const selection = terminal.getSelection().trim();
+      if (!selection || selection === lastCopiedSelectionRef.current || !navigator.clipboard?.writeText) {
+        return;
+      }
+
+      lastCopiedSelectionRef.current = selection;
+      void navigator.clipboard.writeText(selection).catch(() => {
+        lastCopiedSelectionRef.current = "";
+      });
+    };
     const handleViewportResize = () => {
       lastHostWidth = Math.round(hostRef.current?.clientWidth ?? 0);
       lastHostHeight = Math.round(hostRef.current?.clientHeight ?? 0);
       scheduleResize(true);
     };
+    const handleMouseUp = () => {
+      window.requestAnimationFrame(copySelection);
+    };
 
     socket.addEventListener("open", () => scheduleResize(true));
     hostRef.current.addEventListener("click", focusTerminal);
+    hostRef.current.addEventListener("mouseup", handleMouseUp);
+    hostRef.current.addEventListener("focusin", focusTerminal);
     window.addEventListener("resize", handleViewportResize);
     window.visualViewport?.addEventListener("resize", handleViewportResize);
+    window.addEventListener("focus", handleViewportResize);
+    void document.fonts?.ready?.then(() => scheduleResize(true));
 
     return () => {
+      if (scheduleResizeRef.current === scheduleResize) {
+        scheduleResizeRef.current = null;
+      }
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
       }
@@ -247,15 +277,18 @@ export function WorktreeTerminal({
       }
       resizeObserver.disconnect();
       hostRef.current?.removeEventListener("click", focusTerminal);
+      hostRef.current?.removeEventListener("mouseup", handleMouseUp);
+      hostRef.current?.removeEventListener("focusin", focusTerminal);
       window.removeEventListener("resize", handleViewportResize);
       window.visualViewport?.removeEventListener("resize", handleViewportResize);
+      window.removeEventListener("focus", handleViewportResize);
       socket.close();
       if (outputBuffer) {
         terminal.write(outputBuffer);
       }
       terminal.dispose();
     };
-  }, [isFullscreen, sessionName, terminalBranch]);
+  }, [sessionName, terminalBranch]);
 
   const toggleFullscreen = async () => {
     if (!containerRef.current || typeof document === "undefined" || !document.fullscreenEnabled) {
@@ -386,11 +419,11 @@ export function WorktreeTerminal({
               className={`min-w-0 w-full ${isFullscreen ? "min-h-0 flex-1" : "flex-none"}`}
               style={isFullscreen ? undefined : { height: "calc(100vh - 50px)" }}
             >
-              <div
-                ref={hostRef}
-                className="min-h-0 min-w-0 h-full w-full overflow-hidden border border-[rgba(74,255,122,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
-                style={{ contain: "layout size" }}
-              />
+               <div
+                 ref={hostRef}
+                 className="min-h-0 min-w-0 h-full w-full overflow-hidden border border-[rgba(74,255,122,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
+                 style={{ contain: "layout size", height: isFullscreen ? "100dvh" : "calc(100dvh - 50px)" }}
+               />
             </div>
           </div>
         ) : (

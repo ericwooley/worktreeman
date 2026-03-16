@@ -102,6 +102,20 @@ function parseTmuxTimestamp(value: string): string | undefined {
   return new Date(timestamp * 1000).toISOString();
 }
 
+function normalizeTty(value: string): string {
+  return value.trim().replace(/^\/dev\//, "");
+}
+
+async function getProcessTty(pid: number, cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await runCommand("ps", ["-o", "tty=", "-p", String(pid)], { cwd });
+    const tty = normalizeTty(stdout);
+    return tty || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listTmuxClients(runtime: WorktreeRuntime): Promise<TmuxClientInfo[]> {
   if (!(await hasTmuxSession(runtime.tmuxSession, runtime.worktreePath))) {
     return [];
@@ -226,7 +240,15 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     const resolveCurrentClientId = async () => {
       try {
         const clients = await listTmuxClients(runtime);
-        const matchedClient = clients.find((client) => client.pid === term.pid);
+        const processTty = await getProcessTty(term.pid, runtime.worktreePath);
+        const matchedClient = clients.find((client) => {
+          if (processTty && normalizeTty(client.tty) === processTty) {
+            return true;
+          }
+
+          return client.pid === term.pid;
+        });
+
         if (!matchedClient) {
           send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
           return;

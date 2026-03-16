@@ -3,7 +3,7 @@ env:
   APP_NAME: worktree-manager
 
 runtimePorts:
-  - PORT
+  - SERVER_PORT
   - VITE_PORT
 
 worktrees:
