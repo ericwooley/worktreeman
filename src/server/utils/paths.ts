@@ -49,7 +49,24 @@ export async function findGitRoot(startDir: string): Promise<string> {
 export async function findRepoContext(startDir: string, options: RepoContextOptions = {}): Promise<RepoContext> {
   const repoRoot = await findGitRoot(startDir);
   const gitDir = path.join(repoRoot, ".git");
-  const configRef = await resolveConfigRef(repoRoot, options.configRef);
+  const preferredRef = options.configRef?.trim();
+  const configRef = await resolveConfigRef(repoRoot, preferredRef);
+
+  const configWorktreePath = await findWorktreePathForRef(repoRoot, configRef);
+  if (configWorktreePath) {
+    for (const candidate of CONFIG_CANDIDATES) {
+      const configPath = path.join(configWorktreePath, candidate);
+      if (await exists(configPath)) {
+        return {
+          repoRoot,
+          gitDir,
+          configPath,
+          configRef: "WORKTREE",
+          configFile: candidate,
+        };
+      }
+    }
+  }
 
   for (const candidate of CONFIG_CANDIDATES) {
     if (await gitObjectExists(repoRoot, `${configRef}:${candidate}`)) {
@@ -130,6 +147,47 @@ async function tryRunGit(repoRoot: string, args: string[]): Promise<string | nul
   } catch {
     return null;
   }
+}
+
+async function findWorktreePathForRef(repoRoot: string, ref: string): Promise<string | null> {
+  const normalizedRef = normalizeBranchRef(ref);
+
+  if (!normalizedRef) {
+    return null;
+  }
+
+  const { stdout } = await runCommand("git", ["worktree", "list", "--porcelain"], {
+    cwd: repoRoot,
+  });
+
+  let currentWorktree: string | null = null;
+
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line) {
+      currentWorktree = null;
+      continue;
+    }
+
+    if (line.startsWith("worktree ")) {
+      currentWorktree = line.slice("worktree ".length);
+      continue;
+    }
+
+    if (!currentWorktree || !line.startsWith("branch ")) {
+      continue;
+    }
+
+    const branchRef = line.slice("branch ".length);
+    if (normalizeBranchRef(branchRef) === normalizedRef) {
+      return currentWorktree;
+    }
+  }
+
+  return null;
+}
+
+function normalizeBranchRef(ref: string): string {
+  return ref.replace(/^refs\/heads\//, "").replace(/^origin\//, "").trim();
 }
 
 export function sanitizeBranchName(branch: string): string {

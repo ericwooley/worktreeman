@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
 import pty from "node-pty";
 import type { TerminalClientMessage, TerminalServerMessage, WorktreeRuntime } from "../../shared/types.js";
+import { runCommand } from "../utils/process.js";
 
 interface TerminalServiceOptions {
   server: HttpServer;
@@ -14,6 +15,86 @@ interface TerminalServiceOptions {
 
 function send(socket: WebSocket, message: TerminalServerMessage): void {
   socket.send(JSON.stringify(message));
+}
+
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildInteractiveShellCommand(shell: string): string {
+  return `exec ${quoteShellArg(shell)} -l`;
+}
+
+async function hasTmuxSession(session: string, cwd: string): Promise<boolean> {
+  try {
+    await runCommand("tmux", ["has-session", "-t", session], { cwd });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function setTmuxSessionEnvironment(runtime: WorktreeRuntime): Promise<void> {
+  const sessionEnv = {
+    ...runtime.env,
+    WORKTREE_BRANCH: runtime.branch,
+    WORKTREE_PATH: runtime.worktreePath,
+    TMUX_SESSION_NAME: runtime.tmuxSession,
+  };
+
+  for (const [key, value] of Object.entries(sessionEnv)) {
+    await runCommand("tmux", ["set-environment", "-t", runtime.tmuxSession, key, value], {
+      cwd: runtime.worktreePath,
+    });
+  }
+}
+
+async function ensureTmuxSession(runtime: WorktreeRuntime, shell: string): Promise<void> {
+  const sessionExists = await hasTmuxSession(runtime.tmuxSession, runtime.worktreePath);
+
+  if (!sessionExists) {
+    await runCommand(
+      "tmux",
+      [
+        "new-session",
+        "-d",
+        "-s",
+        runtime.tmuxSession,
+        "-c",
+        runtime.worktreePath,
+        buildInteractiveShellCommand(shell),
+      ],
+      { cwd: runtime.worktreePath },
+    );
+  }
+
+  await setTmuxSessionEnvironment(runtime);
+
+  if (!sessionExists) {
+    await runCommand(
+      "tmux",
+      [
+        "respawn-pane",
+        "-k",
+        "-t",
+        `${runtime.tmuxSession}:0.0`,
+        "-c",
+        runtime.worktreePath,
+        buildInteractiveShellCommand(shell),
+      ],
+      { cwd: runtime.worktreePath },
+    );
+  }
+}
+
+export async function killTmuxSession(runtime: WorktreeRuntime): Promise<void> {
+  if (!(await hasTmuxSession(runtime.tmuxSession, runtime.worktreePath))) {
+    return;
+  }
+
+  await runCommand("tmux", ["kill-session", "-t", runtime.tmuxSession], {
+    cwd: runtime.worktreePath,
+  });
 }
 
 export function createTerminalService(options: TerminalServiceOptions): WebSocketServer {
@@ -37,7 +118,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     options.server.off("upgrade", handleUpgrade);
   });
 
-  wss.on("connection", (socket, request) => {
+  wss.on("connection", async (socket, request) => {
     const url = new URL(request.url ?? "", "http://localhost");
     const branch = url.searchParams.get("branch");
 
@@ -65,11 +146,19 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     };
 
     const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "bash");
-    const shellArgs = process.platform === "win32"
-      ? ["-Command", `tmux new-session -A -s ${runtime.tmuxSession}`]
-      : ["-lc", `tmux new-session -A -s ${runtime.tmuxSession}`];
 
-    const term = pty.spawn(shell, shellArgs, {
+    try {
+      await ensureTmuxSession(runtime, shell);
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to prepare tmux session.",
+      });
+      socket.close();
+      return;
+    }
+
+    const term = pty.spawn("tmux", ["attach-session", "-t", runtime.tmuxSession], {
       name: "xterm-256color",
       cols: 120,
       rows: 30,

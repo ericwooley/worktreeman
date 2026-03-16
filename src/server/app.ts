@@ -35,7 +35,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   app.use("/api", createApiRouter({
     repoRoot: options.repo.repoRoot,
     configPath: options.repo.configPath,
-    config,
+    configRef: options.repo.configRef,
+    configFile: options.repo.configFile,
     runtimes,
   }));
 

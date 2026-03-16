@@ -45,6 +45,9 @@ export function WorktreeTerminal({
     terminal.open(hostRef.current);
     terminal.focus();
     fitAddon.fit();
+    let lastCols = terminal.cols;
+    let lastRows = terminal.rows;
+    let resizeFrame: number | null = null;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(
@@ -52,6 +55,7 @@ export function WorktreeTerminal({
     );
 
     socket.addEventListener("message", (event) => {
+      console.log("received message", event);
       const message = JSON.parse(event.data) as TerminalServerMessage;
       if (message.type === "output") {
         terminal.write(message.data);
@@ -78,6 +82,14 @@ export function WorktreeTerminal({
 
     const resize = () => {
       fitAddon.fit();
+
+      if (terminal.cols === lastCols && terminal.rows === lastRows) {
+        return;
+      }
+
+      lastCols = terminal.cols;
+      lastRows = terminal.rows;
+
       const payload: TerminalClientMessage = {
         type: "resize",
         cols: terminal.cols,
@@ -88,14 +100,27 @@ export function WorktreeTerminal({
       }
     };
 
-    const resizeObserver = new ResizeObserver(resize);
+    const scheduleResize = () => {
+      if (resizeFrame !== null) {
+        return;
+      }
+
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        resize();
+      });
+    };
+
+    const resizeObserver = new ResizeObserver(scheduleResize);
     resizeObserver.observe(hostRef.current);
 
     const focusTerminal = () => terminal.focus();
-    socket.addEventListener("open", resize);
+    socket.addEventListener("open", scheduleResize);
     hostRef.current.addEventListener("click", focusTerminal);
-
     return () => {
+      if (resizeFrame !== null) {
+        window.cancelAnimationFrame(resizeFrame);
+      }
       resizeObserver.disconnect();
       hostRef.current?.removeEventListener("click", focusTerminal);
       socket.close();
