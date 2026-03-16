@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import type {
@@ -16,12 +16,29 @@ export function WorktreeTerminal({
   worktree: WorktreeRecord | null;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession ?? null;
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const canFullscreen = typeof document !== "undefined" && document.fullscreenEnabled;
   const runtimeEnvEntries = useMemo(
     () => (worktree?.runtime ? Object.entries(worktree.runtime.env) : []),
     [worktree?.runtime],
   );
+  const visibleEnvEntries = useMemo(() => runtimeEnvEntries.slice(0, 8), [runtimeEnvEntries]);
+
+  useEffect(() => {
+    if (!containerRef.current || typeof document === "undefined" || !document.fullscreenEnabled) {
+      return;
+    }
+
+    const onFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+    };
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
 
   useEffect(() => {
     if (!hostRef.current || !terminalBranch || !sessionName) {
@@ -48,6 +65,7 @@ export function WorktreeTerminal({
     terminal.open(hostRef.current);
     terminal.focus();
     fitAddon.fit();
+
     let lastCols = terminal.cols;
     let lastRows = terminal.rows;
     let lastHostWidth = Math.round(hostRef.current.clientWidth);
@@ -90,9 +108,7 @@ export function WorktreeTerminal({
         terminal.writeln(`\r\n[error] ${message.message}`);
       }
       if (message.type === "exit") {
-        terminal.writeln(
-          `\r\n[session closed: ${message.exitCode ?? "unknown"}]`,
-        );
+        terminal.writeln(`\r\n[session closed: ${message.exitCode ?? "unknown"}]`);
       }
       if (message.type === "ready") {
         terminal.focus();
@@ -170,6 +186,7 @@ export function WorktreeTerminal({
     const focusTerminal = () => terminal.focus();
     socket.addEventListener("open", () => scheduleResize(true));
     hostRef.current.addEventListener("click", focusTerminal);
+
     return () => {
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
@@ -185,25 +202,53 @@ export function WorktreeTerminal({
       }
       terminal.dispose();
     };
-  }, [sessionName, terminalBranch]);
+  }, [isFullscreen, sessionName, terminalBranch]);
+
+  const toggleFullscreen = async () => {
+    if (!containerRef.current || typeof document === "undefined" || !document.fullscreenEnabled) {
+      return;
+    }
+
+    if (document.fullscreenElement === containerRef.current) {
+      await document.exitFullscreen();
+      return;
+    }
+
+    await containerRef.current.requestFullscreen();
+  };
 
   return (
-    <section className="matrix-panel min-w-0 rounded-[2rem] p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-[#ecffec]">Inline terminal</h2>
-          <p className="text-sm text-[#9cd99c]">
-            {worktree?.runtime
-              ? `tmux session ${worktree.runtime.tmuxSession} with injected runtime env`
-              : "Select a running worktree to attach to its tmux session."}
-          </p>
-        </div>
-      </div>
+    <section
+      ref={containerRef}
+      className={`matrix-panel terminal-shell min-w-0 overflow-hidden rounded-[1.8rem] ${isFullscreen ? "h-full rounded-none" : "xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[38rem] xl:flex-col"}`}
+    >
+      <div className="border-b border-[rgba(74,255,122,0.14)] px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="matrix-kicker">Primary shell</p>
+            <h2 className="text-xl font-semibold text-[#ecffec] sm:text-2xl">Inline terminal</h2>
+            <p className="mt-1 text-sm text-[#9cd99c]">
+              {worktree?.runtime
+                ? `tmux session ${worktree.runtime.tmuxSession} with injected runtime env`
+                : "Select a running worktree to attach to its tmux session."}
+            </p>
+          </div>
 
-      {worktree?.runtime ? (
-        <>
-          <div className="mb-4 grid gap-2 sm:grid-cols-2">
-            {runtimeEnvEntries.map(([key, value]) => (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="matrix-button rounded-full px-4 py-2 text-sm"
+              onClick={() => void toggleFullscreen()}
+              disabled={!canFullscreen}
+            >
+              {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {visibleEnvEntries.map(([key, value]) => (
               <div
                 key={key}
                 className="matrix-command rounded-2xl px-3 py-2 font-mono text-xs text-[#9cd99c]"
@@ -212,25 +257,47 @@ export function WorktreeTerminal({
                 <span className="break-all text-[#4aff7a]">{value}</span>
               </div>
             ))}
+            {!visibleEnvEntries.length ? (
+              <div className="matrix-command rounded-2xl px-3 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-4">
+                Runtime env will appear here once the selected worktree is running.
+              </div>
+            ) : null}
           </div>
-          {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
-            <p className="mb-4 text-xs text-[#8fd18f]">
-              Reserved local ports are held for this runtime and injected into
-              the tmux-backed shell.
+
+          <div className="rounded-[1.2rem] border border-[rgba(74,255,122,0.14)] bg-[rgba(0,0,0,0.24)] px-4 py-3 text-xs text-[#8fd18f]">
+            <p className="font-semibold uppercase tracking-[0.18em] text-[#6cb96c]">Terminal notes</p>
+            <p className="mt-2 leading-5">
+              Tap to focus. Fullscreen turns the shell into the dominant workspace, which is especially useful on smaller screens.
             </p>
-          ) : null}
-          <div
-            ref={hostRef}
-            className="h-[24rem] min-w-0 w-full max-w-full overflow-hidden rounded-[1.5rem] border border-[rgba(74,255,122,0.18)] bg-[#020703] p-3 shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
-            style={{ contain: "layout size" }}
-          />
-        </>
-      ) : (
-        <div className="rounded-[1.5rem] border border-dashed border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.22)] p-8 text-sm text-[#8fd18f]">
-          Start a runtime to parse Docker ports, merge config env, and launch
-          the tmux-backed shell.
+            {runtimeEnvEntries.length > visibleEnvEntries.length ? (
+              <p className="mt-2 text-[#7fe19e]">
+                Showing {visibleEnvEntries.length} of {runtimeEnvEntries.length} env vars in the header.
+              </p>
+            ) : null}
+          </div>
         </div>
-      )}
+      </div>
+
+      <div className={`px-3 pb-3 pt-3 sm:px-4 sm:pb-4 ${isFullscreen ? "h-[calc(100%-11.5rem)]" : "xl:min-h-0 xl:flex-1"}`}>
+        {worktree?.runtime ? (
+          <div className="flex h-full min-h-[24rem] flex-col">
+            {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
+              <p className="mb-3 text-xs text-[#8fd18f]">
+                Reserved local ports are held for this runtime and injected into the tmux-backed shell.
+              </p>
+            ) : null}
+            <div
+              ref={hostRef}
+              className={`min-w-0 w-full max-w-full flex-1 overflow-hidden rounded-[1.5rem] border border-[rgba(74,255,122,0.18)] bg-[#020703] p-2 sm:p-3 shadow-[inset_0_1px_0_rgba(181,255,196,0.04)] ${isFullscreen ? "h-full" : "min-h-[22rem]"}`}
+              style={{ contain: "layout size" }}
+            />
+          </div>
+        ) : (
+          <div className="flex h-full min-h-[22rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.22)] p-6 text-center text-sm text-[#8fd18f] sm:p-8">
+            Start a runtime to parse Docker ports, merge config env, and launch the tmux-backed shell.
+          </div>
+        )}
+      </div>
     </section>
   );
 }

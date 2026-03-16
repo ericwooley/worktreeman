@@ -29,7 +29,7 @@ export function WorktreeCard({
           : "matrix-panel hover:border-[rgba(74,255,122,0.3)] hover:bg-[rgba(9,30,12,0.72)]"
       }`}
     >
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="flex flex-col gap-4">
         <button className="text-left" onClick={onSelect}>
           <div className="flex items-center gap-3">
             <span className="rounded-full border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.28)] px-3 py-1 font-mono text-xs text-[#b9ffb9]">{worktree.branch}</span>
@@ -53,7 +53,7 @@ export function WorktreeCard({
           ) : null}
         </button>
 
-        <div className="flex shrink-0 gap-2">
+        <div className="grid shrink-0 grid-cols-3 gap-2">
           <button
             className="matrix-button rounded-full px-3 py-2 text-sm"
             disabled={isBusy || isRunning}

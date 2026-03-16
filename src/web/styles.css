@@ -54,6 +54,12 @@ input {
   z-index: 1;
 }
 
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 .matrix-panel {
   border: 1px solid var(--line);
   background: linear-gradient(180deg, rgba(7, 26, 11, 0.9), rgba(3, 13, 5, 0.84));
@@ -118,4 +124,16 @@ input {
 .matrix-input:focus {
   border-color: rgba(74, 255, 122, 0.42);
   box-shadow: 0 0 0 1px rgba(74, 255, 122, 0.15);
+}
+
+.terminal-shell:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  padding: 0;
+  background: #010402;
+}
+
+.terminal-shell:fullscreen .xterm {
+  height: 100%;
 }
