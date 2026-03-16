@@ -230,7 +230,7 @@ export function WorktreeTerminal({
   return (
     <section
       ref={containerRef}
-      className={`matrix-panel terminal-shell min-w-0 overflow-hidden rounded-[1.8rem] ${isFullscreen ? "h-full rounded-none" : "xl:flex xl:flex-col"}`}
+      className={`matrix-panel terminal-shell min-w-0 overflow-hidden rounded-none ${isFullscreen ? "h-full rounded-none" : "xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"}`}
     >
       <div className="border-b border-[rgba(74,255,122,0.14)] px-4 py-4 sm:px-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -247,7 +247,7 @@ export function WorktreeTerminal({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              className="matrix-button rounded-full px-4 py-2 text-sm"
+              className="matrix-button rounded-none px-4 py-2 text-sm"
               onClick={() => void toggleFullscreen()}
               disabled={!canFullscreen}
             >
@@ -261,20 +261,20 @@ export function WorktreeTerminal({
             {visibleEnvEntries.map(([key, value]) => (
               <div
                 key={key}
-                className="matrix-command rounded-2xl px-3 py-2 font-mono text-xs text-[#9cd99c]"
+                className="matrix-command rounded-none px-3 py-2 font-mono text-xs text-[#9cd99c]"
               >
                 <span className="text-[#ecffec]">{key}</span>=
                 <span className="break-all text-[#4aff7a]">{value}</span>
               </div>
             ))}
             {!visibleEnvEntries.length ? (
-              <div className="matrix-command rounded-2xl px-3 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-4">
+              <div className="matrix-command rounded-none px-3 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-4">
                 Runtime env will appear here once the selected worktree is running.
               </div>
             ) : null}
           </div>
 
-          <div className="rounded-[1.2rem] border border-[rgba(74,255,122,0.14)] bg-[rgba(0,0,0,0.24)] px-4 py-3 text-xs text-[#8fd18f]">
+          <div className="border border-[rgba(74,255,122,0.14)] bg-[rgba(0,0,0,0.24)] px-4 py-3 text-xs text-[#8fd18f]">
             <p className="font-semibold uppercase tracking-[0.18em] text-[#6cb96c]">Terminal notes</p>
             <p className="mt-2 leading-5">
               Tap to focus. Fullscreen turns the shell into the dominant workspace, which is especially useful on smaller screens.
@@ -288,28 +288,28 @@ export function WorktreeTerminal({
         </div>
       </div>
 
-      <div className={`px-3 pb-3 pt-3 sm:px-4 sm:pb-4 ${isFullscreen ? "flex min-h-0 flex-1 flex-col" : "xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"}`}>
+      <div className={`${isFullscreen ? "flex min-h-0 flex-1 flex-col" : "xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"}`}>
         {worktree?.runtime ? (
           <div className="flex h-full min-h-[24rem] min-w-0 flex-1 flex-col">
             {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
-              <p className="mb-3 text-xs text-[#8fd18f]">
+              <p className="px-4 py-3 text-xs text-[#8fd18f]">
                 Reserved local ports are held for this runtime and injected into the tmux-backed shell.
               </p>
             ) : null}
 
             <div
-              className={`min-w-0 w-full max-w-full ${isFullscreen ? "min-h-0 flex-1" : "flex-none"}`}
+              className={`min-w-0 w-full ${isFullscreen ? "min-h-0 flex-1" : "flex-none"}`}
               style={isFullscreen ? undefined : { height: "calc(100vh - 50px)" }}
             >
               <div
                 ref={hostRef}
-                className="min-h-0 min-w-0 h-full w-full overflow-hidden border border-[rgba(74,255,122,0.18)] bg-[#020703] p-2 sm:p-3 shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
+                className="min-h-0 min-w-0 h-full w-full overflow-hidden border border-[rgba(74,255,122,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
                 style={{ contain: "layout size" }}
               />
             </div>
           </div>
         ) : (
-          <div className="flex h-full min-h-[22rem] items-center justify-center rounded-[1.5rem] border border-dashed border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.22)] p-6 text-center text-sm text-[#8fd18f] sm:p-8">
+          <div className="flex h-full min-h-[22rem] items-center justify-center border border-dashed border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.22)] p-6 text-center text-sm text-[#8fd18f] sm:p-8">
             Start a runtime to parse Docker ports, merge config env, and launch the tmux-backed shell.
           </div>
         )}
