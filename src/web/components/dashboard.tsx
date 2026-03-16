@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { WorktreeRecord } from "@shared/types";
 import { useDashboardState } from "../hooks/use-dashboard-state";
-import { AmbientCanvasBackground, appAmbientPalette } from "./ambient-canvas-background";
+import { AmbientCanvasBackground, docsAmbientPalette } from "./ambient-canvas-background";
 import { WorktreeCard } from "./worktree-card";
 import { WorktreeDetail } from "./worktree-detail";
 
@@ -26,15 +26,15 @@ export function Dashboard() {
   };
 
   return (
-    <main className="relative min-h-screen overflow-hidden px-4 py-6 text-ink sm:px-6 lg:px-8">
-      <AmbientCanvasBackground palette={appAmbientPalette} />
+    <main className="relative min-h-screen overflow-hidden px-4 py-6 text-[#d7ffd7] sm:px-6 lg:px-8">
+      <AmbientCanvasBackground palette={docsAmbientPalette} />
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col gap-6">
-        <header className="rounded-[2rem] border border-white/45 bg-white/62 p-6 shadow-panel backdrop-blur-md">
+        <header className="matrix-panel rounded-[2rem] p-6">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-3xl space-y-3">
-              <p className="text-sm uppercase tracking-[0.28em] text-pine">Local orchestration cockpit</p>
-              <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Worktree Manager</h1>
-              <p className="max-w-2xl text-sm leading-6 text-ink/70 sm:text-base">
+              <p className="matrix-kicker">Local orchestration cockpit</p>
+              <h1 className="text-4xl font-semibold tracking-tight text-[#ecffec] sm:text-5xl">Worktree Manager</h1>
+              <p className="max-w-2xl text-sm leading-6 text-[#9cd99c] sm:text-base">
                 Spin up isolated git worktrees, boot branch-scoped Docker Compose stacks, and jump into tmux-backed terminals with runtime env injected in memory.
               </p>
             </div>
@@ -45,11 +45,11 @@ export function Dashboard() {
                   value={branch}
                   onChange={(event) => setBranch(event.target.value)}
                   placeholder="feature/branch-name"
-                  className="h-12 flex-1 rounded-2xl border border-ink/10 bg-mist px-4 font-mono text-sm outline-none transition focus:border-ember"
+                  className="matrix-input h-12 flex-1 rounded-2xl px-4 text-sm outline-none"
                 />
                 <button
                   type="submit"
-                  className="h-12 rounded-2xl bg-ink px-5 text-sm font-semibold text-white transition hover:bg-ink/90"
+                  className="matrix-button h-12 rounded-2xl px-5 text-sm font-semibold"
                 >
                   Create worktree
                 </button>
@@ -59,19 +59,19 @@ export function Dashboard() {
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="rounded-[2rem] border border-white/45 bg-white/66 p-5 shadow-panel backdrop-blur-md">
+          <div className="matrix-panel rounded-[2rem] p-5">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-semibold">Active worktrees</h2>
-                <p className="text-sm text-ink/65">Discover, boot, and remove branches from one view.</p>
+                <h2 className="text-xl font-semibold text-[#ecffec]">Active worktrees</h2>
+                <p className="text-sm text-[#9cd99c]">Discover, boot, and remove branches from one view.</p>
               </div>
-              <button className="rounded-full border border-ink/10 px-3 py-2 text-sm" onClick={() => void refresh()}>
+              <button className="matrix-button rounded-full px-3 py-2 text-sm" onClick={() => void refresh()}>
                 Refresh
               </button>
             </div>
 
-            {loading ? <p className="text-sm text-ink/70">Loading worktrees...</p> : null}
-            {error ? <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
+            {loading ? <p className="text-sm text-[#9cd99c]">Loading worktrees...</p> : null}
+            {error ? <p className="rounded-2xl border border-[rgba(255,109,109,0.22)] bg-[rgba(76,10,10,0.55)] px-4 py-3 text-sm text-[#ffb4b4]">{error}</p> : null}
 
             <div className="grid gap-4">
               {state?.worktrees.map((worktree) => (
@@ -89,7 +89,7 @@ export function Dashboard() {
             </div>
           </div>
 
-          <aside className="space-y-6">
+          <aside className="min-w-0 space-y-6">
             <ConfigPanel repoRoot={state?.repoRoot} configPath={state?.configPath} worktrees={state?.worktrees ?? []} />
             <WorktreeDetail worktree={selected} />
           </aside>
@@ -111,16 +111,16 @@ function ConfigPanel({
   const runningCount = worktrees.filter((entry) => entry.runtime).length;
 
   return (
-    <section className="rounded-[2rem] border border-black/10 bg-[rgba(17,24,27,0.88)] p-5 text-white shadow-panel backdrop-blur-sm">
-      <p className="text-xs uppercase tracking-[0.28em] text-white/60">Workspace</p>
-      <div className="mt-4 space-y-4 text-sm text-white/75">
+    <section className="matrix-panel rounded-[2rem] p-5 text-white">
+      <p className="matrix-kicker">Workspace</p>
+      <div className="mt-4 space-y-4 text-sm text-[#9cd99c]">
         <div>
-          <p className="text-white/45">Repository root</p>
-          <p className="break-all font-mono text-xs text-skyglass">{repoRoot ?? "Loading..."}</p>
+          <p className="text-[#6cb96c]">Repository root</p>
+          <p className="break-all font-mono text-xs text-[#b9ffb9]">{repoRoot ?? "Loading..."}</p>
         </div>
         <div>
-          <p className="text-white/45">Config path</p>
-          <p className="break-all font-mono text-xs text-skyglass">{configPath ?? "Loading..."}</p>
+          <p className="text-[#6cb96c]">Config path</p>
+          <p className="break-all font-mono text-xs text-[#b9ffb9]">{configPath ?? "Loading..."}</p>
         </div>
         <div className="grid grid-cols-2 gap-3 pt-2">
           <Metric label="Worktrees" value={String(worktrees.length)} />
@@ -134,8 +134,8 @@ function ConfigPanel({
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-      <p className="text-xs uppercase tracking-[0.18em] text-white/45">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-mist">{value}</p>
+      <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-[#ecffec]">{value}</p>
     </div>
   );
 }

@@ -8,6 +8,8 @@ import type {
 } from "@shared/types";
 import "@xterm/xterm/css/xterm.css";
 
+const MIN_TERMINAL_COLS = 80;
+
 export function WorktreeTerminal({
   worktree,
 }: {
@@ -30,7 +32,7 @@ export function WorktreeTerminal({
 
     const terminal = new Terminal({
       cursorBlink: true,
-      fontFamily: "IBM Plex Mono, Fira Code, monospace",
+      fontFamily: '"MesloLGS NF", "SauceCodePro Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font Mono", monospace',
       fontSize: 13,
       theme: {
         background: "#0f1720",
@@ -41,6 +43,8 @@ export function WorktreeTerminal({
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    hostRef.current.style.width = "100%";
+    hostRef.current.style.maxWidth = "100%";
     terminal.open(hostRef.current);
     terminal.focus();
     fitAddon.fit();
@@ -49,6 +53,28 @@ export function WorktreeTerminal({
     let lastHostWidth = Math.round(hostRef.current.clientWidth);
     let lastHostHeight = Math.round(hostRef.current.clientHeight);
     let resizeFrame: number | null = null;
+    let outputFrame: number | null = null;
+    let outputBuffer = "";
+
+    const flushOutput = () => {
+      outputFrame = null;
+      if (!outputBuffer) {
+        return;
+      }
+
+      terminal.write(outputBuffer);
+      outputBuffer = "";
+    };
+
+    const enqueueOutput = (data: string) => {
+      outputBuffer += data;
+
+      if (outputFrame !== null) {
+        return;
+      }
+
+      outputFrame = window.requestAnimationFrame(flushOutput);
+    };
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(
@@ -58,7 +84,7 @@ export function WorktreeTerminal({
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(event.data) as TerminalServerMessage;
       if (message.type === "output") {
-        terminal.write(message.data);
+        enqueueOutput(message.data);
       }
       if (message.type === "error") {
         terminal.writeln(`\r\n[error] ${message.message}`);
@@ -83,17 +109,24 @@ export function WorktreeTerminal({
     const resize = (force = false) => {
       fitAddon.fit();
 
-      if (!force && terminal.cols === lastCols && terminal.rows === lastRows) {
+      const nextCols = Math.max(terminal.cols, MIN_TERMINAL_COLS);
+      const nextRows = terminal.rows;
+
+      if (nextCols !== terminal.cols || nextRows !== terminal.rows) {
+        terminal.resize(nextCols, nextRows);
+      }
+
+      if (!force && nextCols === lastCols && nextRows === lastRows) {
         return;
       }
 
-      lastCols = terminal.cols;
-      lastRows = terminal.rows;
+      lastCols = nextCols;
+      lastRows = nextRows;
 
       const payload: TerminalClientMessage = {
         type: "resize",
-        cols: terminal.cols,
-        rows: terminal.rows,
+        cols: nextCols,
+        rows: nextRows,
       };
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify(payload));
@@ -141,19 +174,25 @@ export function WorktreeTerminal({
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
       }
+      if (outputFrame !== null) {
+        window.cancelAnimationFrame(outputFrame);
+      }
       resizeObserver.disconnect();
       hostRef.current?.removeEventListener("click", focusTerminal);
       socket.close();
+      if (outputBuffer) {
+        terminal.write(outputBuffer);
+      }
       terminal.dispose();
     };
   }, [sessionName, terminalBranch]);
 
   return (
-    <section className="rounded-[2rem] border border-ink/10 bg-white/75 p-5 shadow-panel backdrop-blur">
+    <section className="matrix-panel min-w-0 rounded-[2rem] p-5">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold">Inline terminal</h2>
-          <p className="text-sm text-ink/65">
+          <h2 className="text-xl font-semibold text-[#ecffec]">Inline terminal</h2>
+          <p className="text-sm text-[#9cd99c]">
             {worktree?.runtime
               ? `tmux session ${worktree.runtime.tmuxSession} with injected runtime env`
               : "Select a running worktree to attach to its tmux session."}
@@ -167,26 +206,27 @@ export function WorktreeTerminal({
             {runtimeEnvEntries.map(([key, value]) => (
               <div
                 key={key}
-                className="rounded-2xl border border-ink/10 bg-mist px-3 py-2 font-mono text-xs text-ink/75"
+                className="matrix-command rounded-2xl px-3 py-2 font-mono text-xs text-[#9cd99c]"
               >
-                <span className="text-ink">{key}</span>=
-                <span className="break-all text-pine">{value}</span>
+                <span className="text-[#ecffec]">{key}</span>=
+                <span className="break-all text-[#4aff7a]">{value}</span>
               </div>
             ))}
           </div>
           {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
-            <p className="mb-4 text-xs text-ink/55">
+            <p className="mb-4 text-xs text-[#8fd18f]">
               Reserved local ports are held for this runtime and injected into
               the tmux-backed shell.
             </p>
           ) : null}
           <div
             ref={hostRef}
-            className="h-[24rem] overflow-hidden rounded-[1.5rem] border border-ink/10 bg-ink p-3"
+            className="h-[24rem] min-w-0 w-full max-w-full overflow-hidden rounded-[1.5rem] border border-[rgba(74,255,122,0.18)] bg-[#020703] p-3 shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
+            style={{ contain: "layout size" }}
           />
         </>
       ) : (
-        <div className="rounded-[1.5rem] border border-dashed border-ink/15 bg-mist/70 p-8 text-sm text-ink/60">
+        <div className="rounded-[1.5rem] border border-dashed border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.22)] p-8 text-sm text-[#8fd18f]">
           Start a runtime to parse Docker ports, merge config env, and launch
           the tmux-backed shell.
         </div>

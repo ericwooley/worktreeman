@@ -25,28 +25,28 @@ export function WorktreeCard({
     <article
       className={`rounded-[1.6rem] border p-4 transition ${
         isSelected
-          ? "border-ember/60 bg-[rgba(255,247,240,0.74)] backdrop-blur-sm"
-          : "border-white/40 bg-[rgba(255,255,255,0.54)] backdrop-blur-sm hover:bg-[rgba(255,255,255,0.68)]"
+          ? "matrix-panel-strong"
+          : "matrix-panel hover:border-[rgba(74,255,122,0.3)] hover:bg-[rgba(9,30,12,0.72)]"
       }`}
     >
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <button className="text-left" onClick={onSelect}>
           <div className="flex items-center gap-3">
-            <span className="rounded-full bg-ink px-3 py-1 font-mono text-xs text-white">{worktree.branch}</span>
-            <span className={`rounded-full px-2.5 py-1 text-xs ${isRunning ? "bg-pine/10 text-pine" : "bg-ink/5 text-ink/60"}`}>
+            <span className="rounded-full border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.28)] px-3 py-1 font-mono text-xs text-[#b9ffb9]">{worktree.branch}</span>
+            <span className={`rounded-full px-2.5 py-1 text-xs ${isRunning ? "bg-[rgba(74,255,122,0.12)] text-[#4aff7a]" : "bg-[rgba(255,255,255,0.03)] text-[#8ab88a]"}`}>
               {isRunning ? "Runtime active" : "Stopped"}
             </span>
           </div>
-          <p className="mt-3 break-all font-mono text-xs text-ink/60">{worktree.worktreePath}</p>
+          <p className="mt-3 break-all font-mono text-xs text-[#8fd18f]">{worktree.worktreePath}</p>
           {worktree.runtime ? (
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               {worktree.runtime.ports.map((binding) => (
                 <div
                   key={`${binding.service}-${binding.hostPort}`}
-                  className="rounded-2xl border border-white/55 bg-[rgba(255,255,255,0.72)] px-3 py-2 text-xs shadow-sm"
+                  className="matrix-command px-3 py-2 text-xs"
                 >
-                  <p className="font-semibold text-ink">{binding.envName}</p>
-                  <p className="font-mono text-ink/60">localhost:{binding.hostPort}</p>
+                  <p className="font-semibold text-[#ecffec]">{binding.envName}</p>
+                  <p className="font-mono text-[#8fd18f]">localhost:{binding.hostPort}</p>
                 </div>
               ))}
             </div>
@@ -55,21 +55,21 @@ export function WorktreeCard({
 
         <div className="flex shrink-0 gap-2">
           <button
-            className="rounded-full border border-ink/10 px-3 py-2 text-sm"
+            className="matrix-button rounded-full px-3 py-2 text-sm"
             disabled={isBusy || isRunning}
             onClick={onStart}
           >
             Start env
           </button>
           <button
-            className="rounded-full border border-ink/10 px-3 py-2 text-sm"
+            className="matrix-button rounded-full px-3 py-2 text-sm"
             disabled={isBusy || !isRunning}
             onClick={onStop}
           >
             Stop env
           </button>
           <button
-            className="rounded-full border border-red-200 px-3 py-2 text-sm text-red-700"
+            className="matrix-button matrix-button-danger rounded-full px-3 py-2 text-sm"
             disabled={isBusy}
             onClick={onDelete}
           >
