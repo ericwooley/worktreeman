@@ -39,7 +39,6 @@ export function WorktreeTerminal({
         selectionBackground: "rgba(249, 115, 22, 0.28)",
       },
     });
-    console.log("render temrinal");
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(hostRef.current);
@@ -47,6 +46,8 @@ export function WorktreeTerminal({
     fitAddon.fit();
     let lastCols = terminal.cols;
     let lastRows = terminal.rows;
+    let lastHostWidth = Math.round(hostRef.current.clientWidth);
+    let lastHostHeight = Math.round(hostRef.current.clientHeight);
     let resizeFrame: number | null = null;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -55,7 +56,6 @@ export function WorktreeTerminal({
     );
 
     socket.addEventListener("message", (event) => {
-      console.log("received message", event);
       const message = JSON.parse(event.data) as TerminalServerMessage;
       if (message.type === "output") {
         terminal.write(message.data);
@@ -80,10 +80,10 @@ export function WorktreeTerminal({
       }
     });
 
-    const resize = () => {
+    const resize = (force = false) => {
       fitAddon.fit();
 
-      if (terminal.cols === lastCols && terminal.rows === lastRows) {
+      if (!force && terminal.cols === lastCols && terminal.rows === lastRows) {
         return;
       }
 
@@ -100,22 +100,42 @@ export function WorktreeTerminal({
       }
     };
 
-    const scheduleResize = () => {
+    const scheduleResize = (force = false) => {
       if (resizeFrame !== null) {
         return;
       }
 
       resizeFrame = window.requestAnimationFrame(() => {
         resizeFrame = null;
-        resize();
+        resize(force);
       });
     };
 
-    const resizeObserver = new ResizeObserver(scheduleResize);
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+
+      const nextWidth = Math.round(entry.contentRect.width);
+      const nextHeight = Math.round(entry.contentRect.height);
+
+      if (
+        nextWidth <= 0 ||
+        nextHeight <= 0 ||
+        (nextWidth === lastHostWidth && nextHeight === lastHostHeight)
+      ) {
+        return;
+      }
+
+      lastHostWidth = nextWidth;
+      lastHostHeight = nextHeight;
+      scheduleResize();
+    });
     resizeObserver.observe(hostRef.current);
 
     const focusTerminal = () => terminal.focus();
-    socket.addEventListener("open", scheduleResize);
+    socket.addEventListener("open", () => scheduleResize(true));
     hostRef.current.addEventListener("click", focusTerminal);
     return () => {
       if (resizeFrame !== null) {
