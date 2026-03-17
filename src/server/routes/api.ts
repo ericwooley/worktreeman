@@ -1,6 +1,22 @@
 import express from "express";
 import path from "node:path";
-import type { ApiStateResponse, CreateWorktreeRequest, TmuxClientInfo, WorktreeManagerConfig } from "../../shared/types.js";
+import type {
+  ApiStateResponse,
+  BackgroundCommandLogsResponse,
+  BackgroundCommandState,
+  CreateWorktreeRequest,
+  TmuxClientInfo,
+  WorktreeManagerConfig,
+} from "../../shared/types.js";
+import {
+  getBackgroundCommandLogs,
+  getBackgroundCommandEntries,
+  isRuntimeManagedBackgroundCommand,
+  listBackgroundCommands,
+  startBackgroundCommand,
+  stopAllBackgroundCommands,
+  stopBackgroundCommand,
+} from "../services/background-command-service.js";
 import { createWorktree, listWorktrees, removeWorktree } from "../services/git-service.js";
 import { ensureDockerRuntime, stopDockerRuntime } from "../services/docker-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
@@ -162,6 +178,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      await stopAllBackgroundCommands(req.params.branch, runtime.worktreePath);
       await stopDockerRuntime(runtime, config);
       const deletedRuntime = options.runtimes.delete(req.params.branch);
       await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
@@ -214,6 +231,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const runtime = options.runtimes.get(worktree.branch);
       if (runtime) {
+        await stopAllBackgroundCommands(worktree.branch, runtime.worktreePath);
         await stopDockerRuntime(runtime, config);
         const deletedRuntime = options.runtimes.delete(worktree.branch);
         await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
@@ -223,6 +241,137 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);
       res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/worktrees/:branch/background-commands", async (req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const commands: BackgroundCommandState[] = await listBackgroundCommands(
+        config,
+        worktree.branch,
+        worktree.worktreePath,
+        options.runtimes.get(worktree.branch),
+      );
+      res.json(commands);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/background-commands/:name/start", async (req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const decodedName = decodeURIComponent(req.params.name);
+      const command = getBackgroundCommandEntries(config)[decodedName];
+      if (!command) {
+        res.status(404).json({ message: `Unknown background command ${decodedName}` });
+        return;
+      }
+
+      if (isRuntimeManagedBackgroundCommand(command.command) && !options.runtimes.get(worktree.branch)) {
+        const { runtime, reservedPorts } = await ensureDockerRuntime(config, worktree.branch, worktree.worktreePath);
+        options.runtimes.set(runtime, reservedPorts);
+      }
+
+      await startBackgroundCommand({
+        config,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        runtime: options.runtimes.get(worktree.branch),
+        commandName: decodedName,
+      });
+
+      const commands: BackgroundCommandState[] = await listBackgroundCommands(
+        config,
+        worktree.branch,
+        worktree.worktreePath,
+        options.runtimes.get(worktree.branch),
+      );
+      res.json(commands);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/background-commands/:name/stop", async (req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const decodedName = decodeURIComponent(req.params.name);
+      const command = getBackgroundCommandEntries(config)[decodedName];
+      if (!command) {
+        res.status(404).json({ message: `Unknown background command ${decodedName}` });
+        return;
+      }
+
+      if (!isRuntimeManagedBackgroundCommand(command.command)) {
+        await stopBackgroundCommand(worktree.branch, worktree.worktreePath, decodedName);
+      } else {
+        const runtime = options.runtimes.get(worktree.branch);
+        if (runtime) {
+          await stopAllBackgroundCommands(worktree.branch, runtime.worktreePath);
+          await stopDockerRuntime(runtime, config);
+          const deletedRuntime = options.runtimes.delete(worktree.branch);
+          await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
+        }
+      }
+
+      const commands: BackgroundCommandState[] = await listBackgroundCommands(
+        config,
+        worktree.branch,
+        worktree.worktreePath,
+        options.runtimes.get(worktree.branch),
+      );
+      res.json(commands);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/worktrees/:branch/background-commands/:name/logs", async (req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const logs: BackgroundCommandLogsResponse = await getBackgroundCommandLogs(
+        config,
+        worktree.branch,
+        worktree.worktreePath,
+        decodeURIComponent(req.params.name),
+      );
+      res.json(logs);
     } catch (error) {
       next(error);
     }

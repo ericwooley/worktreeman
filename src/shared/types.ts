@@ -21,10 +21,15 @@ export interface DockerConfig {
   quickLinks?: Record<string, string>;
 }
 
+export interface BackgroundCommandConfigEntry {
+  command: string;
+}
+
 export interface WorktreeManagerConfig {
   env: Record<string, string>;
   runtimePorts: string[];
   startupCommands: string[];
+  backgroundCommands: Record<string, BackgroundCommandConfigEntry>;
   worktrees: {
     baseDir: string;
   };
@@ -45,12 +50,38 @@ export interface WorktreeRuntime {
   worktreePath: string;
   composeProject: string;
   env: Record<string, string>;
-   quickLinks: Record<string, string>;
+  quickLinks: Record<string, string>;
   allocatedPorts: Record<string, number>;
   ports: PortBinding[];
   servicePorts: Record<string, PortBinding>;
   tmuxSession: string;
   dockerStartedAt?: string;
+}
+
+export interface BackgroundCommandState {
+  name: string;
+  command: string;
+  processName: string;
+  manager: "pm2" | "runtime";
+  running: boolean;
+  status: string;
+  requiresRuntime: boolean;
+  canStart: boolean;
+  note?: string;
+  pid?: number;
+  startedAt?: string;
+}
+
+export interface BackgroundCommandLogLine {
+  id: string;
+  source: "stdout" | "stderr";
+  text: string;
+  timestamp?: string;
+}
+
+export interface BackgroundCommandLogsResponse {
+  commandName: string;
+  lines: BackgroundCommandLogLine[];
 }
 
 export interface TmuxClientInfo {

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { NamedServicePort, WorktreeManagerConfig } from "../../shared/types.js";
+import type { BackgroundCommandConfigEntry, NamedServicePort, WorktreeManagerConfig } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
 export interface ConfigSource {
@@ -60,6 +60,35 @@ function parseNamedServicePorts(value: unknown): Record<string, NamedServicePort
   );
 }
 
+function parseBackgroundCommands(value: unknown): Record<string, BackgroundCommandConfigEntry> {
+  if (value == null) {
+    return {};
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("backgroundCommands must be a mapping/object.");
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([name, entry]) => {
+      if (typeof entry === "string") {
+        return [name, { command: entry }];
+      }
+
+      if (typeof entry !== "object" || !entry || Array.isArray(entry)) {
+        throw new Error(`backgroundCommands.${name} must be a string or mapping/object.`);
+      }
+
+      return [
+        name,
+        {
+          command: String((entry as { command?: unknown }).command ?? ""),
+        },
+      ];
+    }),
+  );
+}
+
 export async function loadConfig(configSource: string | ConfigSource, repoRoot?: string): Promise<WorktreeManagerConfig> {
   const source = typeof configSource === "string" ? { path: configSource, repoRoot } : configSource;
   const raw = await readConfigContents(source);
@@ -84,6 +113,7 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
       ? parsed.runtimePorts.map((entry) => String(entry)).filter(Boolean)
       : [],
     startupCommands,
+    backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
     worktrees: {
       baseDir: String((worktrees as { baseDir?: string }).baseDir ?? ".worktrees"),
     },

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { WorktreeRecord } from "@shared/types";
+import type { BackgroundCommandLogsResponse, BackgroundCommandState, WorktreeRecord } from "@shared/types";
 import { WorktreeTerminal } from "./worktree-terminal";
 
 interface WorktreeDetailProps {
@@ -9,8 +9,8 @@ interface WorktreeDetailProps {
   worktreeCount: number;
   runningCount: number;
   selectedStatusLabel: string;
-  activeTab: "shell" | "git";
-  onTabChange: (tab: "shell" | "git") => void;
+  activeTab: "shell" | "background" | "git";
+  onTabChange: (tab: "shell" | "background" | "git") => void;
   isTerminalVisible: boolean;
   onTerminalVisibilityChange: (visible: boolean) => void;
   isBusy: boolean;
@@ -18,6 +18,13 @@ interface WorktreeDetailProps {
   onStop: () => void;
   onSyncEnv: () => void;
   onDelete: () => void;
+  backgroundCommands: BackgroundCommandState[];
+  backgroundLogs: BackgroundCommandLogsResponse | null;
+  onLoadBackgroundCommands: (branch: string) => Promise<BackgroundCommandState[]>;
+  onStartBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
+  onStopBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
+  onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
+  onClearBackgroundLogs: () => void;
 }
 
 export function WorktreeDetail({
@@ -36,10 +43,19 @@ export function WorktreeDetail({
   onStop,
   onSyncEnv,
   onDelete,
+  backgroundCommands,
+  backgroundLogs,
+  onLoadBackgroundCommands,
+  onStartBackgroundCommand,
+  onStopBackgroundCommand,
+  onLoadBackgroundLogs,
+  onClearBackgroundLogs,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
   const [copied, setCopied] = useState(false);
   const [worktreeMenuOpen, setWorktreeMenuOpen] = useState(false);
+  const [selectedBackgroundCommandName, setSelectedBackgroundCommandName] = useState<string | null>(null);
+  const [backgroundFilter, setBackgroundFilter] = useState("");
   const worktreeMenuRef = useRef<HTMLDivElement | null>(null);
   const quickLinks = worktree?.runtime ? Object.entries(worktree.runtime.quickLinks ?? {}) : [];
   const selectedWorktree = useMemo(
@@ -49,6 +65,21 @@ export function WorktreeDetail({
   const attachCommand = worktree?.runtime
     ? `tmux attach-session -t '${worktree.runtime.tmuxSession.replace(/'/g, `'\\''`)}'`
     : null;
+  const selectedBackgroundCommand = useMemo(
+    () => backgroundCommands.find((entry) => entry.name === selectedBackgroundCommandName) ?? backgroundCommands[0] ?? null,
+    [backgroundCommands, selectedBackgroundCommandName],
+  );
+  const filteredBackgroundLogLines = useMemo(() => {
+    const lines = backgroundLogs && selectedBackgroundCommand && backgroundLogs.commandName === selectedBackgroundCommand.name
+      ? backgroundLogs.lines
+      : [];
+    if (!backgroundFilter.trim()) {
+      return lines;
+    }
+
+    const query = backgroundFilter.toLowerCase();
+    return lines.filter((line) => line.text.toLowerCase().includes(query));
+  }, [backgroundFilter, backgroundLogs, selectedBackgroundCommand?.name]);
 
   useEffect(() => {
     if (!worktreeMenuOpen) {
@@ -76,6 +107,53 @@ export function WorktreeDetail({
     };
   }, [worktreeMenuOpen]);
 
+  useEffect(() => {
+    if (!selectedBackgroundCommandName && backgroundCommands[0]) {
+      setSelectedBackgroundCommandName(backgroundCommands[0].name);
+      return;
+    }
+
+    if (selectedBackgroundCommandName && !backgroundCommands.some((entry) => entry.name === selectedBackgroundCommandName)) {
+      setSelectedBackgroundCommandName(backgroundCommands[0]?.name ?? null);
+    }
+  }, [backgroundCommands, selectedBackgroundCommandName]);
+
+  useEffect(() => {
+    if (activeTab !== "background" || !worktree?.branch) {
+      return;
+    }
+
+    void onLoadBackgroundCommands(worktree.branch);
+  }, [activeTab, onLoadBackgroundCommands, worktree?.branch]);
+
+  useEffect(() => {
+    if (activeTab !== "background" || !worktree?.branch || !selectedBackgroundCommand?.name) {
+      onClearBackgroundLogs();
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshLogs = async () => {
+      const logs = await onLoadBackgroundLogs(worktree.branch, selectedBackgroundCommand.name);
+      if (cancelled) {
+        return logs;
+      }
+
+      return logs;
+    };
+
+    void refreshLogs();
+    const interval = window.setInterval(() => {
+      void refreshLogs();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeTab, onClearBackgroundLogs, onLoadBackgroundLogs, selectedBackgroundCommand?.name, worktree?.branch]);
+
   const copyAttachCommand = async () => {
     if (!attachCommand) {
       return;
@@ -90,28 +168,9 @@ export function WorktreeDetail({
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
         <div className="flex items-center gap-2 border-b border-[rgba(74,255,122,0.14)] pb-4">
-          <button
-            type="button"
-            className={`px-4 py-2 text-sm uppercase tracking-[0.18em] transition-colors ${
-              activeTab === "shell"
-                ? "border border-[rgba(74,255,122,0.2)] bg-[rgba(9,30,12,0.72)] text-[#ecffec]"
-                : "border border-transparent bg-[rgba(0,0,0,0.18)] text-[#75bb75] hover:border-[rgba(74,255,122,0.12)] hover:text-[#b9ffb9]"
-            }`}
-            onClick={() => onTabChange("shell")}
-          >
-            Shell
-          </button>
-          <button
-            type="button"
-            className={`px-4 py-2 text-sm uppercase tracking-[0.18em] transition-colors ${
-              activeTab === "git"
-                ? "border border-[rgba(74,255,122,0.2)] bg-[rgba(9,30,12,0.72)] text-[#ecffec]"
-                : "border border-transparent bg-[rgba(0,0,0,0.18)] text-[#75bb75] hover:border-[rgba(74,255,122,0.12)] hover:text-[#b9ffb9]"
-            }`}
-            onClick={() => onTabChange("git")}
-          >
-            Git status
-          </button>
+          <TabButton active={activeTab === "shell"} label="Shell" onClick={() => onTabChange("shell")} />
+          <TabButton active={activeTab === "background"} label="Background commands" onClick={() => onTabChange("background")} />
+          <TabButton active={activeTab === "git"} label="Git status" onClick={() => onTabChange("git")} />
         </div>
 
         {activeTab === "shell" ? (
@@ -125,9 +184,10 @@ export function WorktreeDetail({
                 <p className="mt-1 text-sm text-[#9cd99c]">
                   {worktree
                     ? "The shell is the primary surface. Runtime details stay visible, but the terminal owns the layout."
-                    : "Choose a worktree from the side rail to open its terminal session."}
+                    : "Choose a worktree from the environment picker to open its terminal session."}
                 </p>
               </div>
+
               <div className="flex min-w-0 flex-col gap-2 xl:max-w-[52rem] xl:items-end">
                 <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[34rem] xl:grid-cols-[minmax(14rem,1.2fr)_repeat(3,minmax(0,1fr))]">
                   <div ref={worktreeMenuRef} className="relative">
@@ -200,6 +260,7 @@ export function WorktreeDetail({
                   <Metric label="Running" value={String(runningCount)} />
                   <Metric label="Selected" value={selectedStatusLabel} />
                 </div>
+
                 <div className="flex flex-wrap items-center gap-2 xl:justify-end">
                   <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.28)] px-3 py-1 font-mono text-xs text-[#b9ffb9]">
                     {worktree?.runtime ? "tmux attached" : "idle"}
@@ -211,38 +272,10 @@ export function WorktreeDetail({
                   ) : null}
                   {worktree ? (
                     <>
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-1.5 text-sm"
-                        disabled={isBusy || isRunning}
-                        onClick={onStart}
-                      >
-                        Start env
-                      </button>
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-1.5 text-sm"
-                        disabled={isBusy || !isRunning}
-                        onClick={onStop}
-                      >
-                        Stop env
-                      </button>
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-1.5 text-sm"
-                        disabled={isBusy}
-                        onClick={onSyncEnv}
-                      >
-                        Sync .env
-                      </button>
-                      <button
-                        type="button"
-                        className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm"
-                        disabled={isBusy}
-                        onClick={onDelete}
-                      >
-                        Delete
-                      </button>
+                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
+                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
+                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
+                      <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onDelete}>Delete</button>
                     </>
                   ) : null}
                 </div>
@@ -288,17 +321,138 @@ export function WorktreeDetail({
                     <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Attach command</p>
                     <p className="mt-2 break-all font-mono text-sm text-[#d7ffd7]">{attachCommand}</p>
                   </div>
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-3 py-2 text-sm"
-                    onClick={() => void copyAttachCommand()}
-                  >
+                  <button type="button" className="matrix-button rounded-none px-3 py-2 text-sm" onClick={() => void copyAttachCommand()}>
                     {copied ? "Copied" : "Copy"}
                   </button>
                 </div>
               </div>
             ) : null}
           </>
+        ) : activeTab === "background" ? (
+          <div className="mt-4 space-y-4">
+            <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                  <p className="matrix-kicker">Background commands</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-[#ecffec] sm:text-3xl">Process control</h2>
+                  <p className="mt-2 text-sm text-[#9cd99c]">
+                    Long-running dev services live here. `docker compose up` is runtime-backed; other commands run under PM2 after the environment is created.
+                  </p>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto] xl:min-w-[42rem]">
+                  <label className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.18)] px-3 py-2">
+                    <p className="text-[0.6rem] uppercase tracking-[0.18em] text-[#6cb96c]">Command</p>
+                    <select
+                      value={selectedBackgroundCommand?.name ?? ""}
+                      onChange={(event) => setSelectedBackgroundCommandName(event.target.value || null)}
+                      className="mt-1 w-full bg-transparent font-mono text-sm text-[#ecffec] outline-none"
+                    >
+                      {backgroundCommands.map((command) => (
+                        <option key={command.name} value={command.name} className="bg-[#031106] text-[#ecffec]">
+                          {command.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-3 py-2 text-sm"
+                    disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || selectedBackgroundCommand.running || isBusy}
+                    onClick={() => worktree && selectedBackgroundCommand ? void onStartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                  >
+                    Start
+                  </button>
+
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-3 py-2 text-sm"
+                    disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.running || isBusy}
+                    onClick={() => worktree && selectedBackgroundCommand ? void onStopBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                  >
+                    Stop
+                  </button>
+                </div>
+              </div>
+
+              {selectedBackgroundCommand ? (
+                <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
+                  <div className="matrix-command rounded-none px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Command</p>
+                    <p className="mt-2 break-all font-mono text-sm text-[#ecffec]">{selectedBackgroundCommand.command}</p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <DetailField label="Manager" value={selectedBackgroundCommand.manager === "runtime" ? "Runtime" : "PM2"} />
+                    <DetailField label="Status" value={selectedBackgroundCommand.status} mono />
+                    <DetailField label="PID" value={selectedBackgroundCommand.pid ? String(selectedBackgroundCommand.pid) : "-"} mono />
+                    <DetailField
+                      label="Started"
+                      value={selectedBackgroundCommand.startedAt
+                        ? new Date(selectedBackgroundCommand.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                        : "-"}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-4 matrix-command rounded-none px-4 py-3 text-sm text-[#8fd18f]">
+                  No background commands are configured yet.
+                </div>
+              )}
+
+              {selectedBackgroundCommand?.note ? (
+                <div className="mt-3 border border-[rgba(255,207,118,0.22)] bg-[rgba(38,27,5,0.4)] px-3 py-2 text-sm text-[#ffd892]">
+                  {selectedBackgroundCommand.note}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Logs</p>
+                  <p className="mt-2 text-sm text-[#9cd99c]">Grep hides lines that do not contain the search text.</p>
+                </div>
+
+                <label className="w-full sm:max-w-xs">
+                  <span className="sr-only">Filter logs</span>
+                  <input
+                    value={backgroundFilter}
+                    onChange={(event) => setBackgroundFilter(event.target.value)}
+                    placeholder="grep logs"
+                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 max-h-[28rem] overflow-auto border border-[rgba(74,255,122,0.12)] bg-[rgba(1,8,3,0.86)] font-mono text-xs">
+                {filteredBackgroundLogLines.length ? filteredBackgroundLogLines.map((line) => (
+                  <div
+                    key={line.id}
+                    className={`border-b px-4 py-2 last:border-b-0 ${line.source === "stderr"
+                      ? "border-[rgba(255,120,120,0.12)] text-[#ffb4b4]"
+                      : "border-[rgba(74,255,122,0.08)] text-[#d7ffd7]"}`}
+                  >
+                    {line.timestamp ? (
+                      <span className="mr-3 text-[rgba(146,214,146,0.62)]">
+                        {new Date(line.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                      </span>
+                    ) : null}
+                    <span>{line.text}</span>
+                  </div>
+                )) : (
+                  <div className="px-4 py-4 text-[#8fd18f]">
+                    {selectedBackgroundCommand
+                      ? backgroundFilter.trim()
+                        ? "No log lines match the current grep filter."
+                        : "No log output yet."
+                      : "Choose a background command to inspect logs."}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="mt-4 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
             <p className="matrix-kicker">Git status</p>
@@ -323,6 +477,20 @@ export function WorktreeDetail({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function TabButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`px-4 py-2 text-sm uppercase tracking-[0.18em] transition-colors ${active
+        ? "border border-[rgba(74,255,122,0.2)] bg-[rgba(9,30,12,0.72)] text-[#ecffec]"
+        : "border border-transparent bg-[rgba(0,0,0,0.18)] text-[#75bb75] hover:border-[rgba(74,255,122,0.12)] hover:text-[#b9ffb9]"}`}
+      onClick={onClick}
+    >
+      {label}
+    </button>
   );
 }
 

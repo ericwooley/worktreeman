@@ -46,6 +46,10 @@ docker:
 startupCommands:
   - npm install
   - npm run db:migrate
+
+backgroundCommands:
+  Web dev:
+    command: pnpm run dev
 ```
 
 During `worktreemanager init`, the wizard can ask for these `runtimePorts` entries in a loop so you can add names like `PORT`, `VITE_PORT`, or `WEBHOOK_PORT` before the file is written.
@@ -128,3 +132,21 @@ They support the same `${VAR_NAME}` interpolation as `derivedEnv`, so they can r
 Commands that run inside the worktree after Docker is up and the runtime environment has been assembled.
 
 Keep these predictable. Anything listed here will run when a developer clicks `Start env`.
+
+## `backgroundCommands`
+
+Background commands appear in the `Background commands` tab.
+
+Use this for long-running processes you want to start and stop independently after the environment is up, like:
+
+```yml
+backgroundCommands:
+  Web dev:
+    command: pnpm run dev
+  Worker:
+    command: pnpm run worker
+```
+
+These commands are run with PM2 so they can be inspected externally.
+
+`docker compose up` is treated specially: the environment itself always appears in the tab as the built-in `docker compose` runtime-backed command, even if you do not define it under `backgroundCommands`.

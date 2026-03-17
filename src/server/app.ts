@@ -7,6 +7,7 @@ import open from "open";
 import { createApiRouter } from "./routes/api.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopDockerRuntime } from "./services/docker-service.js";
+import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { ShutdownStatusService } from "./services/shutdown-status-service.js";
 import { createTerminalService } from "./services/terminal-service.js";
 import { releaseReservedPorts } from "./services/runtime-port-service.js";
@@ -120,6 +121,15 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
     for (const { runtime, reservedPorts } of activeRuntimes) {
       logInfo(`[shutdown] Stopping runtime ${runtime.branch} (${runtime.composeProject})...`);
+
+      try {
+        logInfo(`[shutdown] stopping background commands for ${runtime.branch}...`);
+        await stopAllBackgroundCommandsForShutdown(runtime.worktreePath);
+      } catch (error) {
+        logError(
+          `[shutdown] Failed to stop background commands for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
 
       try {
         logInfo(`[shutdown] docker compose down for ${runtime.branch}...`);

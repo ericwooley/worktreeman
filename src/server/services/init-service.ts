@@ -226,6 +226,7 @@ async function buildConfigYaml(
       NODE_ENV: "development",
     },
     runtimePorts,
+    backgroundCommands: {},
     worktrees: {
       baseDir,
     },

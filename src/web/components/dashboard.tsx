@@ -11,17 +11,30 @@ export function Dashboard() {
     busyBranch,
     lastEnvSync,
     shutdownStatus,
+    backgroundCommands,
+    backgroundLogs,
     clearLastEnvSync,
+    clearBackgroundLogs,
     create,
     remove,
     start,
     stop,
     syncEnv,
+    loadBackgroundCommands,
+    startBackgroundCommand,
+    stopBackgroundCommand,
+    loadBackgroundLogs,
     refresh,
   } = useDashboardState();
   const [branch, setBranch] = useState("");
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
-  const [activeTab, setActiveTab] = useState<"shell" | "git">(initialParams.get("tab") === "git" ? "git" : "shell");
+  const [activeTab, setActiveTab] = useState<"shell" | "background" | "git">(
+    initialParams.get("tab") === "git"
+      ? "git"
+      : initialParams.get("tab") === "background"
+        ? "background"
+        : "shell",
+  );
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialParams.get("terminal") === "open");
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
 
@@ -189,6 +202,13 @@ export function Dashboard() {
             onStop={() => selected ? void stop(selected.branch) : undefined}
             onSyncEnv={() => selected ? void syncEnv(selected.branch) : undefined}
             onDelete={() => setDeleteConfirmBranch(selected?.branch ?? null)}
+            backgroundCommands={backgroundCommands}
+            backgroundLogs={backgroundLogs}
+            onLoadBackgroundCommands={loadBackgroundCommands}
+            onStartBackgroundCommand={startBackgroundCommand}
+            onStopBackgroundCommand={stopBackgroundCommand}
+            onLoadBackgroundLogs={loadBackgroundLogs}
+            onClearBackgroundLogs={clearBackgroundLogs}
           />
         </section>
       </div>

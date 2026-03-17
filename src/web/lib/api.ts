@@ -1,4 +1,11 @@
-import type { ApiStateResponse, ShutdownStatus, TmuxClientInfo, WorktreeRuntime } from "@shared/types";
+import type {
+  ApiStateResponse,
+  BackgroundCommandLogsResponse,
+  BackgroundCommandState,
+  ShutdownStatus,
+  TmuxClientInfo,
+  WorktreeRuntime,
+} from "@shared/types";
 
 export interface EnvSyncResponse {
   copiedFiles: string[];
@@ -83,4 +90,28 @@ export function subscribeToShutdownStatus(onStatus: (status: ShutdownStatus) => 
   return () => {
     source.close();
   };
+}
+
+export function getBackgroundCommands(branch: string): Promise<BackgroundCommandState[]> {
+  return request<BackgroundCommandState[]>(`/api/worktrees/${encodeURIComponent(branch)}/background-commands`);
+}
+
+export function startBackgroundCommand(branch: string, commandName: string): Promise<BackgroundCommandState[]> {
+  return request<BackgroundCommandState[]>(
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/start`,
+    { method: "POST" },
+  );
+}
+
+export function stopBackgroundCommand(branch: string, commandName: string): Promise<BackgroundCommandState[]> {
+  return request<BackgroundCommandState[]>(
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/stop`,
+    { method: "POST" },
+  );
+}
+
+export function getBackgroundCommandLogs(branch: string, commandName: string): Promise<BackgroundCommandLogsResponse> {
+  return request<BackgroundCommandLogsResponse>(
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/logs`,
+  );
 }

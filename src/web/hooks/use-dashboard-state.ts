@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ApiStateResponse, ShutdownStatus } from "@shared/types";
-import { createWorktree, deleteWorktree, getState, startRuntime, stopRuntime, subscribeToShutdownStatus, syncEnvFiles, type EnvSyncResponse } from "../lib/api";
+import type { ApiStateResponse, BackgroundCommandLogsResponse, BackgroundCommandState, ShutdownStatus } from "@shared/types";
+import {
+  createWorktree,
+  deleteWorktree,
+  getBackgroundCommandLogs as fetchBackgroundCommandLogs,
+  getBackgroundCommands as fetchBackgroundCommands,
+  getState,
+  startBackgroundCommand as startBackgroundProcess,
+  startRuntime,
+  stopBackgroundCommand as stopBackgroundProcess,
+  stopRuntime,
+  subscribeToShutdownStatus,
+  syncEnvFiles,
+  type EnvSyncResponse,
+} from "../lib/api";
 
 export function useDashboardState() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
@@ -9,6 +22,8 @@ export function useDashboardState() {
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
   const [lastEnvSync, setLastEnvSync] = useState<{ branch: string; copiedFiles: string[] } | null>(null);
   const [shutdownStatus, setShutdownStatus] = useState<ShutdownStatus | null>(null);
+  const [backgroundCommands, setBackgroundCommands] = useState<BackgroundCommandState[]>([]);
+  const [backgroundLogs, setBackgroundLogs] = useState<BackgroundCommandLogsResponse | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -95,6 +110,58 @@ export function useDashboardState() {
           setBusyBranch(null);
         }
       },
+      async loadBackgroundCommands(branch: string) {
+        try {
+          const commands = await fetchBackgroundCommands(branch);
+          setBackgroundCommands(commands);
+          setError(null);
+          return commands;
+        } catch (err) {
+          setBackgroundCommands([]);
+          setError(err instanceof Error ? err.message : "Failed to load background commands.");
+          return [];
+        }
+      },
+      async startBackgroundCommand(branch: string, commandName: string) {
+        setBusyBranch(branch);
+        try {
+          const commands = await startBackgroundProcess(branch, commandName);
+          setBackgroundCommands(commands);
+          setError(null);
+          return commands;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to start background command.");
+          return [];
+        } finally {
+          setBusyBranch(null);
+        }
+      },
+      async stopBackgroundCommand(branch: string, commandName: string) {
+        setBusyBranch(branch);
+        try {
+          const commands = await stopBackgroundProcess(branch, commandName);
+          setBackgroundCommands(commands);
+          setError(null);
+          return commands;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to stop background command.");
+          return [];
+        } finally {
+          setBusyBranch(null);
+        }
+      },
+      async loadBackgroundLogs(branch: string, commandName: string) {
+        try {
+          const logs = await fetchBackgroundCommandLogs(branch, commandName);
+          setBackgroundLogs(logs);
+          setError(null);
+          return logs;
+        } catch (err) {
+          setBackgroundLogs({ commandName, lines: [] });
+          setError(err instanceof Error ? err.message : "Failed to load background logs.");
+          return { commandName, lines: [] };
+        }
+      },
     }),
     [refresh],
   );
@@ -106,7 +173,10 @@ export function useDashboardState() {
     busyBranch,
     lastEnvSync,
     shutdownStatus,
+    backgroundCommands,
+    backgroundLogs,
     clearLastEnvSync: () => setLastEnvSync(null),
+    clearBackgroundLogs: () => setBackgroundLogs(null),
     refresh,
     ...actions,
   };
