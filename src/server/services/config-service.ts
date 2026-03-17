@@ -103,6 +103,7 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
         : [],
       servicePorts: parseNamedServicePorts((docker as { servicePorts?: unknown }).servicePorts),
       derivedEnv: ensureRecord((docker as { derivedEnv?: unknown }).derivedEnv, "docker.derivedEnv"),
+      quickLinks: ensureRecord((docker as { quickLinks?: unknown }).quickLinks, "docker.quickLinks"),
     },
   };
 }

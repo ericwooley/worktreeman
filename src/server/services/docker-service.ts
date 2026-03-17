@@ -136,6 +136,7 @@ export async function ensureDockerRuntime(
       ...baseEnv,
       ...renderDerivedEnv(config.docker.derivedEnv ?? {}, baseEnv),
     };
+    const quickLinks = renderDerivedEnv(config.docker.quickLinks ?? {}, env);
 
     const injectedEnv = {
       ...process.env,
@@ -150,6 +151,7 @@ export async function ensureDockerRuntime(
         worktreePath,
         composeProject,
         env,
+        quickLinks,
         allocatedPorts,
         ports: [...ports, ...Object.values(servicePorts)],
         servicePorts,

@@ -18,6 +18,7 @@ export interface DockerConfig {
   portMappings?: DockerPortMapping[];
   servicePorts?: Record<string, NamedServicePort>;
   derivedEnv?: Record<string, string>;
+  quickLinks?: Record<string, string>;
 }
 
 export interface WorktreeManagerConfig {
@@ -44,6 +45,7 @@ export interface WorktreeRuntime {
   worktreePath: string;
   composeProject: string;
   env: Record<string, string>;
+   quickLinks: Record<string, string>;
   allocatedPorts: Record<string, number>;
   ports: PortBinding[];
   servicePorts: Record<string, PortBinding>;

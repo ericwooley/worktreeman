@@ -235,6 +235,7 @@ async function buildConfigYaml(
       portMappings,
       servicePorts: {},
       derivedEnv: {},
+      quickLinks: {},
     },
     startupCommands: [],
   };

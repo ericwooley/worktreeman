@@ -39,6 +39,9 @@ docker:
       envName: BACKEND_SERVER_PORT
   derivedEnv:
     DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
+  quickLinks:
+    App: http://localhost:${PORT}
+    API health: http://localhost:${BACKEND_SERVER_PORT}/health
 
 startupCommands:
   - npm install
@@ -111,6 +114,14 @@ BACKEND_SERVER_PORT=<resolved-host-port>
 Derived environment variables are rendered after port discovery.
 
 Use this for full URLs, DSNs, and connection strings that depend on resolved host ports.
+
+## `docker.quickLinks`
+
+Quick links are rendered after runtime env and derived env are assembled.
+
+Use this for clickable URLs you want surfaced in the UI, like app roots, admin panels, health endpoints, dashboards, and docs.
+
+They support the same `${VAR_NAME}` interpolation as `derivedEnv`, so they can reference runtime ports, discovered Docker ports, service ports, and previously-derived values.
 
 ## `startupCommands`
 

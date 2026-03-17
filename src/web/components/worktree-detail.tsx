@@ -21,6 +21,7 @@ export function WorktreeDetail({
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
   const [copied, setCopied] = useState(false);
+  const quickLinks = worktree?.runtime ? Object.entries(worktree.runtime.quickLinks ?? {}) : [];
   const attachCommand = worktree?.runtime
     ? `tmux attach-session -t '${worktree.runtime.tmuxSession.replace(/'/g, `'\\''`)}'`
     : null;
@@ -103,6 +104,31 @@ export function WorktreeDetail({
           <DetailField label="Head" value={worktree?.headSha ?? "-"} mono />
           <DetailField label="Compose project" value={worktree?.runtime?.composeProject ?? "-"} mono />
           <DetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
+        </div>
+
+        <div className="mt-4 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Quick links</p>
+            <span className="text-xs text-[#7fe19e]">{quickLinks.length}</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {quickLinks.length ? quickLinks.map(([label, href]) => (
+              <a
+                key={label}
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="matrix-command rounded-none px-4 py-3 text-sm text-[#d7ffd7] transition-colors duration-150 hover:border-[rgba(74,255,122,0.24)] hover:text-[#4aff7a]"
+              >
+                <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">{label}</p>
+                <p className="mt-2 break-all font-mono text-xs">{href}</p>
+              </a>
+            )) : (
+              <div className="matrix-command rounded-none px-4 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-3">
+                Quick links appear here after the runtime resolves its ports.
+              </div>
+            )}
+          </div>
         </div>
 
         {attachCommand ? (
