@@ -87,6 +87,20 @@ export interface ApiStateResponse {
   worktrees: WorktreeRecord[];
 }
 
+export interface ShutdownLogEntry {
+  id: number;
+  level: "info" | "error";
+  message: string;
+  timestamp: string;
+}
+
+export interface ShutdownStatus {
+  active: boolean;
+  completed: boolean;
+  failed: boolean;
+  logs: ShutdownLogEntry[];
+}
+
 export type TerminalClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; cols: number; rows: number };

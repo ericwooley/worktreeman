@@ -6,7 +6,9 @@ import { ensureDockerRuntime, stopDockerRuntime } from "../services/docker-servi
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig } from "../services/config-service.js";
 import { releaseReservedPorts } from "../services/runtime-port-service.js";
+import type { ShutdownStatus } from "../../shared/types.js";
 import { disconnectTmuxClient, getTmuxSessionName, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
+import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 
 interface ApiRouterOptions {
@@ -17,6 +19,7 @@ interface ApiRouterOptions {
   configFile: string;
   configWorktreePath?: string;
   runtimes: RuntimeStore;
+  shutdownStatus: ShutdownStatusService;
 }
 
 export function createApiRouter(options: ApiRouterOptions): express.Router {
@@ -56,6 +59,24 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     } catch (error) {
       next(error);
     }
+  });
+
+  router.get("/shutdown-status", (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders?.();
+
+    const writeStatus = (status: ShutdownStatus) => {
+      res.write(`data: ${JSON.stringify(status)}\n\n`);
+    };
+
+    const unsubscribe = options.shutdownStatus.subscribe(writeStatus);
+
+    req.on("close", () => {
+      unsubscribe();
+      res.end();
+    });
   });
 
   router.post("/worktrees", async (req, res, next) => {

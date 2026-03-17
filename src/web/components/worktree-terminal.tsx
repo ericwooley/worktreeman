@@ -14,13 +14,16 @@ const TERMINAL_DRAWER_VISIBLE_HEIGHT = 28;
 
 export function WorktreeTerminal({
   worktree,
+  isTerminalVisible,
+  onTerminalVisibilityChange,
 }: {
   worktree: WorktreeRecord | null;
+  isTerminalVisible: boolean;
+  onTerminalVisibilityChange: (visible: boolean) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession ?? null;
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
-  const [isTerminalVisible, setIsTerminalVisible] = useState(false);
   const [tmuxClients, setTmuxClients] = useState<TmuxClientInfo[]>([]);
   const [currentClientId, setCurrentClientId] = useState<string | null>(null);
   const [disconnectingClientId, setDisconnectingClientId] = useState<
@@ -42,15 +45,6 @@ export function WorktreeTerminal({
     setTmuxClients(clients);
     return clients;
   };
-
-  useEffect(() => {
-    if (worktree?.runtime) {
-      setIsTerminalVisible(true);
-      return;
-    }
-
-    setIsTerminalVisible(false);
-  }, [worktree?.runtime]);
 
   useEffect(() => {
     if (!terminalBranch || !worktree?.runtime) {
@@ -333,12 +327,12 @@ export function WorktreeTerminal({
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="matrix-button rounded-none px-4 py-2 text-sm"
-                onClick={() => setIsTerminalVisible((visible) => !visible)}
-                disabled={!worktree?.runtime}
-              >
+                <button
+                  type="button"
+                  className="matrix-button rounded-none px-4 py-2 text-sm"
+                  onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
+                  disabled={!worktree?.runtime}
+                >
                 {isTerminalVisible ? "Stow terminal" : "Show terminal"}
               </button>
             </div>
@@ -440,7 +434,7 @@ export function WorktreeTerminal({
               type="button"
               aria-expanded={isTerminalVisible}
               className="group absolute left-1/2 top-0 z-20 h-7 w-[80px] -translate-x-1/2 overflow-hidden rounded-t-[16px] border border-b-0 border-[rgba(233,213,255,0.42)] bg-[linear-gradient(180deg,rgba(168,85,247,0.78),rgba(88,28,135,0.68))] text-left text-[#f8f3ff] shadow-[0_-6px_20px_rgba(88,28,135,0.28)] backdrop-blur-md transition-[background,border-color,box-shadow] duration-200 hover:border-[rgba(243,232,255,0.62)] hover:bg-[linear-gradient(180deg,rgba(192,132,252,0.88),rgba(107,33,168,0.74))] hover:shadow-[0_-10px_24px_rgba(107,33,168,0.34)]"
-              onClick={() => setIsTerminalVisible((visible) => !visible)}
+              onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
             >
               <span
                 aria-hidden="true"

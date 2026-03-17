@@ -1,5 +1,4 @@
 import { marked } from "marked";
-import { AmbientCanvasBackground, docsAmbientPalette } from "../src/web/components/ambient-canvas-background";
 
 const markdownModules = import.meta.glob("../docs/*.md", {
   query: "?raw",
@@ -42,8 +41,6 @@ export function DocsSite() {
 
   return (
     <main className="docs-shell relative min-h-screen overflow-hidden text-[#d7ffd7]">
-      <AmbientCanvasBackground palette={docsAmbientPalette} />
-
       <div className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:px-8 lg:py-8">
         <aside className="docs-rail h-fit lg:sticky lg:top-6">
           <div className="docs-rail-card">

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ApiStateResponse } from "@shared/types";
-import { createWorktree, deleteWorktree, getState, startRuntime, stopRuntime, syncEnvFiles, type EnvSyncResponse } from "../lib/api";
+import type { ApiStateResponse, ShutdownStatus } from "@shared/types";
+import { createWorktree, deleteWorktree, getState, startRuntime, stopRuntime, subscribeToShutdownStatus, syncEnvFiles, type EnvSyncResponse } from "../lib/api";
 
 export function useDashboardState() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
@@ -8,6 +8,7 @@ export function useDashboardState() {
   const [loading, setLoading] = useState(true);
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
   const [lastEnvSync, setLastEnvSync] = useState<{ branch: string; copiedFiles: string[] } | null>(null);
+  const [shutdownStatus, setShutdownStatus] = useState<ShutdownStatus | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -25,6 +26,8 @@ export function useDashboardState() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => subscribeToShutdownStatus(setShutdownStatus), []);
 
   const actions = useMemo(
     () => ({
@@ -102,6 +105,7 @@ export function useDashboardState() {
     loading,
     busyBranch,
     lastEnvSync,
+    shutdownStatus,
     clearLastEnvSync: () => setLastEnvSync(null),
     refresh,
     ...actions,

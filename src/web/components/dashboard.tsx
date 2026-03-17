@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import type { WorktreeRecord } from "@shared/types";
 import { useDashboardState } from "../hooks/use-dashboard-state";
-import { AmbientCanvasBackground, docsAmbientPalette } from "./ambient-canvas-background";
-import { WorktreeCard } from "./worktree-card";
 import { WorktreeDetail } from "./worktree-detail";
 
 export function Dashboard() {
+  const initialParams = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
   const {
     state,
     error,
     loading,
     busyBranch,
     lastEnvSync,
+    shutdownStatus,
     clearLastEnvSync,
     create,
     remove,
@@ -21,8 +20,10 @@ export function Dashboard() {
     refresh,
   } = useDashboardState();
   const [branch, setBranch] = useState("");
-  const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
+  const [activeTab, setActiveTab] = useState<"shell" | "git">(initialParams.get("tab") === "git" ? "git" : "shell");
+  const [isTerminalVisible, setIsTerminalVisible] = useState(initialParams.get("terminal") === "open");
+  const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
 
   const selected = useMemo(
     () => {
@@ -47,19 +48,25 @@ export function Dashboard() {
   }, [selected?.branch, selectedBranch]);
 
   useEffect(() => {
-    if (!sidebarOpen) {
-      return;
+    const params = new URLSearchParams(window.location.search);
+
+    if (selectedBranch) {
+      params.set("env", selectedBranch);
+    } else {
+      params.delete("env");
     }
 
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSidebarOpen(false);
-      }
-    };
+    params.set("tab", activeTab);
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [sidebarOpen]);
+    if (isTerminalVisible) {
+      params.set("terminal", "open");
+    } else {
+      params.delete("terminal");
+    }
+
+    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, [activeTab, isTerminalVisible, selectedBranch]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -71,139 +78,166 @@ export function Dashboard() {
     setBranch("");
   };
 
+  const confirmDelete = async () => {
+    if (!deleteConfirmBranch) {
+      return;
+    }
+
+    await remove(deleteConfirmBranch);
+    setDeleteConfirmBranch(null);
+  };
+
   return (
     <main className="relative min-h-screen overflow-hidden px-0 pt-0 pb-3 text-[#d7ffd7] sm:pb-4 lg:pb-6">
-      <AmbientCanvasBackground palette={docsAmbientPalette} />
-      <div className="relative z-10 flex w-full flex-col gap-4">
-        <header className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0 flex-1 space-y-2">
+      <div className="relative z-10 flex w-full flex-col gap-3">
+        <header className="matrix-panel rounded-none border-x-0 p-3 sm:p-4">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1 space-y-1">
               <p className="matrix-kicker">Local orchestration cockpit</p>
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-3xl font-semibold tracking-tight text-[#ecffec] sm:text-4xl">Worktree Manager</h1>
-                  <p className="mt-2 text-sm leading-6 text-[#9cd99c] sm:text-base">
+                  <h1 className="text-2xl font-semibold tracking-tight text-[#ecffec] sm:text-3xl">Worktree Manager</h1>
+                  <p className="mt-1 text-sm leading-5 text-[#9cd99c] sm:text-base">
                     Terminal-first control surface for jumping between branch runtimes without losing the shell.
                   </p>
-                </div>
-                <div className="grid grid-cols-3 gap-2 self-start text-left sm:min-w-[18rem]">
-                  <Metric label="Worktrees" value={String(state?.worktrees.length ?? 0)} />
-                  <Metric label="Running" value={String((state?.worktrees ?? []).filter((entry) => entry.runtime).length)} />
-                  <Metric label="Selected" value={selected?.branch ? "Live" : "None"} />
                 </div>
               </div>
             </div>
 
-            <div className="flex w-full flex-col gap-3 pt-12 xl:max-w-[44rem]">
+            <div className="flex w-full flex-col gap-2 pt-12 xl:max-w-[40rem]">
               <form className="flex w-full flex-col gap-2 sm:flex-row" onSubmit={onSubmit}>
                 <input
                   value={branch}
                   onChange={(event) => setBranch(event.target.value)}
                   placeholder="feature/branch-name"
-                  className="matrix-input h-11 flex-1 rounded-2xl px-4 text-sm outline-none"
+                  className="matrix-input h-10 flex-1 rounded-none px-3 text-sm outline-none"
                 />
                 <div className="flex gap-2">
                   <button
                     type="submit"
-                    className="matrix-button h-11 flex-1 rounded-2xl px-4 text-sm font-semibold sm:flex-none"
+                    className="matrix-button h-10 flex-1 rounded-none px-3 text-sm font-semibold sm:flex-none"
                   >
                     Create
                   </button>
-                  <button className="matrix-button h-11 rounded-2xl px-4 text-sm" onClick={() => void refresh()} type="button">
+                  <button className="matrix-button h-10 rounded-none px-3 text-sm" onClick={() => void refresh()} type="button">
                     Refresh
                   </button>
                 </div>
               </form>
               <p className="text-xs text-[#75bb75]">
-                Pick a worktree and the terminal owns the full width. Open the sidebar when you need workspace and switchboard controls.
+                Pick a worktree from the shell header and the terminal keeps full width.
               </p>
             </div>
           </div>
         </header>
 
         <section className="min-w-0">
+          {shutdownStatus?.active || shutdownStatus?.completed || shutdownStatus?.failed ? (
+            <div className="matrix-panel mb-4 rounded-none border-x-0 border-[rgba(255,196,87,0.24)] bg-[rgba(27,16,1,0.9)] p-4 sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="matrix-kicker text-[#ffcf76]">Server shutdown</p>
+                  <h2 className="mt-2 text-lg font-semibold text-[#fff3d6]">
+                    {shutdownStatus.active
+                      ? "Server is shutting down"
+                      : shutdownStatus.failed
+                        ? "Shutdown failed"
+                        : "Shutdown complete"}
+                  </h2>
+                  <p className="mt-2 text-sm text-[#ffd892]">
+                    {shutdownStatus.active
+                      ? "The server is cleaning up runtimes and active connections."
+                      : "These are the latest shutdown logs reported by the server."}
+                  </p>
+                </div>
+                <div className="border border-[rgba(255,207,118,0.24)] bg-[rgba(0,0,0,0.24)] px-3 py-1 font-mono text-xs text-[#ffe1a8]">
+                  {shutdownStatus.logs.length} log{shutdownStatus.logs.length === 1 ? "" : "s"}
+                </div>
+              </div>
+
+              <div className="mt-4 max-h-[16rem] overflow-auto border border-[rgba(255,207,118,0.18)] bg-[rgba(0,0,0,0.32)]">
+                {shutdownStatus.logs.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className={`border-b px-4 py-2 font-mono text-xs last:border-b-0 ${entry.level === "error"
+                      ? "border-[rgba(255,120,120,0.16)] text-[#ffb4b4]"
+                      : "border-[rgba(255,207,118,0.12)] text-[#ffe1a8]"}`}
+                  >
+                    <span className="mr-3 text-[rgba(255,225,168,0.6)]">
+                      {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    </span>
+                    <span>{entry.message}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <WorktreeDetail
             worktree={selected}
+            worktrees={state?.worktrees ?? []}
+            onSelectWorktree={setSelectedBranch}
+            worktreeCount={state?.worktrees.length ?? 0}
+            runningCount={(state?.worktrees ?? []).filter((entry) => entry.runtime).length}
+            selectedStatusLabel={selected?.branch ? "Live" : "None"}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            isTerminalVisible={isTerminalVisible}
+            onTerminalVisibilityChange={setIsTerminalVisible}
             isBusy={busyBranch === selected?.branch}
             onStart={() => selected ? void start(selected.branch) : undefined}
             onStop={() => selected ? void stop(selected.branch) : undefined}
             onSyncEnv={() => selected ? void syncEnv(selected.branch) : undefined}
-            onDelete={() => selected ? void remove(selected.branch) : undefined}
+            onDelete={() => setDeleteConfirmBranch(selected?.branch ?? null)}
           />
         </section>
       </div>
 
-      <button
-        type="button"
-        aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
-        className="matrix-button fixed right-0 top-0 z-30 flex h-10 w-10 items-center justify-center rounded-none p-0"
-        onClick={() => setSidebarOpen((open) => !open)}
-      >
-        <span className="flex h-4 w-4 flex-col justify-between">
-          <span className="block h-[2px] w-full bg-current" />
-          <span className="block h-[2px] w-full bg-current" />
-          <span className="block h-[2px] w-full bg-current" />
-        </span>
-      </button>
-
-      <div className={`fixed inset-0 z-20 transition ${sidebarOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
-        <button
-          type="button"
-          aria-label="Close sidebar"
-          className={`absolute inset-0 bg-[rgba(1,7,3,0.68)] backdrop-blur-sm transition-opacity ${sidebarOpen ? "opacity-100" : "opacity-0"}`}
-          onClick={() => setSidebarOpen(false)}
-        />
-
-        <aside className={`absolute right-0 top-0 flex h-full w-full max-w-[28rem] flex-col gap-4 overflow-y-auto border-l border-[rgba(74,255,122,0.18)] bg-[rgba(2,7,3,0.94)] p-0 shadow-[-24px_0_64px_rgba(0,0,0,0.5)] transition-transform ${sidebarOpen ? "translate-x-0" : "translate-x-full"}`}>
-          <div className="matrix-panel rounded-none border-x-0 border-t-0 p-4 sm:p-5">
-            <div className="flex items-start justify-between gap-3">
+      {deleteConfirmBranch ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(1,7,3,0.82)] p-4 backdrop-blur-sm">
+          <div className="matrix-panel w-full max-w-xl border border-[rgba(255,109,109,0.22)] bg-[rgba(17,6,6,0.96)] p-4 sm:p-5">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="matrix-kicker">Sidebar</p>
-                <h2 className="text-xl font-semibold text-[#ecffec]">Workspace controls</h2>
-                <p className="mt-2 text-sm text-[#9cd99c]">
-                  Switch worktrees, inspect config, and jump back to the shell.
+                <p className="matrix-kicker text-[#ff9f9f]">Confirm delete</p>
+                <h2 className="mt-2 text-xl font-semibold text-[#ffe3e3]">
+                  Delete worktree `{deleteConfirmBranch}`?
+                </h2>
+                <p className="mt-2 text-sm text-[#ffb4b4]">
+                  This removes the worktree, stops any running environment for it, and clears its persisted tmux session.
                 </p>
               </div>
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm"
-                onClick={() => setSidebarOpen(false)}
+                onClick={() => setDeleteConfirmBranch(null)}
               >
-                Close
+                Cancel
+              </button>
+            </div>
+
+            <div className="mt-4 border border-[rgba(255,109,109,0.18)] bg-[rgba(0,0,0,0.28)] p-3 font-mono text-sm text-[#ffd0d0]">
+              This action cannot be undone from the UI.
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => setDeleteConfirmBranch(null)}
+              >
+                Keep worktree
+              </button>
+              <button
+                type="button"
+                className="matrix-button matrix-button-danger rounded-none px-3 py-2 text-sm"
+                onClick={() => void confirmDelete()}
+              >
+                Delete worktree
               </button>
             </div>
           </div>
-
-          <ConfigPanel repoRoot={state?.repoRoot} configPath={state?.configPath} worktrees={state?.worktrees ?? []} />
-
-          <section className="matrix-panel rounded-none border-x-0 p-4">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="matrix-kicker">Switchboard</p>
-                <h2 className="text-lg font-semibold text-[#ecffec]">Worktrees</h2>
-                <p className="text-sm text-[#9cd99c]">Choose the shell you want to focus.</p>
-              </div>
-            </div>
-
-            {loading ? <p className="text-sm text-[#9cd99c]">Loading worktrees...</p> : null}
-            {error ? <p className="rounded-2xl border border-[rgba(255,109,109,0.22)] bg-[rgba(76,10,10,0.55)] px-4 py-3 text-sm text-[#ffb4b4]">{error}</p> : null}
-
-            <div className="grid gap-3">
-              {state?.worktrees.map((worktree) => (
-                <WorktreeCard
-                  key={worktree.worktreePath}
-                  worktree={worktree}
-                  isSelected={selected?.branch === worktree.branch}
-                  onSelect={() => {
-                    setSelectedBranch(worktree.branch);
-                    setSidebarOpen(false);
-                  }}
-                />
-              ))}
-            </div>
-          </section>
-        </aside>
-      </div>
+        </div>
+      ) : null}
 
       {lastEnvSync ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(1,7,3,0.82)] p-4 backdrop-blur-sm">
@@ -246,46 +280,5 @@ export function Dashboard() {
         </div>
       ) : null}
     </main>
-  );
-}
-
-function ConfigPanel({
-  repoRoot,
-  configPath,
-  worktrees,
-}: {
-  repoRoot?: string;
-  configPath?: string;
-  worktrees: WorktreeRecord[];
-}) {
-  const runningCount = worktrees.filter((entry) => entry.runtime).length;
-
-  return (
-    <section className="matrix-panel rounded-none border-x-0 p-4 text-white">
-      <p className="matrix-kicker">Workspace</p>
-      <div className="mt-3 space-y-3 text-sm text-[#9cd99c]">
-        <div>
-          <p className="text-[#6cb96c]">Repository root</p>
-          <p className="break-all font-mono text-xs text-[#b9ffb9]">{repoRoot ?? "Loading..."}</p>
-        </div>
-        <div>
-          <p className="text-[#6cb96c]">Config path</p>
-          <p className="break-all font-mono text-xs text-[#b9ffb9]">{configPath ?? "Loading..."}</p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          <Metric label="Worktrees" value={String(worktrees.length)} />
-          <Metric label="Running" value={String(runningCount)} />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-none border border-white/10 bg-white/5 px-3 py-2.5">
-      <p className="text-[0.65rem] uppercase tracking-[0.18em] text-[#6cb96c]">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-[#ecffec] sm:text-xl">{value}</p>
-    </div>
   );
 }

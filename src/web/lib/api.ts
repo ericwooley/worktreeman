@@ -1,4 +1,4 @@
-import type { ApiStateResponse, TmuxClientInfo, WorktreeRuntime } from "@shared/types";
+import type { ApiStateResponse, ShutdownStatus, TmuxClientInfo, WorktreeRuntime } from "@shared/types";
 
 export interface EnvSyncResponse {
   copiedFiles: string[];
@@ -71,4 +71,16 @@ export function disconnectTmuxClient(branch: string, clientId: string): Promise<
       method: "POST",
     },
   );
+}
+
+export function subscribeToShutdownStatus(onStatus: (status: ShutdownStatus) => void): () => void {
+  const source = new EventSource("/api/shutdown-status");
+
+  source.onmessage = (event) => {
+    onStatus(JSON.parse(event.data) as ShutdownStatus);
+  };
+
+  return () => {
+    source.close();
+  };
 }
