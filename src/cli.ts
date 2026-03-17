@@ -78,9 +78,25 @@ const startCommand = command({
       `worktreemanager running at http://127.0.0.1:${server.port}\n`,
     );
 
+    let shuttingDown = false;
     const shutdown = async () => {
-      await server.close();
-      process.exit(0);
+      if (shuttingDown) {
+        process.stdout.write("[shutdown] Shutdown already in progress...\n");
+        return;
+      }
+
+      shuttingDown = true;
+      process.stdout.write("[shutdown] Received shutdown signal.\n");
+
+      try {
+        await server.close();
+        process.exit(0);
+      } catch (error) {
+        process.stderr.write(
+          `[shutdown] Shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        process.exit(1);
+      }
     };
 
     process.on("SIGINT", shutdown);

@@ -1,5 +1,9 @@
 import type { ApiStateResponse, TmuxClientInfo, WorktreeRuntime } from "@shared/types";
 
+export interface EnvSyncResponse {
+  copiedFiles: string[];
+}
+
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -25,8 +29,8 @@ export function getState(): Promise<ApiStateResponse> {
   return request<ApiStateResponse>("/api/state");
 }
 
-export function createWorktree(branch: string, worktreePath?: string): Promise<void> {
-  return request<void>("/api/worktrees", {
+export function createWorktree(branch: string, worktreePath?: string): Promise<EnvSyncResponse | void> {
+  return request<EnvSyncResponse | void>("/api/worktrees", {
     method: "POST",
     body: JSON.stringify({ branch, path: worktreePath }),
   });
@@ -46,6 +50,12 @@ export function startRuntime(branch: string): Promise<WorktreeRuntime> {
 
 export function stopRuntime(branch: string): Promise<void> {
   return request<void>(`/api/worktrees/${encodeURIComponent(branch)}/runtime/stop`, {
+    method: "POST",
+  });
+}
+
+export function syncEnvFiles(branch: string): Promise<EnvSyncResponse> {
+  return request<EnvSyncResponse>(`/api/worktrees/${encodeURIComponent(branch)}/env/sync`, {
     method: "POST",
   });
 }

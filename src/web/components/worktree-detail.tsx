@@ -7,6 +7,7 @@ interface WorktreeDetailProps {
   isBusy: boolean;
   onStart: () => void;
   onStop: () => void;
+  onSyncEnv: () => void;
   onDelete: () => void;
 }
 
@@ -15,6 +16,7 @@ export function WorktreeDetail({
   isBusy,
   onStart,
   onStop,
+  onSyncEnv,
   onDelete,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
@@ -74,6 +76,14 @@ export function WorktreeDetail({
                   onClick={onStop}
                 >
                   Stop env
+                </button>
+                <button
+                  type="button"
+                  className="matrix-button rounded-none px-3 py-2 text-sm"
+                  disabled={isBusy}
+                  onClick={onSyncEnv}
+                >
+                  Sync .env
                 </button>
                 <button
                   type="button"

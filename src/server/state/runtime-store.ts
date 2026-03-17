@@ -23,6 +23,10 @@ export class RuntimeStore {
     return storedRuntime;
   }
 
+  entries(): StoredRuntime[] {
+    return [...this.runtimes.values()];
+  }
+
   getReservedPorts(branch: string): ReservedPort[] {
     return this.runtimes.get(branch)?.reservedPorts ?? [];
   }

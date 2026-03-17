@@ -7,6 +7,7 @@ import type WebSocket from "ws";
 import pty from "node-pty";
 import type { TerminalClientMessage, TerminalServerMessage, TmuxClientInfo, WorktreeRuntime } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
+import { sanitizeBranchName } from "../utils/paths.js";
 
 interface TerminalServiceOptions {
   server: HttpServer;
@@ -93,6 +94,10 @@ async function ensureTmuxSession(runtime: WorktreeRuntime, shell: string): Promi
   }
 }
 
+export function getTmuxSessionName(branch: string): string {
+  return `wt-${sanitizeBranchName(branch)}`;
+}
+
 function parseTmuxTimestamp(value: string): string | undefined {
   const timestamp = Number(value);
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
@@ -159,17 +164,22 @@ export async function disconnectTmuxClient(runtime: WorktreeRuntime, clientId: s
 }
 
 export async function killTmuxSession(runtime: WorktreeRuntime): Promise<void> {
-  if (!(await hasTmuxSession(runtime.tmuxSession, runtime.worktreePath))) {
+  await killTmuxSessionByName(runtime.tmuxSession, runtime.worktreePath);
+}
+
+export async function killTmuxSessionByName(sessionName: string, cwd: string): Promise<void> {
+  if (!(await hasTmuxSession(sessionName, cwd))) {
     return;
   }
 
-  await runCommand("tmux", ["kill-session", "-t", runtime.tmuxSession], {
-    cwd: runtime.worktreePath,
+  await runCommand("tmux", ["kill-session", "-t", sessionName], {
+    cwd,
   });
 }
 
 export function createTerminalService(options: TerminalServiceOptions): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+  const activeTerms = new Set<pty.IPty>();
 
   const handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(request.url ?? "", "http://localhost");
@@ -187,6 +197,12 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
 
   wss.on("close", () => {
     options.server.off("upgrade", handleUpgrade);
+
+    for (const term of activeTerms) {
+      term.kill();
+    }
+
+    activeTerms.clear();
   });
 
   wss.on("connection", async (socket, request) => {
@@ -236,6 +252,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       cwd: runtime.worktreePath,
       env,
     });
+    activeTerms.add(term);
 
     const resolveCurrentClientId = async () => {
       try {
@@ -267,6 +284,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     });
 
     term.onExit(({ exitCode }) => {
+      activeTerms.delete(term);
       send(socket, { type: "exit", exitCode });
       socket.close();
     });
@@ -285,6 +303,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     });
 
     socket.on("close", () => {
+      activeTerms.delete(term);
       term.kill();
     });
   });

@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import open from "open";
 import { createApiRouter } from "./routes/api.js";
-import { createTerminalService } from "./services/terminal-service.js";
 import { loadConfig } from "./services/config-service.js";
+import { stopDockerRuntime } from "./services/docker-service.js";
+import { createTerminalService } from "./services/terminal-service.js";
+import { releaseReservedPorts } from "./services/runtime-port-service.js";
 import { RuntimeStore } from "./state/runtime-store.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
@@ -30,13 +32,16 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const server = http.createServer(app);
   let terminalService: WebSocketServer | undefined;
   let vite: Awaited<ReturnType<typeof import("vite")["createServer"]>> | undefined;
+  let closed = false;
 
   app.use(express.json());
   app.use("/api", createApiRouter({
     repoRoot: options.repo.repoRoot,
     configPath: options.repo.configPath,
     configRef: options.repo.configRef,
+    configSourceRef: options.repo.configSourceRef,
     configFile: options.repo.configFile,
+    configWorktreePath: options.repo.configWorktreePath,
     runtimes,
   }));
 
@@ -73,14 +78,82 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
   const port = options.port ?? Number(process.env.PORT || 4312);
 
+  const loadShutdownConfig = () => loadConfig({
+    path: options.repo.configPath,
+    repoRoot: options.repo.repoRoot,
+    gitRef: options.repo.configRef === "WORKTREE" ? undefined : options.repo.configRef,
+    gitFile: options.repo.configFile,
+  });
+
   const close = async () => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    process.stdout.write("[shutdown] Closing Worktree Manager server...\n");
+
+    const shutdownConfig = await loadShutdownConfig().catch((error) => {
+      process.stderr.write(
+        `[shutdown] Failed to reload config for shutdown, using startup config: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      return config;
+    });
+
+    const activeRuntimes = runtimes.entries();
+    if (activeRuntimes.length > 0) {
+      process.stdout.write(`[shutdown] Stopping ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"}...\n`);
+    }
+
+    for (const { runtime, reservedPorts } of activeRuntimes) {
+      process.stdout.write(`[shutdown] Stopping runtime ${runtime.branch} (${runtime.composeProject})...\n`);
+
+      try {
+        process.stdout.write(`[shutdown] docker compose down for ${runtime.branch}...\n`);
+        await stopDockerRuntime(runtime, shutdownConfig);
+      } catch (error) {
+        process.stderr.write(
+          `[shutdown] Failed to stop docker runtime ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+
+      try {
+        if (reservedPorts.length > 0) {
+          process.stdout.write(`[shutdown] releasing ${reservedPorts.length} reserved port${reservedPorts.length === 1 ? "" : "s"} for ${runtime.branch}...\n`);
+        }
+        await releaseReservedPorts(reservedPorts);
+      } catch (error) {
+        process.stderr.write(
+          `[shutdown] Failed to release reserved ports for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+
+      runtimes.delete(runtime.branch);
+    }
+
     if (terminalService) {
+      process.stdout.write(`[shutdown] Closing terminal websocket service (${terminalService.clients.size} client${terminalService.clients.size === 1 ? "" : "s"})...\n`);
+      for (const client of terminalService.clients) {
+        client.close();
+      }
+
       await new Promise<void>((resolve) => {
-        terminalService?.close(() => resolve());
+        const forceTerminateTimer = setTimeout(() => {
+          process.stdout.write("[shutdown] Forcing terminal client disconnects...\n");
+          for (const client of terminalService?.clients ?? []) {
+            client.terminate();
+          }
+        }, 250);
+
+        terminalService?.close(() => {
+          clearTimeout(forceTerminateTimer);
+          resolve();
+        });
       });
     }
 
     if (server.listening) {
+      process.stdout.write("[shutdown] Closing HTTP server...\n");
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) {
@@ -93,8 +166,11 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     }
 
     if (vite) {
+      process.stdout.write("[shutdown] Closing Vite dev server...\n");
       await vite.close();
     }
+
+    process.stdout.write("[shutdown] Shutdown complete.\n");
   };
 
   try {

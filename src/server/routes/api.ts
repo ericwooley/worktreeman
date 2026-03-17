@@ -1,17 +1,21 @@
 import express from "express";
+import path from "node:path";
 import type { ApiStateResponse, CreateWorktreeRequest, TmuxClientInfo, WorktreeManagerConfig } from "../../shared/types.js";
 import { createWorktree, listWorktrees, removeWorktree } from "../services/git-service.js";
 import { ensureDockerRuntime, stopDockerRuntime } from "../services/docker-service.js";
+import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig } from "../services/config-service.js";
 import { releaseReservedPorts } from "../services/runtime-port-service.js";
-import { disconnectTmuxClient, killTmuxSession, listTmuxClients } from "../services/terminal-service.js";
+import { disconnectTmuxClient, getTmuxSessionName, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 
 interface ApiRouterOptions {
   repoRoot: string;
   configPath: string;
   configRef: string;
+  configSourceRef: string;
   configFile: string;
+  configWorktreePath?: string;
   runtimes: RuntimeStore;
 }
 
@@ -24,6 +28,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     gitRef: options.configRef === "WORKTREE" ? undefined : options.configRef,
     gitFile: options.configFile,
   });
+
+  const resolveEnvSyncSourceRoot = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
+    if (options.configWorktreePath) {
+      return options.configWorktreePath;
+    }
+
+    if (path.isAbsolute(options.configPath)) {
+      return path.dirname(options.configPath);
+    }
+
+    return (worktrees.find((entry) => entry.branch === options.configSourceRef)
+      ?? worktrees.find((entry) => entry.branch === "main"))?.worktreePath;
+  };
 
   router.get("/state", async (_req, res, next) => {
     try {
@@ -49,8 +66,18 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         res.status(400).json({ message: "branch is required" });
         return;
       }
+
       const worktree = await createWorktree(options.repoRoot, config, body);
-      res.status(201).json(worktree);
+      const worktrees = await listWorktrees(options.repoRoot);
+      const sourceRoot = await resolveEnvSyncSourceRoot(worktrees);
+
+      if (sourceRoot) {
+        const result = await syncEnvFiles(sourceRoot, worktree.worktreePath);
+        res.status(201).json(result);
+        return;
+      }
+
+      res.status(201).json({ copiedFiles: [] });
     } catch (error) {
       next(error);
     }
@@ -74,9 +101,32 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const { runtime, reservedPorts } = await ensureDockerRuntime(config, worktree.branch, worktree.worktreePath);
-      await killTmuxSession(runtime);
       options.runtimes.set(runtime, reservedPorts);
       res.json(runtime);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/env/sync", async (req, res, next) => {
+    try {
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const sourceRoot = await resolveEnvSyncSourceRoot(worktrees);
+
+      if (!sourceRoot) {
+        res.status(404).json({ message: `Unable to locate the source config worktree for ${options.configSourceRef}.` });
+        return;
+      }
+
+      const result = await syncEnvFiles(sourceRoot, worktree.worktreePath);
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -92,7 +142,6 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       await stopDockerRuntime(runtime, config);
-      await killTmuxSession(runtime);
       const deletedRuntime = options.runtimes.delete(req.params.branch);
       await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
       res.status(204).send();
@@ -145,10 +194,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const runtime = options.runtimes.get(worktree.branch);
       if (runtime) {
         await stopDockerRuntime(runtime, config);
-        await killTmuxSession(runtime);
         const deletedRuntime = options.runtimes.delete(worktree.branch);
         await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
       }
+
+      await killTmuxSessionByName(getTmuxSessionName(worktree.branch), worktree.worktreePath);
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);
       res.status(204).send();

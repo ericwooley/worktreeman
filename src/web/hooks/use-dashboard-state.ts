@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ApiStateResponse } from "@shared/types";
-import { createWorktree, deleteWorktree, getState, startRuntime, stopRuntime } from "../lib/api";
+import { createWorktree, deleteWorktree, getState, startRuntime, stopRuntime, syncEnvFiles, type EnvSyncResponse } from "../lib/api";
 
 export function useDashboardState() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
+  const [lastEnvSync, setLastEnvSync] = useState<{ branch: string; copiedFiles: string[] } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -30,8 +31,11 @@ export function useDashboardState() {
       async create(branch: string, worktreePath?: string) {
         setBusyBranch(branch);
         try {
-          await createWorktree(branch, worktreePath);
+          const result = await createWorktree(branch, worktreePath);
           await refresh();
+          if (result) {
+            setLastEnvSync({ branch, copiedFiles: result.copiedFiles });
+          }
           setError(null);
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to create worktree.");
@@ -75,6 +79,19 @@ export function useDashboardState() {
           setBusyBranch(null);
         }
       },
+      async syncEnv(branch: string) {
+        setBusyBranch(branch);
+        try {
+          const result: EnvSyncResponse = await syncEnvFiles(branch);
+          await refresh();
+          setLastEnvSync({ branch, copiedFiles: result.copiedFiles });
+          setError(null);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to sync env files.");
+        } finally {
+          setBusyBranch(null);
+        }
+      },
     }),
     [refresh],
   );
@@ -84,6 +101,8 @@ export function useDashboardState() {
     error,
     loading,
     busyBranch,
+    lastEnvSync,
+    clearLastEnvSync: () => setLastEnvSync(null),
     refresh,
     ...actions,
   };

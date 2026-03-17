@@ -10,6 +10,8 @@ export interface RepoContext {
   configPath: string;
   configRef: string;
   configFile: string;
+  configSourceRef: string;
+  configWorktreePath?: string;
 }
 
 export interface RepoContextOptions {
@@ -63,6 +65,8 @@ export async function findRepoContext(startDir: string, options: RepoContextOpti
           configPath,
           configRef: "WORKTREE",
           configFile: candidate,
+          configSourceRef: configRef,
+          configWorktreePath,
         };
       }
     }
@@ -76,6 +80,7 @@ export async function findRepoContext(startDir: string, options: RepoContextOpti
         configPath: `${candidate} @ ${configRef}`,
         configRef,
         configFile: candidate,
+        configSourceRef: configRef,
       };
     }
   }
@@ -83,12 +88,15 @@ export async function findRepoContext(startDir: string, options: RepoContextOpti
   for (const candidate of CONFIG_CANDIDATES) {
     const configPath = path.join(repoRoot, candidate);
     if (await exists(configPath)) {
+      const currentBranch = await tryRunGit(repoRoot, ["branch", "--show-current"]);
       return {
         repoRoot,
         gitDir,
         configPath,
         configRef: "WORKTREE",
         configFile: candidate,
+        configSourceRef: currentBranch ?? configRef,
+        configWorktreePath: repoRoot,
       };
     }
   }
@@ -149,7 +157,7 @@ async function tryRunGit(repoRoot: string, args: string[]): Promise<string | nul
   }
 }
 
-async function findWorktreePathForRef(repoRoot: string, ref: string): Promise<string | null> {
+export async function findWorktreePathForRef(repoRoot: string, ref: string): Promise<string | null> {
   const normalizedRef = normalizeBranchRef(ref);
 
   if (!normalizedRef) {

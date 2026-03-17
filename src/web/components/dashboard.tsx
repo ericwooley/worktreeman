@@ -6,7 +6,20 @@ import { WorktreeCard } from "./worktree-card";
 import { WorktreeDetail } from "./worktree-detail";
 
 export function Dashboard() {
-  const { state, error, loading, busyBranch, create, remove, start, stop, refresh } = useDashboardState();
+  const {
+    state,
+    error,
+    loading,
+    busyBranch,
+    lastEnvSync,
+    clearLastEnvSync,
+    create,
+    remove,
+    start,
+    stop,
+    syncEnv,
+    refresh,
+  } = useDashboardState();
   const [branch, setBranch] = useState("");
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -114,6 +127,7 @@ export function Dashboard() {
             isBusy={busyBranch === selected?.branch}
             onStart={() => selected ? void start(selected.branch) : undefined}
             onStop={() => selected ? void stop(selected.branch) : undefined}
+            onSyncEnv={() => selected ? void syncEnv(selected.branch) : undefined}
             onDelete={() => selected ? void remove(selected.branch) : undefined}
           />
         </section>
@@ -190,6 +204,47 @@ export function Dashboard() {
           </section>
         </aside>
       </div>
+
+      {lastEnvSync ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(1,7,3,0.82)] p-4 backdrop-blur-sm">
+          <div className="matrix-panel w-full max-w-2xl border border-[rgba(74,255,122,0.18)] bg-[rgba(2,7,3,0.96)] p-4 sm:p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="matrix-kicker">Env sync output</p>
+                <h2 className="mt-2 text-xl font-semibold text-[#ecffec]">
+                  Synced env files for {lastEnvSync.branch}
+                </h2>
+                <p className="mt-2 text-sm text-[#9cd99c]">
+                  {lastEnvSync.copiedFiles.length > 0
+                    ? "These files were copied from the shared config source into the selected worktree."
+                    : "No .env files were found to copy from the shared config source."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={clearLastEnvSync}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.28)] p-3">
+              {lastEnvSync.copiedFiles.length > 0 ? (
+                <div className="max-h-[50vh] overflow-auto font-mono text-sm text-[#d7ffd7]">
+                  {lastEnvSync.copiedFiles.map((filePath) => (
+                    <div key={filePath} className="border-b border-[rgba(74,255,122,0.08)] py-2 last:border-b-0">
+                      {filePath}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="font-mono text-sm text-[#7fe19e]">No matching `.env*` files found.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
