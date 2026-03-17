@@ -10,27 +10,32 @@ import type {
 import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
 import "@xterm/xterm/css/xterm.css";
 
+const TERMINAL_DRAWER_VISIBLE_HEIGHT = 28;
+
 export function WorktreeTerminal({
   worktree,
 }: {
   worktree: WorktreeRecord | null;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const containerRef = useRef<HTMLElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession ?? null;
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isTerminalVisible, setIsTerminalVisible] = useState(false);
   const [tmuxClients, setTmuxClients] = useState<TmuxClientInfo[]>([]);
   const [currentClientId, setCurrentClientId] = useState<string | null>(null);
-  const [disconnectingClientId, setDisconnectingClientId] = useState<string | null>(null);
+  const [disconnectingClientId, setDisconnectingClientId] = useState<
+    string | null
+  >(null);
   const scheduleResizeRef = useRef<((force?: boolean) => void) | null>(null);
   const lastCopiedSelectionRef = useRef("");
-  const canFullscreen = typeof document !== "undefined" && document.fullscreenEnabled;
   const runtimeEnvEntries = useMemo(
     () => (worktree?.runtime ? Object.entries(worktree.runtime.env) : []),
     [worktree?.runtime],
   );
-  const visibleEnvEntries = useMemo(() => runtimeEnvEntries.slice(0, 8), [runtimeEnvEntries]);
+  const visibleEnvEntries = useMemo(
+    () => runtimeEnvEntries.slice(0, 8),
+    [runtimeEnvEntries],
+  );
 
   const refreshTmuxClients = async (branch: string) => {
     const clients = await getTmuxClients(branch);
@@ -39,17 +44,13 @@ export function WorktreeTerminal({
   };
 
   useEffect(() => {
-    if (!containerRef.current || typeof document === "undefined" || !document.fullscreenEnabled) {
+    if (worktree?.runtime) {
+      setIsTerminalVisible(true);
       return;
     }
 
-    const onFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === containerRef.current);
-    };
-
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, []);
+    setIsTerminalVisible(false);
+  }, [worktree?.runtime]);
 
   useEffect(() => {
     if (!terminalBranch || !worktree?.runtime) {
@@ -84,7 +85,7 @@ export function WorktreeTerminal({
 
   useEffect(() => {
     scheduleResizeRef.current?.(true);
-  }, [isFullscreen]);
+  }, [isTerminalVisible]);
 
   useEffect(() => {
     if (!hostRef.current || !terminalBranch || !sessionName) {
@@ -95,7 +96,8 @@ export function WorktreeTerminal({
 
     const terminal = new Terminal({
       cursorBlink: true,
-      fontFamily: '"MesloLGS NF", "SauceCodePro Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font Mono", monospace',
+      fontFamily:
+        '"MesloLGS NF", "SauceCodePro Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font Mono", monospace',
       fontSize: 13,
       theme: {
         background: "#0f1720",
@@ -154,7 +156,9 @@ export function WorktreeTerminal({
         terminal.writeln(`\r\n[error] ${message.message}`);
       }
       if (message.type === "exit") {
-        terminal.writeln(`\r\n[session closed: ${message.exitCode ?? "unknown"}]`);
+        terminal.writeln(
+          `\r\n[session closed: ${message.exitCode ?? "unknown"}]`,
+        );
       }
       if (message.type === "ready") {
         setCurrentClientId(message.clientId);
@@ -238,7 +242,11 @@ export function WorktreeTerminal({
     };
     const copySelection = () => {
       const selection = terminal.getSelection().trim();
-      if (!selection || selection === lastCopiedSelectionRef.current || !navigator.clipboard?.writeText) {
+      if (
+        !selection ||
+        selection === lastCopiedSelectionRef.current ||
+        !navigator.clipboard?.writeText
+      ) {
         return;
       }
 
@@ -280,7 +288,10 @@ export function WorktreeTerminal({
       hostRef.current?.removeEventListener("mouseup", handleMouseUp);
       hostRef.current?.removeEventListener("focusin", focusTerminal);
       window.removeEventListener("resize", handleViewportResize);
-      window.visualViewport?.removeEventListener("resize", handleViewportResize);
+      window.visualViewport?.removeEventListener(
+        "resize",
+        handleViewportResize,
+      );
       window.removeEventListener("focus", handleViewportResize);
       socket.close();
       if (outputBuffer) {
@@ -289,19 +300,6 @@ export function WorktreeTerminal({
       terminal.dispose();
     };
   }, [sessionName, terminalBranch]);
-
-  const toggleFullscreen = async () => {
-    if (!containerRef.current || typeof document === "undefined" || !document.fullscreenEnabled) {
-      return;
-    }
-
-    if (document.fullscreenElement === containerRef.current) {
-      await document.exitFullscreen();
-      return;
-    }
-
-    await containerRef.current.requestFullscreen();
-  };
 
   const handleDisconnectClient = async (clientId: string) => {
     if (!terminalBranch || clientId === currentClientId) {
@@ -318,120 +316,172 @@ export function WorktreeTerminal({
   };
 
   return (
-    <section
-      ref={containerRef}
-      className={`matrix-panel terminal-shell min-w-0 overflow-hidden rounded-none ${isFullscreen ? "h-full rounded-none" : "xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"}`}
-    >
-      <div className="border-b border-[rgba(74,255,122,0.14)] px-4 py-4 sm:px-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="matrix-kicker">Primary shell</p>
-            <h2 className="text-xl font-semibold text-[#ecffec] sm:text-2xl">Inline terminal</h2>
-            <p className="mt-1 text-sm text-[#9cd99c]">
-              {worktree?.runtime
-                ? `tmux session ${worktree.runtime.tmuxSession} with injected runtime env`
-                : "Select a running worktree to attach to its tmux session."}
-            </p>
+    <>
+      <section className="matrix-panel min-w-0 overflow-hidden rounded-none">
+        <div className="border-b border-[rgba(74,255,122,0.14)] px-4 py-4 sm:px-5">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="matrix-kicker">Primary shell</p>
+              <h2 className="text-xl font-semibold text-[#ecffec] sm:text-2xl">
+                Terminal session info
+              </h2>
+              <p className="mt-1 text-sm text-[#9cd99c]">
+                {worktree?.runtime
+                  ? `tmux session ${worktree.runtime.tmuxSession} is docked as a fixed terminal overlay`
+                  : "Select a running worktree to attach to its tmux session."}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="matrix-button rounded-none px-4 py-2 text-sm"
+                onClick={() => setIsTerminalVisible((visible) => !visible)}
+                disabled={!worktree?.runtime}
+              >
+                {isTerminalVisible ? "Stow terminal" : "Show terminal"}
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {visibleEnvEntries.map(([key, value]) => (
+                <div
+                  key={key}
+                  className="matrix-command rounded-none px-3 py-2 font-mono text-xs text-[#9cd99c]"
+                >
+                  <span className="text-[#ecffec]">{key}</span>=
+                  <span className="break-all text-[#4aff7a]">{value}</span>
+                </div>
+              ))}
+              {!visibleEnvEntries.length ? (
+                <div className="matrix-command rounded-none px-3 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-4">
+                  Runtime env will appear here once the selected worktree is
+                  running.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="border border-[rgba(74,255,122,0.14)] bg-[rgba(0,0,0,0.24)] px-4 py-3 text-xs text-[#8fd18f]">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold uppercase tracking-[0.18em] text-[#6cb96c]">
+                  Attached tmux clients
+                </p>
+                <span className="text-[#7fe19e]">{tmuxClients.length}</span>
+              </div>
+              <div className="mt-3 space-y-2">
+                {tmuxClients.length ? (
+                  tmuxClients.map((client) => {
+                    const isCurrent = client.id === currentClientId;
+
+                    return (
+                      <div
+                        key={client.id}
+                        className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.24)] px-3 py-2"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate font-mono text-[#d7ffd7]">
+                              {client.tty}
+                            </p>
+                            <p className="text-[11px] text-[#6cb96c]">
+                              pid {client.pid}
+                              {client.isControlMode ? " • control" : ""}
+                            </p>
+                          </div>
+                          {isCurrent ? (
+                            <span className="border border-[rgba(74,255,122,0.16)] px-2 py-1 text-[11px] text-[#4aff7a]">
+                              This session
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="matrix-button matrix-button-danger rounded-none px-2 py-1 text-[11px]"
+                              disabled={disconnectingClientId === client.id}
+                              onClick={() =>
+                                void handleDisconnectClient(client.id)
+                              }
+                            >
+                              {disconnectingClientId === client.id
+                                ? "Disconnecting"
+                                : "Disconnect"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p>No tmux clients attached.</p>
+                )}
+              </div>
+              <p className="mt-3 leading-5">
+                The live terminal is a fixed overlay that slides down off the
+                bottom edge. When stowed, its window border stays visible so you
+                can pull it back instantly.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {worktree?.runtime ? (
+        <div
+          className="fixed inset-x-0 bottom-0 z-30 h-[100dvh] transition-transform duration-300 ease-out"
+          style={{
+            transform: isTerminalVisible
+              ? "translateY(0)"
+              : `translateY(calc(100dvh - ${TERMINAL_DRAWER_VISIBLE_HEIGHT}px))`,
+          }}
+        >
+          <div className="relative h-full">
             <button
               type="button"
-              className="matrix-button rounded-none px-4 py-2 text-sm"
-              onClick={() => void toggleFullscreen()}
-              disabled={!canFullscreen}
+              aria-expanded={isTerminalVisible}
+              className="group absolute left-1/2 top-0 z-20 h-7 w-[80px] -translate-x-1/2 overflow-hidden rounded-t-[16px] border border-b-0 border-[rgba(233,213,255,0.42)] bg-[linear-gradient(180deg,rgba(168,85,247,0.78),rgba(88,28,135,0.68))] text-left text-[#f8f3ff] shadow-[0_-6px_20px_rgba(88,28,135,0.28)] backdrop-blur-md transition-[background,border-color,box-shadow] duration-200 hover:border-[rgba(243,232,255,0.62)] hover:bg-[linear-gradient(180deg,rgba(192,132,252,0.88),rgba(107,33,168,0.74))] hover:shadow-[0_-10px_24px_rgba(107,33,168,0.34)]"
+              onClick={() => setIsTerminalVisible((visible) => !visible)}
             >
-              {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 rounded-t-[16px] bg-[radial-gradient(circle_at_center,rgba(245,235,255,0.22)_0%,transparent_72%)]"
+              />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-3 top-[8px] h-px bg-[linear-gradient(90deg,transparent,rgba(250,245,255,0.82),transparent)]"
+              />
+              <span className="sr-only">
+                {isTerminalVisible ? "Stow terminal" : "Show terminal"}
+              </span>
             </button>
+
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 top-[27px] z-10 h-px bg-[linear-gradient(90deg,transparent,rgba(196,181,253,0.16),rgba(233,213,255,0.42),rgba(196,181,253,0.16),transparent)]"
+            />
+
+            <div className="matrix-panel absolute inset-0 bottom-0 top-[27px] flex flex-col overflow-hidden border-x-0 border-t border-b-0 border-[rgba(196,181,253,0.16)] shadow-[0_-18px_80px_rgba(0,0,0,0.72)]">
+
+              <div className="flex min-h-0 flex-1 flex-col bg-[#020703]">
+                {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
+                  <p className="border-b border-[rgba(196,181,253,0.18)] px-4 py-2 text-xs text-[#c4b5fd]">
+                    Reserved local ports are held for this runtime and injected
+                    into the tmux-backed shell.
+                  </p>
+                ) : null}
+
+                <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                  <div
+                    ref={hostRef}
+                    className="h-full w-full overflow-hidden border-b border-b-[rgba(196,181,253,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(243,232,255,0.08)]"
+                    style={{ contain: "layout size" }}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-
-        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {visibleEnvEntries.map(([key, value]) => (
-              <div
-                key={key}
-                className="matrix-command rounded-none px-3 py-2 font-mono text-xs text-[#9cd99c]"
-              >
-                <span className="text-[#ecffec]">{key}</span>=
-                <span className="break-all text-[#4aff7a]">{value}</span>
-              </div>
-            ))}
-            {!visibleEnvEntries.length ? (
-              <div className="matrix-command rounded-none px-3 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-4">
-                Runtime env will appear here once the selected worktree is running.
-              </div>
-            ) : null}
-          </div>
-
-          <div className="border border-[rgba(74,255,122,0.14)] bg-[rgba(0,0,0,0.24)] px-4 py-3 text-xs text-[#8fd18f]">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-semibold uppercase tracking-[0.18em] text-[#6cb96c]">Attached tmux clients</p>
-              <span className="text-[#7fe19e]">{tmuxClients.length}</span>
-            </div>
-            <div className="mt-3 space-y-2">
-              {tmuxClients.length ? tmuxClients.map((client) => {
-                const isCurrent = client.id === currentClientId;
-
-                return (
-                  <div key={client.id} className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.24)] px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate font-mono text-[#d7ffd7]">{client.tty}</p>
-                        <p className="text-[11px] text-[#6cb96c]">pid {client.pid}{client.isControlMode ? " • control" : ""}</p>
-                      </div>
-                      {isCurrent ? (
-                        <span className="border border-[rgba(74,255,122,0.16)] px-2 py-1 text-[11px] text-[#4aff7a]">This session</span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="matrix-button matrix-button-danger rounded-none px-2 py-1 text-[11px]"
-                          disabled={disconnectingClientId === client.id}
-                          onClick={() => void handleDisconnectClient(client.id)}
-                        >
-                          {disconnectingClientId === client.id ? "Disconnecting" : "Disconnect"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              }) : (
-                <p>No tmux clients attached.</p>
-              )}
-            </div>
-            <p className="mt-3 leading-5">
-              Tap to focus. Fullscreen turns the shell into the dominant workspace, which is especially useful on smaller screens.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className={`${isFullscreen ? "flex min-h-0 flex-1 flex-col" : "xl:flex xl:min-h-0 xl:flex-1 xl:flex-col"}`}>
-        {worktree?.runtime ? (
-          <div className="flex h-full min-h-[24rem] min-w-0 flex-1 flex-col">
-            {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
-              <p className="px-4 py-3 text-xs text-[#8fd18f]">
-                Reserved local ports are held for this runtime and injected into the tmux-backed shell.
-              </p>
-            ) : null}
-
-            <div
-              className={`min-w-0 w-full ${isFullscreen ? "min-h-0 flex-1" : "flex-none"}`}
-              style={isFullscreen ? undefined : { height: "calc(100vh - 50px)" }}
-            >
-               <div
-                 ref={hostRef}
-                 className="min-h-0 min-w-0 h-full w-full overflow-hidden border border-[rgba(74,255,122,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(181,255,196,0.04)]"
-                 style={{ contain: "layout size", height: isFullscreen ? "100dvh" : "calc(100dvh - 50px)" }}
-               />
-            </div>
-          </div>
-        ) : (
-          <div className="flex h-full min-h-[22rem] items-center justify-center border border-dashed border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.22)] p-6 text-center text-sm text-[#8fd18f] sm:p-8">
-            Start a runtime to parse Docker ports, merge config env, and launch the tmux-backed shell.
-          </div>
-        )}
-      </div>
-    </section>
+      ) : null}
+    </>
   );
 }
