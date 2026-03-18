@@ -228,7 +228,7 @@ async function buildConfigYaml(
     },
     runtimePorts,
     derivedEnv: {},
-    quickLinks: {},
+    quickLinks: [],
     backgroundCommands: {},
     worktrees: {
       baseDir,

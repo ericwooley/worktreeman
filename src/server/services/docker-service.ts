@@ -3,10 +3,11 @@ import type {
   DockerPortMapping,
   NamedServicePort,
   PortBinding,
+  QuickLinkConfigEntry,
   WorktreeManagerConfig,
   WorktreeRuntime,
 } from "../../shared/types.js";
-import { renderDerivedEnv } from "./config-service.js";
+import { renderDerivedEnv, renderTemplate } from "./config-service.js";
 import { reserveRuntimePorts, type ReservedPort } from "./runtime-port-service.js";
 import { runCommand } from "../utils/process.js";
 import { sanitizeBranchName } from "../utils/paths.js";
@@ -14,6 +15,13 @@ import { sanitizeBranchName } from "../utils/paths.js";
 export interface DockerRuntimeResult {
   runtime: WorktreeRuntime;
   reservedPorts: ReservedPort[];
+}
+
+function renderQuickLinks(quickLinks: QuickLinkConfigEntry[], sourceEnv: Record<string, string>): QuickLinkConfigEntry[] {
+  return quickLinks.map((entry) => ({
+    name: entry.name,
+    url: renderTemplate(entry.url, sourceEnv),
+  }));
 }
 
 export async function runStartupCommands(
@@ -136,7 +144,7 @@ export async function ensureDockerRuntime(
       ...baseEnv,
       ...renderDerivedEnv(config.derivedEnv ?? {}, baseEnv),
     };
-    const quickLinks = renderDerivedEnv(config.quickLinks ?? {}, env);
+    const quickLinks = renderQuickLinks(config.quickLinks ?? [], env);
 
     const injectedEnv = {
       ...process.env,

@@ -23,11 +23,16 @@ export interface BackgroundCommandConfigEntry {
   command: string;
 }
 
+export interface QuickLinkConfigEntry {
+  name: string;
+  url: string;
+}
+
 export interface WorktreeManagerConfig {
   env: Record<string, string>;
   runtimePorts: string[];
   derivedEnv: Record<string, string>;
-  quickLinks: Record<string, string>;
+  quickLinks: QuickLinkConfigEntry[];
   startupCommands: string[];
   backgroundCommands: Record<string, BackgroundCommandConfigEntry>;
   worktrees: {
@@ -50,7 +55,7 @@ export interface WorktreeRuntime {
   worktreePath: string;
   composeProject: string;
   env: Record<string, string>;
-  quickLinks: Record<string, string>;
+  quickLinks: QuickLinkConfigEntry[];
   allocatedPorts: Record<string, number>;
   ports: PortBinding[];
   servicePorts: Record<string, PortBinding>;

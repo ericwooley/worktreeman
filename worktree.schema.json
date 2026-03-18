@@ -37,11 +37,11 @@
       }
     },
     "quickLinks": {
-      "type": "object",
+      "type": "array",
       "description": "UI links rendered after runtime env and derived env are assembled.",
-      "default": {},
-      "additionalProperties": {
-        "type": "string"
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/quickLinkEntry"
       }
     },
     "startupCommands": {
@@ -98,6 +98,24 @@
           }
         }
       ]
+    },
+    "quickLinkEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "url"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     },
     "worktreesConfig": {
       "type": "object",

@@ -62,7 +62,7 @@ export function WorktreeDetail({
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
-  const quickLinks = worktree?.runtime ? Object.entries(worktree.runtime.quickLinks ?? {}) : [];
+  const quickLinks = worktree?.runtime?.quickLinks ?? [];
   const selectedWorktree = useMemo(
     () => worktrees.find((entry) => entry.branch === worktree?.branch) ?? null,
     [worktree?.branch, worktrees],
@@ -277,16 +277,16 @@ export function WorktreeDetail({
                 <span className="text-xs text-[#7fe19e]">{quickLinks.length}</span>
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {quickLinks.length ? quickLinks.map(([label, href]) => (
+                {quickLinks.length ? quickLinks.map((entry) => (
                   <a
-                    key={label}
-                    href={href}
+                    key={`${entry.name}:${entry.url}`}
+                    href={entry.url}
                     target="_blank"
                     rel="noreferrer"
                     className="matrix-command rounded-none px-4 py-3 text-sm text-[#d7ffd7] transition-colors duration-150 hover:border-[rgba(74,255,122,0.24)] hover:text-[#4aff7a]"
                   >
-                    <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">{label}</p>
-                    <p className="mt-2 break-all font-mono text-xs">{href}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">{entry.name}</p>
+                    <p className="mt-2 break-all font-mono text-xs">{entry.url}</p>
                   </a>
                 )) : (
                   <div className="matrix-command rounded-none px-4 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-3">

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { BackgroundCommandConfigEntry, NamedServicePort, WorktreeManagerConfig } from "../../shared/types.js";
+import type { BackgroundCommandConfigEntry, NamedServicePort, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
 export interface ConfigSource {
@@ -89,6 +89,28 @@ function parseBackgroundCommands(value: unknown): Record<string, BackgroundComma
   );
 }
 
+function parseQuickLinks(value: unknown): QuickLinkConfigEntry[] {
+  if (value == null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error("quickLinks must be an array.");
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== "object" || !entry || Array.isArray(entry)) {
+      throw new Error(`quickLinks[${index}] must be a mapping/object.`);
+    }
+
+    const quickLink = entry as Record<string, unknown>;
+    return {
+      name: String(quickLink.name ?? ""),
+      url: String(quickLink.url ?? ""),
+    };
+  });
+}
+
 export async function loadConfig(configSource: string | ConfigSource, repoRoot?: string): Promise<WorktreeManagerConfig> {
   const source = typeof configSource === "string" ? { path: configSource, repoRoot } : configSource;
   const raw = await readConfigContents(source);
@@ -113,7 +135,7 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
       ? parsed.runtimePorts.map((entry) => String(entry)).filter(Boolean)
       : [],
     derivedEnv: ensureRecord(parsed.derivedEnv, "derivedEnv"),
-    quickLinks: ensureRecord(parsed.quickLinks, "quickLinks"),
+    quickLinks: parseQuickLinks(parsed.quickLinks),
     startupCommands,
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
     worktrees: {
@@ -164,7 +186,11 @@ export function renderDerivedEnv(
   return Object.fromEntries(
     Object.entries(derivedEnv).map(([key, template]) => [
       key,
-      template.replace(/\$\{([^}]+)\}/g, (_, variable: string) => sourceEnv[variable] ?? ""),
+      renderTemplate(template, sourceEnv),
     ]),
   );
+}
+
+export function renderTemplate(template: string, sourceEnv: Record<string, string>): string {
+  return template.replace(/\$\{([^}]+)\}/g, (_, variable: string) => sourceEnv[variable] ?? "");
 }
