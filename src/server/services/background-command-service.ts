@@ -167,7 +167,7 @@ export async function listBackgroundCommands(
       status: isDockerComposeUp ? (hasRuntime ? "online" : "stopped") : processInfo?.status ?? "stopped",
       requiresRuntime,
       canStart: isDockerComposeUp || hasRuntime,
-      note: !isDockerComposeUp && !hasRuntime ? "Start environment first" : undefined,
+      note: !isDockerComposeUp && !hasRuntime ? "Waiting for Docker/worktree runtime setup before PM2 can start this command." : undefined,
       pid: isDockerComposeUp ? undefined : processInfo?.pid,
       startedAt: isDockerComposeUp ? runtime?.dockerStartedAt : processInfo?.createdAt,
     };
@@ -236,6 +236,29 @@ export async function startBackgroundCommand(options: {
   } catch (error) {
     await deleteMetadata(processName);
     throw error;
+  }
+}
+
+export async function startRuntimeReadyBackgroundCommands(options: {
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  runtime: WorktreeRuntime;
+}): Promise<void> {
+  const entries = getBackgroundCommandEntries(options.config);
+
+  for (const [commandName, entry] of Object.entries(entries)) {
+    if (isRuntimeManagedBackgroundCommand(entry.command)) {
+      continue;
+    }
+
+    await startBackgroundCommand({
+      config: options.config,
+      branch: options.branch,
+      worktreePath: options.worktreePath,
+      runtime: options.runtime,
+      commandName,
+    });
   }
 }
 

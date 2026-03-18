@@ -16,6 +16,7 @@ import {
   listBackgroundCommands,
   normalizeBackgroundCommandName,
   startBackgroundCommand,
+  startRuntimeReadyBackgroundCommands,
   streamBackgroundCommandLogs,
   stopAllBackgroundCommands,
   stopBackgroundCommand,
@@ -142,6 +143,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const { runtime, reservedPorts } = await ensureDockerRuntime(config, worktree.branch, worktree.worktreePath);
       options.runtimes.set(runtime, reservedPorts);
+      await startRuntimeReadyBackgroundCommands({
+        config,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        runtime,
+      });
       res.json(runtime);
     } catch (error) {
       next(error);
@@ -293,6 +300,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       if (isRuntimeManagedBackgroundCommand(command.command) && !options.runtimes.get(worktree.branch)) {
         const { runtime, reservedPorts } = await ensureDockerRuntime(config, worktree.branch, worktree.worktreePath);
         options.runtimes.set(runtime, reservedPorts);
+        await startRuntimeReadyBackgroundCommands({
+          config,
+          branch: worktree.branch,
+          worktreePath: worktree.worktreePath,
+          runtime,
+        });
       }
 
       await startBackgroundCommand({

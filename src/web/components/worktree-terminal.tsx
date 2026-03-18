@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import type {
@@ -42,6 +43,54 @@ export function WorktreeTerminal({
     () => runtimeEnvEntries.slice(0, 8),
     [runtimeEnvEntries],
   );
+  const drawer = worktree?.runtime ? (
+    <div
+      className="fixed inset-x-0 bottom-0 z-[35] h-[100dvh] transition-transform duration-300 ease-out"
+      style={{
+        transform: isTerminalVisible
+          ? "translateY(0)"
+          : `translateY(calc(100dvh - ${TERMINAL_DRAWER_VISIBLE_HEIGHT}px))`,
+      }}
+    >
+      <div className="relative h-full">
+        <button
+          type="button"
+          aria-expanded={isTerminalVisible}
+          className="group absolute left-1/2 top-0 z-20 h-7 w-[80px] -translate-x-1/2 overflow-hidden rounded-t-[16px] border border-b-0 border-[rgba(233,213,255,0.42)] bg-[linear-gradient(180deg,rgba(168,85,247,0.78),rgba(88,28,135,0.68))] text-left text-[#f8f3ff] shadow-[0_-6px_20px_rgba(88,28,135,0.28)] backdrop-blur-md transition-[background,border-color,box-shadow] duration-200 hover:border-[rgba(243,232,255,0.62)] hover:bg-[linear-gradient(180deg,rgba(192,132,252,0.88),rgba(107,33,168,0.74))] hover:shadow-[0_-10px_24px_rgba(107,33,168,0.34)]"
+          onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 rounded-t-[16px] bg-[radial-gradient(circle_at_center,rgba(245,235,255,0.22)_0%,transparent_72%)]"
+          />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-3 top-[8px] h-px bg-[linear-gradient(90deg,transparent,rgba(250,245,255,0.82),transparent)]"
+          />
+          <span className="sr-only">
+            {isTerminalVisible ? "Stow terminal" : "Show terminal"}
+          </span>
+        </button>
+
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-[27px] z-10 h-px bg-[linear-gradient(90deg,transparent,rgba(196,181,253,0.16),rgba(233,213,255,0.42),rgba(196,181,253,0.16),transparent)]"
+        />
+
+        <div className="matrix-panel absolute inset-0 bottom-0 top-[27px] flex flex-col overflow-hidden border-x-0 border-t border-b-0 border-[rgba(196,181,253,0.16)] shadow-[0_-18px_80px_rgba(0,0,0,0.72)]">
+          <div className="flex min-h-0 flex-1 flex-col bg-[#020703]">
+            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+              <div
+                ref={hostRef}
+                className="h-full w-full overflow-hidden border-b border-b-[rgba(196,181,253,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(243,232,255,0.08)]"
+                style={{ contain: "layout size" }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   const refreshTmuxClients = async (branch: string) => {
     const clients = await getTmuxClients(branch);
@@ -423,62 +472,9 @@ export function WorktreeTerminal({
       </section>
       ) : null}
 
-      {worktree?.runtime ? (
-        <div
-          className="fixed inset-x-0 bottom-0 z-30 h-[100dvh] transition-transform duration-300 ease-out"
-          style={{
-            transform: isTerminalVisible
-              ? "translateY(0)"
-              : `translateY(calc(100dvh - ${TERMINAL_DRAWER_VISIBLE_HEIGHT}px))`,
-          }}
-        >
-          <div className="relative h-full">
-            <button
-              type="button"
-              aria-expanded={isTerminalVisible}
-              className="group absolute left-1/2 top-0 z-20 h-7 w-[80px] -translate-x-1/2 overflow-hidden rounded-t-[16px] border border-b-0 border-[rgba(233,213,255,0.42)] bg-[linear-gradient(180deg,rgba(168,85,247,0.78),rgba(88,28,135,0.68))] text-left text-[#f8f3ff] shadow-[0_-6px_20px_rgba(88,28,135,0.28)] backdrop-blur-md transition-[background,border-color,box-shadow] duration-200 hover:border-[rgba(243,232,255,0.62)] hover:bg-[linear-gradient(180deg,rgba(192,132,252,0.88),rgba(107,33,168,0.74))] hover:shadow-[0_-10px_24px_rgba(107,33,168,0.34)]"
-              onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
-            >
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 rounded-t-[16px] bg-[radial-gradient(circle_at_center,rgba(245,235,255,0.22)_0%,transparent_72%)]"
-              />
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-x-3 top-[8px] h-px bg-[linear-gradient(90deg,transparent,rgba(250,245,255,0.82),transparent)]"
-              />
-              <span className="sr-only">
-                {isTerminalVisible ? "Stow terminal" : "Show terminal"}
-              </span>
-            </button>
-
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-x-0 top-[27px] z-10 h-px bg-[linear-gradient(90deg,transparent,rgba(196,181,253,0.16),rgba(233,213,255,0.42),rgba(196,181,253,0.16),transparent)]"
-            />
-
-            <div className="matrix-panel absolute inset-0 bottom-0 top-[27px] flex flex-col overflow-hidden border-x-0 border-t border-b-0 border-[rgba(196,181,253,0.16)] shadow-[0_-18px_80px_rgba(0,0,0,0.72)]">
-
-              <div className="flex min-h-0 flex-1 flex-col bg-[#020703]">
-                {Object.keys(worktree.runtime.allocatedPorts).length > 0 ? (
-                  <p className="border-b border-[rgba(196,181,253,0.18)] px-4 py-2 text-xs text-[#c4b5fd]">
-                    Reserved local ports are held for this runtime and injected
-                    into the tmux-backed shell.
-                  </p>
-                ) : null}
-
-                <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-                  <div
-                    ref={hostRef}
-                    className="h-full w-full overflow-hidden border-b border-b-[rgba(196,181,253,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(243,232,255,0.08)]"
-                    style={{ contain: "layout size" }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {typeof document !== "undefined" && drawer
+        ? createPortal(drawer, document.body)
+        : drawer}
     </>
   );
 }

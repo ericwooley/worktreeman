@@ -37,4 +37,9 @@ export default defineConfig({
     outDir: path.resolve(__dirname, "dist/docs"),
     emptyOutDir: false,
   },
+  server: {
+    watch: {
+      ignored: ["**/dist/**", "**/.worktrees/**"],
+    },
+  },
 });

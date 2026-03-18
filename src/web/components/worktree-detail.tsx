@@ -6,8 +6,6 @@ import { WorktreeTerminal } from "./worktree-terminal";
 
 interface WorktreeDetailProps {
   worktree: WorktreeRecord | null;
-  worktrees: WorktreeRecord[];
-  onSelectWorktree: (branch: string) => void;
   worktreeCount: number;
   runningCount: number;
   selectedStatusLabel: string;
@@ -32,8 +30,6 @@ interface WorktreeDetailProps {
 
 export function WorktreeDetail({
   worktree,
-  worktrees,
-  onSelectWorktree,
   worktreeCount,
   runningCount,
   selectedStatusLabel,
@@ -63,20 +59,6 @@ export function WorktreeDetail({
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
-  const selectedWorktree = useMemo(
-    () => worktrees.find((entry) => entry.branch === worktree?.branch) ?? null,
-    [worktree?.branch, worktrees],
-  );
-  const worktreeOptions = useMemo<MatrixDropdownOption[]>(
-    () => worktrees.map((entry) => ({
-      value: entry.branch,
-      label: entry.branch,
-      description: entry.runtime ? "Runtime active" : "Idle",
-      badgeLabel: entry.runtime ? "Active" : "Idle",
-      badgeTone: entry.runtime ? "active" : "idle",
-    })),
-    [worktrees],
-  );
   const attachCommand = worktree?.runtime
     ? `tmux attach-session -t '${worktree.runtime.tmuxSession.replace(/'/g, `'\\''`)}'`
     : null;
@@ -229,19 +211,12 @@ export function WorktreeDetail({
                 <p className="mt-1 text-sm text-[#9cd99c]">
                   {worktree
                     ? "The shell is the primary surface. Runtime details stay visible, but the terminal owns the layout."
-                    : "Choose a worktree from the environment picker to open its terminal session."}
+                    : "Choose a worktree from the worktree picker to open its terminal session."}
                 </p>
               </div>
 
               <div className="flex min-w-0 flex-col gap-2 xl:max-w-[52rem] xl:items-end">
-                <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[34rem] xl:grid-cols-[minmax(14rem,1.2fr)_repeat(3,minmax(0,1fr))]">
-                  <MatrixDropdown
-                    label="Environment"
-                    value={selectedWorktree?.branch ?? null}
-                    options={worktreeOptions}
-                    placeholder="Select worktree"
-                    onChange={onSelectWorktree}
-                  />
+                <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[24rem] xl:grid-cols-[repeat(3,minmax(0,1fr))]">
                   <MatrixMetric label="Worktrees" value={String(worktreeCount)} />
                   <MatrixMetric label="Running" value={String(runningCount)} />
                   <MatrixMetric label="Selected" value={selectedStatusLabel} />
@@ -318,7 +293,7 @@ export function WorktreeDetail({
                   <p className="matrix-kicker">Background commands</p>
                   <h2 className="mt-2 text-2xl font-semibold text-[#ecffec] sm:text-3xl">Process control</h2>
                   <p className="mt-2 text-sm text-[#9cd99c]">
-                    Long-running dev services live here. `docker compose up` is runtime-backed; other commands run under PM2 after the environment is created.
+                    Long-running dev services live here. `docker compose up` is runtime-backed; other commands start under PM2 automatically once Docker/worktree runtime setup completes.
                   </p>
                 </div>
 

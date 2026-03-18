@@ -82,6 +82,17 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
   const port = options.port ?? Number(process.env.PORT || 4312);
 
+  const formatStartupError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : null;
+
+    if (code === "EADDRINUSE") {
+      return `Port ${port} is already in use on 127.0.0.1. Stop the existing server or start worktreemanager with --port <port>.`;
+    }
+
+    return message;
+  };
+
   const loadShutdownConfig = () => loadConfig({
     path: options.repo.configPath,
     repoRoot: options.repo.repoRoot,
@@ -197,6 +208,28 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     process.stdout.write("[shutdown] Shutdown complete.\n");
   };
 
+  const cleanupFailedStart = async (error: unknown) => {
+    process.stderr.write(`[startup] ${formatStartupError(error)}\n`);
+
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((closeError) => {
+          if (closeError) {
+            reject(closeError);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    }
+
+    if (vite) {
+      process.stdout.write("[startup] Closing Vite dev server after failed startup...\n");
+      await vite.close();
+    }
+  };
+
   try {
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
@@ -224,8 +257,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       await open(url);
     }
   } catch (error) {
-    await close().catch(() => undefined);
-    throw error;
+    await cleanupFailedStart(error).catch(() => undefined);
+    throw new Error(formatStartupError(error));
   }
 
   return {

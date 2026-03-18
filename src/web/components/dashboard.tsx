@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useDashboardState } from "../hooks/use-dashboard-state";
+import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixModal } from "./matrix-primitives";
 import { WorktreeDetail } from "./worktree-detail";
 
 export function Dashboard() {
+  const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
   const initialParams = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
   const {
     state,
@@ -28,7 +30,6 @@ export function Dashboard() {
     subscribeToBackgroundLogs,
     refresh,
   } = useDashboardState();
-  const [branch, setBranch] = useState("");
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
   const [activeTab, setActiveTab] = useState<"shell" | "background" | "git">(
     initialParams.get("tab") === "git"
@@ -39,6 +40,8 @@ export function Dashboard() {
   );
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialParams.get("terminal") === "open");
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
+  const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
+  const [branch, setBranch] = useState("");
 
   const selected = useMemo(
     () => {
@@ -52,6 +55,24 @@ export function Dashboard() {
         ?? null;
     },
     [selectedBranch, state?.worktrees],
+  );
+
+  const worktreeOptions = useMemo<MatrixDropdownOption[]>(
+    () => [
+      ...((state?.worktrees ?? []).map((entry): MatrixDropdownOption => ({
+        value: entry.branch,
+        label: entry.branch,
+        description: entry.runtime ? "Runtime active" : "Idle",
+        badgeLabel: entry.runtime ? "Active" : "Idle",
+        badgeTone: entry.runtime ? "active" : "idle",
+      }))),
+      {
+        value: CREATE_WORKTREE_OPTION_VALUE,
+        label: "+new worktree",
+        description: "Create a new branch worktree",
+      },
+    ],
+    [state?.worktrees],
   );
 
   useEffect(() => {
@@ -89,8 +110,11 @@ export function Dashboard() {
       return;
     }
 
-    await create(branch.trim());
+    const nextBranch = branch.trim();
+    await create(nextBranch);
+    setSelectedBranch(nextBranch);
     setBranch("");
+    setCreateWorktreeModalOpen(false);
   };
 
   const confirmDelete = async () => {
@@ -105,7 +129,7 @@ export function Dashboard() {
   return (
     <main className="relative min-h-screen overflow-hidden px-0 pt-0 pb-3 text-[#d7ffd7] sm:pb-4 lg:pb-6">
       <div className="relative z-10 flex w-full flex-col gap-3">
-        <header className="matrix-panel rounded-none border-x-0 p-3 sm:p-4">
+        <header className="matrix-panel relative z-30 rounded-none border-x-0 p-3 sm:p-4">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0 flex-1 space-y-1">
               <p className="matrix-kicker">Local orchestration cockpit</p>
@@ -119,34 +143,31 @@ export function Dashboard() {
               </div>
             </div>
 
-            <div className="flex w-full flex-col gap-2 pt-12 xl:max-w-[40rem]">
-              <form className="flex w-full flex-col gap-2 sm:flex-row" onSubmit={onSubmit}>
-                <input
-                  value={branch}
-                  onChange={(event) => setBranch(event.target.value)}
-                  placeholder="feature/branch-name"
-                  className="matrix-input h-10 flex-1 rounded-none px-3 text-sm outline-none"
+            <div className="flex w-full flex-col gap-2 pt-12 xl:max-w-[32rem] xl:items-end">
+              <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[26rem] xl:grid-cols-[minmax(16rem,1fr)_auto]">
+                <MatrixDropdown
+                  label="Worktree"
+                  value={selected?.branch ?? null}
+                  options={worktreeOptions}
+                  placeholder="Select worktree"
+                  onChange={(value) => {
+                    if (value === CREATE_WORKTREE_OPTION_VALUE) {
+                      setCreateWorktreeModalOpen(true);
+                      return;
+                    }
+
+                    setSelectedBranch(value);
+                  }}
                 />
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    className="matrix-button h-10 flex-1 rounded-none px-3 text-sm font-semibold sm:flex-none"
-                  >
-                    Create
-                  </button>
-                  <button className="matrix-button h-10 rounded-none px-3 text-sm" onClick={() => void refresh()} type="button">
-                    Refresh
-                  </button>
-                </div>
-              </form>
-              <p className="text-xs text-[#75bb75]">
-                Pick a worktree from the shell header and the terminal keeps full width.
-              </p>
+                <button className="matrix-button h-full min-h-[100%] rounded-none px-3 py-2 text-sm" onClick={() => void refresh()} type="button">
+                  Refresh
+                </button>
+              </div>
             </div>
           </div>
         </header>
 
-        <section className="min-w-0">
+        <section className="relative z-10 min-w-0">
           {shutdownStatus?.active || shutdownStatus?.completed || shutdownStatus?.failed ? (
             <div className="matrix-panel mb-4 rounded-none border-x-0 border-[rgba(255,196,87,0.24)] bg-[rgba(27,16,1,0.9)] p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -190,8 +211,6 @@ export function Dashboard() {
 
           <WorktreeDetail
             worktree={selected}
-            worktrees={state?.worktrees ?? []}
-            onSelectWorktree={setSelectedBranch}
             worktreeCount={state?.worktrees.length ?? 0}
             runningCount={(state?.worktrees ?? []).filter((entry) => entry.runtime).length}
             selectedStatusLabel={selected?.branch ? "Live" : "None"}
@@ -220,7 +239,7 @@ export function Dashboard() {
         <MatrixModal
           kicker="Confirm delete"
           title={<>Delete worktree `{deleteConfirmBranch}`?</>}
-          description="This removes the worktree, stops any running environment for it, and clears its persisted tmux session."
+          description="This removes the worktree, stops any running worktree runtime for it, and clears its persisted tmux session."
           tone="danger"
           closeLabel="Cancel"
           maxWidthClass="max-w-xl"
@@ -247,6 +266,54 @@ export function Dashboard() {
           <div className="border border-[rgba(255,109,109,0.18)] bg-[rgba(0,0,0,0.28)] p-3 font-mono text-sm text-[#ffd0d0]">
             This action cannot be undone from the UI.
           </div>
+        </MatrixModal>
+      ) : null}
+
+      {createWorktreeModalOpen ? (
+        <MatrixModal
+          kicker="New worktree"
+          title="Create a worktree"
+          description="Create a new branch worktree and switch the worktree picker to it."
+          closeLabel="Cancel"
+          maxWidthClass="max-w-lg"
+          onClose={() => {
+            setCreateWorktreeModalOpen(false);
+            setBranch("");
+          }}
+          footer={(
+            <>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => {
+                  setCreateWorktreeModalOpen(false);
+                  setBranch("");
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                form="create-worktree-form"
+                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+              >
+                Create worktree
+              </button>
+            </>
+          )}
+        >
+          <form id="create-worktree-form" className="space-y-3" onSubmit={onSubmit}>
+            <label className="block">
+              <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Branch name</span>
+              <input
+                value={branch}
+                onChange={(event) => setBranch(event.target.value)}
+                placeholder="feature/branch-name"
+                className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
+                autoFocus
+              />
+            </label>
+          </form>
         </MatrixModal>
       ) : null}
 

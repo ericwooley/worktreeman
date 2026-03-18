@@ -68,11 +68,19 @@ const startCommand = command({
     const repo = await findRepoContext(cwd, {
       configRef: configRef ?? process.env.WORKTREEMANAGER_CONFIG_REF,
     });
-    const server = await startServer({
-      repo,
-      port,
-      openBrowser: noOpen ? false : open,
-    });
+    let server: Awaited<ReturnType<typeof startServer>>;
+
+    try {
+      server = await startServer({
+        repo,
+        port,
+        openBrowser: noOpen ? false : open,
+      });
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+      return;
+    }
 
     process.stdout.write(
       `worktreemanager running at http://127.0.0.1:${server.port}\n`,

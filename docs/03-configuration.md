@@ -1,5 +1,30 @@
 # Configuration
 
+## Contents
+
+- [Schema and editor support](#schema-and-editor-support)
+- [Recommended full example](#recommended-full-example)
+- [How configuration flows at runtime](#how-configuration-flows-at-runtime)
+- [Compose port declaration recommendation](#compose-port-declaration-recommendation)
+- [Top-level fields](#top-level-fields)
+- [`env`](#env)
+- [`runtimePorts`](#runtimeports)
+- [`derivedEnv`](#derivedenv)
+- [`quickLinks`](#quicklinks)
+- [`startupCommands`](#startupcommands)
+- [`backgroundCommands`](#backgroundcommands)
+- [`worktrees`](#worktrees)
+  - [`worktrees.baseDir`](#worktreesbasedir)
+- [`docker`](#docker)
+  - [`docker.composeFile`](#dockercomposefile)
+  - [`docker.projectPrefix`](#dockerprojectprefix)
+  - [`docker.portMappings`](#dockerportmappings)
+  - [`docker.servicePorts`](#dockerserviceports)
+- [Practical patterns](#practical-patterns)
+- [Minimal app with one dev server](#minimal-app-with-one-dev-server)
+- [App plus Docker database](#app-plus-docker-database)
+- [Notes on `init`](#notes-on-init)
+
 `worktreemanager` reads configuration from one of these files at the repository root:
 
 - `worktree.yml`
