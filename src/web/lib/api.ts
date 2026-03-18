@@ -1,5 +1,6 @@
 import type {
   ApiStateResponse,
+  BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   ShutdownStatus,
@@ -9,6 +10,10 @@ import type {
 
 export interface EnvSyncResponse {
   copiedFiles: string[];
+}
+
+function normalizeBackgroundCommandName(commandName: string): string {
+  return commandName === "Environment" ? "docker compose" : commandName;
 }
 
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
@@ -97,21 +102,53 @@ export function getBackgroundCommands(branch: string): Promise<BackgroundCommand
 }
 
 export function startBackgroundCommand(branch: string, commandName: string): Promise<BackgroundCommandState[]> {
+  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
   return request<BackgroundCommandState[]>(
-    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/start`,
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/start`,
     { method: "POST" },
   );
 }
 
 export function stopBackgroundCommand(branch: string, commandName: string): Promise<BackgroundCommandState[]> {
+  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
   return request<BackgroundCommandState[]>(
-    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/stop`,
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/stop`,
     { method: "POST" },
   );
 }
 
 export function getBackgroundCommandLogs(branch: string, commandName: string): Promise<BackgroundCommandLogsResponse> {
+  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
   return request<BackgroundCommandLogsResponse>(
-    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/logs`,
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/logs`,
   );
+}
+
+export function subscribeToBackgroundCommandLogs(
+  branch: string,
+  commandName: string,
+  onEvent: (event: BackgroundCommandLogStreamEvent) => void,
+): () => void {
+  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
+  let closed = false;
+  const source = new EventSource(
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/logs/stream`,
+  );
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as BackgroundCommandLogStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+
+    source.close();
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
 }

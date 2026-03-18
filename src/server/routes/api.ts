@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import type {
   ApiStateResponse,
+  BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   CreateWorktreeRequest,
@@ -13,7 +14,9 @@ import {
   getBackgroundCommandEntries,
   isRuntimeManagedBackgroundCommand,
   listBackgroundCommands,
+  normalizeBackgroundCommandName,
   startBackgroundCommand,
+  streamBackgroundCommandLogs,
   stopAllBackgroundCommands,
   stopBackgroundCommand,
 } from "../services/background-command-service.js";
@@ -280,7 +283,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const decodedName = decodeURIComponent(req.params.name);
+      const decodedName = normalizeBackgroundCommandName(decodeURIComponent(req.params.name));
       const command = getBackgroundCommandEntries(config)[decodedName];
       if (!command) {
         res.status(404).json({ message: `Unknown background command ${decodedName}` });
@@ -323,7 +326,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const decodedName = decodeURIComponent(req.params.name);
+      const decodedName = normalizeBackgroundCommandName(decodeURIComponent(req.params.name));
       const command = getBackgroundCommandEntries(config)[decodedName];
       if (!command) {
         res.status(404).json({ message: `Unknown background command ${decodedName}` });
@@ -369,9 +372,71 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         config,
         worktree.branch,
         worktree.worktreePath,
-        decodeURIComponent(req.params.name),
+        normalizeBackgroundCommandName(decodeURIComponent(req.params.name)),
       );
       res.json(logs);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/worktrees/:branch/background-commands/:name/logs/stream", async (req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const commandName = normalizeBackgroundCommandName(decodeURIComponent(req.params.name));
+      const command = getBackgroundCommandEntries(config)[commandName];
+      if (!command) {
+        res.status(404).json({ message: `Unknown background command ${commandName}` });
+        return;
+      }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+
+      const writeEvent = (payload: BackgroundCommandLogStreamEvent) => {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      };
+
+      const history = await getBackgroundCommandLogs(config, worktree.branch, worktree.worktreePath, commandName);
+      writeEvent({ type: "snapshot", commandName: history.commandName, lines: history.lines });
+
+      const dispose = await streamBackgroundCommandLogs({
+        config,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        commandName,
+        onEvent: (event) => writeEvent(event),
+        onError: (message) => writeEvent({
+          type: "append",
+          commandName,
+          lines: [{
+            id: `stream-error:${Date.now()}`,
+            source: "stderr",
+            text: message,
+            timestamp: new Date().toISOString(),
+          }],
+        }),
+      });
+
+      const keepAlive = setInterval(() => {
+        res.write(": keep-alive\n\n");
+      }, 15000);
+
+      req.on("close", () => {
+        clearInterval(keepAlive);
+        dispose();
+        res.end();
+      });
     } catch (error) {
       next(error);
     }

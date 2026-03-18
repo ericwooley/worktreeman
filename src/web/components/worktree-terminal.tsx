@@ -8,6 +8,7 @@ import type {
   TmuxClientInfo,
 } from "@shared/types";
 import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
+import { MatrixBadge } from "./matrix-primitives";
 import "@xterm/xterm/css/xterm.css";
 
 const TERMINAL_DRAWER_VISIBLE_HEIGHT = 28;
@@ -16,10 +17,12 @@ export function WorktreeTerminal({
   worktree,
   isTerminalVisible,
   onTerminalVisibilityChange,
+  showSessionInfo = true,
 }: {
   worktree: WorktreeRecord | null;
   isTerminalVisible: boolean;
   onTerminalVisibilityChange: (visible: boolean) => void;
+  showSessionInfo?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession ?? null;
@@ -311,6 +314,7 @@ export function WorktreeTerminal({
 
   return (
     <>
+      {showSessionInfo ? (
       <section className="matrix-panel min-w-0 overflow-hidden rounded-none">
         <div className="border-b border-[rgba(74,255,122,0.14)] px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -385,9 +389,7 @@ export function WorktreeTerminal({
                             </p>
                           </div>
                           {isCurrent ? (
-                            <span className="border border-[rgba(74,255,122,0.16)] px-2 py-1 text-[11px] text-[#4aff7a]">
-                              This session
-                            </span>
+                            <MatrixBadge tone="active">This session</MatrixBadge>
                           ) : (
                             <button
                               type="button"
@@ -419,6 +421,7 @@ export function WorktreeTerminal({
           </div>
         </div>
       </section>
+      ) : null}
 
       {worktree?.runtime ? (
         <div

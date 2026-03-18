@@ -112,6 +112,8 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
     runtimePorts: Array.isArray(parsed.runtimePorts)
       ? parsed.runtimePorts.map((entry) => String(entry)).filter(Boolean)
       : [],
+    derivedEnv: ensureRecord(parsed.derivedEnv, "derivedEnv"),
+    quickLinks: ensureRecord(parsed.quickLinks, "quickLinks"),
     startupCommands,
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
     worktrees: {
@@ -132,8 +134,6 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
           }) ?? [])
         : [],
       servicePorts: parseNamedServicePorts((docker as { servicePorts?: unknown }).servicePorts),
-      derivedEnv: ensureRecord((docker as { derivedEnv?: unknown }).derivedEnv, "docker.derivedEnv"),
-      quickLinks: ensureRecord((docker as { quickLinks?: unknown }).quickLinks, "docker.quickLinks"),
     },
   };
 }

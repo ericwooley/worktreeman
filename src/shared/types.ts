@@ -17,8 +17,6 @@ export interface DockerConfig {
   projectPrefix?: string;
   portMappings?: DockerPortMapping[];
   servicePorts?: Record<string, NamedServicePort>;
-  derivedEnv?: Record<string, string>;
-  quickLinks?: Record<string, string>;
 }
 
 export interface BackgroundCommandConfigEntry {
@@ -28,6 +26,8 @@ export interface BackgroundCommandConfigEntry {
 export interface WorktreeManagerConfig {
   env: Record<string, string>;
   runtimePorts: string[];
+  derivedEnv: Record<string, string>;
+  quickLinks: Record<string, string>;
   startupCommands: string[];
   backgroundCommands: Record<string, BackgroundCommandConfigEntry>;
   worktrees: {
@@ -80,6 +80,12 @@ export interface BackgroundCommandLogLine {
 }
 
 export interface BackgroundCommandLogsResponse {
+  commandName: string;
+  lines: BackgroundCommandLogLine[];
+}
+
+export interface BackgroundCommandLogStreamEvent {
+  type: "snapshot" | "append";
   commandName: string;
   lines: BackgroundCommandLogLine[];
 }

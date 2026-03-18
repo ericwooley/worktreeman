@@ -6,6 +6,7 @@ import { listWorktrees } from "./git-service.js";
 import { runCommand } from "../utils/process.js";
 
 const DEFAULT_INIT_ENV_NAME_STYLE = "service-port-number" as const;
+const WORKTREE_CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json";
 
 const COMPOSE_CANDIDATES = [
   "docker-compose.yml",
@@ -226,6 +227,8 @@ async function buildConfigYaml(
       NODE_ENV: "development",
     },
     runtimePorts,
+    derivedEnv: {},
+    quickLinks: {},
     backgroundCommands: {},
     worktrees: {
       baseDir,
@@ -235,8 +238,6 @@ async function buildConfigYaml(
       projectPrefix: "wt",
       portMappings,
       servicePorts: {},
-      derivedEnv: {},
-      quickLinks: {},
     },
     startupCommands: [],
   };
@@ -246,6 +247,10 @@ async function buildConfigYaml(
     lineWidth: 120,
     sortKeys: false,
   });
+}
+
+function withSchemaHeader(contents: string): string {
+  return `# yaml-language-server: $schema=${WORKTREE_CONFIG_SCHEMA_URL}\n\n${contents}`;
 }
 
 export async function initRepository(
@@ -296,7 +301,9 @@ export async function initRepository(
   }
 
   const compose = await detectComposeFile(worktreePath);
-  const contents = await buildConfigYaml(worktreePath, compose, baseDir, runtimePorts);
+  const contents = withSchemaHeader(
+    await buildConfigYaml(worktreePath, compose, baseDir, runtimePorts),
+  );
   await fs.writeFile(configPath, contents, "utf8");
 
   return {

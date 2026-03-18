@@ -134,9 +134,9 @@ export async function ensureDockerRuntime(
 
     const env = {
       ...baseEnv,
-      ...renderDerivedEnv(config.docker.derivedEnv ?? {}, baseEnv),
+      ...renderDerivedEnv(config.derivedEnv ?? {}, baseEnv),
     };
-    const quickLinks = renderDerivedEnv(config.docker.quickLinks ?? {}, env);
+    const quickLinks = renderDerivedEnv(config.quickLinks ?? {}, env);
 
     const injectedEnv = {
       ...process.env,

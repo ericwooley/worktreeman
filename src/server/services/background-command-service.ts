@@ -2,10 +2,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { spawn } from "node:child_process";
+import readline from "node:readline";
 import type {
   BackgroundCommandConfigEntry,
   BackgroundCommandLogLine,
   BackgroundCommandLogsResponse,
+  BackgroundCommandLogStreamEvent,
   BackgroundCommandState,
   WorktreeManagerConfig,
   WorktreeRuntime,
@@ -18,12 +21,16 @@ const DOCKER_COMPOSE_PATTERN = /^docker\s+compose\s+up(?:\s|$)/i;
 const PM2_NAMESPACE = "worktreemanager";
 const LOG_LINES_LIMIT = 400;
 export const INTEGRAL_ENVIRONMENT_COMMAND_NAME = "docker compose";
+export const LEGACY_INTEGRAL_ENVIRONMENT_COMMAND_NAME = "Environment";
+let streamedLogSequence = 0;
 
 interface Pm2ProcessDescription {
   name: string;
   pid?: number;
   status: string;
   createdAt?: string;
+  outLogPath?: string;
+  errLogPath?: string;
 }
 
 interface BackgroundCommandMetadata {
@@ -37,6 +44,12 @@ interface BackgroundCommandMetadata {
 
 function getPm2CommandName(branch: string, commandName: string): string {
   return `wtm:${branch}:${commandName}`;
+}
+
+export function normalizeBackgroundCommandName(commandName: string): string {
+  return commandName === LEGACY_INTEGRAL_ENVIRONMENT_COMMAND_NAME
+    ? INTEGRAL_ENVIRONMENT_COMMAND_NAME
+    : commandName;
 }
 
 export function getBackgroundCommandEntries(config: WorktreeManagerConfig): Record<string, BackgroundCommandConfigEntry> {
@@ -69,7 +82,7 @@ function buildBackgroundEnv(config: WorktreeManagerConfig, runtime: WorktreeRunt
 
   const env = {
     ...baseEnv,
-    ...renderDerivedEnv(config.docker.derivedEnv ?? {}, baseEnv),
+    ...renderDerivedEnv(config.derivedEnv ?? {}, baseEnv),
     ...runtime.env,
     WORKTREE_BRANCH: runtime.branch,
     WORKTREE_PATH: runtime.worktreePath,
@@ -103,8 +116,10 @@ async function listPm2Processes(cwd: string): Promise<Map<string, Pm2ProcessDesc
       ? new Date(pm2Env.pm_uptime).toISOString()
       : undefined;
     const status = typeof pm2Env.status === "string" ? pm2Env.status : "unknown";
+    const outLogPath = typeof pm2Env.pm_out_log_path === "string" ? pm2Env.pm_out_log_path : undefined;
+    const errLogPath = typeof pm2Env.pm_err_log_path === "string" ? pm2Env.pm_err_log_path : undefined;
 
-    entries.push([name, { name, pid, status, createdAt }]);
+    entries.push([name, { name, pid, status, createdAt, outLogPath, errLogPath }]);
   }
 
   return new Map(entries);
@@ -166,7 +181,8 @@ export async function startBackgroundCommand(options: {
   runtime: WorktreeRuntime | undefined;
   commandName: string;
 }): Promise<void> {
-  const entry = getBackgroundCommandEntries(options.config)[options.commandName];
+  const normalizedCommandName = normalizeBackgroundCommandName(options.commandName);
+  const entry = getBackgroundCommandEntries(options.config)[normalizedCommandName];
   if (!entry) {
     throw new Error(`Unknown background command ${options.commandName}.`);
   }
@@ -175,7 +191,7 @@ export async function startBackgroundCommand(options: {
     return;
   }
 
-  const processName = getPm2CommandName(options.branch, options.commandName);
+  const processName = getPm2CommandName(options.branch, normalizedCommandName);
   await runPm2(["delete", processName], options.worktreePath).catch(() => undefined);
 
   const runtime = options.runtime;
@@ -187,7 +203,7 @@ export async function startBackgroundCommand(options: {
   const env = buildBackgroundEnv(options.config, runtime);
   const metadata: BackgroundCommandMetadata = {
     branch: options.branch,
-    commandName: options.commandName,
+    commandName: normalizedCommandName,
     command: entry.command,
     worktreePath: options.worktreePath,
     composeProject: runtime.composeProject,
@@ -224,7 +240,7 @@ export async function startBackgroundCommand(options: {
 }
 
 export async function stopBackgroundCommand(branch: string, worktreePath: string, commandName: string): Promise<void> {
-  const processName = getPm2CommandName(branch, commandName);
+  const processName = getPm2CommandName(branch, normalizeBackgroundCommandName(commandName));
   await runPm2(["delete", processName], worktreePath);
   await deleteMetadata(processName);
 }
@@ -280,6 +296,17 @@ function buildRawLogLines(source: "stdout" | "stderr", raw: string): BackgroundC
     }));
 }
 
+function createStreamLogLine(source: "stdout" | "stderr", text: string): BackgroundCommandLogLine {
+  streamedLogSequence += 1;
+
+  return {
+    id: `${source}:stream:${streamedLogSequence}`,
+    source,
+    text,
+    timestamp: new Date().toISOString(),
+  };
+}
+
 function buildComposeProjectName(config: WorktreeManagerConfig, branch: string): string {
   return `${config.docker.projectPrefix ?? "wt"}-${sanitizeBranchName(branch)}`;
 }
@@ -295,13 +322,67 @@ function buildComposeLogsArgs(config: WorktreeManagerConfig, branch: string): st
   return args;
 }
 
+function buildComposeFollowLogsArgs(config: WorktreeManagerConfig, branch: string): string[] {
+  const args = ["compose", "-p", buildComposeProjectName(config, branch)];
+
+  if (config.docker.composeFile) {
+    args.push("-f", config.docker.composeFile);
+  }
+
+  args.push("logs", "--follow", "--tail", "0");
+  return args;
+}
+
+function bindLineStream(
+  stream: NodeJS.ReadableStream,
+  source: "stdout" | "stderr",
+  onLines: (lines: BackgroundCommandLogLine[]) => void,
+): () => void {
+  const lineReader = readline.createInterface({ input: stream });
+
+  lineReader.on("line", (line) => {
+    const text = line.trimEnd();
+    if (!text) {
+      return;
+    }
+
+    onLines([createStreamLogLine(source, text)]);
+  });
+
+  return () => {
+    lineReader.removeAllListeners();
+    lineReader.close();
+  };
+}
+
+function spawnTailFollower(
+  filePath: string,
+  source: "stdout" | "stderr",
+  onLines: (lines: BackgroundCommandLogLine[]) => void,
+): { child: ReturnType<typeof spawn>; dispose: () => void } {
+  const child = spawn("tail", ["-n", "0", "-F", filePath], {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  const disposeReader = bindLineStream(child.stdout, source, onLines);
+
+  return {
+    child,
+    dispose: () => {
+      disposeReader();
+      child.kill();
+    },
+  };
+}
+
 export async function getBackgroundCommandLogs(
   config: WorktreeManagerConfig,
   branch: string,
   worktreePath: string,
   commandName: string,
 ): Promise<BackgroundCommandLogsResponse> {
-  const entry = getBackgroundCommandEntries(config)[commandName];
+  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
+  const entry = getBackgroundCommandEntries(config)[normalizedCommandName];
   if (!entry) {
     throw new Error(`Unknown background command ${commandName}.`);
   }
@@ -310,18 +391,85 @@ export async function getBackgroundCommandLogs(
     const { stdout, stderr } = await runCommand("docker", buildComposeLogsArgs(config, branch), { cwd: worktreePath }).catch(() => ({ stdout: "", stderr: "" }));
 
     return {
-      commandName,
+      commandName: normalizedCommandName,
       lines: [...buildRawLogLines("stdout", stdout), ...buildRawLogLines("stderr", stderr)].slice(-LOG_LINES_LIMIT),
     };
   }
 
-  const processName = getPm2CommandName(branch, commandName);
+  const processName = getPm2CommandName(branch, normalizedCommandName);
   const { stdout, stderr } = await runPm2(["logs", processName, "--nostream", "--lines", String(LOG_LINES_LIMIT)], worktreePath).catch(() => ({ stdout: "", stderr: "" }));
   const pm2Output = [stdout, stderr].filter(Boolean).join("\n").trim();
 
   return {
-    commandName,
+    commandName: normalizedCommandName,
     lines: parsePm2LogOutput(pm2Output),
+  };
+}
+
+export async function streamBackgroundCommandLogs(options: {
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  commandName: string;
+  onEvent: (event: BackgroundCommandLogStreamEvent) => void;
+  onError?: (message: string) => void;
+}): Promise<() => void> {
+  const normalizedCommandName = normalizeBackgroundCommandName(options.commandName);
+  const entry = getBackgroundCommandEntries(options.config)[normalizedCommandName];
+  if (!entry) {
+    throw new Error(`Unknown background command ${options.commandName}.`);
+  }
+
+  if (isRuntimeManagedBackgroundCommand(entry.command)) {
+    const child = spawn("docker", buildComposeFollowLogsArgs(options.config, options.branch), {
+      cwd: options.worktreePath,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const disposeStdout = bindLineStream(child.stdout, "stdout", (lines) => {
+      options.onEvent({ type: "append", commandName: normalizedCommandName, lines });
+    });
+    const disposeStderr = bindLineStream(child.stderr, "stderr", (lines) => {
+      options.onEvent({ type: "append", commandName: normalizedCommandName, lines });
+    });
+
+    child.on("error", (error) => {
+      options.onError?.(`Background log stream failed for ${normalizedCommandName}: ${error.message}`);
+    });
+
+    return () => {
+      disposeStdout();
+      disposeStderr();
+      child.kill();
+    };
+  }
+
+  const processName = getPm2CommandName(options.branch, normalizedCommandName);
+  const processInfo = (await listPm2Processes(options.worktreePath)).get(processName);
+
+  if (!processInfo) {
+    return () => undefined;
+  }
+
+  const followers = [
+    processInfo.outLogPath ? spawnTailFollower(processInfo.outLogPath, "stdout", (lines) => {
+      options.onEvent({ type: "append", commandName: normalizedCommandName, lines });
+    }) : null,
+    processInfo.errLogPath ? spawnTailFollower(processInfo.errLogPath, "stderr", (lines) => {
+      options.onEvent({ type: "append", commandName: normalizedCommandName, lines });
+    }) : null,
+  ].filter((entry): entry is { child: ReturnType<typeof spawn>; dispose: () => void } => entry !== null);
+
+  for (const follower of followers) {
+    follower.child.on("error", (error) => {
+      options.onError?.(`Background log stream failed for ${normalizedCommandName}: ${error.message}`);
+    });
+  }
+
+  return () => {
+    for (const follower of followers) {
+      follower.dispose();
+    }
   };
 }
 

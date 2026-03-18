@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json",
+  "title": "Worktree Manager Config",
+  "description": "Schema for worktree.yml / worktreemanager.yml configuration files.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "env": {
+      "type": "object",
+      "description": "Static environment variables injected into every runtime.",
+      "default": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "runtimePorts": {
+      "type": "array",
+      "description": "Environment variable names that should receive allocated free local ports.",
+      "default": [],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "derivedEnv": {
+      "type": "object",
+      "description": "Environment variables rendered from other env and discovered port values.",
+      "default": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "quickLinks": {
+      "type": "object",
+      "description": "UI links rendered after runtime env and derived env are assembled.",
+      "default": {},
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "startupCommands": {
+      "type": "array",
+      "description": "Commands run inside the worktree after the environment starts.",
+      "default": [],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "backgroundCommands": {
+      "type": "object",
+      "description": "Named long-running commands shown in the Background commands tab.",
+      "default": {},
+      "additionalProperties": {
+        "$ref": "#/$defs/backgroundCommandEntry"
+      }
+    },
+    "worktrees": {
+      "$ref": "#/$defs/worktreesConfig"
+    },
+    "docker": {
+      "$ref": "#/$defs/dockerConfig"
+    }
+  },
+  "$defs": {
+    "protocol": {
+      "type": "string",
+      "enum": [
+        "tcp",
+        "udp"
+      ],
+      "default": "tcp"
+    },
+    "backgroundCommandEntry": {
+      "description": "A named background command. A bare string is shorthand for { command: <string> }.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "command"
+          ],
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "worktreesConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "baseDir": {
+          "type": "string",
+          "description": "Directory where git worktrees are created.",
+          "default": ".worktrees"
+        }
+      },
+      "required": [
+        "baseDir"
+      ]
+    },
+    "dockerPortMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "containerPort",
+        "envName"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "minLength": 1
+        },
+        "containerPort": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "envName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "namedServicePort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "containerPort"
+      ],
+      "properties": {
+        "service": {
+          "type": "string",
+          "minLength": 1
+        },
+        "containerPort": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "protocol": {
+          "$ref": "#/$defs/protocol"
+        },
+        "envName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "dockerConfig": {
+      "type": "object",
+      "description": "Docker Compose-specific configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "composeFile": {
+          "type": "string",
+          "description": "Compose file to run for the environment."
+        },
+        "projectPrefix": {
+          "type": "string",
+          "description": "Prefix used for branch-scoped compose project names.",
+          "default": "wt"
+        },
+        "portMappings": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/dockerPortMapping"
+          }
+        },
+        "servicePorts": {
+          "type": "object",
+          "description": "Named service/container ports discovered from Docker at runtime.",
+          "default": {},
+          "additionalProperties": {
+            "$ref": "#/$defs/namedServicePort"
+          }
+        }
+      }
+    }
+  }
+}

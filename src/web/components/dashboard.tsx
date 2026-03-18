@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useDashboardState } from "../hooks/use-dashboard-state";
+import { MatrixModal } from "./matrix-primitives";
 import { WorktreeDetail } from "./worktree-detail";
 
 export function Dashboard() {
@@ -24,6 +25,7 @@ export function Dashboard() {
     startBackgroundCommand,
     stopBackgroundCommand,
     loadBackgroundLogs,
+    subscribeToBackgroundLogs,
     refresh,
   } = useDashboardState();
   const [branch, setBranch] = useState("");
@@ -208,38 +210,23 @@ export function Dashboard() {
             onStartBackgroundCommand={startBackgroundCommand}
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
+            onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
           />
         </section>
       </div>
 
       {deleteConfirmBranch ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(1,7,3,0.82)] p-4 backdrop-blur-sm">
-          <div className="matrix-panel w-full max-w-xl border border-[rgba(255,109,109,0.22)] bg-[rgba(17,6,6,0.96)] p-4 sm:p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="matrix-kicker text-[#ff9f9f]">Confirm delete</p>
-                <h2 className="mt-2 text-xl font-semibold text-[#ffe3e3]">
-                  Delete worktree `{deleteConfirmBranch}`?
-                </h2>
-                <p className="mt-2 text-sm text-[#ffb4b4]">
-                  This removes the worktree, stops any running environment for it, and clears its persisted tmux session.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="matrix-button rounded-none px-3 py-2 text-sm"
-                onClick={() => setDeleteConfirmBranch(null)}
-              >
-                Cancel
-              </button>
-            </div>
-
-            <div className="mt-4 border border-[rgba(255,109,109,0.18)] bg-[rgba(0,0,0,0.28)] p-3 font-mono text-sm text-[#ffd0d0]">
-              This action cannot be undone from the UI.
-            </div>
-
-            <div className="mt-4 flex justify-end gap-2">
+        <MatrixModal
+          kicker="Confirm delete"
+          title={<>Delete worktree `{deleteConfirmBranch}`?</>}
+          description="This removes the worktree, stops any running environment for it, and clears its persisted tmux session."
+          tone="danger"
+          closeLabel="Cancel"
+          maxWidthClass="max-w-xl"
+          onClose={() => setDeleteConfirmBranch(null)}
+          footer={(
+            <>
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm"
@@ -254,50 +241,38 @@ export function Dashboard() {
               >
                 Delete worktree
               </button>
-            </div>
+            </>
+          )}
+        >
+          <div className="border border-[rgba(255,109,109,0.18)] bg-[rgba(0,0,0,0.28)] p-3 font-mono text-sm text-[#ffd0d0]">
+            This action cannot be undone from the UI.
           </div>
-        </div>
+        </MatrixModal>
       ) : null}
 
       {lastEnvSync ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(1,7,3,0.82)] p-4 backdrop-blur-sm">
-          <div className="matrix-panel w-full max-w-2xl border border-[rgba(74,255,122,0.18)] bg-[rgba(2,7,3,0.96)] p-4 sm:p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="matrix-kicker">Env sync output</p>
-                <h2 className="mt-2 text-xl font-semibold text-[#ecffec]">
-                  Synced env files for {lastEnvSync.branch}
-                </h2>
-                <p className="mt-2 text-sm text-[#9cd99c]">
-                  {lastEnvSync.copiedFiles.length > 0
-                    ? "These files were copied from the shared config source into the selected worktree."
-                    : "No .env files were found to copy from the shared config source."}
-                </p>
+        <MatrixModal
+          kicker="Env sync output"
+          title={<>Synced env files for {lastEnvSync.branch}</>}
+          description={lastEnvSync.copiedFiles.length > 0
+            ? "These files were copied from the shared config source into the selected worktree."
+            : "No .env files were found to copy from the shared config source."}
+          onClose={clearLastEnvSync}
+        >
+          <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.28)] p-3">
+            {lastEnvSync.copiedFiles.length > 0 ? (
+              <div className="max-h-[50vh] overflow-auto font-mono text-sm text-[#d7ffd7]">
+                {lastEnvSync.copiedFiles.map((filePath) => (
+                  <div key={filePath} className="border-b border-[rgba(74,255,122,0.08)] py-2 last:border-b-0">
+                    {filePath}
+                  </div>
+                ))}
               </div>
-              <button
-                type="button"
-                className="matrix-button rounded-none px-3 py-2 text-sm"
-                onClick={clearLastEnvSync}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="mt-4 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.28)] p-3">
-              {lastEnvSync.copiedFiles.length > 0 ? (
-                <div className="max-h-[50vh] overflow-auto font-mono text-sm text-[#d7ffd7]">
-                  {lastEnvSync.copiedFiles.map((filePath) => (
-                    <div key={filePath} className="border-b border-[rgba(74,255,122,0.08)] py-2 last:border-b-0">
-                      {filePath}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="font-mono text-sm text-[#7fe19e]">No matching `.env*` files found.</p>
-              )}
-            </div>
+            ) : (
+              <p className="font-mono text-sm text-[#7fe19e]">No matching `.env*` files found.</p>
+            )}
           </div>
-        </div>
+        </MatrixModal>
       ) : null}
     </main>
   );

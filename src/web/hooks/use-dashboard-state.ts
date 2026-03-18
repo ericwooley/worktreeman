@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ApiStateResponse, BackgroundCommandLogsResponse, BackgroundCommandState, ShutdownStatus } from "@shared/types";
+import type {
+  ApiStateResponse,
+  BackgroundCommandLogStreamEvent,
+  BackgroundCommandLogsResponse,
+  BackgroundCommandState,
+  ShutdownStatus,
+} from "@shared/types";
 import {
   createWorktree,
   deleteWorktree,
@@ -10,6 +16,7 @@ import {
   startRuntime,
   stopBackgroundCommand as stopBackgroundProcess,
   stopRuntime,
+  subscribeToBackgroundCommandLogs,
   subscribeToShutdownStatus,
   syncEnvFiles,
   type EnvSyncResponse,
@@ -43,6 +50,37 @@ export function useDashboardState() {
   }, [refresh]);
 
   useEffect(() => subscribeToShutdownStatus(setShutdownStatus), []);
+
+  const appendBackgroundLogs = useCallback((event: BackgroundCommandLogStreamEvent) => {
+    setBackgroundLogs((current) => {
+      if (event.type === "snapshot") {
+        return {
+          commandName: event.commandName,
+          lines: event.lines,
+        };
+      }
+
+      if (!current || current.commandName !== event.commandName) {
+        return {
+          commandName: event.commandName,
+          lines: event.lines,
+        };
+      }
+
+      return {
+        commandName: current.commandName,
+        lines: [...current.lines, ...event.lines].slice(-800),
+      };
+    });
+  }, []);
+
+  const clearLastEnvSync = useCallback(() => {
+    setLastEnvSync(null);
+  }, []);
+
+  const clearBackgroundLogs = useCallback(() => {
+    setBackgroundLogs(null);
+  }, []);
 
   const actions = useMemo(
     () => ({
@@ -162,8 +200,14 @@ export function useDashboardState() {
           return { commandName, lines: [] };
         }
       },
+      subscribeToBackgroundLogs(branch: string, commandName: string, onEvent?: (event: BackgroundCommandLogStreamEvent) => void) {
+        return subscribeToBackgroundCommandLogs(branch, commandName, (event) => {
+          onEvent?.(event);
+          appendBackgroundLogs(event);
+        });
+      },
     }),
-    [refresh],
+    [appendBackgroundLogs, refresh],
   );
 
   return {
@@ -175,8 +219,8 @@ export function useDashboardState() {
     shutdownStatus,
     backgroundCommands,
     backgroundLogs,
-    clearLastEnvSync: () => setLastEnvSync(null),
-    clearBackgroundLogs: () => setBackgroundLogs(null),
+    clearLastEnvSync,
+    clearBackgroundLogs,
     refresh,
     ...actions,
   };

@@ -14,6 +14,8 @@ That lets Docker choose an open host port while still giving `worktreemanager` a
 Example:
 
 ```yml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json
+
 env:
   NODE_ENV: development
   APP_NAME: my-app
@@ -21,6 +23,13 @@ env:
 runtimePorts:
   - PORT
   - VITE_PORT
+
+derivedEnv:
+  DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
+
+quickLinks:
+  App: http://localhost:${PORT}
+  API health: http://localhost:${BACKEND_SERVER_PORT}/health
 
 worktrees:
   baseDir: .worktrees
@@ -37,11 +46,6 @@ docker:
       service: api
       containerPort: 3000
       envName: BACKEND_SERVER_PORT
-  derivedEnv:
-    DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
-  quickLinks:
-    App: http://localhost:${PORT}
-    API health: http://localhost:${BACKEND_SERVER_PORT}/health
 
 startupCommands:
   - npm install
@@ -113,13 +117,13 @@ Example:
 BACKEND_SERVER_PORT=<resolved-host-port>
 ```
 
-## `docker.derivedEnv`
+## `derivedEnv`
 
 Derived environment variables are rendered after port discovery.
 
 Use this for full URLs, DSNs, and connection strings that depend on resolved host ports.
 
-## `docker.quickLinks`
+## `quickLinks`
 
 Quick links are rendered after runtime env and derived env are assembled.
 
