@@ -127,7 +127,10 @@ export function Dashboard() {
   };
 
   return (
-    <main className="relative min-h-screen overflow-hidden px-0 pt-0 pb-3 text-[#d7ffd7] sm:pb-4 lg:pb-6">
+    <main
+      className="relative min-h-screen overflow-hidden px-0 pt-0 text-[#d7ffd7]"
+      style={{ paddingBottom: "calc(var(--terminal-drawer-stowed-height) + var(--terminal-drawer-page-gap))" }}
+    >
       <div className="relative z-10 flex w-full flex-col gap-3">
         <header className="matrix-panel relative z-30 rounded-none border-x-0 p-3 sm:p-4">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -211,9 +214,18 @@ export function Dashboard() {
 
           <WorktreeDetail
             worktree={selected}
+            worktreeOptions={worktreeOptions}
             worktreeCount={state?.worktrees.length ?? 0}
             runningCount={(state?.worktrees ?? []).filter((entry) => entry.runtime).length}
             selectedStatusLabel={selected?.branch ? "Live" : "None"}
+            onSelectWorktree={(value) => {
+              if (value === CREATE_WORKTREE_OPTION_VALUE) {
+                setCreateWorktreeModalOpen(true);
+                return;
+              }
+
+              setSelectedBranch(value);
+            }}
             activeTab={activeTab}
             onTabChange={setActiveTab}
             isTerminalVisible={isTerminalVisible}

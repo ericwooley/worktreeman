@@ -17,6 +17,8 @@
   --green: #4aff7a;
   --green-dim: #2fa556;
   --code: #b9ffb9;
+  --terminal-drawer-stowed-height: 52px;
+  --terminal-drawer-page-gap: 24px;
 }
 
 body {

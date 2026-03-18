@@ -9,20 +9,25 @@ import type {
   TmuxClientInfo,
 } from "@shared/types";
 import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
+import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
 import "@xterm/xterm/css/xterm.css";
 
-const TERMINAL_DRAWER_VISIBLE_HEIGHT = 28;
+const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
 
 export function WorktreeTerminal({
   worktree,
   isTerminalVisible,
   onTerminalVisibilityChange,
+  worktreeOptions,
+  onSelectWorktree,
   showSessionInfo = true,
 }: {
   worktree: WorktreeRecord | null;
   isTerminalVisible: boolean;
   onTerminalVisibilityChange: (visible: boolean) => void;
+  worktreeOptions: MatrixDropdownOption[];
+  onSelectWorktree: (value: string) => void;
   showSessionInfo?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -52,32 +57,47 @@ export function WorktreeTerminal({
           : `translateY(calc(100dvh - ${TERMINAL_DRAWER_VISIBLE_HEIGHT}px))`,
       }}
     >
-      <div className="relative h-full">
-        <button
-          type="button"
-          aria-expanded={isTerminalVisible}
-          className="group absolute left-1/2 top-0 z-20 h-7 w-[80px] -translate-x-1/2 overflow-hidden rounded-t-[16px] border border-b-0 border-[rgba(233,213,255,0.42)] bg-[linear-gradient(180deg,rgba(168,85,247,0.78),rgba(88,28,135,0.68))] text-left text-[#f8f3ff] shadow-[0_-6px_20px_rgba(88,28,135,0.28)] backdrop-blur-md transition-[background,border-color,box-shadow] duration-200 hover:border-[rgba(243,232,255,0.62)] hover:bg-[linear-gradient(180deg,rgba(192,132,252,0.88),rgba(107,33,168,0.74))] hover:shadow-[0_-10px_24px_rgba(107,33,168,0.34)]"
-          onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
-        >
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 rounded-t-[16px] bg-[radial-gradient(circle_at_center,rgba(245,235,255,0.22)_0%,transparent_72%)]"
-          />
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-3 top-[8px] h-px bg-[linear-gradient(90deg,transparent,rgba(250,245,255,0.82),transparent)]"
-          />
-          <span className="sr-only">
-            {isTerminalVisible ? "Stow terminal" : "Show terminal"}
-          </span>
-        </button>
+      <div className="flex h-full flex-col">
+        <div className="z-20 shrink-0 border-t border-[rgba(233,213,255,0.42)] bg-[linear-gradient(180deg,rgba(168,85,247,0.24),rgba(30,12,47,0.88))] shadow-[0_-10px_36px_rgba(48,12,82,0.28)] backdrop-blur-md">
+          <div
+            aria-expanded={isTerminalVisible}
+            className="grid min-h-[52px] cursor-pointer gap-2 border-b border-[rgba(196,181,253,0.24)] px-3 py-2 sm:grid-cols-[auto_minmax(15rem,22rem)] sm:items-center sm:px-4"
+            role="button"
+            tabIndex={0}
+            onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onTerminalVisibilityChange(!isTerminalVisible);
+              }
+            }}
+          >
+            <div className="flex min-w-0 items-center justify-between gap-3 text-left text-[#f8f3ff] transition-colors duration-150 hover:text-white">
+              <div className="min-w-0">
+                <p className="text-[0.6rem] uppercase tracking-[0.22em] text-[rgba(243,232,255,0.7)]">
+                  Terminal drawer
+                </p>
+                <p className="truncate font-mono text-sm text-[#f8f3ff] sm:text-[0.95rem]">
+                  {worktree?.branch ?? "No worktree selected"}
+                </p>
+              </div>
+            </div>
 
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-[27px] z-10 h-px bg-[linear-gradient(90deg,transparent,rgba(196,181,253,0.16),rgba(233,213,255,0.42),rgba(196,181,253,0.16),transparent)]"
-        />
+            {isTerminalVisible ? (
+              <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                <MatrixDropdown
+                  label="Worktree"
+                  value={worktree?.branch ?? null}
+                  options={worktreeOptions}
+                  placeholder="Select worktree"
+                  onChange={onSelectWorktree}
+                />
+              </div>
+            ) : null}
+          </div>
+        </div>
 
-        <div className="matrix-panel absolute inset-0 bottom-0 top-[27px] flex flex-col overflow-hidden border-x-0 border-t border-b-0 border-[rgba(196,181,253,0.16)] shadow-[0_-18px_80px_rgba(0,0,0,0.72)]">
+        <div className="matrix-panel flex min-h-0 flex-1 flex-col overflow-hidden border-x-0 border-t border-b-0 border-[rgba(196,181,253,0.16)] shadow-[0_-18px_80px_rgba(0,0,0,0.72)]">
           <div className="flex min-h-0 flex-1 flex-col bg-[#020703]">
             <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
               <div

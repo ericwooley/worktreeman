@@ -6,9 +6,11 @@ import { WorktreeTerminal } from "./worktree-terminal";
 
 interface WorktreeDetailProps {
   worktree: WorktreeRecord | null;
+  worktreeOptions: MatrixDropdownOption[];
   worktreeCount: number;
   runningCount: number;
   selectedStatusLabel: string;
+  onSelectWorktree: (value: string) => void;
   activeTab: "shell" | "background" | "git";
   onTabChange: (tab: "shell" | "background" | "git") => void;
   isTerminalVisible: boolean;
@@ -30,9 +32,11 @@ interface WorktreeDetailProps {
 
 export function WorktreeDetail({
   worktree,
+  worktreeOptions,
   worktreeCount,
   runningCount,
   selectedStatusLabel,
+  onSelectWorktree,
   activeTab,
   onTabChange,
   isTerminalVisible,
@@ -428,6 +432,8 @@ export function WorktreeDetail({
           worktree={worktree}
           isTerminalVisible={isTerminalVisible}
           onTerminalVisibilityChange={onTerminalVisibilityChange}
+          worktreeOptions={worktreeOptions}
+          onSelectWorktree={onSelectWorktree}
           showSessionInfo={activeTab === "shell"}
         />
       </div>
