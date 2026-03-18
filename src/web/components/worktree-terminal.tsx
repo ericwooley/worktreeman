@@ -11,6 +11,7 @@ import type {
 import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
+import { shortcutFromKeyboardEvent } from "./command-palette";
 import "@xterm/xterm/css/xterm.css";
 
 const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
@@ -22,6 +23,8 @@ export function WorktreeTerminal({
   worktreeOptions,
   onSelectWorktree,
   showSessionInfo = true,
+  commandPaletteShortcut,
+  onCommandPaletteToggle,
 }: {
   worktree: WorktreeRecord | null;
   isTerminalVisible: boolean;
@@ -29,6 +32,8 @@ export function WorktreeTerminal({
   worktreeOptions: MatrixDropdownOption[];
   onSelectWorktree: (value: string) => void;
   showSessionInfo?: boolean;
+  commandPaletteShortcut: string;
+  onCommandPaletteToggle: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession ?? null;
@@ -177,6 +182,16 @@ export function WorktreeTerminal({
     hostRef.current.style.width = "100%";
     hostRef.current.style.maxWidth = "100%";
     terminal.open(hostRef.current);
+    terminal.attachCustomKeyEventHandler((event) => {
+      const shortcut = shortcutFromKeyboardEvent(event);
+      if (!shortcut || shortcut !== commandPaletteShortcut) {
+        return true;
+      }
+
+      event.preventDefault();
+      onCommandPaletteToggle();
+      return false;
+    });
     terminal.focus();
     fitAddon.fit();
 

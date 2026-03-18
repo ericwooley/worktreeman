@@ -1,11 +1,38 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { CommandPalette, DEFAULT_COMMAND_PALETTE_SHORTCUT, formatShortcutLabel, shortcutFromKeyboardEvent, type CommandPaletteItem } from "./command-palette";
 import { useDashboardState } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixModal } from "./matrix-primitives";
+import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { WorktreeDetail } from "./worktree-detail";
 
+const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
+const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreemanager.commandPaletteShortcut";
+
+function getWorktreeCommandCode(branch: string): string {
+  const cleaned = branch.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const suffix = cleaned.slice(0, 2) || "wt";
+  return `w${suffix}`.slice(0, 3);
+}
+
+function comparePaletteItems(left: CommandPaletteItem, right: CommandPaletteItem): number {
+  const groupOrder: Record<string, number> = {
+    Navigation: 0,
+    Terminal: 1,
+    Worktree: 2,
+    Settings: 3,
+  };
+
+  const leftOrder = groupOrder[left.group ?? ""] ?? 99;
+  const rightOrder = groupOrder[right.group ?? ""] ?? 99;
+
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+
+  return left.title.localeCompare(right.title);
+}
+
 export function Dashboard() {
-  const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
   const initialParams = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
   const {
     state,
@@ -42,6 +69,38 @@ export function Dashboard() {
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
   const [branch, setBranch] = useState("");
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const [commandPaletteShortcut, setCommandPaletteShortcut] = useState(() => {
+    if (typeof window === "undefined") {
+      return DEFAULT_COMMAND_PALETTE_SHORTCUT;
+    }
+
+    return window.localStorage.getItem(COMMAND_PALETTE_SHORTCUT_STORAGE_KEY) ?? DEFAULT_COMMAND_PALETTE_SHORTCUT;
+  });
+
+  const openCommandPalette = useCallback(() => {
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      lastFocusedElementRef.current = document.activeElement;
+    }
+
+    setCommandPaletteOpen(true);
+  }, []);
+
+  const closeCommandPalette = useCallback((options?: { restoreFocus?: boolean }) => {
+    setCommandPaletteOpen(false);
+
+    if (!options?.restoreFocus) {
+      return;
+    }
+
+    const previousFocusTarget = lastFocusedElementRef.current;
+    window.requestAnimationFrame(() => {
+      if (previousFocusTarget?.isConnected) {
+        previousFocusTarget.focus();
+      }
+    });
+  }, []);
 
   const selected = useMemo(
     () => {
@@ -82,6 +141,41 @@ export function Dashboard() {
 
     setSelectedBranch(selected.branch);
   }, [selected?.branch, selectedBranch]);
+
+  useEffect(() => {
+    window.localStorage.setItem(COMMAND_PALETTE_SHORTCUT_STORAGE_KEY, commandPaletteShortcut);
+  }, [commandPaletteShortcut]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const tagName = (event.target as HTMLElement | null)?.tagName;
+      const isTypingContext = Boolean(
+        (event.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable='true']")
+        || tagName === "INPUT"
+        || tagName === "TEXTAREA"
+        || tagName === "SELECT",
+      );
+
+      const shortcut = shortcutFromKeyboardEvent(event);
+      if (!shortcut || shortcut !== commandPaletteShortcut) {
+        return;
+      }
+
+      if (isTypingContext && !commandPaletteOpen) {
+        return;
+      }
+
+        event.preventDefault();
+        if (commandPaletteOpen) {
+          closeCommandPalette({ restoreFocus: true });
+        } else {
+          openCommandPalette();
+        }
+      };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [closeCommandPalette, commandPaletteOpen, commandPaletteShortcut, openCommandPalette]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -126,6 +220,147 @@ export function Dashboard() {
     setDeleteConfirmBranch(null);
   };
 
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const items: CommandPaletteItem[] = [
+      {
+        id: "nav-shell",
+        code: "ns",
+        title: "Open Shell tab",
+        subtitle: "Jump to the terminal-focused shell view.",
+        group: "Navigation",
+        keywords: ["terminal", "shell", "tab"],
+        badgeLabel: activeTab === "shell" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => setActiveTab("shell"),
+      },
+      {
+        id: "nav-background",
+        code: "nb",
+        title: "Open Background commands tab",
+        subtitle: "Inspect long-running runtime and PM2 commands.",
+        group: "Navigation",
+        keywords: ["pm2", "logs", "background", "processes"],
+        badgeLabel: activeTab === "background" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => setActiveTab("background"),
+      },
+      {
+        id: "nav-git",
+        code: "ng",
+        title: "Open Git status tab",
+        subtitle: "Jump to the planned git workflow area.",
+        group: "Navigation",
+        keywords: ["git", "status", "changes"],
+        badgeLabel: activeTab === "git" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => setActiveTab("git"),
+      },
+      {
+        id: "terminal-toggle",
+        code: "tt",
+        title: isTerminalVisible ? "Stow terminal drawer" : "Open terminal drawer",
+        subtitle: "Toggle the global tmux-backed terminal drawer.",
+        group: "Terminal",
+        keywords: ["drawer", "terminal", "toggle"],
+        action: () => setIsTerminalVisible((current) => !current),
+      },
+      {
+        id: "refresh-state",
+        code: "wr",
+        title: "Refresh worktree state",
+        subtitle: "Reload worktrees, runtimes, and current UI state.",
+        group: "Worktree",
+        keywords: ["reload", "refresh", "state"],
+        action: () => void refresh(),
+      },
+      {
+        id: "create-worktree",
+        code: "wn",
+        title: "Create new worktree",
+        subtitle: "Open the create-worktree modal.",
+        group: "Worktree",
+        keywords: ["new", "branch", "create", "worktree"],
+        action: () => setCreateWorktreeModalOpen(true),
+      },
+      {
+        id: "shortcut-settings",
+        code: "sc",
+        title: "Change command palette shortcut",
+        subtitle: `Current shortcut: ${formatShortcutLabel(commandPaletteShortcut)}`,
+        group: "Settings",
+        keywords: ["shortcut", "keyboard", "command palette"],
+        action: () => setCommandPaletteOpen(true),
+      },
+    ];
+
+    if (selected) {
+      items.push(
+        {
+          id: `worktree-start-${selected.branch}`,
+          code: "wst",
+          title: `Start worktree runtime: ${selected.branch}`,
+          subtitle: "Bring up docker/runtime services for the selected worktree.",
+          group: "Worktree",
+          keywords: [selected.branch, "start", "runtime", "docker"],
+          disabled: Boolean(selected.runtime) || busyBranch === selected.branch,
+          badgeLabel: selected.runtime ? "Running" : "Idle",
+          badgeTone: selected.runtime ? "active" : "idle",
+          action: () => void start(selected.branch),
+        },
+        {
+          id: `worktree-stop-${selected.branch}`,
+          code: "wsp",
+          title: `Stop worktree runtime: ${selected.branch}`,
+          subtitle: "Stop docker/runtime services for the selected worktree.",
+          group: "Worktree",
+          keywords: [selected.branch, "stop", "runtime", "docker"],
+          disabled: !selected.runtime || busyBranch === selected.branch,
+          badgeLabel: selected.runtime ? "Running" : "Idle",
+          badgeTone: selected.runtime ? "active" : "idle",
+          action: () => void stop(selected.branch),
+        },
+        {
+          id: `worktree-sync-${selected.branch}`,
+          code: "wen",
+          title: `Sync .env files: ${selected.branch}`,
+          subtitle: "Copy shared env files into the selected worktree.",
+          group: "Worktree",
+          keywords: [selected.branch, ".env", "sync"],
+          disabled: busyBranch === selected.branch,
+          action: () => void syncEnv(selected.branch),
+        },
+        {
+          id: `worktree-delete-${selected.branch}`,
+          code: "wdel",
+          title: `Delete worktree: ${selected.branch}`,
+          subtitle: "Open a confirmation modal before deleting the worktree.",
+          group: "Worktree",
+          keywords: [selected.branch, "delete", "remove"],
+          badgeLabel: "Danger",
+          badgeTone: "danger",
+          disabled: busyBranch === selected.branch,
+          action: () => setDeleteConfirmBranch(selected.branch),
+        },
+      );
+    }
+
+    for (const entry of state?.worktrees ?? []) {
+      items.push({
+        id: `switch-${entry.branch}`,
+        code: getWorktreeCommandCode(entry.branch),
+        title: `Switch to worktree: ${entry.branch}`,
+        subtitle: entry.runtime ? "Runtime active" : "Idle",
+        group: "Worktree",
+        keywords: [entry.branch, entry.worktreePath, entry.runtime ? "active" : "idle"],
+        badgeLabel: entry.runtime ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => setSelectedBranch(entry.branch),
+      });
+    }
+
+    return items.sort(comparePaletteItems);
+  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, refresh, selected, start, state?.worktrees, stop, syncEnv]);
+
   return (
     <main
       className="relative min-h-screen overflow-hidden px-0 pt-0 text-[#d7ffd7]"
@@ -165,6 +400,10 @@ export function Dashboard() {
                 <button className="matrix-button h-full min-h-[100%] rounded-none px-3 py-2 text-sm" onClick={() => void refresh()} type="button">
                   Refresh
                 </button>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-[#8fd18f]">
+                <MatrixBadge tone="neutral">Command palette</MatrixBadge>
+                <span className="font-mono text-[#ecffec]">{formatShortcutLabel(commandPaletteShortcut)}</span>
               </div>
             </div>
           </div>
@@ -230,6 +469,15 @@ export function Dashboard() {
             onTabChange={setActiveTab}
             isTerminalVisible={isTerminalVisible}
             onTerminalVisibilityChange={setIsTerminalVisible}
+            commandPaletteShortcut={commandPaletteShortcut}
+            onCommandPaletteToggle={() => {
+              if (commandPaletteOpen) {
+                closeCommandPalette({ restoreFocus: true });
+                return;
+              }
+
+              openCommandPalette();
+            }}
             isBusy={busyBranch === selected?.branch}
             onStart={() => selected ? void start(selected.branch) : undefined}
             onStop={() => selected ? void stop(selected.branch) : undefined}
@@ -353,6 +601,15 @@ export function Dashboard() {
           </div>
         </MatrixModal>
       ) : null}
+
+      <CommandPalette
+        open={commandPaletteOpen}
+        commands={commandPaletteItems}
+        shortcut={commandPaletteShortcut}
+        onClose={closeCommandPalette}
+        onShortcutChange={setCommandPaletteShortcut}
+        onShortcutReset={() => setCommandPaletteShortcut(DEFAULT_COMMAND_PALETTE_SHORTCUT)}
+      />
     </main>
   );
 }
