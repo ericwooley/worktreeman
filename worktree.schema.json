@@ -6,6 +6,10 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional editor hint for schema-aware YAML tooling. The comment header form is preferred."
+    },
     "env": {
       "type": "object",
       "description": "Static environment variables injected into every runtime.",
