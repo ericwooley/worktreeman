@@ -8,6 +8,7 @@ export interface CommandResult {
 export interface CommandOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  allowExitCodes?: number[];
 }
 
 export async function runCommand(command: string, args: string[], options: CommandOptions): Promise<CommandResult> {
@@ -31,7 +32,7 @@ export async function runCommand(command: string, args: string[], options: Comma
 
     child.on("error", reject);
     child.on("close", (code) => {
-      if (code === 0) {
+      if (code === 0 || options.allowExitCodes?.includes(code ?? -1)) {
         resolve({ stdout, stderr });
         return;
       }

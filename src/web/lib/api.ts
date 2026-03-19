@@ -3,6 +3,7 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  GitComparisonResponse,
   ShutdownStatus,
   TmuxClientInfo,
   WorktreeRuntime,
@@ -34,11 +35,30 @@ async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
 
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (!contentType.includes("application/json")) {
+    const body = await response.text();
+    if (contentType.includes("text/html") || /^\s*</.test(body)) {
+      throw new Error("API returned HTML instead of JSON. Restart the server to pick up backend route changes.");
+    }
+
+    throw new Error(`Expected JSON response but received ${contentType || "an unknown content type"}.`);
+  }
+
   return (await response.json()) as T;
 }
 
 export function getState(): Promise<ApiStateResponse> {
   return request<ApiStateResponse>("/api/state");
+}
+
+export function getGitComparison(compareBranch: string, baseBranch?: string): Promise<GitComparisonResponse> {
+  const params = new URLSearchParams({ compareBranch });
+  if (baseBranch) {
+    params.set("baseBranch", baseBranch);
+  }
+
+  return request<GitComparisonResponse>(`/api/git/compare?${params.toString()}`);
 }
 
 export function createWorktree(branch: string, worktreePath?: string): Promise<EnvSyncResponse | void> {

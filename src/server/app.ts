@@ -48,6 +48,11 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     runtimes,
     shutdownStatus,
   }));
+  app.use("/api", (_req, res) => {
+    res.status(404).json({
+      message: "API route not found. Restart the server to pick up newly added endpoints.",
+    });
+  });
 
   const isDevelopment = process.env.NODE_ENV === "development";
   if (isDevelopment) {

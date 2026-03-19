@@ -70,6 +70,8 @@ export function Dashboard() {
     shutdownStatus,
     backgroundCommands,
     backgroundLogs,
+    gitComparison,
+    gitComparisonLoading,
     clearLastEnvSync,
     clearBackgroundLogs,
     create,
@@ -81,6 +83,7 @@ export function Dashboard() {
     startBackgroundCommand,
     stopBackgroundCommand,
     loadBackgroundLogs,
+    loadGitComparison,
     subscribeToBackgroundLogs,
     refresh,
   } = useDashboardState();
@@ -599,6 +602,13 @@ export function Dashboard() {
             </div>
           ) : null}
 
+          {error ? (
+            <div className="matrix-panel mb-4 rounded-none border-x-0 border-[rgba(255,109,109,0.22)] bg-[rgba(34,6,6,0.9)] p-4 sm:p-5">
+              <p className="matrix-kicker text-[#ff9e9e]">Request error</p>
+              <p className="mt-2 text-sm text-[#ffd0d0]">{error}</p>
+            </div>
+          ) : null}
+
           <WorktreeDetail
             worktree={selected}
             worktreeOptions={worktreeOptions}
@@ -635,10 +645,13 @@ export function Dashboard() {
             onDelete={() => setDeleteConfirmBranch(selected?.branch ?? null)}
             backgroundCommands={backgroundCommands}
             backgroundLogs={backgroundLogs}
+            gitComparison={gitComparison}
+            gitComparisonLoading={gitComparisonLoading}
             onLoadBackgroundCommands={loadBackgroundCommands}
             onStartBackgroundCommand={startBackgroundCommand}
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
+            onLoadGitComparison={loadGitComparison}
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
           />

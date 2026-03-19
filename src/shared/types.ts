@@ -129,6 +129,46 @@ export interface ApiStateResponse {
   worktrees: WorktreeRecord[];
 }
 
+export interface GitBranchOption {
+  name: string;
+  default?: boolean;
+  current?: boolean;
+  hasWorktree?: boolean;
+}
+
+export interface GitCompareCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authoredAt: string;
+}
+
+export interface GitWorkingTreeSummary {
+  dirty: boolean;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  changedFiles: number;
+  untrackedFiles: number;
+}
+
+export interface GitComparisonResponse {
+  defaultBranch: string;
+  baseBranch: string;
+  compareBranch: string;
+  mergeBase: GitCompareCommit | null;
+  ahead: number;
+  behind: number;
+  branches: GitBranchOption[];
+  baseCommits: GitCompareCommit[];
+  compareCommits: GitCompareCommit[];
+  diff: string;
+  workingTreeDiff: string;
+  effectiveDiff: string;
+  workingTreeSummary: GitWorkingTreeSummary;
+}
+
 export interface ShutdownLogEntry {
   id: number;
   level: "info" | "error";

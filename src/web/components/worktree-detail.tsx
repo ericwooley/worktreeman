@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { BackgroundCommandLogsResponse, BackgroundCommandState, WorktreeRecord } from "@shared/types";
+import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
+import type { BackgroundCommandLogsResponse, BackgroundCommandState, GitComparisonResponse, WorktreeRecord } from "@shared/types";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
+
+const GIT_COMPARISON_POLL_INTERVAL_MS = 3000;
 
 interface WorktreeDetailProps {
   worktree: WorktreeRecord | null;
@@ -26,10 +29,13 @@ interface WorktreeDetailProps {
   onDelete: () => void;
   backgroundCommands: BackgroundCommandState[];
   backgroundLogs: BackgroundCommandLogsResponse | null;
+  gitComparison: GitComparisonResponse | null;
+  gitComparisonLoading: boolean;
   onLoadBackgroundCommands: (branch: string) => Promise<BackgroundCommandState[]>;
   onStartBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onStopBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
+  onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
   onSubscribeToBackgroundLogs: (branch: string, commandName: string) => () => void;
   onClearBackgroundLogs: () => void;
 }
@@ -56,10 +62,13 @@ export function WorktreeDetail({
   onDelete,
   backgroundCommands,
   backgroundLogs,
+  gitComparison,
+  gitComparisonLoading,
   onLoadBackgroundCommands,
   onStartBackgroundCommand,
   onStopBackgroundCommand,
   onLoadBackgroundLogs,
+  onLoadGitComparison,
   onSubscribeToBackgroundLogs,
   onClearBackgroundLogs,
 }: WorktreeDetailProps) {
@@ -67,6 +76,8 @@ export function WorktreeDetail({
   const [copied, setCopied] = useState(false);
   const [selectedBackgroundCommandName, setSelectedBackgroundCommandName] = useState<string | null>(null);
   const [backgroundFilter, setBackgroundFilter] = useState("");
+  const [gitView, setGitView] = useState<"graph" | "diff">("graph");
+  const [selectedGitBaseBranch, setSelectedGitBaseBranch] = useState<string | null>(null);
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
@@ -87,6 +98,74 @@ export function WorktreeDetail({
       badgeTone: command.running ? "active" : "idle",
     })),
     [backgroundCommands],
+  );
+  const gitBranchOptions = useMemo<MatrixDropdownOption[]>(
+    () => (gitComparison?.branches ?? []).map((branch) => ({
+      value: branch.name,
+      label: branch.name,
+      description: branch.default ? "Default branch" : branch.hasWorktree ? "Has worktree" : "Branch",
+      badgeLabel: branch.default ? "Default" : branch.hasWorktree ? "Worktree" : undefined,
+      badgeTone: branch.default ? "active" : branch.hasWorktree ? "idle" : undefined,
+    })),
+    [gitComparison?.branches],
+  );
+  const gitGraphData = useMemo(() => {
+    if (!gitComparison) {
+      return null;
+    }
+
+    const baseHashes = new Set(gitComparison.baseCommits.map((commit) => commit.hash));
+    const compareHashes = new Set(gitComparison.compareCommits.map((commit) => commit.hash));
+
+    return {
+      baseCommits: gitComparison.baseCommits.filter((commit) => !compareHashes.has(commit.hash)),
+      compareCommits: gitComparison.compareCommits.filter((commit) => !baseHashes.has(commit.hash)),
+    };
+  }, [gitComparison]);
+  const gitGraphKey = useMemo(() => {
+    if (!gitComparison) {
+      return "empty";
+    }
+
+    return JSON.stringify({
+      baseBranch: gitComparison.baseBranch,
+      compareBranch: gitComparison.compareBranch,
+      mergeBase: gitComparison.mergeBase?.hash ?? null,
+      baseCommits: gitGraphData?.baseCommits.map((commit) => commit.hash) ?? [],
+      compareCommits: gitGraphData?.compareCommits.map((commit) => commit.hash) ?? [],
+    });
+  }, [gitComparison, gitGraphData]);
+  const gitGraphOptions = useMemo(
+    () => ({
+      orientation: Orientation.VerticalReverse,
+      initCommitOffsetX: 70,
+      initCommitOffsetY: 0,
+      template: templateExtend(TemplateName.Metro, {
+        colors: ["#4aff7a", "#c084fc", "#86efac", "#facc15", "#38bdf8"],
+        branch: {
+          spacing: 68,
+          label: {
+            font: '500 11px "JetBrains Mono", "IBM Plex Mono", monospace',
+            bgColor: "#1f1230",
+            color: "#f3e8ff",
+            strokeColor: "#c084fc",
+          },
+        },
+        commit: {
+          spacing: 42,
+          dot: {
+            size: 10,
+            font: '600 10px "JetBrains Mono", "IBM Plex Mono", monospace',
+          },
+          message: {
+            font: '500 11px "JetBrains Mono", "IBM Plex Mono", monospace',
+            displayAuthor: false,
+            displayHash: true,
+          },
+        },
+      }),
+    }),
+    [],
   );
   const filteredBackgroundLogLines = useMemo(() => {
     const lines = backgroundLogs && selectedBackgroundCommand && backgroundLogs.commandName === selectedBackgroundCommand.name
@@ -116,6 +195,49 @@ export function WorktreeDetail({
       setSelectedBackgroundCommandName("docker compose");
     }
   }, [backgroundCommands, selectedBackgroundCommandName]);
+
+  useEffect(() => {
+    if (activeTab !== "git" || !worktree?.branch) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadComparison = async () => {
+      const comparison = await onLoadGitComparison(worktree.branch, selectedGitBaseBranch ?? undefined, {
+        silent: true,
+      });
+      if (cancelled || !comparison) {
+        return;
+      }
+    };
+
+    void loadComparison();
+
+    const interval = window.setInterval(() => {
+      void loadComparison();
+    }, GIT_COMPARISON_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeTab, onLoadGitComparison, selectedGitBaseBranch, worktree?.branch]);
+
+  useEffect(() => {
+    if (!gitComparison) {
+      return;
+    }
+
+    if (!selectedGitBaseBranch) {
+      setSelectedGitBaseBranch(gitComparison.baseBranch);
+      return;
+    }
+
+    if (!gitComparison.branches.some((branch) => branch.name === selectedGitBaseBranch)) {
+      setSelectedGitBaseBranch(gitComparison.baseBranch);
+    }
+  }, [gitComparison, selectedGitBaseBranch]);
 
   useEffect(() => {
     if (activeTab !== "background" || !worktree?.branch) {
@@ -422,15 +544,124 @@ export function WorktreeDetail({
             </div>
           </div>
         ) : (
-          <div className="mt-4 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
-            <p className="matrix-kicker">Git status</p>
-            <h2 className="mt-2 text-2xl font-semibold text-[#ecffec] sm:text-3xl">Planned</h2>
-            <p className="mt-2 text-sm text-[#9cd99c]">
-              This section is a todo placeholder for the richer git workflow ideas you want to add next.
-            </p>
-            <div className="mt-4 matrix-command rounded-none px-4 py-3 text-sm text-[#8fd18f]">
-              TODO: build out git status, actions, review flow, and branch insights here.
+          <div className="mt-4 space-y-4">
+            <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                <div>
+                  <p className="matrix-kicker">Git status</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-[#ecffec] sm:text-3xl">Branch comparison</h2>
+                  <p className="mt-2 text-sm text-[#9cd99c]">
+                    Compare the selected worktree against the default branch, including staged, unstaged, and untracked local changes in the effective diff.
+                  </p>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto] xl:min-w-[42rem]">
+                  <MatrixDropdown
+                    label="Base branch"
+                    value={selectedGitBaseBranch}
+                    options={gitBranchOptions}
+                    placeholder="Choose base branch"
+                    disabled={!gitBranchOptions.length}
+                    emptyLabel="No branches available"
+                    onChange={setSelectedGitBaseBranch}
+                  />
+                  <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => setGitView("graph")} />
+                  <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => setGitView("diff")} />
+                </div>
+              </div>
+
+              {gitComparison ? (
+                <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                  <MatrixDetailField label="Base" value={gitComparison.baseBranch} mono />
+                  <MatrixDetailField label="Compare" value={gitComparison.compareBranch} mono />
+                  <MatrixDetailField label="Ahead" value={String(gitComparison.ahead)} mono />
+                  <MatrixDetailField label="Behind" value={String(gitComparison.behind)} mono />
+                </div>
+              ) : null}
+
+              {gitComparison ? (
+                <div className="mt-3 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                  <MatrixDetailField label="Changed files" value={String(gitComparison.workingTreeSummary.changedFiles)} mono />
+                  <MatrixDetailField label="Untracked files" value={String(gitComparison.workingTreeSummary.untrackedFiles)} mono />
+                  <MatrixDetailField
+                    label="Staged"
+                    value={gitComparison.workingTreeSummary.staged ? "Yes" : "No"}
+                    mono
+                  />
+                  <MatrixDetailField
+                    label="Unstaged"
+                    value={gitComparison.workingTreeSummary.unstaged ? "Yes" : "No"}
+                    mono
+                  />
+                </div>
+              ) : null}
             </div>
+
+            {gitComparisonLoading ? (
+              <div className="matrix-command rounded-none px-4 py-3 text-sm text-[#8fd18f]">Loading git comparison…</div>
+            ) : gitComparison ? gitView === "graph" ? (
+              gitComparison.ahead === 0 && gitComparison.behind === 0 ? (
+                <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+                  <div className="matrix-command rounded-none px-4 py-4 text-sm text-[#8fd18f]">
+                    The branches are identical.
+                  </div>
+                </div>
+              ) : (
+                <div className="border border-[rgba(192,132,252,0.26)] bg-[linear-gradient(180deg,rgba(35,16,54,0.36),rgba(0,0,0,0.24))] p-4 shadow-[inset_0_1px_0_rgba(243,232,255,0.06)]">
+                  <div className="overflow-auto">
+                    <div className="min-w-[48rem] bg-[linear-gradient(180deg,rgba(17,10,28,0.94),rgba(1,8,3,0.92))] px-4 pb-4 pt-6">
+                      <Gitgraph key={gitGraphKey} options={gitGraphOptions}>
+                        {(gitgraph) => {
+                          gitgraph.clear();
+
+                          const base = gitgraph.branch(gitComparison.baseBranch);
+
+                          if (gitComparison.mergeBase) {
+                            base.commit({
+                              subject: gitComparison.mergeBase.subject,
+                              hash: gitComparison.mergeBase.hash,
+                              author: gitComparison.mergeBase.authorName,
+                            });
+                          }
+
+                          const compare = base.branch(gitComparison.compareBranch);
+
+                          for (const commit of gitGraphData?.baseCommits ?? []) {
+                            base.commit({
+                              subject: commit.subject,
+                              hash: commit.hash,
+                              author: commit.authorName,
+                            });
+                          }
+
+                          for (const commit of gitGraphData?.compareCommits ?? []) {
+                            compare.commit({
+                              subject: commit.subject,
+                              hash: commit.hash,
+                              author: commit.authorName,
+                            });
+                          }
+                        }}
+                      </Gitgraph>
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+                <div className="max-h-[34rem] overflow-auto border border-[rgba(192,132,252,0.16)] bg-[linear-gradient(180deg,rgba(17,10,28,0.96),rgba(3,8,6,0.96))] font-mono text-xs text-[#f3e8ff]">
+                  {gitComparison.effectiveDiff ? (
+                    <pre className="whitespace-pre-wrap break-words px-4 py-3">{gitComparison.effectiveDiff}</pre>
+                  ) : (
+                    <div className="px-4 py-4 text-[#8fd18f]">No effective diff between these branches or in the selected worktree.</div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="matrix-command rounded-none px-4 py-3 text-sm text-[#8fd18f]">
+                Select a worktree to load branch comparison details.
+              </div>
+            )}
           </div>
         )}
       </div>

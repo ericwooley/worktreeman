@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@gitgraph/react':
+        specifier: ^1.6.0
+        version: 1.6.0(react@18.3.1)
       '@inquirer/prompts':
         specifier: ^8.3.2
         version: 8.3.2(@types/node@22.19.15)
@@ -491,6 +494,14 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@gitgraph/core@1.5.0':
+    resolution: {integrity: sha512-8CeeHbkKoFHM1y9vfjYiHyEpzl1mEhVrg5c/eFgDBsntOYswoDKU2yOf6DjtVINcE60wmcuynBSJqjMkQo07Ww==}
+
+  '@gitgraph/react@1.6.0':
+    resolution: {integrity: sha512-cLFNZDoEiNbsnMfdT82zeZti5saYghQamfCbTpVvCRr+BrrQ/k94glkZqYPXKKNTEqbQV6L9JeOfAk1hNiFYXA==}
+    peerDependencies:
+      react: '>= 16.8.0'
 
   '@inquirer/ansi@2.0.4':
     resolution: {integrity: sha512-DpcZrQObd7S0R/U3bFdkcT5ebRwbTTC4D3tCc1vsJizmgPLxNJBo+AAFmrZwe8zk30P2QzgzGWZ3Q9uJwWuhIg==}
@@ -2417,6 +2428,13 @@ snapshots:
 
   '@esbuild/win32-x64@0.27.4':
     optional: true
+
+  '@gitgraph/core@1.5.0': {}
+
+  '@gitgraph/react@1.6.0(react@18.3.1)':
+    dependencies:
+      '@gitgraph/core': 1.5.0
+      react: 18.3.1
 
   '@inquirer/ansi@2.0.4': {}
 

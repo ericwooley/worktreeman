@@ -4,6 +4,7 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  GitComparisonResponse,
   ShutdownStatus,
 } from "@shared/types";
 import {
@@ -11,6 +12,7 @@ import {
   deleteWorktree,
   getBackgroundCommandLogs as fetchBackgroundCommandLogs,
   getBackgroundCommands as fetchBackgroundCommands,
+  getGitComparison as fetchGitComparison,
   getState,
   startBackgroundCommand as startBackgroundProcess,
   startRuntime,
@@ -22,6 +24,18 @@ import {
   type EnvSyncResponse,
 } from "../lib/api";
 
+function areGitComparisonsEqual(left: GitComparisonResponse | null, right: GitComparisonResponse | null) {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 export function useDashboardState() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +45,8 @@ export function useDashboardState() {
   const [shutdownStatus, setShutdownStatus] = useState<ShutdownStatus | null>(null);
   const [backgroundCommands, setBackgroundCommands] = useState<BackgroundCommandState[]>([]);
   const [backgroundLogs, setBackgroundLogs] = useState<BackgroundCommandLogsResponse | null>(null);
+  const [gitComparison, setGitComparison] = useState<GitComparisonResponse | null>(null);
+  const [gitComparisonLoading, setGitComparisonLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -206,6 +222,26 @@ export function useDashboardState() {
           appendBackgroundLogs(event);
         });
       },
+      async loadGitComparison(compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) {
+        if (!options?.silent) {
+          setGitComparisonLoading(true);
+        }
+
+        try {
+          const comparison = await fetchGitComparison(compareBranch, baseBranch);
+          setGitComparison((current) => areGitComparisonsEqual(current, comparison) ? current : comparison);
+          setError(null);
+          return comparison;
+        } catch (err) {
+          setGitComparison(null);
+          setError(err instanceof Error ? err.message : "Failed to load git comparison.");
+          return null;
+        } finally {
+          if (!options?.silent) {
+            setGitComparisonLoading(false);
+          }
+        }
+      },
     }),
     [appendBackgroundLogs, refresh],
   );
@@ -219,6 +255,8 @@ export function useDashboardState() {
     shutdownStatus,
     backgroundCommands,
     backgroundLogs,
+    gitComparison,
+    gitComparisonLoading,
     clearLastEnvSync,
     clearBackgroundLogs,
     refresh,

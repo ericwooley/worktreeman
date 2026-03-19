@@ -18,6 +18,7 @@
     "check": "tsc -p tsconfig.node.json --noEmit && vite build --mode production && vite build --config vite.docs.config.ts --mode production"
   },
   "dependencies": {
+    "@gitgraph/react": "^1.6.0",
     "@inquirer/prompts": "^8.3.2",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",

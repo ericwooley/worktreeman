@@ -6,6 +6,7 @@ import type {
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   CreateWorktreeRequest,
+  GitComparisonResponse,
   TmuxClientInfo,
   WorktreeManagerConfig,
 } from "../../shared/types.js";
@@ -21,7 +22,7 @@ import {
   stopAllBackgroundCommands,
   stopBackgroundCommand,
 } from "../services/background-command-service.js";
-import { createWorktree, listWorktrees, removeWorktree } from "../services/git-service.js";
+import { createWorktree, getGitComparison, listWorktrees, removeWorktree } from "../services/git-service.js";
 import { ensureDockerRuntime, stopDockerRuntime } from "../services/docker-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig } from "../services/config-service.js";
@@ -97,6 +98,23 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       unsubscribe();
       res.end();
     });
+  });
+
+  router.get("/git/compare", async (req, res, next) => {
+    try {
+      const compareBranch = String(req.query.compareBranch ?? "").trim();
+      const baseBranch = typeof req.query.baseBranch === "string" ? req.query.baseBranch : undefined;
+
+      if (!compareBranch) {
+        res.status(400).json({ message: "compareBranch is required" });
+        return;
+      }
+
+      const comparison: GitComparisonResponse = await getGitComparison(options.repoRoot, compareBranch, baseBranch);
+      res.json(comparison);
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post("/worktrees", async (req, res, next) => {
