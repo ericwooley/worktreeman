@@ -13,22 +13,19 @@ import type {
 import {
   getBackgroundCommandLogs,
   getBackgroundCommandEntries,
-  isRuntimeManagedBackgroundCommand,
   listBackgroundCommands,
-  normalizeBackgroundCommandName,
   startBackgroundCommand,
-  startRuntimeReadyBackgroundCommands,
+  startConfiguredBackgroundCommands,
   streamBackgroundCommandLogs,
   stopAllBackgroundCommands,
   stopBackgroundCommand,
 } from "../services/background-command-service.js";
 import { createWorktree, getGitComparison, listWorktrees, removeWorktree } from "../services/git-service.js";
-import { ensureDockerRuntime, stopDockerRuntime } from "../services/docker-service.js";
+import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig } from "../services/config-service.js";
-import { releaseReservedPorts } from "../services/runtime-port-service.js";
 import type { ShutdownStatus } from "../../shared/types.js";
-import { disconnectTmuxClient, getTmuxSessionName, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
+import { disconnectTmuxClient, ensureRuntimeTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 
@@ -159,9 +156,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const { runtime, reservedPorts } = await ensureDockerRuntime(config, worktree.branch, worktree.worktreePath);
-      options.runtimes.set(runtime, reservedPorts);
-      await startRuntimeReadyBackgroundCommands({
+      const { runtime } = await createRuntime(config, worktree.branch, worktree.worktreePath);
+      options.runtimes.set(runtime);
+      await ensureRuntimeTerminalSession(runtime);
+      await runStartupCommands(config.startupCommands, worktree.worktreePath, buildRuntimeProcessEnv(runtime));
+      await startConfiguredBackgroundCommands({
         config,
         branch: worktree.branch,
         worktreePath: worktree.worktreePath,
@@ -199,7 +198,6 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/runtime/stop", async (req, res, next) => {
     try {
-      const config = await loadCurrentConfig();
       const runtime = options.runtimes.get(req.params.branch);
       if (!runtime) {
         res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
@@ -207,9 +205,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       await stopAllBackgroundCommands(req.params.branch, runtime.worktreePath);
-      await stopDockerRuntime(runtime, config);
-      const deletedRuntime = options.runtimes.delete(req.params.branch);
-      await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
+      await killTmuxSession(runtime);
+      options.runtimes.delete(req.params.branch);
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -248,7 +245,6 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.delete("/worktrees/:branch", async (req, res, next) => {
     try {
-      const config = await loadCurrentConfig();
       const worktrees = await listWorktrees(options.repoRoot);
       const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
 
@@ -260,12 +256,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const runtime = options.runtimes.get(worktree.branch);
       if (runtime) {
         await stopAllBackgroundCommands(worktree.branch, runtime.worktreePath);
-        await stopDockerRuntime(runtime, config);
-        const deletedRuntime = options.runtimes.delete(worktree.branch);
-        await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
+        await killTmuxSession(runtime);
+        options.runtimes.delete(worktree.branch);
+      } else {
+        await killTmuxSessionByName(getTmuxSessionName(worktree.branch), worktree.worktreePath);
       }
-
-      await killTmuxSessionByName(getTmuxSessionName(worktree.branch), worktree.worktreePath);
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);
       res.status(204).send();
@@ -308,22 +303,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const decodedName = normalizeBackgroundCommandName(decodeURIComponent(req.params.name));
+      const decodedName = decodeURIComponent(req.params.name);
       const command = getBackgroundCommandEntries(config)[decodedName];
       if (!command) {
         res.status(404).json({ message: `Unknown background command ${decodedName}` });
         return;
-      }
-
-      if (isRuntimeManagedBackgroundCommand(command.command) && !options.runtimes.get(worktree.branch)) {
-        const { runtime, reservedPorts } = await ensureDockerRuntime(config, worktree.branch, worktree.worktreePath);
-        options.runtimes.set(runtime, reservedPorts);
-        await startRuntimeReadyBackgroundCommands({
-          config,
-          branch: worktree.branch,
-          worktreePath: worktree.worktreePath,
-          runtime,
-        });
       }
 
       await startBackgroundCommand({
@@ -348,7 +332,6 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/background-commands/:name/stop", async (req, res, next) => {
     try {
-      const config = await loadCurrentConfig();
       const worktrees = await listWorktrees(options.repoRoot);
       const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
 
@@ -357,27 +340,17 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const decodedName = normalizeBackgroundCommandName(decodeURIComponent(req.params.name));
-      const command = getBackgroundCommandEntries(config)[decodedName];
+      const decodedName = decodeURIComponent(req.params.name);
+      const command = getBackgroundCommandEntries(await loadCurrentConfig())[decodedName];
       if (!command) {
         res.status(404).json({ message: `Unknown background command ${decodedName}` });
         return;
       }
 
-      if (!isRuntimeManagedBackgroundCommand(command.command)) {
-        await stopBackgroundCommand(worktree.branch, worktree.worktreePath, decodedName);
-      } else {
-        const runtime = options.runtimes.get(worktree.branch);
-        if (runtime) {
-          await stopAllBackgroundCommands(worktree.branch, runtime.worktreePath);
-          await stopDockerRuntime(runtime, config);
-          const deletedRuntime = options.runtimes.delete(worktree.branch);
-          await releaseReservedPorts(deletedRuntime?.reservedPorts ?? []);
-        }
-      }
+      await stopBackgroundCommand(worktree.branch, worktree.worktreePath, decodedName);
 
       const commands: BackgroundCommandState[] = await listBackgroundCommands(
-        config,
+        await loadCurrentConfig(),
         worktree.branch,
         worktree.worktreePath,
         options.runtimes.get(worktree.branch),
@@ -403,7 +376,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         config,
         worktree.branch,
         worktree.worktreePath,
-        normalizeBackgroundCommandName(decodeURIComponent(req.params.name)),
+        decodeURIComponent(req.params.name),
       );
       res.json(logs);
     } catch (error) {
@@ -422,7 +395,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const commandName = normalizeBackgroundCommandName(decodeURIComponent(req.params.name));
+      const commandName = decodeURIComponent(req.params.name);
       const command = getBackgroundCommandEntries(config)[commandName];
       if (!command) {
         res.status(404).json({ message: `Unknown background command ${commandName}` });

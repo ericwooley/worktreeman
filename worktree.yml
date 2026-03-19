@@ -5,29 +5,23 @@ env:
 runtimePorts:
   - SERVER_PORT
   - VITE_PORT
+  - DB_PORT
+  - REDIS_PORT
+  - BACKEND_SERVER_PORT
+
+derivedEnv:
+  DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
+  REDIS_URL: redis://localhost:${REDIS_PORT}
+  APP_URL: http://127.0.0.1:${SERVER_PORT}
 
 worktrees:
   baseDir: ..
 
-docker:
-  composeFile: docker-compose.yml
-  portMappings:
-    - service: postgres
-      containerPort: 5432
-      envName: DB_PORT
-    - service: redis
-      containerPort: 6379
-      envName: REDIS_PORT
-  servicePorts:
-    backendServer:
-      service: api
-      containerPort: 3000
-      envName: BACKEND_SERVER_PORT
-  derivedEnv:
-    DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
-    REDIS_URL: redis://localhost:${REDIS_PORT}
-    APP_URL: http://127.0.0.1:${PORT}
-
 startupCommands:
   - pnpm install
-  - pnpm run dev
+
+backgroundCommands:
+  Docker services:
+    command: docker compose up
+  Web dev:
+    command: pnpm run dev

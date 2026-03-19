@@ -216,15 +216,7 @@ const initCommand = command({
     }
 
     process.stdout.write(`Created ${result.configPath}\n`);
-    if (result.composeFile) {
-      process.stdout.write(
-        `Detected Docker Compose file: ${result.composeFile}\n`,
-      );
-    } else {
-      process.stdout.write(
-        "No Docker Compose file detected. Wrote a starter config with empty docker mappings.\n",
-      );
-    }
+    process.stdout.write("Wrote a starter config with runtime ports, startup commands, and background commands ready to customize.\n");
   },
 });
 
@@ -232,7 +224,7 @@ const cli = subcommands({
   name: "worktreemanager",
   version: "0.1.0",
   description:
-    "Manage git worktrees, Docker Compose runtimes, and tmux-backed terminals from one local UI.",
+    "Manage git worktrees, runtime env setup, background commands, and tmux-backed terminals from one local UI.",
   cmds: {
     start: startCommand,
     init: initCommand,

@@ -17,18 +17,13 @@ The resulting path is tracked by the UI so each branch has a visible local works
 When you click `Start env`, `worktreemanager` performs this sequence:
 
 1. load `worktree.yml`
-2. start Docker Compose with a branch-scoped project name
-3. inspect the published host ports for configured services
-4. resolve named service ports
-5. render derived environment variables
-6. run any configured startup commands in the worktree
-7. store runtime metadata for the UI and terminal session
-
-Compose is started with a branch-specific project name similar to:
-
-```bash
-docker compose -p wt-feature-search up -d
-```
+2. allocate configured `runtimePorts`
+3. render derived environment variables
+4. render quick links
+5. prepare the tmux session for the branch
+6. run any configured startup commands in the worktree and wait for them to finish
+7. start all configured background commands under PM2
+8. store runtime metadata for the UI and terminal session
 
 ## In-memory environment injection
 
@@ -36,15 +31,16 @@ docker compose -p wt-feature-search up -d
 
 1. static `env`
 2. allocated `runtimePorts`
-3. discovered `portMappings`
-4. discovered `servicePorts`
-5. rendered `derivedEnv`
+3. rendered `derivedEnv`
 
 That merged environment is passed directly into:
 
 - startup commands
+- background commands
 - the shell created by `node-pty`
 - the tmux session used by the browser terminal
+
+If you want Docker in the workflow, declare a Docker command in `backgroundCommands`. It is treated the same as any other PM2-managed process.
 
 No `.env` files are written as part of this flow.
 
@@ -62,5 +58,5 @@ That gives you a persistent shell session you can reconnect to from the UI while
 
 ## Runtime shutdown
 
-- `Stop env` runs `docker compose down` for that branch runtime
+- `Stop env` stops background commands and kills the tmux session for that branch runtime
 - `Delete` removes the Git worktree when the branch environment is no longer needed

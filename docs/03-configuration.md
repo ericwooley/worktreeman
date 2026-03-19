@@ -15,14 +15,9 @@
 - [`backgroundCommands`](#backgroundcommands)
 - [`worktrees`](#worktrees)
   - [`worktrees.baseDir`](#worktreesbasedir)
-- [`docker`](#docker)
-  - [`docker.composeFile`](#dockercomposefile)
-  - [`docker.projectPrefix`](#dockerprojectprefix)
-  - [`docker.portMappings`](#dockerportmappings)
-  - [`docker.servicePorts`](#dockerserviceports)
 - [Practical patterns](#practical-patterns)
 - [Minimal app with one dev server](#minimal-app-with-one-dev-server)
-- [App plus Docker database](#app-plus-docker-database)
+- [App plus database and worker](#app-plus-database-and-worker)
 - [Notes on `init`](#notes-on-init)
 
 `worktreemanager` reads configuration from one of these files at the repository root:
@@ -55,38 +50,20 @@ env:
 
 runtimePorts:
   - PORT
-  - VITE_PORT
+  - DB_PORT
 
 derivedEnv:
-  DATABASE_URL: postgresql://postgres:postgres@localhost:${DB_PORT}/app
   APP_URL: http://localhost:${PORT}
+  DATABASE_URL: postgresql://postgres:postgres@localhost:${DB_PORT}/app
 
 quickLinks:
   - name: App
     url: http://localhost:${PORT}
-  - name: API health
-    url: http://localhost:${BACKEND_SERVER_PORT}/health
   - name: PostgreSQL
     url: postgresql://postgres:postgres@localhost:${DB_PORT}/postgres
 
 worktrees:
   baseDir: .worktrees
-
-docker:
-  composeFile: docker-compose.yml
-  projectPrefix: wt
-  portMappings:
-    - service: postgres
-      containerPort: 5432
-      envName: DB_PORT
-    - service: minio
-      containerPort: 9001
-      envName: MINIO_CONSOLE_PORT
-  servicePorts:
-    backendServer:
-      service: api
-      containerPort: 3000
-      envName: BACKEND_SERVER_PORT
 
 startupCommands:
   - pnpm install
@@ -105,33 +82,17 @@ When you click `Start env`, `worktreemanager` builds the runtime in this order:
 
 1. Start with static `env`
 2. Allocate any `runtimePorts`
-3. Run `docker compose up -d`
-4. Discover Docker ports from `docker.portMappings`
-5. Discover named ports from `docker.servicePorts`
-6. Render `derivedEnv` from the values above
-7. Render `quickLinks` from the final assembled env
-8. Run `startupCommands`
-9. Expose the final env to the tmux-backed shell and UI
+3. Render `derivedEnv` from the values above
+4. Render `quickLinks` from the final assembled env
+5. Prepare the tmux-backed runtime session
+6. Run `startupCommands` sequentially and wait for them to finish
+7. Start all configured `backgroundCommands` under PM2
+8. Expose the final env to the tmux-backed shell and UI
 
 That ordering matters:
 
-- `derivedEnv` can reference values from `env`, `runtimePorts`, `docker.portMappings`, and `docker.servicePorts`
+- `derivedEnv` can reference values from `env` and `runtimePorts`
 - `quickLinks` can reference all of the above plus previously-derived values
-
-## Compose port declaration recommendation
-
-For Docker Compose files, prefer published host ports that use env interpolation with `0` as the default host port.
-
-Example:
-
-```yml
-ports:
-  - "${DB_PORT:-0}:5432"
-```
-
-This gives Docker freedom to choose an open host port while still giving `worktreemanager` a stable env var name to discover and inject.
-
-`worktreemanager init` can often detect these env names automatically.
 
 ## Top-level fields
 
@@ -139,7 +100,7 @@ This gives Docker freedom to choose an open host port while still giving `worktr
 
 Static environment variables added to every runtime for the repo.
 
-Use `env` for values that do not depend on runtime port allocation or Docker inspection.
+Use `env` for values that do not depend on runtime port allocation.
 
 Example:
 
@@ -151,7 +112,7 @@ env:
 
 ## `runtimePorts`
 
-Environment variable names that should receive a reserved free local port.
+Environment variable names that should receive an allocated free local port.
 
 Use this when your app needs a free port that is not discovered from Docker, such as:
 
@@ -263,9 +224,10 @@ backgroundCommands:
 Notes:
 
 - these commands are run with PM2
+- they start automatically after `startupCommands` finish during `Start env`
 - they can be started and stopped independently from the UI
 - their logs appear in the `Background commands` tab
-- the core runtime-backed `docker compose` command appears there automatically and does not need to be declared
+- if you want `docker compose up`, declare it explicitly as a background command like any other process
 
 ## `worktrees`
 
@@ -283,68 +245,6 @@ Example:
 worktrees:
   baseDir: .worktrees
 ```
-
-## `docker`
-
-The `docker` section is only for Docker Compose-specific configuration.
-
-## `docker.composeFile`
-
-Compose file to run when the environment starts.
-
-Example:
-
-```yml
-docker:
-  composeFile: docker-compose.yml
-```
-
-## `docker.projectPrefix`
-
-Prefix used when building branch-scoped Compose project names.
-
-For example, branch `feature/search` may become a Compose project like `wt-feature-search`.
-
-## `docker.portMappings`
-
-Explicit Docker-discovered port bindings that should become environment variables.
-
-Use this when you already know:
-
-- the Compose service name
-- the container port
-- the env var name you want exposed
-
-Example:
-
-```yml
-docker:
-  portMappings:
-    - service: postgres
-      containerPort: 5432
-      envName: DB_PORT
-```
-
-After the environment starts, `worktreemanager` inspects the real published host port and injects it as `DB_PORT`.
-
-## `docker.servicePorts`
-
-Named logical service ports discovered from Docker at runtime.
-
-Use this when you want a stable logical name in config and UI, even if the actual host port changes.
-
-Example:
-
-```yml
-docker:
-  servicePorts:
-    backendServer:
-      service: api
-      containerPort: 3000
-      envName: BACKEND_SERVER_PORT
-```
-
-This lets other parts of the config refer to `BACKEND_SERVER_PORT` without hard-coding a host port.
 
 ## Practical patterns
 
@@ -367,9 +267,6 @@ quickLinks:
 worktrees:
   baseDir: .worktrees
 
-docker:
-  projectPrefix: wt
-
 startupCommands:
   - pnpm install
 
@@ -378,7 +275,7 @@ backgroundCommands:
     command: pnpm run dev
 ```
 
-## App plus Docker database
+## App plus database and worker
 
 ```yml
 env:
@@ -386,6 +283,7 @@ env:
 
 runtimePorts:
   - PORT
+  - DB_PORT
 
 derivedEnv:
   DATABASE_URL: postgresql://postgres:postgres@localhost:${DB_PORT}/app
@@ -399,14 +297,6 @@ quickLinks:
 worktrees:
   baseDir: .worktrees
 
-docker:
-  composeFile: docker-compose.yml
-  projectPrefix: wt
-  portMappings:
-    - service: postgres
-      containerPort: 5432
-      envName: DB_PORT
-
 startupCommands:
   - pnpm install
   - pnpm run db:migrate
@@ -418,7 +308,7 @@ backgroundCommands:
 
 ## Notes on `init`
 
-`worktreemanager init` creates a starter config and can detect useful Docker port mappings from your Compose file.
+`worktreemanager init` creates a starter config with the schema header and the basic runtime fields.
 
 It also writes the schema header automatically so editors can validate the file.
 

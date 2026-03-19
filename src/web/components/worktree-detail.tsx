@@ -255,7 +255,7 @@ export function WorktreeDetail({
     () => backgroundCommands.map((command) => ({
       value: command.name,
       label: command.name,
-      description: command.manager === "runtime" ? "Runtime managed" : "PM2 managed",
+      description: "PM2 managed",
       badgeLabel: command.running ? "Running" : "Stopped",
       badgeTone: command.running ? "active" : "idle",
     })),
@@ -421,12 +421,6 @@ export function WorktreeDetail({
 
     if (selectedBackgroundCommandName && !backgroundCommands.some((entry) => entry.name === selectedBackgroundCommandName)) {
       setSelectedBackgroundCommandName(backgroundCommands[0]?.name ?? null);
-    }
-  }, [backgroundCommands, selectedBackgroundCommandName]);
-
-  useEffect(() => {
-    if (selectedBackgroundCommandName === "Environment" && backgroundCommands.some((entry) => entry.name === "docker compose")) {
-      setSelectedBackgroundCommandName("docker compose");
     }
   }, [backgroundCommands, selectedBackgroundCommandName]);
 
@@ -611,8 +605,8 @@ export function WorktreeDetail({
 
                 <div className="flex flex-wrap items-center gap-2 xl:justify-end">
                   <MatrixBadge tone="neutral">{worktree?.runtime ? "tmux attached" : "idle"}</MatrixBadge>
-                  {worktree?.runtime?.dockerStartedAt ? (
-                    <MatrixBadge tone="active">live since {new Date(worktree.runtime.dockerStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</MatrixBadge>
+                  {worktree?.runtime?.runtimeStartedAt ? (
+                    <MatrixBadge tone="active">live since {new Date(worktree.runtime.runtimeStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</MatrixBadge>
                   ) : null}
                   {worktree ? (
                     <>
@@ -629,7 +623,7 @@ export function WorktreeDetail({
             <div className="mt-5 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
               <MatrixDetailField label="Path" value={worktree?.worktreePath ?? "-"} mono />
               <MatrixDetailField label="Head" value={worktree?.headSha ?? "-"} mono />
-              <MatrixDetailField label="Compose project" value={worktree?.runtime?.composeProject ?? "-"} mono />
+              <MatrixDetailField label="Started" value={worktree?.runtime?.runtimeStartedAt ? new Date(worktree.runtime.runtimeStartedAt).toLocaleString() : "-"} />
               <MatrixDetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
             </div>
 
@@ -680,7 +674,7 @@ export function WorktreeDetail({
                   <p className="matrix-kicker">Background commands</p>
                   <h2 className="mt-2 text-2xl font-semibold text-[#ecffec] sm:text-3xl">Process control</h2>
                   <p className="mt-2 text-sm text-[#9cd99c]">
-                    Long-running dev services live here. `docker compose up` is runtime-backed; other commands start under PM2 automatically once Docker/worktree runtime setup completes.
+                    Long-running dev services live here. Start the environment first, then manage each configured background command under PM2.
                   </p>
                 </div>
 
@@ -723,7 +717,7 @@ export function WorktreeDetail({
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <MatrixDetailField label="Manager" value={selectedBackgroundCommand.manager === "runtime" ? "Runtime" : "PM2"} />
+                    <MatrixDetailField label="Manager" value="PM2" />
                     <MatrixDetailField label="Status" value={selectedBackgroundCommand.status} mono />
                     <MatrixDetailField label="PID" value={selectedBackgroundCommand.pid ? String(selectedBackgroundCommand.pid) : "-"} mono />
                     <MatrixDetailField

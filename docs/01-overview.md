@@ -5,19 +5,18 @@
 It is built for repositories that already use:
 
 - `git worktree`
-- `docker compose`
 - `tmux`
 
-Instead of manually creating worktrees, starting Compose stacks, exporting ports, and keeping terminal sessions alive, `worktreemanager` wires those pieces together and exposes them in one local control panel.
+Instead of manually creating worktrees, exporting ports, starting long-running commands, and keeping terminal sessions alive, `worktreemanager` wires those pieces together and exposes them in one local control panel.
 
 ## What it does
 
 With `worktreemanager`, you can:
 
 - create and remove Git worktrees for branches
-- start a branch-scoped Docker Compose runtime for each worktree
-- resolve the real host ports Docker assigned after startup
+- allocate configured runtime ports for each worktree
 - inject runtime environment variables in memory instead of writing `.env` files
+- run startup commands and background commands with the same resolved env
 - open a browser terminal attached to a tmux session for that branch
 
 ## Why use it
@@ -27,8 +26,7 @@ The typical branch workflow usually turns into a mix of shell history, copied co
 `worktreemanager` reduces that by standardizing:
 
 - where worktrees are created
-- how Compose projects are named per branch
-- how service ports are discovered
+- how configured runtime ports are allocated
 - how derived environment variables are assembled
 - how developers reconnect to the same terminal session
 
@@ -42,6 +40,6 @@ The typical branch workflow usually turns into a mix of shell history, copied co
 
 ## What it does not do
 
-`worktreemanager` does not replace your application stack. It does not define your Docker services, dependency graph, or startup logic.
+`worktreemanager` does not replace your application stack. It does not define your services, dependency graph, or startup logic.
 
 You keep those in your repository. `worktreemanager` orchestrates them consistently across disposable branch environments.

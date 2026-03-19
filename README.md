@@ -1,6 +1,6 @@
 # Worktree Manager
 
-Worktree Manager is the local app for creating Git worktrees, starting branch-scoped Docker Compose runtimes, and attaching to tmux-backed browser terminals.
+Worktree Manager is the local app for creating Git worktrees, preparing branch-scoped runtime environments, managing background commands, and attaching to tmux-backed browser terminals.
 
 ## Local app
 

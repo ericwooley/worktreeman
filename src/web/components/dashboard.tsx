@@ -356,7 +356,7 @@ export function Dashboard() {
         id: "nav-background",
         code: "nb",
         title: "Open Background commands tab",
-        subtitle: "Inspect long-running runtime and PM2 commands.",
+        subtitle: "Inspect long-running background commands and their logs.",
         group: "Navigation",
         keywords: ["pm2", "logs", "background", "processes"],
         badgeLabel: activeTab === "background" ? "Active" : undefined,
@@ -428,9 +428,9 @@ export function Dashboard() {
           id: `worktree-start-${selected.branch}`,
           code: "wst",
           title: `Start worktree runtime: ${selected.branch}`,
-          subtitle: "Bring up docker/runtime services for the selected worktree.",
+          subtitle: "Prepare the runtime, terminal session, startup commands, and background commands.",
           group: "Worktree",
-          keywords: [selected.branch, "start", "runtime", "docker"],
+          keywords: [selected.branch, "start", "runtime", "background"],
           disabled: Boolean(selected.runtime) || busyBranch === selected.branch,
           badgeLabel: selected.runtime ? "Running" : "Idle",
           badgeTone: selected.runtime ? "active" : "idle",
@@ -440,9 +440,9 @@ export function Dashboard() {
           id: `worktree-stop-${selected.branch}`,
           code: "wsp",
           title: `Stop worktree runtime: ${selected.branch}`,
-          subtitle: "Stop docker/runtime services for the selected worktree.",
+          subtitle: "Stop background commands and close the tmux runtime session.",
           group: "Worktree",
-          keywords: [selected.branch, "stop", "runtime", "docker"],
+          keywords: [selected.branch, "stop", "runtime", "background"],
           disabled: !selected.runtime || busyBranch === selected.branch,
           badgeLabel: selected.runtime ? "Running" : "Idle",
           badgeTone: selected.runtime ? "active" : "idle",
@@ -666,7 +666,7 @@ export function Dashboard() {
         <MatrixModal
           kicker="Confirm delete"
           title={<>Delete worktree `{deleteConfirmBranch}`?</>}
-          description="This removes the worktree, stops any running worktree runtime for it, and clears its persisted tmux session."
+          description="This removes the worktree, stops any running background commands for it, and clears its persisted tmux session."
           tone="danger"
           closeLabel="Cancel"
           maxWidthClass="max-w-xl"

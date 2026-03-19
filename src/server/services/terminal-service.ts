@@ -94,6 +94,11 @@ async function ensureTmuxSession(runtime: WorktreeRuntime, shell: string): Promi
   }
 }
 
+export async function ensureRuntimeTerminalSession(runtime: WorktreeRuntime): Promise<void> {
+  const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "bash");
+  await ensureTmuxSession(runtime, shell);
+}
+
 export function getTmuxSessionName(branch: string): string {
   return `wt-${sanitizeBranchName(branch)}`;
 }
@@ -232,10 +237,8 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       TMUX_SESSION_NAME: runtime.tmuxSession,
     };
 
-    const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "bash");
-
     try {
-      await ensureTmuxSession(runtime, shell);
+      await ensureRuntimeTerminalSession(runtime);
     } catch (error) {
       send(socket, {
         type: "error",

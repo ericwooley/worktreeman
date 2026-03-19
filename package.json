@@ -9,13 +9,14 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx src/cli.ts",
     "dev:watch": "NODE_ENV=development tsx watch src/cli.ts start",
+    "test": "tsx --test src/server/services/config-service.test.ts",
     "build": "npm run build:server && npm run build:web && npm run build:docs",
     "build:server": "tsc -p tsconfig.node.json",
     "build:web": "vite build",
     "build:docs": "vite build --config vite.docs.config.ts",
     "preview:docs": "npm run build:docs && http-server dist/docs -p 4174 -c-1",
     "start": "node dist/cli.js",
-    "check": "tsc -p tsconfig.node.json --noEmit && vite build --mode production && vite build --config vite.docs.config.ts --mode production"
+    "check": "npm run test && tsc -p tsconfig.node.json --noEmit && vite build --mode production && vite build --config vite.docs.config.ts --mode production"
   },
   "dependencies": {
     "@git-diff-view/core": "^0.1.2",

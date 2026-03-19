@@ -1,63 +1,44 @@
 import net from "node:net";
 
-export interface ReservedPort {
+export interface AllocatedPort {
   envName: string;
   port: number;
-  release: () => Promise<void>;
 }
 
-async function reserveSinglePort(envName: string): Promise<ReservedPort> {
-  const server = net.createServer();
+async function allocateSinglePort(envName: string): Promise<AllocatedPort> {
+  const port = await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
 
-  await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    server.close();
-    throw new Error(`Unable to reserve a local port for ${envName}.`);
-  }
-
-  return {
-    envName,
-    port: address.port,
-    release: async () => {
-      if (!server.listening) {
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error(`Unable to allocate a local port for ${envName}.`)));
         return;
       }
 
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
+      const allocatedPort = address.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
 
-          resolve();
-        });
+        resolve(allocatedPort);
       });
-    },
-  };
+    });
+  });
+
+  return { envName, port };
 }
 
-export async function reserveRuntimePorts(envNames: string[]): Promise<ReservedPort[]> {
+export async function allocateRuntimePorts(envNames: string[]): Promise<AllocatedPort[]> {
   const uniqueEnvNames = [...new Set(envNames.map((envName) => envName.trim()).filter(Boolean))];
-  const reservedPorts: ReservedPort[] = [];
+  const allocatedPorts: AllocatedPort[] = [];
 
-  try {
-    for (const envName of uniqueEnvNames) {
-      reservedPorts.push(await reserveSinglePort(envName));
-    }
-
-    return reservedPorts;
-  } catch (error) {
-    await Promise.allSettled(reservedPorts.map((entry) => entry.release()));
-    throw error;
+  for (const envName of uniqueEnvNames) {
+    allocatedPorts.push(await allocateSinglePort(envName));
   }
-}
 
-export async function releaseReservedPorts(entries: ReservedPort[]): Promise<void> {
-  await Promise.allSettled(entries.map((entry) => entry.release()));
+  return allocatedPorts;
 }

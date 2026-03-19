@@ -6,11 +6,9 @@ import express from "express";
 import open from "open";
 import { createApiRouter } from "./routes/api.js";
 import { loadConfig } from "./services/config-service.js";
-import { stopDockerRuntime } from "./services/docker-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { ShutdownStatusService } from "./services/shutdown-status-service.js";
-import { createTerminalService } from "./services/terminal-service.js";
-import { releaseReservedPorts } from "./services/runtime-port-service.js";
+import { createTerminalService, killTmuxSession } from "./services/terminal-service.js";
 import { RuntimeStore } from "./state/runtime-store.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
@@ -123,11 +121,10 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     shutdownStatus.begin("[shutdown] Closing Worktree Manager server...");
     process.stdout.write("[shutdown] Closing Worktree Manager server...\n");
 
-    const shutdownConfig = await loadShutdownConfig().catch((error) => {
+    await loadShutdownConfig().catch((error) => {
       logError(
-        `[shutdown] Failed to reload config for shutdown, using startup config: ${error instanceof Error ? error.message : String(error)}`,
+        `[shutdown] Failed to reload config for shutdown: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return config;
     });
 
     const activeRuntimes = runtimes.entries();
@@ -135,8 +132,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       logInfo(`[shutdown] Stopping ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"}...`);
     }
 
-    for (const { runtime, reservedPorts } of activeRuntimes) {
-      logInfo(`[shutdown] Stopping runtime ${runtime.branch} (${runtime.composeProject})...`);
+    for (const runtime of activeRuntimes) {
+      logInfo(`[shutdown] Stopping runtime ${runtime.branch}...`);
 
       try {
         logInfo(`[shutdown] stopping background commands for ${runtime.branch}...`);
@@ -148,22 +145,11 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       }
 
       try {
-        logInfo(`[shutdown] docker compose down for ${runtime.branch}...`);
-        await stopDockerRuntime(runtime, shutdownConfig);
+        logInfo(`[shutdown] killing tmux session for ${runtime.branch}...`);
+        await killTmuxSession(runtime);
       } catch (error) {
         logError(
-          `[shutdown] Failed to stop docker runtime ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-
-      try {
-        if (reservedPorts.length > 0) {
-          logInfo(`[shutdown] releasing ${reservedPorts.length} reserved port${reservedPorts.length === 1 ? "" : "s"} for ${runtime.branch}...`);
-        }
-        await releaseReservedPorts(reservedPorts);
-      } catch (error) {
-        logError(
-          `[shutdown] Failed to release reserved ports for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
+          `[shutdown] Failed to stop tmux session for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
 

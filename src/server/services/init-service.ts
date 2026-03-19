@@ -5,22 +5,13 @@ import { CONFIG_CANDIDATES, fileExists, findGitRoot, sanitizeBranchName } from "
 import { listWorktrees } from "./git-service.js";
 import { runCommand } from "../utils/process.js";
 
-const DEFAULT_INIT_ENV_NAME_STYLE = "service-port-number" as const;
 const WORKTREE_CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json";
-
-const COMPOSE_CANDIDATES = [
-  "docker-compose.yml",
-  "docker-compose.yaml",
-  "compose.yml",
-  "compose.yaml",
-];
 
 export interface InitResult {
   branch: string;
   repoRoot: string;
   worktreePath: string;
   configPath: string;
-  composeFile?: string;
   created: boolean;
   createdWorktree: boolean;
 }
@@ -32,196 +23,10 @@ export interface InitOptions {
   force?: boolean;
 }
 
-interface ComposeDetection {
-  relativePath: string;
-  services: string[];
-}
-
-function pickPortEnvName(
-  serviceName: string,
-  containerPort: number,
-): string {
-  const normalized = serviceName
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toUpperCase();
-
-  return `${normalized || "SERVICE"}_${containerPort}_PORT`;
-}
-
-function splitComposePortSpec(entry: string): string[] {
-  const segments: string[] = [];
-  let current = "";
-  let braceDepth = 0;
-
-  for (const char of entry) {
-    if (char === "$" && current.endsWith("$")) {
-      current += char;
-      continue;
-    }
-
-    if (char === "{") {
-      braceDepth += 1;
-      current += char;
-      continue;
-    }
-
-    if (char === "}" && braceDepth > 0) {
-      braceDepth -= 1;
-      current += char;
-      continue;
-    }
-
-    if (char === ":" && braceDepth === 0) {
-      segments.push(current);
-      current = "";
-      continue;
-    }
-
-    current += char;
-  }
-
-  segments.push(current);
-  return segments;
-}
-
-function extractEnvNameFromPortValue(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-
-  const interpolationMatch = value.match(/\$\{\s*([A-Za-z_][A-Za-z0-9_]*)[^}]*\}/);
-  if (interpolationMatch?.[1]) {
-    return interpolationMatch[1];
-  }
-
-  const directEnvMatch = value.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*$/);
-  return directEnvMatch?.[1];
-}
-
-function extractPortMappings(
-  serviceName: string,
-  service: Record<string, unknown>,
-) {
-  const ports = Array.isArray(service.ports) ? service.ports : [];
-
-  return ports
-    .map((entry) => {
-      if (typeof entry === "string") {
-        const segments = splitComposePortSpec(entry);
-        const containerSegment = segments.at(-1)?.split("/")[0];
-        const protocol =
-          (segments.at(-1)?.split("/")[1] as "tcp" | "udp" | undefined) ??
-          "tcp";
-        const containerPort = Number(containerSegment);
-        const envName = segments
-          .slice(0, -1)
-          .map((segment) => extractEnvNameFromPortValue(segment))
-          .find((segment): segment is string => Boolean(segment));
-
-        if (!Number.isFinite(containerPort)) {
-          return null;
-        }
-
-        return {
-          service: serviceName,
-          containerPort,
-          protocol,
-          envName: envName ?? pickPortEnvName(serviceName, containerPort),
-        };
-      }
-
-      if (typeof entry === "object" && entry && !Array.isArray(entry)) {
-        const mapping = entry as Record<string, unknown>;
-        const target = Number(mapping.target);
-        const envName = extractEnvNameFromPortValue(mapping.published);
-        if (!Number.isFinite(target)) {
-          return null;
-        }
-
-        return {
-          service: serviceName,
-          containerPort: target,
-          protocol: (mapping.protocol as "tcp" | "udp" | undefined) ?? "tcp",
-          envName: envName ?? pickPortEnvName(serviceName, target),
-        };
-      }
-
-      return null;
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
-}
-
-async function detectComposeFile(
-  repoRoot: string,
-): Promise<ComposeDetection | undefined> {
-  for (const candidate of COMPOSE_CANDIDATES) {
-    const absolutePath = path.join(repoRoot, candidate);
-    if (!(await fileExists(absolutePath))) {
-      continue;
-    }
-
-    const raw = await fs.readFile(absolutePath, "utf8");
-    const parsed =
-      (yaml.load(raw) as Record<string, unknown> | undefined) ?? {};
-    const servicesNode = parsed.services;
-
-    if (
-      !servicesNode ||
-      typeof servicesNode !== "object" ||
-      Array.isArray(servicesNode)
-    ) {
-      return { relativePath: candidate, services: [] };
-    }
-
-    return {
-      relativePath: candidate,
-      services: Object.keys(servicesNode),
-    };
-  }
-
-  return undefined;
-}
-
-async function buildConfigYaml(
-  repoRoot: string,
-  compose: ComposeDetection | undefined,
+function buildConfigYaml(
   baseDir: string,
   runtimePorts: string[],
-): Promise<string> {
-  const portMappings: Array<Record<string, unknown>> = [];
-
-  if (compose?.relativePath) {
-    const absolutePath = path.join(repoRoot, compose.relativePath);
-    const raw = await fs.readFile(absolutePath, "utf8");
-    const parsed =
-      (yaml.load(raw) as Record<string, unknown> | undefined) ?? {};
-    const servicesNode = parsed.services;
-
-    if (
-      servicesNode &&
-      typeof servicesNode === "object" &&
-      !Array.isArray(servicesNode)
-    ) {
-      for (const [serviceName, serviceValue] of Object.entries(servicesNode)) {
-        if (
-          !serviceValue ||
-          typeof serviceValue !== "object" ||
-          Array.isArray(serviceValue)
-        ) {
-          continue;
-        }
-
-        for (const mapping of extractPortMappings(
-          serviceName,
-          serviceValue as Record<string, unknown>,
-        )) {
-          portMappings.push(mapping);
-        }
-      }
-    }
-  }
-
+): string {
   const config = {
     env: {
       NODE_ENV: "development",
@@ -232,12 +37,6 @@ async function buildConfigYaml(
     backgroundCommands: {},
     worktrees: {
       baseDir,
-    },
-    docker: {
-      composeFile: compose?.relativePath,
-      projectPrefix: "wt",
-      portMappings,
-      servicePorts: {},
     },
     startupCommands: [],
   };
@@ -294,15 +93,13 @@ export async function initRepository(
       repoRoot: worktreePath,
       worktreePath,
       configPath: existingConfigPath,
-      composeFile: undefined,
       created: false,
       createdWorktree,
     };
   }
 
-  const compose = await detectComposeFile(worktreePath);
   const contents = withSchemaHeader(
-    await buildConfigYaml(worktreePath, compose, baseDir, runtimePorts),
+    buildConfigYaml(baseDir, runtimePorts),
   );
   await fs.writeFile(configPath, contents, "utf8");
 
@@ -311,7 +108,6 @@ export async function initRepository(
     repoRoot: worktreePath,
     worktreePath,
     configPath,
-    composeFile: compose?.relativePath,
     created: true,
     createdWorktree,
   };

@@ -1,24 +1,3 @@
-export interface DockerPortMapping {
-  service: string;
-  containerPort: number;
-  protocol?: "tcp" | "udp";
-  envName: string;
-}
-
-export interface NamedServicePort {
-  service: string;
-  containerPort: number;
-  protocol?: "tcp" | "udp";
-  envName?: string;
-}
-
-export interface DockerConfig {
-  composeFile?: string;
-  projectPrefix?: string;
-  portMappings?: DockerPortMapping[];
-  servicePorts?: Record<string, NamedServicePort>;
-}
-
 export interface BackgroundCommandConfigEntry {
   command: string;
 }
@@ -38,36 +17,23 @@ export interface WorktreeManagerConfig {
   worktrees: {
     baseDir: string;
   };
-  docker: DockerConfig;
-}
-
-export interface PortBinding {
-  name?: string;
-  envName: string;
-  service: string;
-  containerPort: number;
-  hostPort: number;
-  protocol: "tcp" | "udp";
 }
 
 export interface WorktreeRuntime {
   branch: string;
   worktreePath: string;
-  composeProject: string;
   env: Record<string, string>;
   quickLinks: QuickLinkConfigEntry[];
   allocatedPorts: Record<string, number>;
-  ports: PortBinding[];
-  servicePorts: Record<string, PortBinding>;
   tmuxSession: string;
-  dockerStartedAt?: string;
+  runtimeStartedAt?: string;
 }
 
 export interface BackgroundCommandState {
   name: string;
   command: string;
   processName: string;
-  manager: "pm2" | "runtime";
+  manager: "pm2";
   running: boolean;
   status: string;
   requiresRuntime: boolean;

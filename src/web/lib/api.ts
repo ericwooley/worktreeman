@@ -13,10 +13,6 @@ export interface EnvSyncResponse {
   copiedFiles: string[];
 }
 
-function normalizeBackgroundCommandName(commandName: string): string {
-  return commandName === "Environment" ? "docker compose" : commandName;
-}
-
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -122,25 +118,22 @@ export function getBackgroundCommands(branch: string): Promise<BackgroundCommand
 }
 
 export function startBackgroundCommand(branch: string, commandName: string): Promise<BackgroundCommandState[]> {
-  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
   return request<BackgroundCommandState[]>(
-    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/start`,
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/start`,
     { method: "POST" },
   );
 }
 
 export function stopBackgroundCommand(branch: string, commandName: string): Promise<BackgroundCommandState[]> {
-  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
   return request<BackgroundCommandState[]>(
-    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/stop`,
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/stop`,
     { method: "POST" },
   );
 }
 
 export function getBackgroundCommandLogs(branch: string, commandName: string): Promise<BackgroundCommandLogsResponse> {
-  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
   return request<BackgroundCommandLogsResponse>(
-    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/logs`,
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/logs`,
   );
 }
 
@@ -149,10 +142,9 @@ export function subscribeToBackgroundCommandLogs(
   commandName: string,
   onEvent: (event: BackgroundCommandLogStreamEvent) => void,
 ): () => void {
-  const normalizedCommandName = normalizeBackgroundCommandName(commandName);
   let closed = false;
   const source = new EventSource(
-    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(normalizedCommandName)}/logs/stream`,
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/logs/stream`,
   );
 
   source.onmessage = (event) => {

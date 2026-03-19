@@ -1,40 +1,30 @@
-import type { ReservedPort } from "../services/runtime-port-service.js";
 import type { WorktreeRuntime } from "../../shared/types.js";
 
-interface StoredRuntime {
-  runtime: WorktreeRuntime;
-  reservedPorts: ReservedPort[];
-}
-
 export class RuntimeStore {
-  private runtimes = new Map<string, StoredRuntime>();
+  private runtimes = new Map<string, WorktreeRuntime>();
 
   get(branch: string): WorktreeRuntime | undefined {
-    return this.runtimes.get(branch)?.runtime;
+    return this.runtimes.get(branch);
   }
 
-  set(runtime: WorktreeRuntime, reservedPorts: ReservedPort[] = []): void {
-    this.runtimes.set(runtime.branch, { runtime, reservedPorts });
+  set(runtime: WorktreeRuntime): void {
+    this.runtimes.set(runtime.branch, runtime);
   }
 
-  delete(branch: string): StoredRuntime | undefined {
+  delete(branch: string): WorktreeRuntime | undefined {
     const storedRuntime = this.runtimes.get(branch);
     this.runtimes.delete(branch);
     return storedRuntime;
   }
 
-  entries(): StoredRuntime[] {
+  entries(): WorktreeRuntime[] {
     return [...this.runtimes.values()];
-  }
-
-  getReservedPorts(branch: string): ReservedPort[] {
-    return this.runtimes.get(branch)?.reservedPorts ?? [];
   }
 
   mergeInto<T extends { branch: string }>(worktrees: T[]): Array<T & { runtime?: WorktreeRuntime }> {
     return worktrees.map((worktree) => ({
       ...worktree,
-      runtime: this.runtimes.get(worktree.branch)?.runtime,
+      runtime: this.runtimes.get(worktree.branch),
     }));
   }
 }

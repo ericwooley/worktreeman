@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import type { BackgroundCommandConfigEntry, NamedServicePort, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
+import type { BackgroundCommandConfigEntry, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
 export interface ConfigSource {
@@ -27,35 +27,6 @@ function ensureRecord(value: unknown, label: string): Record<string, string> {
       }
 
       return [key, String(entry)];
-    }),
-  );
-}
-
-function parseNamedServicePorts(value: unknown): Record<string, NamedServicePort> {
-  if (value == null) {
-    return {};
-  }
-
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("docker.servicePorts must be a mapping/object.");
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).map(([name, entry]) => {
-      if (typeof entry !== "object" || !entry || Array.isArray(entry)) {
-        throw new Error(`docker.servicePorts.${name} must be a mapping/object.`);
-      }
-
-      const servicePort = entry as Record<string, unknown>;
-      return [
-        name,
-        {
-          service: String(servicePort.service),
-          containerPort: Number(servicePort.containerPort),
-          protocol: (servicePort.protocol as "tcp" | "udp" | undefined) ?? "tcp",
-          envName: servicePort.envName == null ? undefined : String(servicePort.envName),
-        },
-      ];
     }),
   );
 }
@@ -125,10 +96,6 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
     ? parsed.worktrees
     : {};
 
-  const docker = typeof parsed.docker === "object" && parsed.docker && !Array.isArray(parsed.docker)
-    ? parsed.docker
-    : {};
-
   return {
     env,
     runtimePorts: Array.isArray(parsed.runtimePorts)
@@ -140,22 +107,6 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
     worktrees: {
       baseDir: String((worktrees as { baseDir?: string }).baseDir ?? ".worktrees"),
-    },
-    docker: {
-      composeFile: (docker as { composeFile?: string }).composeFile,
-      projectPrefix: String((docker as { projectPrefix?: string }).projectPrefix ?? "wt"),
-      portMappings: Array.isArray((docker as { portMappings?: unknown[] }).portMappings)
-        ? ((docker as { portMappings: unknown[] }).portMappings.map((entry) => {
-            const mapping = entry as Record<string, unknown>;
-            return {
-              service: String(mapping.service),
-              containerPort: Number(mapping.containerPort),
-              protocol: (mapping.protocol as "tcp" | "udp" | undefined) ?? "tcp",
-              envName: String(mapping.envName),
-            };
-          }) ?? [])
-        : [],
-      servicePorts: parseNamedServicePorts((docker as { servicePorts?: unknown }).servicePorts),
     },
   };
 }
