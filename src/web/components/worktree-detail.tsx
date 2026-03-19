@@ -212,15 +212,34 @@ export function WorktreeDetail({
       }
     };
 
-    void loadComparison();
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void loadComparison();
+    };
+
+    if (document.visibilityState === "visible") {
+      void loadComparison();
+    }
 
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
       void loadComparison();
     }, GIT_COMPARISON_POLL_INTERVAL_MS);
+
+    window.addEventListener("focus", handleVisibilityRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.removeEventListener("focus", handleVisibilityRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
   }, [activeTab, onLoadGitComparison, selectedGitBaseBranch, worktree?.branch]);
 
