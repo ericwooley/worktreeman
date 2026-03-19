@@ -14,7 +14,17 @@ export interface CommandPaletteItem {
   badgeLabel?: string;
   badgeTone?: MatrixBadgeTone;
   disabled?: boolean;
+  closeOnSelect?: boolean;
   action: () => void;
+}
+
+export interface CommandPaletteShortcutSetting {
+  id: string;
+  label: string;
+  shortcut: string;
+  defaultShortcut: string;
+  onChange: (shortcut: string) => void;
+  onReset: () => void;
 }
 
 export function normalizeShortcutKey(key: string): string | null {
@@ -100,6 +110,14 @@ function getFuzzyScore(query: string, candidate: string): number | null {
   return score - Math.max(firstMatchIndex, 0) * 0.05 - (haystack.length - needle.length) * 0.01;
 }
 
+function getQuickSelectKey(index: number): string | null {
+  if (index < 0 || index > 9) {
+    return null;
+  }
+
+  return index === 9 ? "0" : String(index + 1);
+}
+
 export function CommandPalette({
   open,
   commands,
@@ -107,6 +125,15 @@ export function CommandPalette({
   onClose,
   onShortcutChange,
   onShortcutReset,
+  title = "Command palette",
+  placeholder = "Type a command or worktree name, or :code",
+  emptyState = "No commands match the current search.",
+  fuzzyModeLabel = "Fuzzy mode: search commands by name",
+  codeModeLabel = "Code mode: exact command codes",
+  codeModeHint = "Prefix with `:`",
+  autoExecuteExactCode = true,
+  scopeKey = "default",
+  shortcutSettings,
 }: {
   open: boolean;
   commands: CommandPaletteItem[];
@@ -114,11 +141,20 @@ export function CommandPalette({
   onClose: (options?: { restoreFocus?: boolean }) => void;
   onShortcutChange: (shortcut: string) => void;
   onShortcutReset: () => void;
+  title?: string;
+  placeholder?: string;
+  emptyState?: string;
+  fuzzyModeLabel?: string;
+  codeModeLabel?: string;
+  codeModeHint?: string;
+  autoExecuteExactCode?: boolean;
+  scopeKey?: string;
+  shortcutSettings: CommandPaletteShortcutSetting[];
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
-  const [isRecordingShortcut, setIsRecordingShortcut] = useState(false);
+  const [recordingShortcutId, setRecordingShortcutId] = useState<string | null>(null);
   const isCodeMode = query.startsWith(":");
   const codeQuery = isCodeMode ? query.slice(1).trim().toLowerCase() : "";
 
@@ -154,15 +190,31 @@ export function CommandPalette({
       .map((entry) => entry.command);
   }, [codeMatchedCommands, commands, isCodeMode, query]);
 
+  const focusInput = () => {
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+
+    input.focus();
+    input.select();
+  };
+
   useEffect(() => {
     if (!open) {
       setQuery("");
       setActiveIndex(0);
-      setIsRecordingShortcut(false);
+      setRecordingShortcutId(null);
       return;
     }
 
-    window.requestAnimationFrame(() => inputRef.current?.focus());
+    const frame = window.requestAnimationFrame(focusInput);
+    const timeout = window.setTimeout(focusInput, 30);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -170,13 +222,15 @@ export function CommandPalette({
   }, [query]);
 
   useEffect(() => {
-    if (!open || !isCodeMode || !exactCodeMatch || exactCodeMatch.disabled) {
+    if (!open || !autoExecuteExactCode || !isCodeMode || !exactCodeMatch || exactCodeMatch.disabled) {
       return;
     }
 
-    onClose();
+    if (exactCodeMatch.closeOnSelect !== false) {
+      onClose();
+    }
     exactCodeMatch.action();
-  }, [exactCodeMatch, isCodeMode, onClose, open]);
+  }, [autoExecuteExactCode, exactCodeMatch, isCodeMode, onClose, open]);
 
   useEffect(() => {
     if (!open) {
@@ -184,10 +238,10 @@ export function CommandPalette({
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isRecordingShortcut) {
+      if (recordingShortcutId) {
         if (event.key === "Escape") {
           event.preventDefault();
-          setIsRecordingShortcut(false);
+          setRecordingShortcutId(null);
           return;
         }
 
@@ -197,14 +251,15 @@ export function CommandPalette({
         }
 
         event.preventDefault();
-        onShortcutChange(nextShortcut);
-        setIsRecordingShortcut(false);
+        shortcutSettings.find((setting) => setting.id === recordingShortcutId)?.onChange(nextShortcut);
+        setRecordingShortcutId(null);
         return;
       }
 
       const pressedShortcut = shortcutFromKeyboardEvent(event);
       if (pressedShortcut && pressedShortcut === shortcut) {
         event.preventDefault();
+        event.stopPropagation();
         onClose({ restoreFocus: true });
         return;
       }
@@ -238,14 +293,49 @@ export function CommandPalette({
         }
 
         event.preventDefault();
-        onClose();
+        if (command.closeOnSelect !== false) {
+          onClose();
+        }
+        command.action();
+        return;
+      }
+
+      if (!isCodeMode && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && /^[0-9]$/.test(event.key)) {
+        const quickIndex = event.key === "0" ? 9 : Number(event.key) - 1;
+        const command = filteredCommands[quickIndex];
+        if (!command || command.disabled) {
+          return;
+        }
+
+        event.preventDefault();
+        if (command.closeOnSelect !== false) {
+          onClose();
+        }
         command.action();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeIndex, filteredCommands, isRecordingShortcut, onClose, onShortcutChange, open, shortcut]);
+  }, [activeIndex, filteredCommands, isCodeMode, onClose, open, recordingShortcutId, shortcut, shortcutSettings]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setQuery("");
+    setActiveIndex(0);
+    setRecordingShortcutId(null);
+
+    const frame = window.requestAnimationFrame(focusInput);
+    const timeout = window.setTimeout(focusInput, 30);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+    };
+  }, [open, scopeKey]);
 
   if (!open) {
     return null;
@@ -258,25 +348,27 @@ export function CommandPalette({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="border-b border-[rgba(74,255,122,0.12)] px-4 py-4 sm:px-5">
-          <p className="matrix-kicker">Command palette</p>
+          <p className="matrix-kicker">{title}</p>
           <div className="mt-3 border border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.28)]">
             <input
               ref={inputRef}
+              autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Type a command or worktree name, or :code"
+              placeholder={placeholder}
               className="h-12 w-full bg-transparent px-4 font-mono text-sm text-[#ecffec] outline-none placeholder:text-[#6cb96c]"
             />
           </div>
           <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[#8fd18f]">
-            <span>{isCodeMode ? "Code mode: exact command codes" : "Fuzzy mode: search commands by name"}</span>
-            {isCodeMode ? <span className="font-mono text-[#ecffec]">Prefix with `:`</span> : null}
+            <span>{isCodeMode ? codeModeLabel : fuzzyModeLabel}</span>
+            {isCodeMode ? <span className="font-mono text-[#ecffec]">{codeModeHint}</span> : null}
           </div>
         </div>
 
         <div className="max-h-[50vh] overflow-auto">
           {filteredCommands.length ? filteredCommands.map((command, index) => {
             const active = index === activeIndex;
+            const quickSelectKey = !isCodeMode ? getQuickSelectKey(index) : null;
 
             return (
               <button
@@ -292,15 +384,22 @@ export function CommandPalette({
                     return;
                   }
 
-                  onClose();
+                  if (command.closeOnSelect !== false) {
+                    onClose();
+                  }
                   command.action();
                 }}
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-mono text-sm text-[#ecffec]">{command.title}</p>
-                    {command.group ? <span className="text-[10px] uppercase tracking-[0.18em] text-[#6cb96c]">{command.group}</span> : null}
-                    <span className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.22)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#7fe19e]">
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {quickSelectKey ? (
+                        <span className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.22)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#ffd892]">
+                          {quickSelectKey}
+                        </span>
+                      ) : null}
+                      <p className="font-mono text-sm text-[#ecffec]">{command.title}</p>
+                      {command.group ? <span className="text-[10px] uppercase tracking-[0.18em] text-[#6cb96c]">{command.group}</span> : null}
+                      <span className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.22)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#7fe19e]">
                       :{command.code}
                     </span>
                   </div>
@@ -312,32 +411,40 @@ export function CommandPalette({
               </button>
             );
           }) : (
-            <div className="px-4 py-6 text-sm text-[#8fd18f]">No commands match the current search.</div>
+            <div className="px-4 py-6 text-sm text-[#8fd18f]">{emptyState}</div>
           )}
         </div>
 
         <div className="flex flex-col gap-3 border-t border-[rgba(74,255,122,0.12)] px-4 py-3 text-sm text-[#9cd99c] sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <div>
-            <p className="text-[0.65rem] uppercase tracking-[0.18em] text-[#6cb96c]">Shortcut</p>
-            <p className="mt-1 font-mono text-[#ecffec]">
-              {isRecordingShortcut ? "Press a new shortcut..." : formatShortcutLabel(shortcut)}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              onClick={() => setIsRecordingShortcut(true)}
-            >
-              Change shortcut
-            </button>
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              onClick={onShortcutReset}
-            >
-              Reset to {formatShortcutLabel(DEFAULT_COMMAND_PALETTE_SHORTCUT)}
-            </button>
+          <div className="grid flex-1 gap-3 sm:grid-cols-2">
+            {shortcutSettings.map((setting) => {
+              const isRecording = recordingShortcutId === setting.id;
+
+              return (
+                <div key={setting.id} className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.18)] px-3 py-3">
+                  <p className="text-[0.65rem] uppercase tracking-[0.18em] text-[#6cb96c]">{setting.label}</p>
+                  <p className="mt-1 font-mono text-[#ecffec]">
+                    {isRecording ? "Press a new shortcut..." : formatShortcutLabel(setting.shortcut)}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      onClick={() => setRecordingShortcutId(setting.id)}
+                    >
+                      Change shortcut
+                    </button>
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      onClick={setting.onReset}
+                    >
+                      Reset to {formatShortcutLabel(setting.defaultShortcut)}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

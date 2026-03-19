@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CommandPalette, DEFAULT_COMMAND_PALETTE_SHORTCUT, formatShortcutLabel, shortcutFromKeyboardEvent, type CommandPaletteItem } from "./command-palette";
+import {
+  CommandPalette,
+  DEFAULT_COMMAND_PALETTE_SHORTCUT,
+  formatShortcutLabel,
+  shortcutFromKeyboardEvent,
+  type CommandPaletteItem,
+  type CommandPaletteShortcutSetting,
+} from "./command-palette";
 import { useDashboardState } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
@@ -7,6 +14,26 @@ import { WorktreeDetail } from "./worktree-detail";
 
 const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
 const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreemanager.commandPaletteShortcut";
+const TERMINAL_SHORTCUT_STORAGE_KEY = "worktreemanager.terminalShortcut";
+const LEGACY_COMMAND_PALETTE_SHORTCUTS = new Set(["Shift+Space", "Meta+P"]);
+const DEFAULT_TERMINAL_SHORTCUT = "Ctrl+Shift+;";
+type CommandPaletteScope = "main" | "worktree-select";
+
+function normalizeCommandPaletteShortcut(shortcut: string | null): string {
+  if (!shortcut || LEGACY_COMMAND_PALETTE_SHORTCUTS.has(shortcut)) {
+    return DEFAULT_COMMAND_PALETTE_SHORTCUT;
+  }
+
+  return shortcut;
+}
+
+function normalizeTerminalShortcut(shortcut: string | null): string {
+  if (!shortcut) {
+    return DEFAULT_TERMINAL_SHORTCUT;
+  }
+
+  return shortcut;
+}
 
 function getWorktreeCommandCode(branch: string): string {
   const cleaned = branch.replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -70,25 +97,37 @@ export function Dashboard() {
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
   const [branch, setBranch] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteScope, setCommandPaletteScope] = useState<CommandPaletteScope>("main");
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const lastTerminalFocusedElementRef = useRef<HTMLElement | null>(null);
+  const lastTerminalShortcutAtRef = useRef(0);
   const [commandPaletteShortcut, setCommandPaletteShortcut] = useState(() => {
     if (typeof window === "undefined") {
       return DEFAULT_COMMAND_PALETTE_SHORTCUT;
     }
 
-    return window.localStorage.getItem(COMMAND_PALETTE_SHORTCUT_STORAGE_KEY) ?? DEFAULT_COMMAND_PALETTE_SHORTCUT;
+    return normalizeCommandPaletteShortcut(window.localStorage.getItem(COMMAND_PALETTE_SHORTCUT_STORAGE_KEY));
+  });
+  const [terminalShortcut, setTerminalShortcut] = useState(() => {
+    if (typeof window === "undefined") {
+      return DEFAULT_TERMINAL_SHORTCUT;
+    }
+
+    return normalizeTerminalShortcut(window.localStorage.getItem(TERMINAL_SHORTCUT_STORAGE_KEY));
   });
 
-  const openCommandPalette = useCallback(() => {
+  const openCommandPalette = useCallback((scope: CommandPaletteScope = "main") => {
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
       lastFocusedElementRef.current = document.activeElement;
     }
 
+    setCommandPaletteScope(scope);
     setCommandPaletteOpen(true);
   }, []);
 
   const closeCommandPalette = useCallback((options?: { restoreFocus?: boolean }) => {
     setCommandPaletteOpen(false);
+    setCommandPaletteScope("main");
 
     if (!options?.restoreFocus) {
       return;
@@ -99,6 +138,34 @@ export function Dashboard() {
       if (previousFocusTarget?.isConnected) {
         previousFocusTarget.focus();
       }
+    });
+  }, []);
+
+  const toggleTerminalVisibility = useCallback((restoreFocus = false) => {
+    const now = Date.now();
+    if (now - lastTerminalShortcutAtRef.current < 150) {
+      return;
+    }
+
+    lastTerminalShortcutAtRef.current = now;
+
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      lastTerminalFocusedElementRef.current = document.activeElement;
+    }
+
+    setIsTerminalVisible((current) => {
+      const next = !current;
+
+      if (!next && restoreFocus) {
+        const previousFocusTarget = lastTerminalFocusedElementRef.current;
+        window.requestAnimationFrame(() => {
+          if (previousFocusTarget?.isConnected) {
+            previousFocusTarget.focus();
+          }
+        });
+      }
+
+      return next;
     });
   }, []);
 
@@ -143,11 +210,26 @@ export function Dashboard() {
   }, [selected?.branch, selectedBranch]);
 
   useEffect(() => {
-    window.localStorage.setItem(COMMAND_PALETTE_SHORTCUT_STORAGE_KEY, commandPaletteShortcut);
+    window.localStorage.setItem(
+      COMMAND_PALETTE_SHORTCUT_STORAGE_KEY,
+      normalizeCommandPaletteShortcut(commandPaletteShortcut),
+    );
   }, [commandPaletteShortcut]);
 
   useEffect(() => {
+    window.localStorage.setItem(
+      TERMINAL_SHORTCUT_STORAGE_KEY,
+      normalizeTerminalShortcut(terminalShortcut),
+    );
+  }, [terminalShortcut]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) {
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
       const tagName = (event.target as HTMLElement | null)?.tagName;
       const isTypingContext = Boolean(
         (event.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable='true']")
@@ -155,9 +237,33 @@ export function Dashboard() {
         || tagName === "TEXTAREA"
         || tagName === "SELECT",
       );
+      const isInsideTerminal = Boolean(target?.closest(".xterm"));
 
       const shortcut = shortcutFromKeyboardEvent(event);
-      if (!shortcut || shortcut !== commandPaletteShortcut) {
+      if (!shortcut) {
+        return;
+      }
+
+      if (shortcut === terminalShortcut) {
+        if (isInsideTerminal) {
+          return;
+        }
+
+        if (commandPaletteOpen && !isTypingContext) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        toggleTerminalVisibility(true);
+        return;
+      }
+
+      if (shortcut !== commandPaletteShortcut) {
+        return;
+      }
+
+      if (isInsideTerminal) {
         return;
       }
 
@@ -165,17 +271,18 @@ export function Dashboard() {
         return;
       }
 
-        event.preventDefault();
-        if (commandPaletteOpen) {
-          closeCommandPalette({ restoreFocus: true });
-        } else {
+      event.preventDefault();
+      event.stopPropagation();
+      if (commandPaletteOpen) {
+        closeCommandPalette({ restoreFocus: true });
+      } else {
           openCommandPalette();
         }
       };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [closeCommandPalette, commandPaletteOpen, commandPaletteShortcut, openCommandPalette]);
+  }, [closeCommandPalette, commandPaletteOpen, commandPaletteShortcut, openCommandPalette, terminalShortcut, toggleTerminalVisibility]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -220,7 +327,14 @@ export function Dashboard() {
     setDeleteConfirmBranch(null);
   };
 
-  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+  const navigateToTab = (tab: "shell" | "background" | "git") => {
+    setActiveTab(tab);
+    if (tab !== "shell") {
+      setIsTerminalVisible(false);
+    }
+  };
+
+  const mainCommandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     const items: CommandPaletteItem[] = [
       {
         id: "nav-shell",
@@ -231,7 +345,7 @@ export function Dashboard() {
         keywords: ["terminal", "shell", "tab"],
         badgeLabel: activeTab === "shell" ? "Active" : undefined,
         badgeTone: "active",
-        action: () => setActiveTab("shell"),
+        action: () => navigateToTab("shell"),
       },
       {
         id: "nav-background",
@@ -242,7 +356,7 @@ export function Dashboard() {
         keywords: ["pm2", "logs", "background", "processes"],
         badgeLabel: activeTab === "background" ? "Active" : undefined,
         badgeTone: "active",
-        action: () => setActiveTab("background"),
+        action: () => navigateToTab("background"),
       },
       {
         id: "nav-git",
@@ -253,7 +367,7 @@ export function Dashboard() {
         keywords: ["git", "status", "changes"],
         badgeLabel: activeTab === "git" ? "Active" : undefined,
         badgeTone: "active",
-        action: () => setActiveTab("git"),
+        action: () => navigateToTab("git"),
       },
       {
         id: "terminal-toggle",
@@ -263,6 +377,16 @@ export function Dashboard() {
         group: "Terminal",
         keywords: ["drawer", "terminal", "toggle"],
         action: () => setIsTerminalVisible((current) => !current),
+      },
+      {
+        id: "worktree-select",
+        code: "ww",
+        title: "Select worktree",
+        subtitle: "Open a dedicated picker with fuzzy search and numeric jump codes.",
+        group: "Worktree",
+        keywords: ["worktree", "switch", "select", "picker"],
+        closeOnSelect: false,
+        action: () => setCommandPaletteScope("worktree-select"),
       },
       {
         id: "refresh-state",
@@ -344,22 +468,46 @@ export function Dashboard() {
       );
     }
 
-    for (const entry of state?.worktrees ?? []) {
-      items.push({
-        id: `switch-${entry.branch}`,
-        code: getWorktreeCommandCode(entry.branch),
-        title: `Switch to worktree: ${entry.branch}`,
-        subtitle: entry.runtime ? "Runtime active" : "Idle",
-        group: "Worktree",
-        keywords: [entry.branch, entry.worktreePath, entry.runtime ? "active" : "idle"],
-        badgeLabel: entry.runtime ? "Active" : undefined,
-        badgeTone: "active",
-        action: () => setSelectedBranch(entry.branch),
-      });
-    }
-
     return items.sort(comparePaletteItems);
   }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, refresh, selected, start, state?.worktrees, stop, syncEnv]);
+
+  const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    return (state?.worktrees ?? []).map((entry, index) => ({
+      id: `select-worktree-${entry.branch}`,
+      code: String(index + 1),
+      title: `${index + 1}. ${entry.branch}`,
+      subtitle: entry.runtime ? `Runtime active - ${entry.worktreePath}` : `Idle - ${entry.worktreePath}`,
+      group: "Worktree",
+      keywords: [entry.branch, entry.worktreePath, entry.runtime ? "active" : "idle", String(index + 1)],
+      badgeLabel: entry.runtime ? "Active" : "Idle",
+      badgeTone: entry.runtime ? "active" : "idle",
+      closeOnSelect: true,
+      action: () => setSelectedBranch(entry.branch),
+    }));
+  }, [state?.worktrees]);
+
+  const paletteCommands = commandPaletteScope === "worktree-select"
+    ? worktreeSelectionPaletteItems
+    : mainCommandPaletteItems;
+
+  const shortcutSettings = useMemo<CommandPaletteShortcutSetting[]>(() => [
+    {
+      id: "command-palette",
+      label: "Command palette shortcut",
+      shortcut: commandPaletteShortcut,
+      defaultShortcut: DEFAULT_COMMAND_PALETTE_SHORTCUT,
+      onChange: setCommandPaletteShortcut,
+      onReset: () => setCommandPaletteShortcut(DEFAULT_COMMAND_PALETTE_SHORTCUT),
+    },
+    {
+      id: "terminal-toggle",
+      label: "Terminal toggle shortcut",
+      shortcut: terminalShortcut,
+      defaultShortcut: DEFAULT_TERMINAL_SHORTCUT,
+      onChange: setTerminalShortcut,
+      onReset: () => setTerminalShortcut(DEFAULT_TERMINAL_SHORTCUT),
+    },
+  ], [commandPaletteShortcut, terminalShortcut]);
 
   return (
     <main
@@ -478,6 +626,8 @@ export function Dashboard() {
 
               openCommandPalette();
             }}
+            terminalShortcut={terminalShortcut}
+            onTerminalShortcutToggle={() => toggleTerminalVisibility(true)}
             isBusy={busyBranch === selected?.branch}
             onStart={() => selected ? void start(selected.branch) : undefined}
             onStop={() => selected ? void stop(selected.branch) : undefined}
@@ -604,11 +754,28 @@ export function Dashboard() {
 
       <CommandPalette
         open={commandPaletteOpen}
-        commands={commandPaletteItems}
+        commands={paletteCommands}
         shortcut={commandPaletteShortcut}
         onClose={closeCommandPalette}
         onShortcutChange={setCommandPaletteShortcut}
         onShortcutReset={() => setCommandPaletteShortcut(DEFAULT_COMMAND_PALETTE_SHORTCUT)}
+        shortcutSettings={shortcutSettings}
+        title={commandPaletteScope === "worktree-select" ? "Select worktree" : "Command palette"}
+        placeholder={commandPaletteScope === "worktree-select"
+          ? "Type a worktree name, path, or :number"
+          : "Type a command or worktree name, or :code"}
+        emptyState={commandPaletteScope === "worktree-select"
+          ? "No worktrees match the current search."
+          : "No commands match the current search."}
+        fuzzyModeLabel={commandPaletteScope === "worktree-select"
+          ? "Fuzzy mode: search worktrees by branch or path"
+          : "Fuzzy mode: search commands by name"}
+        codeModeLabel={commandPaletteScope === "worktree-select"
+          ? "Number mode: exact worktree number"
+          : "Code mode: exact command codes"}
+        codeModeHint={commandPaletteScope === "worktree-select" ? "Prefix with `:` then a number" : "Prefix with `:`"}
+        autoExecuteExactCode={commandPaletteScope !== "worktree-select"}
+        scopeKey={commandPaletteScope}
       />
     </main>
   );

@@ -25,6 +25,8 @@ export function WorktreeTerminal({
   showSessionInfo = true,
   commandPaletteShortcut,
   onCommandPaletteToggle,
+  terminalShortcut,
+  onTerminalShortcutToggle,
 }: {
   worktree: WorktreeRecord | null;
   isTerminalVisible: boolean;
@@ -34,6 +36,8 @@ export function WorktreeTerminal({
   showSessionInfo?: boolean;
   commandPaletteShortcut: string;
   onCommandPaletteToggle: () => void;
+  terminalShortcut: string;
+  onTerminalShortcutToggle: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession ?? null;
@@ -45,6 +49,10 @@ export function WorktreeTerminal({
   >(null);
   const scheduleResizeRef = useRef<((force?: boolean) => void) | null>(null);
   const lastCopiedSelectionRef = useRef("");
+  const commandPaletteShortcutRef = useRef(commandPaletteShortcut);
+  const terminalShortcutRef = useRef(terminalShortcut);
+  const commandPaletteToggleRef = useRef(onCommandPaletteToggle);
+  const terminalShortcutToggleRef = useRef(onTerminalShortcutToggle);
   const runtimeEnvEntries = useMemo(
     () => (worktree?.runtime ? Object.entries(worktree.runtime.env) : []),
     [worktree?.runtime],
@@ -53,6 +61,14 @@ export function WorktreeTerminal({
     () => runtimeEnvEntries.slice(0, 8),
     [runtimeEnvEntries],
   );
+
+  useEffect(() => {
+    commandPaletteShortcutRef.current = commandPaletteShortcut;
+    terminalShortcutRef.current = terminalShortcut;
+    commandPaletteToggleRef.current = onCommandPaletteToggle;
+    terminalShortcutToggleRef.current = onTerminalShortcutToggle;
+  }, [commandPaletteShortcut, onCommandPaletteToggle, onTerminalShortcutToggle, terminalShortcut]);
+
   const drawer = worktree?.runtime ? (
     <div
       className="fixed inset-x-0 bottom-0 z-[35] h-[100dvh] transition-transform duration-300 ease-out"
@@ -184,12 +200,22 @@ export function WorktreeTerminal({
     terminal.open(hostRef.current);
     terminal.attachCustomKeyEventHandler((event) => {
       const shortcut = shortcutFromKeyboardEvent(event);
-      if (!shortcut || shortcut !== commandPaletteShortcut) {
+      if (!shortcut) {
+        return true;
+      }
+
+      if (shortcut === terminalShortcutRef.current) {
+        event.preventDefault();
+        terminalShortcutToggleRef.current();
+        return false;
+      }
+
+      if (shortcut !== commandPaletteShortcutRef.current) {
         return true;
       }
 
       event.preventDefault();
-      onCommandPaletteToggle();
+      commandPaletteToggleRef.current();
       return false;
     });
     terminal.focus();

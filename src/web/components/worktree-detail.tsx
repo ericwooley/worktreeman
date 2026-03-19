@@ -17,6 +17,8 @@ interface WorktreeDetailProps {
   onTerminalVisibilityChange: (visible: boolean) => void;
   commandPaletteShortcut: string;
   onCommandPaletteToggle: () => void;
+  terminalShortcut: string;
+  onTerminalShortcutToggle: () => void;
   isBusy: boolean;
   onStart: () => void;
   onStop: () => void;
@@ -45,6 +47,8 @@ export function WorktreeDetail({
   onTerminalVisibilityChange,
   commandPaletteShortcut,
   onCommandPaletteToggle,
+  terminalShortcut,
+  onTerminalShortcutToggle,
   isBusy,
   onStart,
   onStop,
@@ -434,13 +438,15 @@ export function WorktreeDetail({
       <div className="min-w-0 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
         <WorktreeTerminal
           worktree={worktree}
-        isTerminalVisible={isTerminalVisible}
-        onTerminalVisibilityChange={onTerminalVisibilityChange}
-        commandPaletteShortcut={commandPaletteShortcut}
-        onCommandPaletteToggle={onCommandPaletteToggle}
-        worktreeOptions={worktreeOptions}
-        onSelectWorktree={onSelectWorktree}
-        showSessionInfo={activeTab === "shell"}
+          isTerminalVisible={isTerminalVisible}
+          onTerminalVisibilityChange={onTerminalVisibilityChange}
+          commandPaletteShortcut={commandPaletteShortcut}
+          onCommandPaletteToggle={onCommandPaletteToggle}
+          terminalShortcut={terminalShortcut}
+          onTerminalShortcutToggle={onTerminalShortcutToggle}
+          worktreeOptions={worktreeOptions}
+          onSelectWorktree={onSelectWorktree}
+          showSessionInfo={activeTab === "shell"}
         />
       </div>
     </section>
