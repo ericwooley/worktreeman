@@ -1,11 +1,165 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
+import { DiffView, DiffModeEnum } from "@git-diff-view/react";
+import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
+import "@git-diff-view/react/styles/diff-view-pure.css";
 import type { BackgroundCommandLogsResponse, BackgroundCommandState, GitComparisonResponse, WorktreeRecord } from "@shared/types";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
 
 const GIT_COMPARISON_POLL_INTERVAL_MS = 3000;
+const DIFF_RENDER_MAX_CHARS = 350_000;
+const DIFF_RENDER_MAX_LINES = 8_000;
+const DIFF_RENDER_MAX_FILES = 80;
+const DIFF_VIEW_MAX_LINE_LENGTH = 2_000;
+
+changeMaxLengthToIgnoreLineDiff(DIFF_VIEW_MAX_LINE_LENGTH);
+
+type ParsedDiffSection = {
+  title: string;
+  files: Array<{
+    key: string;
+    oldFileName: string;
+    newFileName: string;
+    diffText: string;
+    hunks: string[];
+  }>;
+};
+
+function buildDiffContents(hunks: string[]) {
+  const oldLines: string[] = [];
+  const newLines: string[] = [];
+
+  for (const hunk of hunks) {
+    for (const line of hunk.split("\n").slice(1)) {
+      if (!line || line.startsWith("@@ ") || line.startsWith("\\ No newline at end of file")) {
+        continue;
+      }
+
+      const prefix = line[0];
+      const content = line.slice(1);
+
+      if (prefix === " " || prefix === "-") {
+        oldLines.push(content);
+      }
+
+      if (prefix === " " || prefix === "+") {
+        newLines.push(content);
+      }
+    }
+  }
+
+  return {
+    oldContent: oldLines.join("\n"),
+    newContent: newLines.join("\n"),
+  };
+}
+
+function normalizeDiffPath(value: string) {
+  const trimmed = value.trim().replace(/^"|"$/g, "");
+  if (trimmed === "/dev/null") {
+    return trimmed;
+  }
+
+  return trimmed.replace(/^[ab]\//, "");
+}
+
+function parseDiffBlock(block: string, key: string) {
+  const lines = block.split("\n");
+  const oldFileLine = lines.find((line) => line.startsWith("--- "));
+  const newFileLine = lines.find((line) => line.startsWith("+++ "));
+
+  if (!oldFileLine || !newFileLine) {
+    return null;
+  }
+
+  const hunks: string[] = [];
+  let currentHunk: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("@@ ")) {
+      if (currentHunk.length) {
+        hunks.push(currentHunk.join("\n"));
+      }
+      currentHunk = [line];
+      continue;
+    }
+
+    if (currentHunk.length) {
+      currentHunk.push(line);
+    }
+  }
+
+  if (currentHunk.length) {
+    hunks.push(currentHunk.join("\n"));
+  }
+
+  if (!hunks.length) {
+    return null;
+  }
+
+  return {
+    key,
+    oldFileName: normalizeDiffPath(oldFileLine.slice(4)),
+    newFileName: normalizeDiffPath(newFileLine.slice(4)),
+    diffText: block.trim(),
+    hunks,
+  };
+}
+
+function parseDiffSections(raw: string) {
+  const sections: ParsedDiffSection[] = [];
+  let currentTitle = "Branch diff";
+  let currentBlocks: string[] = [];
+  let currentBlock: string[] = [];
+
+  const flushBlock = () => {
+    if (!currentBlock.length) {
+      return;
+    }
+    currentBlocks.push(currentBlock.join("\n"));
+    currentBlock = [];
+  };
+
+  const flushSection = () => {
+    flushBlock();
+    if (!currentBlocks.length) {
+      return;
+    }
+
+    const files = currentBlocks
+      .map((block, index) => parseDiffBlock(block, `${currentTitle}:${index}`))
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+    if (files.length) {
+      sections.push({ title: currentTitle, files });
+    }
+
+    currentBlocks = [];
+  };
+
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("# ")) {
+      flushSection();
+      currentTitle = line.slice(2).trim();
+      continue;
+    }
+
+    if (line.startsWith("diff --git ")) {
+      flushBlock();
+      currentBlock = [line];
+      continue;
+    }
+
+    if (currentBlock.length) {
+      currentBlock.push(line);
+    }
+  }
+
+  flushSection();
+  return sections;
+}
 
 interface WorktreeDetailProps {
   worktree: WorktreeRecord | null;
@@ -16,6 +170,8 @@ interface WorktreeDetailProps {
   onSelectWorktree: (value: string) => void;
   activeTab: "shell" | "background" | "git";
   onTabChange: (tab: "shell" | "background" | "git") => void;
+  gitView: "graph" | "diff";
+  onGitViewChange: (view: "graph" | "diff") => void;
   isTerminalVisible: boolean;
   onTerminalVisibilityChange: (visible: boolean) => void;
   commandPaletteShortcut: string;
@@ -49,6 +205,8 @@ export function WorktreeDetail({
   onSelectWorktree,
   activeTab,
   onTabChange,
+  gitView,
+  onGitViewChange,
   isTerminalVisible,
   onTerminalVisibilityChange,
   commandPaletteShortcut,
@@ -76,8 +234,12 @@ export function WorktreeDetail({
   const [copied, setCopied] = useState(false);
   const [selectedBackgroundCommandName, setSelectedBackgroundCommandName] = useState<string | null>(null);
   const [backgroundFilter, setBackgroundFilter] = useState("");
-  const [gitView, setGitView] = useState<"graph" | "diff">("graph");
   const [selectedGitBaseBranch, setSelectedGitBaseBranch] = useState<string | null>(null);
+  const [diffMode, setDiffMode] = useState<DiffModeEnum>(DiffModeEnum.SplitGitHub);
+  const [diffTheme, setDiffTheme] = useState<"light" | "dark">("dark");
+  const [diffWrap, setDiffWrap] = useState(false);
+  const [diffHighlight, setDiffHighlight] = useState(false);
+  const [diffFontSize, setDiffFontSize] = useState(13);
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
@@ -167,6 +329,78 @@ export function WorktreeDetail({
     }),
     [],
   );
+  const gitDiffMetrics = useMemo(() => {
+    const raw = gitComparison?.effectiveDiff ?? "";
+    return {
+      chars: raw.length,
+      lines: raw ? raw.split("\n").length : 0,
+    };
+  }, [gitComparison?.effectiveDiff]);
+  const parsedDiffSections = useMemo(
+    () => gitComparison?.effectiveDiff ? parseDiffSections(gitComparison.effectiveDiff) : [],
+    [gitComparison?.effectiveDiff],
+  );
+  const parsedDiffFileCount = useMemo(
+    () => parsedDiffSections.reduce((count, section) => count + section.files.length, 0),
+    [parsedDiffSections],
+  );
+  const isDiffTooLargeToRender = gitDiffMetrics.chars > DIFF_RENDER_MAX_CHARS
+    || gitDiffMetrics.lines > DIFF_RENDER_MAX_LINES
+    || parsedDiffFileCount > DIFF_RENDER_MAX_FILES;
+  const gitDiffFiles = useMemo(() => {
+    if (isDiffTooLargeToRender) {
+      return [];
+    }
+
+    return parsedDiffSections.map((section) => ({
+      title: section.title,
+      files: section.files.map((file) => {
+        const primaryFileName = file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName;
+        const oldLang = file.oldFileName !== "/dev/null" ? getLang(file.oldFileName) : "plaintext";
+        const newLang = primaryFileName !== "/dev/null" ? getLang(primaryFileName) : "plaintext";
+        const { oldContent, newContent } = buildDiffContents(file.hunks);
+        const diffFile = new DiffFile(
+          file.oldFileName,
+          oldContent,
+          file.newFileName,
+          newContent,
+          [file.diffText],
+          oldLang,
+          newLang,
+        );
+
+        diffFile.initTheme(diffTheme);
+        if (diffHighlight) {
+          diffFile.init();
+        } else {
+          diffFile.initRaw();
+        }
+        diffFile.buildSplitDiffLines();
+        diffFile.buildUnifiedDiffLines();
+
+        return {
+          key: file.key,
+          diffFile,
+          displayName: primaryFileName,
+        };
+      }),
+    }));
+  }, [diffHighlight, diffTheme, isDiffTooLargeToRender, parsedDiffSections]);
+  const diffModeOptions = useMemo<MatrixDropdownOption[]>(() => ([
+    { value: String(DiffModeEnum.SplitGitHub), label: "Split GitHub", description: "GitHub-style split view" },
+    { value: String(DiffModeEnum.SplitGitLab), label: "Split GitLab", description: "GitLab-style split view" },
+    { value: String(DiffModeEnum.Split), label: "Split", description: "Plain split view" },
+    { value: String(DiffModeEnum.Unified), label: "Unified", description: "Single-column unified view" },
+  ]), []);
+  const diffThemeOptions = useMemo<MatrixDropdownOption[]>(() => ([
+    { value: "dark", label: "Dark", description: "Match the app theme" },
+    { value: "light", label: "Light", description: "Use the viewer light theme" },
+  ]), []);
+  const diffFontSizeOptions = useMemo<MatrixDropdownOption[]>(() => ([12, 13, 14, 15, 16].map((size) => ({
+    value: String(size),
+    label: `${size}px`,
+    description: "Diff font size",
+  }))), []);
   const filteredBackgroundLogLines = useMemo(() => {
     const lines = backgroundLogs && selectedBackgroundCommand && backgroundLogs.commandName === selectedBackgroundCommand.name
       ? backgroundLogs.lines
@@ -584,8 +818,8 @@ export function WorktreeDetail({
                     emptyLabel="No branches available"
                     onChange={setSelectedGitBaseBranch}
                   />
-                  <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => setGitView("graph")} />
-                  <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => setGitView("diff")} />
+                          <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => onGitViewChange("graph")} />
+                   <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => onGitViewChange("diff")} />
                 </div>
               </div>
 
@@ -668,9 +902,81 @@ export function WorktreeDetail({
               )
             ) : (
               <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
-                <div className="max-h-[34rem] overflow-auto border border-[rgba(192,132,252,0.16)] bg-[linear-gradient(180deg,rgba(17,10,28,0.96),rgba(3,8,6,0.96))] font-mono text-xs text-[#f3e8ff]">
-                  {gitComparison.effectiveDiff ? (
-                    <pre className="whitespace-pre-wrap break-words px-4 py-3">{gitComparison.effectiveDiff}</pre>
+                <div className="flex flex-col gap-3">
+                  <div className="grid gap-2 xl:grid-cols-[minmax(15rem,18rem)_minmax(11rem,13rem)_minmax(11rem,13rem)_auto_auto]">
+                    <MatrixDropdown
+                      label="View mode"
+                      value={String(diffMode)}
+                      options={diffModeOptions}
+                      placeholder="Choose diff mode"
+                      onChange={(value) => setDiffMode(Number(value) as DiffModeEnum)}
+                    />
+                    <MatrixDropdown
+                      label="Theme"
+                      value={diffTheme}
+                      options={diffThemeOptions}
+                      placeholder="Choose theme"
+                      onChange={(value) => setDiffTheme(value as "light" | "dark")}
+                    />
+                    <MatrixDropdown
+                      label="Font size"
+                      value={String(diffFontSize)}
+                      options={diffFontSizeOptions}
+                      placeholder="Choose font size"
+                      onChange={(value) => setDiffFontSize(Number(value))}
+                    />
+                    <button
+                      type="button"
+                      className={`matrix-button rounded-none px-3 py-2 text-sm ${diffWrap ? "border-[rgba(192,132,252,0.38)] text-[#f3e8ff]" : ""}`}
+                      onClick={() => setDiffWrap((current) => !current)}
+                    >
+                      Wrap {diffWrap ? "on" : "off"}
+                    </button>
+                    <button
+                      type="button"
+                      className={`matrix-button rounded-none px-3 py-2 text-sm ${diffHighlight ? "border-[rgba(192,132,252,0.38)] text-[#f3e8ff]" : ""}`}
+                      onClick={() => setDiffHighlight((current) => !current)}
+                    >
+                      Highlight {diffHighlight ? "on" : "off"}
+                    </button>
+                  </div>
+
+                  {gitComparison.effectiveDiff ? isDiffTooLargeToRender ? (
+                    <div className="border border-[rgba(255,207,118,0.22)] bg-[rgba(38,27,5,0.4)] px-4 py-4 text-sm text-[#ffd892]">
+                      Diff is too large to render safely in the browser.
+                      <div className="mt-2 font-mono text-xs text-[#ffe3af]">
+                        {parsedDiffFileCount} files, {gitDiffMetrics.lines.toLocaleString()} lines, {gitDiffMetrics.chars.toLocaleString()} chars
+                      </div>
+                    </div>
+                  ) : gitDiffFiles.length ? (
+                    <div className="space-y-4">
+                      {gitDiffFiles.map((section) => (
+                        <div key={section.title} className="space-y-3">
+                          <div className="text-xs uppercase tracking-[0.18em] text-[#cda7ff]">{section.title}</div>
+                          {section.files.map((file) => (
+                            <div key={file.key} className="overflow-hidden border border-[rgba(192,132,252,0.16)] bg-[linear-gradient(180deg,rgba(17,10,28,0.96),rgba(3,8,6,0.96))]">
+                              <div className="border-b border-[rgba(192,132,252,0.16)] px-4 py-2 font-mono text-xs text-[#f3e8ff]">
+                                {file.displayName}
+                              </div>
+                              <div className="max-h-[40rem] overflow-auto">
+                                <DiffView
+                                  diffFile={file.diffFile}
+                                  diffViewMode={diffMode}
+                                  diffViewTheme={diffTheme}
+                                  diffViewWrap={diffWrap}
+                                  diffViewHighlight={diffHighlight}
+                                  diffViewFontSize={diffFontSize}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="border border-[rgba(255,207,118,0.22)] bg-[rgba(38,27,5,0.4)] px-4 py-4 text-sm text-[#ffd892]">
+                      Diff data could not be parsed into file hunks for the visual viewer.
+                    </div>
                   ) : (
                     <div className="px-4 py-4 text-[#8fd18f]">No effective diff between these branches or in the selected worktree.</div>
                   )}

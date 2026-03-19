@@ -95,6 +95,7 @@ export function Dashboard() {
         ? "background"
         : "shell",
   );
+  const [gitView, setGitView] = useState<"graph" | "diff">(initialParams.get("git") === "diff" ? "diff" : "graph");
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialParams.get("terminal") === "open");
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
@@ -297,6 +298,7 @@ export function Dashboard() {
     }
 
     params.set("tab", activeTab);
+    params.set("git", gitView);
 
     if (isTerminalVisible) {
       params.set("terminal", "open");
@@ -306,7 +308,7 @@ export function Dashboard() {
 
     const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
     window.history.replaceState(null, "", nextUrl);
-  }, [activeTab, isTerminalVisible, selectedBranch]);
+  }, [activeTab, gitView, isTerminalVisible, selectedBranch]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -625,6 +627,8 @@ export function Dashboard() {
             }}
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            gitView={gitView}
+            onGitViewChange={setGitView}
             isTerminalVisible={isTerminalVisible}
             onTerminalVisibilityChange={setIsTerminalVisible}
             commandPaletteShortcut={commandPaletteShortcut}
