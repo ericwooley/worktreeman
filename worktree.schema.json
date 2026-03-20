@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json",
-  "title": "Worktree Manager Config",
-  "description": "Schema for worktree.yml / worktreemanager.yml configuration files.",
+  "title": "worktreeman Config",
+  "description": "Schema for worktree.yml / worktreeman.yml configuration files.",
   "type": "object",
   "additionalProperties": false,
   "properties": {

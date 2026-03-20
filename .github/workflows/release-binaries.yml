@@ -20,23 +20,23 @@ jobs:
           - name: linux-x64
             runner: ubuntu-24.04
             script: build:binary:linux-x64
-            artifact_name: worktreemanager-linux-x64
-            artifact_path: dist/worktreemanager-linux-x64
+            artifact_name: worktreeman-linux-x64
+            artifact_path: dist/worktreeman-linux-x64
           - name: linux-arm64
             runner: ubuntu-24.04-arm
             script: build:binary:linux-arm64
-            artifact_name: worktreemanager-linux-arm64
-            artifact_path: dist/worktreemanager-linux-arm64
+            artifact_name: worktreeman-linux-arm64
+            artifact_path: dist/worktreeman-linux-arm64
           - name: macos-x64
             runner: macos-13
             script: build:binary:macos-x64
-            artifact_name: worktreemanager-macos-x64
-            artifact_path: dist/worktreemanager-macos-x64
+            artifact_name: worktreeman-macos-x64
+            artifact_path: dist/worktreeman-macos-x64
           - name: macos-arm64
             runner: macos-14
             script: build:binary:macos-arm64
-            artifact_name: worktreemanager-macos-arm64
-            artifact_path: dist/worktreemanager-macos-arm64
+            artifact_name: worktreeman-macos-arm64
+            artifact_path: dist/worktreeman-macos-arm64
 
     steps:
       - name: Check out repository
@@ -76,18 +76,18 @@ jobs:
         run: |
           cd release-artifacts
           sha256sum \
-            worktreemanager-linux-x64/worktreemanager-linux-x64 \
-            worktreemanager-linux-arm64/worktreemanager-linux-arm64 \
-            worktreemanager-macos-x64/worktreemanager-macos-x64 \
-            worktreemanager-macos-arm64/worktreemanager-macos-arm64 \
-            > worktreemanager-checksums.txt
+            worktreeman-linux-x64/worktreeman-linux-x64 \
+            worktreeman-linux-arm64/worktreeman-linux-arm64 \
+            worktreeman-macos-x64/worktreeman-macos-x64 \
+            worktreeman-macos-arm64/worktreeman-macos-arm64 \
+            > worktreeman-checksums.txt
 
       - name: Publish GitHub release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release-artifacts/worktreemanager-linux-x64/worktreemanager-linux-x64
-            release-artifacts/worktreemanager-linux-arm64/worktreemanager-linux-arm64
-            release-artifacts/worktreemanager-macos-x64/worktreemanager-macos-x64
-            release-artifacts/worktreemanager-macos-arm64/worktreemanager-macos-arm64
-            release-artifacts/worktreemanager-checksums.txt
+            release-artifacts/worktreeman-linux-x64/worktreeman-linux-x64
+            release-artifacts/worktreeman-linux-arm64/worktreeman-linux-arm64
+            release-artifacts/worktreeman-macos-x64/worktreeman-macos-x64
+            release-artifacts/worktreeman-macos-arm64/worktreeman-macos-arm64
+            release-artifacts/worktreeman-checksums.txt

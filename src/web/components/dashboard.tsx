@@ -14,8 +14,8 @@ import { useTheme } from "./theme-provider";
 import { WorktreeDetail } from "./worktree-detail";
 
 const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
-const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreemanager.commandPaletteShortcut";
-const TERMINAL_SHORTCUT_STORAGE_KEY = "worktreemanager.terminalShortcut";
+const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreeman.commandPaletteShortcut";
+const TERMINAL_SHORTCUT_STORAGE_KEY = "worktreeman.terminalShortcut";
 const LEGACY_COMMAND_PALETTE_SHORTCUTS = new Set(["Shift+Space", "Meta+P"]);
 const DEFAULT_TERMINAL_SHORTCUT = "Ctrl+Shift+;";
 type CommandPaletteScope = "main" | "worktree-select" | "theme-select";
@@ -554,7 +554,7 @@ export function Dashboard() {
               <p className="matrix-kicker">Local orchestration cockpit</p>
               <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-2xl font-semibold tracking-tight theme-text-strong sm:text-3xl">Worktree Manager</h1>
+                  <h1 className="text-2xl font-semibold tracking-tight theme-text-strong sm:text-3xl">worktreeman</h1>
                   <p className="mt-1 text-sm leading-5 theme-text-muted sm:text-base">
                     Terminal-first control surface for jumping between branch runtimes without losing the shell.
                   </p>

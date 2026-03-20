@@ -72,7 +72,7 @@ export async function initRepository(
   );
   const currentRepoRoot = await findGitRoot(startDir);
   const { worktreePath, createdWorktree } = await ensureBranchWorktree(currentRepoRoot, branch);
-  await runCommand("git", ["config", "--local", "worktreemanager.configRef", branch], {
+  await runCommand("git", ["config", "--local", "worktreeman.configRef", branch], {
     cwd: worktreePath,
   });
 

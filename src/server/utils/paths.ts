@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { runCommand } from "./process.js";
 
-export const CONFIG_CANDIDATES = ["worktree.yml", "worktree.yaml", "worktreemanager.yml", "worktreemanager.yaml"];
+export const CONFIG_CANDIDATES = ["worktree.yml", "worktree.yaml", "worktreeman.yml", "worktreeman.yaml"];
 
 export interface RepoContext {
   repoRoot: string;
@@ -112,7 +112,7 @@ async function resolveConfigRef(repoRoot: string, preferredRef?: string): Promis
     return normalizedPreferredRef;
   }
 
-  const configuredRef = await tryRunGit(repoRoot, ["config", "--local", "--get", "worktreemanager.configRef"]);
+  const configuredRef = await tryRunGit(repoRoot, ["config", "--local", "--get", "worktreeman.configRef"]);
   if (configuredRef) {
     return configuredRef;
   }

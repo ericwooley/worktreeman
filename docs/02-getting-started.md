@@ -28,16 +28,16 @@ You also need a Git repository that already contains the app or service stack yo
 
 ## Install the CLI
 
-Install `worktreemanager` globally with Bun:
+Install `worktreeman` globally with Bun:
 
 ```bash
-bun add -g worktreemanager
+bun add -g worktreeman
 ```
 
 Check that the command is available:
 
 ```bash
-worktreemanager --help
+worktreeman --help
 ```
 
 ## Initialize a repository
@@ -45,13 +45,13 @@ worktreemanager --help
 From the repository root, you can either let `init` ask you questions:
 
 ```bash
-worktreemanager init
+worktreeman init
 ```
 
 Or provide the branch up front:
 
 ```bash
-worktreemanager init main
+worktreeman init main
 ```
 
 That command will:
@@ -66,13 +66,13 @@ That command will:
 If you want to regenerate the file:
 
 ```bash
-worktreemanager init main --force
+worktreeman init main --force
 ```
 
 If you already know the worktree layout you want, you can also pass it directly:
 
 ```bash
-worktreemanager init main --base-dir ..
+worktreeman init main --base-dir ..
 ```
 
 ## Review `worktree.yml`
@@ -253,7 +253,7 @@ These are intentionally minimal starting points. After pasting one in, the usual
 Run:
 
 ```bash
-worktreemanager start
+worktreeman start
 ```
 
 Then open:
@@ -274,7 +274,7 @@ http://127.0.0.1:4312
 ## Useful commands
 
 ```bash
-worktreemanager --help
-worktreemanager init --help
-worktreemanager start --help
+worktreeman --help
+worktreeman init --help
+worktreeman start --help
 ```

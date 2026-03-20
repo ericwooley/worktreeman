@@ -47,12 +47,12 @@ export function DocsSite() {
       <div className="relative z-10 mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[20rem_minmax(0,1fr)] lg:px-8 lg:py-8">
         <aside className="docs-rail h-fit lg:sticky lg:top-6">
           <div className="docs-rail-card">
-            <div className="docs-terminal-mark">worktreemanager docs</div>
+            <div className="docs-terminal-mark">worktreeman docs</div>
             <p className="docs-rail-title">Install, configure, and run branch-scoped local environments.</p>
             <div className="docs-command-block">
-              <span>$ bun add -g worktreemanager</span>
-              <span>$ worktreemanager init</span>
-              <span>$ worktreemanager start</span>
+              <span>$ bun add -g worktreeman</span>
+              <span>$ worktreeman init</span>
+              <span>$ worktreeman start</span>
             </div>
 
             <nav className="mt-5 flex flex-col gap-2 text-sm">
@@ -115,7 +115,7 @@ function extractExcerpt(markdown: string): string {
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("```"));
 
   const paragraph = lines.find((line) => !line.startsWith("-") && !/^\d+\./.test(line));
-  return paragraph ? stripMarkdown(paragraph) : "Install and use worktreemanager.";
+  return paragraph ? stripMarkdown(paragraph) : "Install and use worktreeman.";
 }
 
 function stripMarkdown(markdown: string): string {

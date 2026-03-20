@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BASE16_THEMES, DEFAULT_THEME_ID, getThemeById, getThemeCssVariables, type Base16Theme } from "../lib/themes";
 
-const THEME_STORAGE_KEY = "worktreemanager.theme";
+const THEME_STORAGE_KEY = "worktreeman.theme";
 
 interface ThemeContextValue {
   theme: Base16Theme;

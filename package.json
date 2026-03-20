@@ -1,5 +1,5 @@
 {
-  "name": "worktreemanager",
+  "name": "worktreeman",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "node-pty"
   ],
   "bin": {
-    "worktreemanager": "dist/worktreemanager"
+    "worktreeman": "dist/worktreeman"
   },
   "scripts": {
     "dev": "NODE_ENV=development tsx src/cli.ts",
@@ -20,15 +20,15 @@
     "build:web": "vite build",
     "build:embedded-web": "bun ./scripts/generate-embedded-web-assets.mjs",
     "build:binary:prepare": "bun run build:web && bun run build:embedded-web",
-    "build:binary": "bun run build:binary:prepare && bun build --compile src/cli.ts --outfile dist/worktreemanager",
+    "build:binary": "bun run build:binary:prepare && bun build --compile src/cli.ts --outfile dist/worktreeman",
     "build:binary:all": "bun run build:binary:linux-x64 && bun run build:binary:linux-arm64 && bun run build:binary:macos-x64 && bun run build:binary:macos-arm64",
-    "build:binary:linux-x64": "bun run build:binary:prepare && bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/worktreemanager-linux-x64",
-    "build:binary:linux-arm64": "bun run build:binary:prepare && bun build --compile --target=bun-linux-arm64 src/cli.ts --outfile dist/worktreemanager-linux-arm64",
-    "build:binary:macos-x64": "bun run build:binary:prepare && bun build --compile --target=bun-darwin-x64 src/cli.ts --outfile dist/worktreemanager-macos-x64",
-    "build:binary:macos-arm64": "bun run build:binary:prepare && bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/worktreemanager-macos-arm64",
+    "build:binary:linux-x64": "bun run build:binary:prepare && bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/worktreeman-linux-x64",
+    "build:binary:linux-arm64": "bun run build:binary:prepare && bun build --compile --target=bun-linux-arm64 src/cli.ts --outfile dist/worktreeman-linux-arm64",
+    "build:binary:macos-x64": "bun run build:binary:prepare && bun build --compile --target=bun-darwin-x64 src/cli.ts --outfile dist/worktreeman-macos-x64",
+    "build:binary:macos-arm64": "bun run build:binary:prepare && bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/worktreeman-macos-arm64",
     "build:docs": "vite build --config vite.docs.config.ts",
     "preview:docs": "bun run build:docs && http-server dist/docs -p 4174 -c-1",
-    "start": "node dist/cli.js",
+    "start": "./dist/worktreeman",
     "check": "bun run test && tsc -p tsconfig.node.json --noEmit && vite build --mode production && vite build --config vite.docs.config.ts --mode production"
   },
   "dependencies": {

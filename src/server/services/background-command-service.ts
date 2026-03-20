@@ -17,7 +17,7 @@ import type {
 } from "../../shared/types.js";
 import { buildRuntimeProcessEnv } from "./runtime-service.js";
 
-const PM2_NAMESPACE = "worktreemanager";
+const PM2_NAMESPACE = "worktreeman";
 const LOG_LINES_LIMIT = 400;
 let streamedLogSequence = 0;
 

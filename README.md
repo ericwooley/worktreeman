@@ -1,6 +1,6 @@
-# Worktree Manager
+# worktreeman
 
-Worktree Manager is the local app for creating Git worktrees, preparing branch-scoped runtime environments, managing background commands, and attaching to tmux-backed browser terminals.
+worktreeman is the local app for creating Git worktrees, preparing branch-scoped runtime environments, managing background commands, and attaching to tmux-backed browser terminals.
 
 ## Local app
 
@@ -32,11 +32,11 @@ bun run build
 bun run build:binary
 ```
 
-- `bun run build:binary` builds the default standalone binary at `dist/worktreemanager`
-- `bun run build:binary:linux-x64` builds `dist/worktreemanager-linux-x64`
-- `bun run build:binary:linux-arm64` builds `dist/worktreemanager-linux-arm64`
-- `bun run build:binary:macos-x64` builds `dist/worktreemanager-macos-x64`
-- `bun run build:binary:macos-arm64` builds `dist/worktreemanager-macos-arm64`
+- `bun run build:binary` builds the default standalone binary at `dist/worktreeman`
+- `bun run build:binary:linux-x64` builds `dist/worktreeman-linux-x64`
+- `bun run build:binary:linux-arm64` builds `dist/worktreeman-linux-arm64`
+- `bun run build:binary:macos-x64` builds `dist/worktreeman-macos-x64`
+- `bun run build:binary:macos-arm64` builds `dist/worktreeman-macos-arm64`
 - `bun run build:binary:all` runs all per-target scripts and is intended for CI or native per-platform runners
 - `bun run build:binary:prepare` only builds the shared frontend and embedded asset inputs used by the binary builds
 
@@ -53,10 +53,10 @@ curl -fsSL https://raw.githubusercontent.com/ericwooley/worktreeman/main/install
 ```
 
 - The installer downloads the latest matching GitHub release binary for your OS and CPU
-- It verifies the download with `worktreemanager-checksums.txt`
-- It installs to `~/.local/bin/worktreemanager` by default
+- It verifies the download with `worktreeman-checksums.txt`
+- It installs to `~/.local/bin/worktreeman` by default
 - Set `INSTALL_DIR=/your/bin/dir` to choose a different install location
-- Set `WORKTREEMANAGER_VERSION=v0.1.0` to install a specific release tag
+- Set `WORKTREEMAN_VERSION=v0.1.0` to install a specific release tag
 
 ## Docs source
 

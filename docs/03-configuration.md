@@ -20,12 +20,12 @@
 - [App plus database and worker](#app-plus-database-and-worker)
 - [Notes on `init`](#notes-on-init)
 
-`worktreemanager` reads configuration from one of these files at the repository root:
+`worktreeman` reads configuration from one of these files at the repository root:
 
 - `worktree.yml`
 - `worktree.yaml`
-- `worktreemanager.yml`
-- `worktreemanager.yaml`
+- `worktreeman.yml`
+- `worktreeman.yaml`
 
 In most repos, `worktree.yml` is the best default.
 
@@ -78,7 +78,7 @@ backgroundCommands:
 
 ## How configuration flows at runtime
 
-When you click `Start env`, `worktreemanager` builds the runtime in this order:
+When you click `Start env`, `worktreeman` builds the runtime in this order:
 
 1. Start with static `env`
 2. Allocate any `runtimePorts`
@@ -308,7 +308,7 @@ backgroundCommands:
 
 ## Notes on `init`
 
-`worktreemanager init` creates a starter config with the schema header and the basic runtime fields.
+`worktreeman init` creates a starter config with the schema header and the basic runtime fields.
 
 It also writes the schema header automatically so editors can validate the file.
 

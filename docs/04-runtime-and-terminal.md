@@ -2,7 +2,7 @@
 
 ## Worktree creation
 
-When you create a worktree from the UI, `worktreemanager` runs the Git worktree flow for that branch.
+When you create a worktree from the UI, `worktreeman` runs the Git worktree flow for that branch.
 
 Conceptually:
 
@@ -14,7 +14,7 @@ The resulting path is tracked by the UI so each branch has a visible local works
 
 ## Runtime startup
 
-When you click `Start env`, `worktreemanager` performs this sequence:
+When you click `Start env`, `worktreeman` performs this sequence:
 
 1. load `worktree.yml`
 2. allocate configured `runtimePorts`
@@ -27,7 +27,7 @@ When you click `Start env`, `worktreemanager` performs this sequence:
 
 ## In-memory environment injection
 
-`worktreemanager` builds the runtime environment from:
+`worktreeman` builds the runtime environment from:
 
 1. static `env`
 2. allocated `runtimePorts`

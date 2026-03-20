@@ -15,7 +15,7 @@ import { shortcutFromKeyboardEvent } from "./command-palette";
 import "@xterm/xterm/css/xterm.css";
 
 const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
-const TERMINAL_SURFACE_MODE_STORAGE_KEY = "worktreemanager.terminalSurfaceMode";
+const TERMINAL_SURFACE_MODE_STORAGE_KEY = "worktreeman.terminalSurfaceMode";
 
 type TerminalSurfaceMode = "dark" | "light";
 

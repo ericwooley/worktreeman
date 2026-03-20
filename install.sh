@@ -3,9 +3,9 @@
 set -euo pipefail
 
 REPO_SLUG="ericwooley/worktreeman"
-BINARY_NAME="worktreemanager"
+BINARY_NAME="worktreeman"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-VERSION="${WORKTREEMANAGER_VERSION:-latest}"
+VERSION="${WORKTREEMAN_VERSION:-latest}"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -123,12 +123,12 @@ main() {
   trap 'rm -rf "$tmp_dir"' EXIT
 
   binary_tmp="${tmp_dir}/${asset_name}"
-  checksum_tmp="${tmp_dir}/worktreemanager-checksums.txt"
+  checksum_tmp="${tmp_dir}/worktreeman-checksums.txt"
 
   printf 'Installing %s %s for %s\n' "$BINARY_NAME" "$version" "$platform"
 
   download "${release_base}/${asset_name}" "$binary_tmp"
-  download "${release_base}/worktreemanager-checksums.txt" "$checksum_tmp"
+  download "${release_base}/worktreeman-checksums.txt" "$checksum_tmp"
   verify_checksum "$checksum_tmp" "$asset_name" "$binary_tmp"
 
   mkdir -p "$INSTALL_DIR"

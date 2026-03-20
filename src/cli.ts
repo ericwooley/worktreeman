@@ -24,7 +24,7 @@ import { findGitRoot } from "./server/utils/paths.js";
 const startCommand = command({
   name: "start",
   description:
-    "Start the local Worktree Manager server for the current git repository and open the browser UI.",
+    "Start the local worktreeman server for the current git repository and open the browser UI.",
   version: "0.1.0",
   args: {
     cwd: option({
@@ -46,7 +46,7 @@ const startCommand = command({
       type: optional(string),
       long: "config-ref",
       description:
-        "Git ref to load worktree config from. Overrides WORKTREEMANAGER_CONFIG_REF and git config worktreemanager.configRef.",
+        "Git ref to load worktree config from. Overrides WORKTREEMAN_CONFIG_REF and git config worktreeman.configRef.",
     }),
     open: flag({
       type: boolean,
@@ -66,7 +66,7 @@ const startCommand = command({
   },
   handler: async ({ cwd, port, configRef, open, noOpen }) => {
     const repo = await findRepoContext(cwd, {
-      configRef: configRef ?? process.env.WORKTREEMANAGER_CONFIG_REF,
+      configRef: configRef ?? process.env.WORKTREEMAN_CONFIG_REF,
     });
     let server: Awaited<ReturnType<typeof startServer>>;
 
@@ -83,7 +83,7 @@ const startCommand = command({
     }
 
     process.stdout.write(
-      `worktreemanager running at http://127.0.0.1:${server.port}\n`,
+      `worktreeman running at http://127.0.0.1:${server.port}\n`,
     );
 
     let shuttingDown = false;
@@ -151,7 +151,7 @@ const initCommand = command({
     const interactive = process.stdin.isTTY && process.stdout.isTTY;
 
     if (interactive) {
-      process.stdout.write("\nworktreemanager init\n");
+      process.stdout.write("\nworktreeman init\n");
       process.stdout.write("Create or reuse a branch worktree, then generate a shared worktree.yml.\n\n");
     }
 
@@ -163,7 +163,7 @@ const initCommand = command({
 
     if (!resolvedBranch?.trim()) {
       throw new Error(
-        "Branch is required. Pass `worktreemanager init <branch>` or run `worktreemanager init` in an interactive terminal.",
+        "Branch is required. Pass `worktreeman init <branch>` or run `worktreeman init` in an interactive terminal.",
       );
     }
 
@@ -221,7 +221,7 @@ const initCommand = command({
 });
 
 const cli = subcommands({
-  name: "worktreemanager",
+  name: "worktreeman",
   version: "0.1.0",
   description:
     "Manage git worktrees, runtime env setup, background commands, and tmux-backed terminals from one local UI.",

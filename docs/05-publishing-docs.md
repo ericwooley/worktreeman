@@ -1,6 +1,6 @@
 # Team Setup Notes
 
-If multiple developers will use `worktreemanager` in the same repository, treat `worktree.yml` as part of the project setup.
+If multiple developers will use `worktreeman` in the same repository, treat `worktree.yml` as part of the project setup.
 
 ## Keep `worktree.yml` in version control
 
@@ -16,7 +16,7 @@ Checking in `worktree.yml` helps the team share the same:
 
 Before asking the rest of the team to use the tool, verify the full path yourself:
 
-1. run `worktreemanager init` and answer the setup questions
+1. run `worktreeman init` and answer the setup questions
 2. create a fresh worktree
 3. start the runtime
 4. confirm the right ports are injected
@@ -38,8 +38,8 @@ Keep that behavior documented in the repository so startup is predictable.
 ## Common commands
 
 ```bash
-bun add -g worktreemanager
-worktreemanager init
-worktreemanager start
-worktreemanager --help
+bun add -g worktreeman
+worktreeman init
+worktreeman start
+worktreeman --help
 ```

@@ -130,7 +130,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : null;
 
     if (code === "EADDRINUSE") {
-      return `Port ${port} is already in use on 127.0.0.1. Stop the existing server or start worktreemanager with --port <port>.`;
+      return `Port ${port} is already in use on 127.0.0.1. Stop the existing server or start worktreeman with --port <port>.`;
     }
 
     return message;
@@ -158,8 +158,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       shutdownStatus.error(message);
     };
 
-    shutdownStatus.begin("[shutdown] Closing Worktree Manager server...");
-    process.stdout.write("[shutdown] Closing Worktree Manager server...\n");
+    shutdownStatus.begin("[shutdown] Closing worktreeman server...");
+    process.stdout.write("[shutdown] Closing worktreeman server...\n");
 
     await loadShutdownConfig().catch((error) => {
       logError(
