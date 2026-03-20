@@ -28,10 +28,10 @@ You also need a Git repository that already contains the app or service stack yo
 
 ## Install the CLI
 
-Install `worktreemanager` globally from npm:
+Install `worktreemanager` globally with Bun:
 
 ```bash
-npm install -g worktreemanager
+bun add -g worktreemanager
 ```
 
 Check that the command is available:
@@ -134,7 +134,7 @@ backgroundCommands:
   Docker services:
     command: docker compose up
   Web dev:
-    command: pnpm run dev
+    command: bun run dev
 ```
 
 For the full field-by-field reference, see [`docs/03-configuration.md`](docs/03-configuration.md).
@@ -165,12 +165,12 @@ worktrees:
   baseDir: .worktrees
 
 startupCommands:
-  - pnpm install
-  - pnpm run db:migrate
+  - bun install
+  - bun run db:migrate
 
 backgroundCommands:
   Web dev:
-    command: pnpm run dev
+    command: bun run dev
 ```
 
 ### 2. App plus database and worker
@@ -199,14 +199,14 @@ worktrees:
   baseDir: .worktrees
 
 startupCommands:
-  - pnpm install
-  - pnpm run db:migrate
+  - bun install
+  - bun run db:migrate
 
 backgroundCommands:
   Web dev:
-    command: pnpm run dev
+    command: bun run dev
   Worker:
-    command: pnpm run worker
+    command: bun run worker
 ```
 
 ### 3. App plus Docker commands as background processes
@@ -231,13 +231,13 @@ worktrees:
   baseDir: .worktrees
 
 startupCommands:
-  - pnpm install
+  - bun install
 
 backgroundCommands:
   Docker services:
     command: docker compose up
   Web dev:
-    command: pnpm run dev
+    command: bun run dev
 ```
 
 These are intentionally minimal starting points. After pasting one in, the usual next steps are:

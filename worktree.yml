@@ -18,10 +18,10 @@ worktrees:
   baseDir: ..
 
 startupCommands:
-  - pnpm install
+  - bun install
 
 backgroundCommands:
   Docker services:
     command: docker compose up
   Web dev:
-    command: pnpm run dev
+    command: bun run dev

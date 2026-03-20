@@ -50,7 +50,7 @@ export function DocsSite() {
             <div className="docs-terminal-mark">worktreemanager docs</div>
             <p className="docs-rail-title">Install, configure, and run branch-scoped local environments.</p>
             <div className="docs-command-block">
-              <span>$ npm install -g worktreemanager</span>
+              <span>$ bun add -g worktreemanager</span>
               <span>$ worktreemanager init</span>
               <span>$ worktreemanager start</span>
             </div>

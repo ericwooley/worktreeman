@@ -5,22 +5,22 @@ Worktree Manager is the local app for creating Git worktrees, preparing branch-s
 ## Local app
 
 ```bash
-npm install
-pnpm run dev -- init
-pnpm run dev:watch -- --cwd /path/to/repo
+bun install
+bun run dev -- init
+bun run dev:watch -- --cwd /path/to/repo
 ```
 
 Then open `http://127.0.0.1:4312`.
 
-- `pnpm run dev -- <subcommand>` runs the CLI once and exits
-- `pnpm run dev:watch -- --cwd /path/to/repo` starts the watched local server flow
-- `pnpm run dev -- init` prompts for branch, worktree layout, and optional dynamic runtime port env vars
-- `pnpm run dev -- init main --base-dir ..` keeps init non-interactive for sibling worktree layouts
+- `bun run dev -- <subcommand>` runs the CLI once and exits
+- `bun run dev:watch -- --cwd /path/to/repo` starts the watched local server flow
+- `bun run dev -- init` prompts for branch, worktree layout, and optional dynamic runtime port env vars
+- `bun run dev -- init main --base-dir ..` keeps init non-interactive for sibling worktree layouts
 
 ## Build outputs
 
 ```bash
-npm run build
+bun run build
 ```
 
 - `dist/web` contains the local app frontend used by the CLI server
@@ -29,8 +29,8 @@ npm run build
 ## Docs source
 
 - `docs/*.md` is the source of truth for the standalone docs website
-- `npm run build:docs` builds the publishable docs site
-- `npm run preview:docs` builds and serves the docs site at `http://127.0.0.1:4174`
+- `bun run build:docs` builds the publishable docs site
+- `bun run preview:docs` builds and serves the docs site at `http://127.0.0.1:4174`
 
 ## CLI help
 

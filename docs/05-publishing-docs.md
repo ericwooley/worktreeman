@@ -38,7 +38,7 @@ Keep that behavior documented in the repository so startup is predictable.
 ## Common commands
 
 ```bash
-npm install -g worktreemanager
+bun add -g worktreemanager
 worktreemanager init
 worktreemanager start
 worktreemanager --help

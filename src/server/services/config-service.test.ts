@@ -24,12 +24,12 @@ test("loadConfig parses runtime env, links, and background commands", async () =
         "    url: http://localhost:${PORT}",
         "backgroundCommands:",
         "  Web dev:",
-        "    command: pnpm run dev",
-        "  Worker: pnpm run worker",
+        "    command: bun run dev",
+        "  Worker: bun run worker",
         "worktrees:",
         "  baseDir: .worktrees",
         "startupCommands:",
-        "  - pnpm install",
+        "  - bun install",
         "",
       ].join("\n"),
       "utf8",
@@ -39,8 +39,8 @@ test("loadConfig parses runtime env, links, and background commands", async () =
 
     assert.deepEqual(config.runtimePorts, ["PORT"]);
     assert.deepEqual(config.backgroundCommands, {
-      "Web dev": { command: "pnpm run dev" },
-      Worker: { command: "pnpm run worker" },
+      "Web dev": { command: "bun run dev" },
+      Worker: { command: "bun run worker" },
     });
     assert.deepEqual(config.quickLinks, [{ name: "App", url: "http://localhost:${PORT}" }]);
   } finally {
