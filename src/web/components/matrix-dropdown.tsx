@@ -65,29 +65,29 @@ export function MatrixDropdown({
     <div ref={rootRef} className={`relative ${open ? "z-[80]" : "z-10"}`}>
       <button
         type="button"
-        className="flex h-full min-h-[100%] w-full items-center justify-between gap-3 border border-[rgba(74,255,122,0.12)] bg-[linear-gradient(180deg,rgba(8,28,12,0.9),rgba(0,0,0,0.72))] px-3 py-2 text-left shadow-[inset_0_1px_0_rgba(181,255,196,0.04)] transition-colors duration-150 hover:border-[rgba(74,255,122,0.32)] hover:bg-[linear-gradient(180deg,rgba(10,34,14,0.94),rgba(1,10,3,0.82))] disabled:cursor-not-allowed disabled:opacity-60"
+        className="theme-border-subtle theme-dropdown-trigger flex h-full min-h-[100%] w-full items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60"
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
       >
         <div className="min-w-0">
-          <p className="text-[0.6rem] uppercase tracking-[0.18em] text-[#6cb96c]">{label}</p>
+          <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">{label}</p>
           <div className="mt-1 flex items-center gap-2">
-            <span className="truncate font-mono text-sm text-[#ecffec]">
+            <span className="theme-text-strong truncate font-mono text-sm">
               {selectedOption?.label ?? placeholder}
             </span>
             {selectedOption?.badgeLabel ? <MatrixBadge tone={selectedOption.badgeTone ?? "idle"} compact>{selectedOption.badgeLabel}</MatrixBadge> : null}
           </div>
         </div>
-        <span className={`font-mono text-sm text-[#7fe19e] transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
+        <span className={`theme-text-accent-soft font-mono text-sm transition-transform duration-150 ${open ? "rotate-180" : ""}`}>
           v
         </span>
       </button>
 
       {open ? (
         <div
-          className="absolute left-0 right-0 z-[90] mt-2 max-h-[18rem] overflow-auto border border-[rgba(74,255,122,0.18)] bg-[rgba(2,10,4,0.96)] shadow-[0_18px_48px_rgba(0,0,0,0.5)] backdrop-blur-md"
+          className="theme-border theme-dropdown-menu absolute left-0 right-0 z-[90] mt-2 max-h-[18rem] overflow-auto border backdrop-blur-md"
           role="listbox"
           aria-label={`${label} selector`}
         >
@@ -99,8 +99,8 @@ export function MatrixDropdown({
                 key={option.value}
                 type="button"
                 className={`flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left transition-colors duration-150 last:border-b-0 ${isSelected
-                  ? "border-[rgba(74,255,122,0.16)] bg-[rgba(9,30,12,0.74)] text-[#ecffec]"
-                  : "border-[rgba(74,255,122,0.08)] text-[#b9ffb9] hover:bg-[rgba(9,30,12,0.58)] hover:text-[#ecffec]"}`}
+                  ? "theme-border-subtle theme-row-active theme-text-strong"
+                  : "theme-border-faint theme-row-idle theme-text theme-hover-text-strong"}`}
                 role="option"
                 aria-selected={isSelected}
                 onClick={() => {
@@ -111,7 +111,7 @@ export function MatrixDropdown({
                 <div className="min-w-0">
                   <p className="truncate font-mono text-sm">{option.label}</p>
                   {option.description ? (
-                    <p className="mt-1 truncate text-[10px] uppercase tracking-[0.16em] text-[#6cb96c]">
+                    <p className="theme-text-soft mt-1 truncate text-[10px] uppercase tracking-[0.16em]">
                       {option.description}
                     </p>
                   ) : null}
@@ -120,7 +120,7 @@ export function MatrixDropdown({
               </button>
             );
           }) : (
-            <div className="px-3 py-3 text-sm text-[#8fd18f]">{emptyLabel}</div>
+            <div className="theme-text-muted px-3 py-3 text-sm">{emptyLabel}</div>
           )}
         </div>
       ) : null}

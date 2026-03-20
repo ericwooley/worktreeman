@@ -342,26 +342,26 @@ export function CommandPalette({
   }
 
   const palette = (
-    <div className="fixed inset-0 z-50 bg-[rgba(1,7,3,0.82)] p-4 backdrop-blur-sm" onClick={() => onClose({ restoreFocus: true })}>
+    <div className="theme-overlay fixed inset-0 z-50 p-4 backdrop-blur-sm" onClick={() => onClose({ restoreFocus: true })}>
       <div
-        className="mx-auto mt-[8vh] w-full max-w-3xl border border-[rgba(74,255,122,0.18)] bg-[rgba(2,7,3,0.98)] shadow-[0_30px_80px_rgba(0,0,0,0.55)]"
+        className="theme-border theme-panel-overlay theme-panel-elevated mx-auto mt-[8vh] w-full max-w-3xl border"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="border-b border-[rgba(74,255,122,0.12)] px-4 py-4 sm:px-5">
+        <div className="theme-divider border-b px-4 py-4 sm:px-5">
           <p className="matrix-kicker">{title}</p>
-          <div className="mt-3 border border-[rgba(74,255,122,0.16)] bg-[rgba(0,0,0,0.28)]">
+          <div className="theme-inline-panel mt-3">
             <input
               ref={inputRef}
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={placeholder}
-              className="h-12 w-full bg-transparent px-4 font-mono text-sm text-[#ecffec] outline-none placeholder:text-[#6cb96c]"
+              className="theme-text-strong theme-placeholder-soft h-12 w-full bg-transparent px-4 font-mono text-sm outline-none"
             />
           </div>
-          <div className="mt-2 flex items-center justify-between gap-3 text-xs text-[#8fd18f]">
+          <div className="theme-text-muted mt-2 flex items-center justify-between gap-3 text-xs">
             <span>{isCodeMode ? codeModeLabel : fuzzyModeLabel}</span>
-            {isCodeMode ? <span className="font-mono text-[#ecffec]">{codeModeHint}</span> : null}
+            {isCodeMode ? <span className="theme-text-strong font-mono">{codeModeHint}</span> : null}
           </div>
         </div>
 
@@ -374,9 +374,9 @@ export function CommandPalette({
               <button
                 key={command.id}
                 type="button"
-                className={`flex w-full items-start justify-between gap-3 border-b px-4 py-3 text-left transition-colors last:border-b-0 ${active
-                  ? "border-[rgba(74,255,122,0.16)] bg-[rgba(9,30,12,0.72)]"
-                  : "border-[rgba(74,255,122,0.08)] bg-transparent hover:bg-[rgba(9,30,12,0.54)]"} ${command.disabled ? "opacity-60" : ""}`}
+                 className={`flex w-full items-start justify-between gap-3 border-b px-4 py-3 text-left transition-colors last:border-b-0 ${active
+                  ? "theme-border-subtle theme-row-active"
+                  : "theme-border-faint bg-transparent theme-row-idle"} ${command.disabled ? "opacity-60" : ""}`}
                 disabled={command.disabled}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => {
@@ -393,17 +393,17 @@ export function CommandPalette({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       {quickSelectKey ? (
-                        <span className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.22)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#ffd892]">
+                        <span className="theme-selection-chip theme-text-warning border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em]">
                           {quickSelectKey}
                         </span>
                       ) : null}
-                      <p className="font-mono text-sm text-[#ecffec]">{command.title}</p>
-                      {command.group ? <span className="text-[10px] uppercase tracking-[0.18em] text-[#6cb96c]">{command.group}</span> : null}
-                      <span className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.22)] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-[#7fe19e]">
-                      :{command.code}
-                    </span>
-                  </div>
-                  {command.subtitle ? <p className="mt-1 text-sm text-[#9cd99c]">{command.subtitle}</p> : null}
+                      <p className="theme-text-strong font-mono text-sm">{command.title}</p>
+                      {command.group ? <span className="theme-text-soft text-[10px] uppercase tracking-[0.18em]">{command.group}</span> : null}
+                      <span className="theme-selection-chip theme-chip-muted border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em]">
+                       :{command.code}
+                     </span>
+                   </div>
+                   {command.subtitle ? <p className="theme-text-muted mt-1 text-sm">{command.subtitle}</p> : null}
                 </div>
                 {command.badgeLabel ? (
                   <MatrixBadge tone={command.badgeTone ?? "neutral"}>{command.badgeLabel}</MatrixBadge>
@@ -411,19 +411,19 @@ export function CommandPalette({
               </button>
             );
           }) : (
-            <div className="px-4 py-6 text-sm text-[#8fd18f]">{emptyState}</div>
+            <div className="theme-empty-note px-4 py-6 text-sm">{emptyState}</div>
           )}
         </div>
 
-        <div className="flex flex-col gap-3 border-t border-[rgba(74,255,122,0.12)] px-4 py-3 text-sm text-[#9cd99c] sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div className="theme-divider theme-text-muted flex flex-col gap-3 border-t px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <div className="grid flex-1 gap-3 sm:grid-cols-2">
             {shortcutSettings.map((setting) => {
               const isRecording = recordingShortcutId === setting.id;
 
               return (
-                <div key={setting.id} className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.18)] px-3 py-3">
-                  <p className="text-[0.65rem] uppercase tracking-[0.18em] text-[#6cb96c]">{setting.label}</p>
-                  <p className="mt-1 font-mono text-[#ecffec]">
+                <div key={setting.id} className="theme-inline-panel px-3 py-3">
+                  <p className="theme-text-soft text-[0.65rem] uppercase tracking-[0.18em]">{setting.label}</p>
+                  <p className="theme-text-strong mt-1 font-mono">
                     {isRecording ? "Press a new shortcut..." : formatShortcutLabel(setting.shortcut)}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">

@@ -10,6 +10,7 @@ import {
 import { useDashboardState } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
+import { useTheme } from "./theme-provider";
 import { WorktreeDetail } from "./worktree-detail";
 
 const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
@@ -17,7 +18,7 @@ const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreemanager.commandPaletteShor
 const TERMINAL_SHORTCUT_STORAGE_KEY = "worktreemanager.terminalShortcut";
 const LEGACY_COMMAND_PALETTE_SHORTCUTS = new Set(["Shift+Space", "Meta+P"]);
 const DEFAULT_TERMINAL_SHORTCUT = "Ctrl+Shift+;";
-type CommandPaletteScope = "main" | "worktree-select";
+type CommandPaletteScope = "main" | "worktree-select" | "theme-select";
 
 function normalizeCommandPaletteShortcut(shortcut: string | null): string {
   if (!shortcut || LEGACY_COMMAND_PALETTE_SHORTCUTS.has(shortcut)) {
@@ -87,6 +88,7 @@ export function Dashboard() {
     subscribeToBackgroundLogs,
     refresh,
   } = useDashboardState();
+  const { theme, themes, setThemeId } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
   const [activeTab, setActiveTab] = useState<"shell" | "background" | "git">(
     initialParams.get("tab") === "git"
@@ -204,7 +206,6 @@ export function Dashboard() {
     ],
     [state?.worktrees],
   );
-
   useEffect(() => {
     if (!selected?.branch || selected.branch === selectedBranch) {
       return;
@@ -412,6 +413,16 @@ export function Dashboard() {
         action: () => setCreateWorktreeModalOpen(true),
       },
       {
+        id: "theme-select",
+        code: "st",
+        title: "Change theme",
+        subtitle: `Open the searchable theme picker. Current theme: ${theme.name}`,
+        group: "Settings",
+        keywords: [theme.name, theme.author, theme.variant, "theme", "base16", "colors"],
+        closeOnSelect: false,
+        action: () => setCommandPaletteScope("theme-select"),
+      },
+      {
         id: "shortcut-settings",
         code: "sc",
         title: "Change command palette shortcut",
@@ -474,7 +485,7 @@ export function Dashboard() {
     }
 
     return items.sort(comparePaletteItems);
-  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, refresh, selected, start, state?.worktrees, stop, syncEnv]);
+  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, refresh, selected, start, state?.worktrees, stop, syncEnv, theme]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     return (state?.worktrees ?? []).map((entry, index) => ({
@@ -491,9 +502,26 @@ export function Dashboard() {
     }));
   }, [state?.worktrees]);
 
+  const themeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    return themes.map((entry, index) => ({
+      id: `select-theme-${entry.id}`,
+      code: String(index + 1),
+      title: entry.name,
+      subtitle: `${entry.author} - ${entry.variant} - ${entry.fileName}`,
+      group: "Settings",
+      keywords: [entry.id, entry.name, entry.author, entry.variant, entry.fileName, "theme", "base16"],
+      badgeLabel: entry.id === theme.id ? "Active" : undefined,
+      badgeTone: entry.id === theme.id ? "active" : undefined,
+      closeOnSelect: true,
+      action: () => setThemeId(entry.id),
+    }));
+  }, [setThemeId, theme.id, themes]);
+
   const paletteCommands = commandPaletteScope === "worktree-select"
     ? worktreeSelectionPaletteItems
-    : mainCommandPaletteItems;
+    : commandPaletteScope === "theme-select"
+      ? themeSelectionPaletteItems
+      : mainCommandPaletteItems;
 
   const shortcutSettings = useMemo<CommandPaletteShortcutSetting[]>(() => [
     {
@@ -516,7 +544,7 @@ export function Dashboard() {
 
   return (
     <main
-      className="relative min-h-screen overflow-hidden px-0 pt-0 text-[#d7ffd7]"
+      className="relative min-h-screen overflow-hidden px-0 pt-0 theme-text"
       style={{ paddingBottom: "calc(var(--terminal-drawer-stowed-height) + var(--terminal-drawer-page-gap))" }}
     >
       <div className="relative z-10 flex w-full flex-col gap-3">
@@ -526,16 +554,16 @@ export function Dashboard() {
               <p className="matrix-kicker">Local orchestration cockpit</p>
               <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
                 <div className="min-w-0 flex-1">
-                  <h1 className="text-2xl font-semibold tracking-tight text-[#ecffec] sm:text-3xl">Worktree Manager</h1>
-                  <p className="mt-1 text-sm leading-5 text-[#9cd99c] sm:text-base">
+                  <h1 className="text-2xl font-semibold tracking-tight theme-text-strong sm:text-3xl">Worktree Manager</h1>
+                  <p className="mt-1 text-sm leading-5 theme-text-muted sm:text-base">
                     Terminal-first control surface for jumping between branch runtimes without losing the shell.
                   </p>
                 </div>
               </div>
             </div>
 
-            <div className="flex w-full flex-col gap-2 pt-12 xl:max-w-[32rem] xl:items-end">
-              <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[26rem] xl:grid-cols-[minmax(16rem,1fr)_auto]">
+            <div className="flex w-full flex-col gap-2 pt-12 xl:max-w-[40rem] xl:items-end">
+              <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[34rem] xl:grid-cols-[minmax(14rem,1fr)_minmax(14rem,1fr)_auto]">
                 <MatrixDropdown
                   label="Worktree"
                   value={selected?.branch ?? null}
@@ -550,13 +578,29 @@ export function Dashboard() {
                     setSelectedBranch(value);
                   }}
                 />
+                <button
+                  type="button"
+                  className="theme-border-subtle theme-dropdown-trigger flex h-full min-h-[100%] w-full items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150"
+                  onClick={() => openCommandPalette("theme-select")}
+                >
+                  <div className="min-w-0">
+                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">Theme</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="theme-text-strong truncate font-mono text-sm">{theme.name}</span>
+                      <MatrixBadge tone="active" compact>{theme.variant}</MatrixBadge>
+                    </div>
+                  </div>
+                  <span className="theme-text-accent-soft font-mono text-sm">/</span>
+                </button>
                 <button className="matrix-button h-full min-h-[100%] rounded-none px-3 py-2 text-sm" onClick={() => void refresh()} type="button">
                   Refresh
                 </button>
               </div>
-              <div className="flex items-center gap-2 text-xs text-[#8fd18f]">
+              <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
                 <MatrixBadge tone="neutral">Command palette</MatrixBadge>
-                <span className="font-mono text-[#ecffec]">{formatShortcutLabel(commandPaletteShortcut)}</span>
+                <span className="font-mono theme-text-strong">{formatShortcutLabel(commandPaletteShortcut)}</span>
+                <MatrixBadge tone="active">{theme.name}</MatrixBadge>
+                <span>{themes.length} Base16 themes loaded</span>
               </div>
             </div>
           </div>
@@ -564,37 +608,37 @@ export function Dashboard() {
 
         <section className="relative z-10 min-w-0">
           {shutdownStatus?.active || shutdownStatus?.completed || shutdownStatus?.failed ? (
-            <div className="matrix-panel mb-4 rounded-none border-x-0 border-[rgba(255,196,87,0.24)] bg-[rgba(27,16,1,0.9)] p-4 sm:p-5">
+            <div className="matrix-panel mb-4 rounded-none border-x-0 theme-inline-panel-warning p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="matrix-kicker text-[#ffcf76]">Server shutdown</p>
-                  <h2 className="mt-2 text-lg font-semibold text-[#fff3d6]">
+                  <p className="matrix-kicker theme-kicker-warning">Server shutdown</p>
+                  <h2 className="mt-2 text-lg font-semibold theme-text-strong">
                     {shutdownStatus.active
                       ? "Server is shutting down"
                       : shutdownStatus.failed
                         ? "Shutdown failed"
                         : "Shutdown complete"}
                   </h2>
-                  <p className="mt-2 text-sm text-[#ffd892]">
+                  <p className="mt-2 text-sm theme-text-warning">
                     {shutdownStatus.active
                       ? "The server is cleaning up runtimes and active connections."
                       : "These are the latest shutdown logs reported by the server."}
                   </p>
                 </div>
-                <div className="border border-[rgba(255,207,118,0.24)] bg-[rgba(0,0,0,0.24)] px-3 py-1 font-mono text-xs text-[#ffe1a8]">
+                <div className="border theme-count-chip px-3 py-1 font-mono text-xs theme-text-warning-soft">
                   {shutdownStatus.logs.length} log{shutdownStatus.logs.length === 1 ? "" : "s"}
                 </div>
               </div>
 
-              <div className="mt-4 max-h-[16rem] overflow-auto border border-[rgba(255,207,118,0.18)] bg-[rgba(0,0,0,0.32)]">
+              <div className="mt-4 max-h-[16rem] overflow-auto border theme-inline-panel-warning">
                 {shutdownStatus.logs.map((entry) => (
                   <div
                     key={entry.id}
                     className={`border-b px-4 py-2 font-mono text-xs last:border-b-0 ${entry.level === "error"
-                      ? "border-[rgba(255,120,120,0.16)] text-[#ffb4b4]"
-                      : "border-[rgba(255,207,118,0.12)] text-[#ffe1a8]"}`}
+                      ? "theme-log-entry-error"
+                      : "theme-border-warning theme-text-warning-soft"}`}
                   >
-                    <span className="mr-3 text-[rgba(255,225,168,0.6)]">
+                    <span className="mr-3 theme-timestamp">
                       {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                     </span>
                     <span>{entry.message}</span>
@@ -605,9 +649,9 @@ export function Dashboard() {
           ) : null}
 
           {error ? (
-            <div className="matrix-panel mb-4 rounded-none border-x-0 border-[rgba(255,109,109,0.22)] bg-[rgba(34,6,6,0.9)] p-4 sm:p-5">
-              <p className="matrix-kicker text-[#ff9e9e]">Request error</p>
-              <p className="mt-2 text-sm text-[#ffd0d0]">{error}</p>
+            <div className="matrix-panel mb-4 rounded-none border-x-0 theme-inline-panel-danger p-4 sm:p-5">
+              <p className="matrix-kicker theme-kicker-danger">Request error</p>
+              <p className="mt-2 text-sm theme-text-danger">{error}</p>
             </div>
           ) : null}
 
@@ -690,7 +734,7 @@ export function Dashboard() {
             </>
           )}
         >
-          <div className="border border-[rgba(255,109,109,0.18)] bg-[rgba(0,0,0,0.28)] p-3 font-mono text-sm text-[#ffd0d0]">
+          <div className="border theme-inline-panel-danger p-3 font-mono text-sm theme-text-danger">
             This action cannot be undone from the UI.
           </div>
         </MatrixModal>
@@ -731,7 +775,7 @@ export function Dashboard() {
         >
           <form id="create-worktree-form" className="space-y-3" onSubmit={onSubmit}>
             <label className="block">
-              <span className="mb-2 block text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Branch name</span>
+              <span className="mb-2 block text-xs uppercase tracking-[0.18em] theme-text-soft">Branch name</span>
               <input
                 value={branch}
                 onChange={(event) => setBranch(event.target.value)}
@@ -753,17 +797,17 @@ export function Dashboard() {
             : "No .env files were found to copy from the shared config source."}
           onClose={clearLastEnvSync}
         >
-          <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.28)] p-3">
+          <div className="border theme-inline-panel p-3">
             {lastEnvSync.copiedFiles.length > 0 ? (
-              <div className="max-h-[50vh] overflow-auto font-mono text-sm text-[#d7ffd7]">
+              <div className="max-h-[50vh] overflow-auto font-mono text-sm theme-text">
                 {lastEnvSync.copiedFiles.map((filePath) => (
-                  <div key={filePath} className="border-b border-[rgba(74,255,122,0.08)] py-2 last:border-b-0">
+                  <div key={filePath} className="border-b theme-border-faint py-2 last:border-b-0">
                     {filePath}
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="font-mono text-sm text-[#7fe19e]">No matching `.env*` files found.</p>
+              <p className="font-mono text-sm theme-chip-muted">No matching `.env*` files found.</p>
             )}
           </div>
         </MatrixModal>
@@ -777,21 +821,33 @@ export function Dashboard() {
         onShortcutChange={setCommandPaletteShortcut}
         onShortcutReset={() => setCommandPaletteShortcut(DEFAULT_COMMAND_PALETTE_SHORTCUT)}
         shortcutSettings={shortcutSettings}
-        title={commandPaletteScope === "worktree-select" ? "Select worktree" : "Command palette"}
+        title={commandPaletteScope === "worktree-select"
+          ? "Select worktree"
+          : commandPaletteScope === "theme-select"
+            ? "Select theme"
+            : "Command palette"}
         placeholder={commandPaletteScope === "worktree-select"
           ? "Type a worktree name, path, or :number"
-          : "Type a command or worktree name, or :code"}
+          : commandPaletteScope === "theme-select"
+            ? "Type a theme name, author, variant, or :number"
+            : "Type a command or worktree name, or :code"}
         emptyState={commandPaletteScope === "worktree-select"
           ? "No worktrees match the current search."
-          : "No commands match the current search."}
+          : commandPaletteScope === "theme-select"
+            ? "No themes match the current search."
+            : "No commands match the current search."}
         fuzzyModeLabel={commandPaletteScope === "worktree-select"
           ? "Fuzzy mode: search worktrees by branch or path"
-          : "Fuzzy mode: search commands by name"}
-        codeModeLabel={commandPaletteScope === "worktree-select"
-          ? "Number mode: exact worktree number"
+          : commandPaletteScope === "theme-select"
+            ? "Fuzzy mode: search themes by name, author, or variant"
+            : "Fuzzy mode: search commands by name"}
+        codeModeLabel={commandPaletteScope === "worktree-select" || commandPaletteScope === "theme-select"
+          ? "Number mode: exact selection number"
           : "Code mode: exact command codes"}
-        codeModeHint={commandPaletteScope === "worktree-select" ? "Prefix with `:` then a number" : "Prefix with `:`"}
-        autoExecuteExactCode={commandPaletteScope !== "worktree-select"}
+        codeModeHint={commandPaletteScope === "worktree-select" || commandPaletteScope === "theme-select"
+          ? "Prefix with `:` then a number"
+          : "Prefix with `:`"}
+        autoExecuteExactCode={commandPaletteScope === "main"}
         scopeKey={commandPaletteScope}
       />
     </main>

@@ -8,6 +8,15 @@ import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
 
+function getCssVariable(name: string, fallback: string): string {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
 const GIT_COMPARISON_POLL_INTERVAL_MS = 3000;
 const DIFF_RENDER_MAX_CHARS = 350_000;
 const DIFF_RENDER_MAX_LINES = 8_000;
@@ -303,14 +312,20 @@ export function WorktreeDetail({
       initCommitOffsetX: 70,
       initCommitOffsetY: 0,
       template: templateExtend(TemplateName.Metro, {
-        colors: ["#4aff7a", "#c084fc", "#86efac", "#facc15", "#38bdf8"],
+        colors: [
+          getCssVariable("--base0B", "#4aff7a"),
+          getCssVariable("--base0E", "#c084fc"),
+          getCssVariable("--base0C", "#86efac"),
+          getCssVariable("--base0A", "#facc15"),
+          getCssVariable("--base0D", "#38bdf8"),
+        ],
         branch: {
           spacing: 68,
           label: {
             font: '500 11px "JetBrains Mono", "IBM Plex Mono", monospace',
-            bgColor: "#1f1230",
-            color: "#f3e8ff",
-            strokeColor: "#c084fc",
+            bgColor: getCssVariable("--base01", "#1f1230"),
+            color: getCssVariable("--base06", "#f3e8ff"),
+            strokeColor: getCssVariable("--base0E", "#c084fc"),
           },
         },
         commit: {
@@ -327,7 +342,7 @@ export function WorktreeDetail({
         },
       }),
     }),
-    [],
+    [gitComparison?.baseBranch, gitComparison?.compareBranch, gitView, worktree?.branch],
   );
   const gitDiffMetrics = useMemo(() => {
     const raw = gitComparison?.effectiveDiff ?? "";
@@ -575,7 +590,7 @@ export function WorktreeDetail({
   return (
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
-        <div className="flex items-center gap-2 border-b border-[rgba(74,255,122,0.14)] pb-4">
+        <div className="flex items-center gap-2 theme-divider border-b pb-4">
           <MatrixTabButton active={activeTab === "shell"} label="Shell" onClick={() => onTabChange("shell")} />
           <MatrixTabButton active={activeTab === "background"} label="Background commands" onClick={() => onTabChange("background")} />
           <MatrixTabButton active={activeTab === "git"} label="Git status" onClick={() => onTabChange("git")} />
@@ -586,10 +601,10 @@ export function WorktreeDetail({
             <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0 flex-1">
                 <p className="matrix-kicker">Terminal focus</p>
-                <h2 className="mt-1 text-2xl font-semibold text-[#ecffec] sm:text-3xl">
+                <h2 className="mt-1 text-2xl font-semibold theme-text-strong sm:text-3xl">
                   {worktree?.branch ?? "Select a worktree"}
                 </h2>
-                <p className="mt-1 text-sm text-[#9cd99c]">
+                <p className="mt-1 text-sm theme-text-muted">
                   {worktree
                     ? "The shell is the primary surface. Runtime details stay visible, but the terminal owns the layout."
                     : "Choose a worktree from the worktree picker to open its terminal session."}
@@ -627,10 +642,10 @@ export function WorktreeDetail({
               <MatrixDetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
             </div>
 
-            <div className="mt-4 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-3">
+            <div className="mt-4 theme-inline-panel p-3">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Quick links</p>
-                <span className="text-xs text-[#7fe19e]">{quickLinks.length}</span>
+                <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Quick links</p>
+                <span className="text-xs theme-chip-muted">{quickLinks.length}</span>
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {quickLinks.length ? quickLinks.map((entry) => (
@@ -639,13 +654,13 @@ export function WorktreeDetail({
                     href={entry.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="matrix-command rounded-none px-4 py-3 text-sm text-[#d7ffd7] transition-colors duration-150 hover:border-[rgba(74,255,122,0.24)] hover:text-[#4aff7a]"
+                    className="matrix-command theme-hover-accent rounded-none px-4 py-3 text-sm theme-text transition-colors duration-150 theme-hover-text-accent"
                   >
-                    <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">{entry.name}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">{entry.name}</p>
                     <p className="mt-2 break-all font-mono text-xs">{entry.url}</p>
                   </a>
                 )) : (
-                  <div className="matrix-command rounded-none px-4 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-3">
+                  <div className="matrix-command rounded-none px-4 py-3 text-xs theme-empty-note sm:col-span-2 xl:col-span-3">
                     Quick links appear here after the runtime resolves its ports.
                   </div>
                 )}
@@ -653,11 +668,11 @@ export function WorktreeDetail({
             </div>
 
             {attachCommand ? (
-              <div className="mt-3 border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-3">
+              <div className="mt-3 theme-inline-panel p-3">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Attach command</p>
-                    <p className="mt-2 break-all font-mono text-sm text-[#d7ffd7]">{attachCommand}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Attach command</p>
+                    <p className="mt-2 break-all font-mono text-sm theme-text">{attachCommand}</p>
                   </div>
                   <button type="button" className="matrix-button rounded-none px-3 py-2 text-sm" onClick={() => void copyAttachCommand()}>
                     {copied ? "Copied" : "Copy"}
@@ -668,12 +683,12 @@ export function WorktreeDetail({
           </>
         ) : activeTab === "background" ? (
           <div className="mt-4 space-y-4">
-            <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+            <div className="theme-inline-panel p-4">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                 <div>
                   <p className="matrix-kicker">Background commands</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-[#ecffec] sm:text-3xl">Process control</h2>
-                  <p className="mt-2 text-sm text-[#9cd99c]">
+                  <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Process control</h2>
+                  <p className="mt-2 text-sm theme-text-muted">
                     Long-running dev services live here. Start the environment first, then manage each configured background command under PM2.
                   </p>
                 </div>
@@ -712,8 +727,8 @@ export function WorktreeDetail({
               {selectedBackgroundCommand ? (
                 <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
                   <div className="matrix-command rounded-none px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Command</p>
-                    <p className="mt-2 break-all font-mono text-sm text-[#ecffec]">{selectedBackgroundCommand.command}</p>
+                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Command</p>
+                    <p className="mt-2 break-all font-mono text-sm theme-text-strong">{selectedBackgroundCommand.command}</p>
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -729,23 +744,23 @@ export function WorktreeDetail({
                   </div>
                 </div>
               ) : (
-                <div className="mt-4 matrix-command rounded-none px-4 py-3 text-sm text-[#8fd18f]">
+                <div className="mt-4 matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">
                   No background commands are configured yet.
                 </div>
               )}
 
               {selectedBackgroundCommand?.note ? (
-                <div className="mt-3 border border-[rgba(255,207,118,0.22)] bg-[rgba(38,27,5,0.4)] px-3 py-2 text-sm text-[#ffd892]">
+                <div className="mt-3 theme-inline-panel-warning px-3 py-2 text-sm theme-text-warning">
                   {selectedBackgroundCommand.note}
                 </div>
               ) : null}
             </div>
 
-            <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+            <div className="theme-inline-panel p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.18em] text-[#6cb96c]">Logs</p>
-                  <p className="mt-2 text-sm text-[#9cd99c]">Grep hides lines that do not contain the search text.</p>
+                  <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Logs</p>
+                  <p className="mt-2 text-sm theme-text-muted">Grep hides lines that do not contain the search text.</p>
                 </div>
 
                 <label className="w-full sm:max-w-xs">
@@ -762,24 +777,24 @@ export function WorktreeDetail({
                <div
                  ref={backgroundLogViewportRef}
                  onScroll={handleBackgroundLogScroll}
-                 className="mt-4 max-h-[28rem] overflow-auto border border-[rgba(74,255,122,0.12)] bg-[rgba(1,8,3,0.86)] font-mono text-xs"
+                 className="mt-4 max-h-[28rem] overflow-auto theme-scroll-panel font-mono text-xs"
                >
                 {filteredBackgroundLogLines.length ? filteredBackgroundLogLines.map((line) => (
                   <div
                     key={line.id}
                     className={`border-b px-4 py-2 last:border-b-0 ${line.source === "stderr"
-                      ? "border-[rgba(255,120,120,0.12)] text-[#ffb4b4]"
-                      : "border-[rgba(74,255,122,0.08)] text-[#d7ffd7]"}`}
+                       ? "theme-log-entry-error"
+                       : "theme-log-entry"}`}
                   >
                     {line.timestamp ? (
-                      <span className="mr-3 text-[rgba(146,214,146,0.62)]">
+                      <span className="mr-3 theme-timestamp">
                         {new Date(line.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                       </span>
                     ) : null}
                     <span>{line.text}</span>
                   </div>
                 )) : (
-                  <div className="px-4 py-4 text-[#8fd18f]">
+                  <div className="px-4 py-4 theme-empty-note">
                     {selectedBackgroundCommand
                       ? backgroundFilter.trim()
                         ? "No log lines match the current grep filter."
@@ -792,12 +807,12 @@ export function WorktreeDetail({
           </div>
         ) : (
           <div className="mt-4 space-y-4">
-            <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+            <div className="theme-inline-panel p-4">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                 <div>
                   <p className="matrix-kicker">Git status</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-[#ecffec] sm:text-3xl">Branch comparison</h2>
-                  <p className="mt-2 text-sm text-[#9cd99c]">
+                  <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Branch comparison</h2>
+                  <p className="mt-2 text-sm theme-text-muted">
                     Compare the selected worktree against the default branch, including staged, unstaged, and untracked local changes in the effective diff.
                   </p>
                 </div>
@@ -845,18 +860,18 @@ export function WorktreeDetail({
             </div>
 
             {gitComparisonLoading ? (
-              <div className="matrix-command rounded-none px-4 py-3 text-sm text-[#8fd18f]">Loading git comparison…</div>
+              <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">Loading git comparison…</div>
             ) : gitComparison ? gitView === "graph" ? (
               gitComparison.ahead === 0 && gitComparison.behind === 0 ? (
-                <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
-                  <div className="matrix-command rounded-none px-4 py-4 text-sm text-[#8fd18f]">
+                <div className="theme-inline-panel p-4">
+                  <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
                     The branches are identical.
                   </div>
                 </div>
               ) : (
-                <div className="border border-[rgba(192,132,252,0.26)] bg-[linear-gradient(180deg,rgba(35,16,54,0.36),rgba(0,0,0,0.24))] p-4 shadow-[inset_0_1px_0_rgba(243,232,255,0.06)]">
+                <div className="matrix-diff-panel p-4">
                   <div className="overflow-auto">
-                    <div className="min-w-[48rem] bg-[linear-gradient(180deg,rgba(17,10,28,0.94),rgba(1,8,3,0.92))] px-4 pb-4 pt-6">
+                    <div className="matrix-diff-surface px-4 pb-4 pt-6">
                       <Gitgraph key={gitGraphKey} options={gitGraphOptions}>
                         {(gitgraph) => {
                           gitgraph.clear();
@@ -895,7 +910,7 @@ export function WorktreeDetail({
                 </div>
               )
             ) : (
-              <div className="border border-[rgba(74,255,122,0.18)] bg-[rgba(0,0,0,0.24)] p-4">
+              <div className="theme-inline-panel p-4">
                 <div className="flex flex-col gap-3">
                   <div className="grid gap-2 xl:grid-cols-[minmax(15rem,18rem)_minmax(11rem,13rem)_minmax(11rem,13rem)_auto_auto]">
                     <MatrixDropdown
@@ -921,14 +936,14 @@ export function WorktreeDetail({
                     />
                     <button
                       type="button"
-                      className={`matrix-button rounded-none px-3 py-2 text-sm ${diffWrap ? "border-[rgba(192,132,252,0.38)] text-[#f3e8ff]" : ""}`}
+                      className={`matrix-button rounded-none px-3 py-2 text-sm ${diffWrap ? "theme-pill-emphasis theme-text-strong" : ""}`}
                       onClick={() => setDiffWrap((current) => !current)}
                     >
                       Wrap {diffWrap ? "on" : "off"}
                     </button>
                     <button
                       type="button"
-                      className={`matrix-button rounded-none px-3 py-2 text-sm ${diffHighlight ? "border-[rgba(192,132,252,0.38)] text-[#f3e8ff]" : ""}`}
+                      className={`matrix-button rounded-none px-3 py-2 text-sm ${diffHighlight ? "theme-pill-emphasis theme-text-strong" : ""}`}
                       onClick={() => setDiffHighlight((current) => !current)}
                     >
                       Highlight {diffHighlight ? "on" : "off"}
@@ -936,9 +951,9 @@ export function WorktreeDetail({
                   </div>
 
                   {gitComparison.effectiveDiff ? isDiffTooLargeToRender ? (
-                    <div className="border border-[rgba(255,207,118,0.22)] bg-[rgba(38,27,5,0.4)] px-4 py-4 text-sm text-[#ffd892]">
+                    <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
                       Diff is too large to render safely in the browser.
-                      <div className="mt-2 font-mono text-xs text-[#ffe3af]">
+                      <div className="mt-2 font-mono text-xs theme-text-warning-soft">
                         {parsedDiffFileCount} files, {gitDiffMetrics.lines.toLocaleString()} lines, {gitDiffMetrics.chars.toLocaleString()} chars
                       </div>
                     </div>
@@ -946,10 +961,10 @@ export function WorktreeDetail({
                     <div className="space-y-4">
                       {gitDiffFiles.map((section) => (
                         <div key={section.title} className="space-y-3">
-                          <div className="text-xs uppercase tracking-[0.18em] text-[#cda7ff]">{section.title}</div>
+                          <div className="text-xs uppercase tracking-[0.18em] theme-text-emphasis">{section.title}</div>
                           {section.files.map((file) => (
-                            <div key={file.key} className="overflow-hidden border border-[rgba(192,132,252,0.16)] bg-[linear-gradient(180deg,rgba(17,10,28,0.96),rgba(3,8,6,0.96))]">
-                              <div className="border-b border-[rgba(192,132,252,0.16)] px-4 py-2 font-mono text-xs text-[#f3e8ff]">
+                            <div key={file.key} className="overflow-hidden matrix-diff-file">
+                              <div className="theme-border-emphasis border-b px-4 py-2 font-mono text-xs theme-text-strong">
                                 {file.displayName}
                               </div>
                               <div className="max-h-[40rem] overflow-auto">
@@ -968,16 +983,16 @@ export function WorktreeDetail({
                       ))}
                     </div>
                   ) : (
-                    <div className="border border-[rgba(255,207,118,0.22)] bg-[rgba(38,27,5,0.4)] px-4 py-4 text-sm text-[#ffd892]">
+                    <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
                       Diff data could not be parsed into file hunks for the visual viewer.
                     </div>
                   ) : (
-                    <div className="px-4 py-4 text-[#8fd18f]">No effective diff between these branches or in the selected worktree.</div>
+                    <div className="px-4 py-4 theme-empty-note">No effective diff between these branches or in the selected worktree.</div>
                   )}
                 </div>
               </div>
             ) : (
-              <div className="matrix-command rounded-none px-4 py-3 text-sm text-[#8fd18f]">
+              <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">
                 Select a worktree to load branch comparison details.
               </div>
             )}

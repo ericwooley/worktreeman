@@ -15,6 +15,39 @@ import { shortcutFromKeyboardEvent } from "./command-palette";
 import "@xterm/xterm/css/xterm.css";
 
 const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
+const TERMINAL_SURFACE_MODE_STORAGE_KEY = "worktreemanager.terminalSurfaceMode";
+
+type TerminalSurfaceMode = "dark" | "light";
+
+function getCssVariable(name: string, fallback: string): string {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+
+  const value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function getTerminalTheme(surfaceMode: TerminalSurfaceMode) {
+  const background = surfaceMode === "light"
+    ? getCssVariable("--base07", "#ffffff")
+    : getCssVariable("--base00", "#000000");
+  const foreground = surfaceMode === "light"
+    ? getCssVariable("--base01", "#111111")
+    : getCssVariable("--base05", "#ffffff");
+  const cursor = surfaceMode === "light"
+    ? getCssVariable("--base0D", "#2563eb")
+    : getCssVariable("--base0B", "#ffffff");
+  const selectionSource = surfaceMode === "light" ? "--rgb-base0D" : "--rgb-base0E";
+  const selectionRgb = getCssVariable(selectionSource, "192 132 252").replace(/\s+/g, ", ");
+
+  return {
+    background,
+    foreground,
+    cursor,
+    selectionBackground: `rgba(${selectionRgb}, 0.28)`,
+  };
+}
 
 export function WorktreeTerminal({
   worktree,
@@ -47,6 +80,15 @@ export function WorktreeTerminal({
   const [disconnectingClientId, setDisconnectingClientId] = useState<
     string | null
   >(null);
+  const [terminalSurfaceMode, setTerminalSurfaceMode] = useState<TerminalSurfaceMode>(() => {
+    if (typeof window === "undefined") {
+      return "dark";
+    }
+
+    return window.localStorage.getItem(TERMINAL_SURFACE_MODE_STORAGE_KEY) === "light"
+      ? "light"
+      : "dark";
+  });
   const scheduleResizeRef = useRef<((force?: boolean) => void) | null>(null);
   const lastCopiedSelectionRef = useRef("");
   const commandPaletteShortcutRef = useRef(commandPaletteShortcut);
@@ -69,6 +111,10 @@ export function WorktreeTerminal({
     terminalShortcutToggleRef.current = onTerminalShortcutToggle;
   }, [commandPaletteShortcut, onCommandPaletteToggle, onTerminalShortcutToggle, terminalShortcut]);
 
+  useEffect(() => {
+    window.localStorage.setItem(TERMINAL_SURFACE_MODE_STORAGE_KEY, terminalSurfaceMode);
+  }, [terminalSurfaceMode]);
+
   const drawer = worktree?.runtime ? (
     <div
       className="fixed inset-x-0 bottom-0 z-[35] h-[100dvh] transition-transform duration-300 ease-out"
@@ -78,11 +124,11 @@ export function WorktreeTerminal({
           : `translateY(calc(100dvh - ${TERMINAL_DRAWER_VISIBLE_HEIGHT}px))`,
       }}
     >
-      <div className="flex h-full flex-col">
-        <div className="z-20 shrink-0 border-t border-[rgba(233,213,255,0.42)] bg-[linear-gradient(180deg,rgba(168,85,247,0.24),rgba(30,12,47,0.88))] shadow-[0_-10px_36px_rgba(48,12,82,0.28)] backdrop-blur-md">
+      <div className="flex h-full flex-col" data-terminal-surface-mode={terminalSurfaceMode}>
+        <div className="theme-terminal-drawer z-20 shrink-0 border-t backdrop-blur-md">
           <div
             aria-expanded={isTerminalVisible}
-            className="grid min-h-[52px] cursor-pointer gap-2 border-b border-[rgba(196,181,253,0.24)] px-3 py-2 sm:grid-cols-[auto_minmax(15rem,22rem)] sm:items-center sm:px-4"
+            className="theme-terminal-drawer-row grid min-h-[52px] cursor-pointer gap-2 border-b px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-4"
             role="button"
             tabIndex={0}
             onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
@@ -93,37 +139,60 @@ export function WorktreeTerminal({
               }
             }}
           >
-            <div className="flex min-w-0 items-center justify-between gap-3 text-left text-[#f8f3ff] transition-colors duration-150 hover:text-white">
+            <div className="theme-text-strong flex min-w-0 items-center justify-between gap-3 text-left transition-colors duration-150 hover:text-white">
               <div className="min-w-0">
-                <p className="text-[0.6rem] uppercase tracking-[0.22em] text-[rgba(243,232,255,0.7)]">
+                <p className="theme-text-muted text-[0.6rem] uppercase tracking-[0.22em]">
                   Terminal drawer
                 </p>
-                <p className="truncate font-mono text-sm text-[#f8f3ff] sm:text-[0.95rem]">
+                <p className="truncate font-mono text-sm sm:text-[0.95rem]">
                   {worktree?.branch ?? "No worktree selected"}
                 </p>
               </div>
             </div>
 
-            {isTerminalVisible ? (
-              <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-                <MatrixDropdown
-                  label="Worktree"
-                  value={worktree?.branch ?? null}
-                  options={worktreeOptions}
-                  placeholder="Select worktree"
-                  onChange={onSelectWorktree}
-                />
+            <div className="flex min-w-0 items-center justify-end gap-2">
+              <div
+                className="flex items-center gap-1"
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  className={`theme-terminal-mode-toggle rounded-none px-2 py-1 text-[11px] uppercase tracking-[0.16em] ${terminalSurfaceMode === "dark" ? "theme-terminal-mode-toggle-active" : "theme-terminal-mode-toggle-idle"}`}
+                  onClick={() => setTerminalSurfaceMode("dark")}
+                >
+                  Dark
+                </button>
+                <button
+                  type="button"
+                  className={`theme-terminal-mode-toggle rounded-none px-2 py-1 text-[11px] uppercase tracking-[0.16em] ${terminalSurfaceMode === "light" ? "theme-terminal-mode-toggle-active" : "theme-terminal-mode-toggle-idle"}`}
+                  onClick={() => setTerminalSurfaceMode("light")}
+                >
+                  Light
+                </button>
               </div>
-            ) : null}
+
+              {isTerminalVisible ? (
+                <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                  <MatrixDropdown
+                    label="Worktree"
+                    value={worktree?.branch ?? null}
+                    options={worktreeOptions}
+                    placeholder="Select worktree"
+                    onChange={onSelectWorktree}
+                  />
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
-        <div className="matrix-panel flex min-h-0 flex-1 flex-col overflow-hidden border-x-0 border-t border-b-0 border-[rgba(196,181,253,0.16)] shadow-[0_-18px_80px_rgba(0,0,0,0.72)]">
-          <div className="flex min-h-0 flex-1 flex-col bg-[#020703]">
+        <div className="theme-terminal-border theme-shell-shadow matrix-panel flex min-h-0 flex-1 flex-col overflow-hidden border-x-0 border-t border-b-0">
+          <div className="theme-terminal-surface flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
               <div
                 ref={hostRef}
-                className="h-full w-full overflow-hidden border-b border-b-[rgba(196,181,253,0.18)] bg-[#020703] shadow-[inset_0_1px_0_rgba(243,232,255,0.08)]"
+                className="theme-terminal-border theme-terminal-surface theme-shell-host h-full w-full overflow-hidden border-b"
                 style={{ contain: "layout size" }}
               />
             </div>
@@ -181,17 +250,12 @@ export function WorktreeTerminal({
 
     hostRef.current.replaceChildren();
 
-    const terminal = new Terminal({
+      const terminal = new Terminal({
       cursorBlink: true,
       fontFamily:
         '"MesloLGS NF", "SauceCodePro Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font Mono", monospace',
       fontSize: 13,
-      theme: {
-        background: "#0f1720",
-        foreground: "#f8fafc",
-        cursor: "#f97316",
-        selectionBackground: "rgba(249, 115, 22, 0.28)",
-      },
+      theme: getTerminalTheme(terminalSurfaceMode),
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -406,7 +470,7 @@ export function WorktreeTerminal({
       }
       terminal.dispose();
     };
-  }, [sessionName, terminalBranch]);
+  }, [sessionName, terminalBranch, terminalSurfaceMode]);
 
   const handleDisconnectClient = async (clientId: string) => {
     if (!terminalBranch || clientId === currentClientId) {
@@ -426,14 +490,14 @@ export function WorktreeTerminal({
     <>
       {showSessionInfo ? (
       <section className="matrix-panel min-w-0 overflow-hidden rounded-none">
-        <div className="border-b border-[rgba(74,255,122,0.14)] px-4 py-4 sm:px-5">
+        <div className="theme-divider border-b px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="matrix-kicker">Primary shell</p>
-              <h2 className="text-xl font-semibold text-[#ecffec] sm:text-2xl">
+              <h2 className="theme-text-strong text-xl font-semibold sm:text-2xl">
                 Terminal session info
               </h2>
-              <p className="mt-1 text-sm text-[#9cd99c]">
+              <p className="theme-text-muted mt-1 text-sm">
                 {worktree?.runtime
                   ? `tmux session ${worktree.runtime.tmuxSession} is docked as a fixed terminal overlay`
                   : "Select a running worktree to attach to its tmux session."}
@@ -457,26 +521,26 @@ export function WorktreeTerminal({
               {visibleEnvEntries.map(([key, value]) => (
                 <div
                   key={key}
-                  className="matrix-command rounded-none px-3 py-2 font-mono text-xs text-[#9cd99c]"
+                  className="matrix-command theme-text-muted rounded-none px-3 py-2 font-mono text-xs"
                 >
-                  <span className="text-[#ecffec]">{key}</span>=
-                  <span className="break-all text-[#4aff7a]">{value}</span>
+                  <span className="theme-text-strong">{key}</span>=
+                  <span className="theme-text-accent break-all">{value}</span>
                 </div>
               ))}
               {!visibleEnvEntries.length ? (
-                <div className="matrix-command rounded-none px-3 py-3 text-xs text-[#8fd18f] sm:col-span-2 xl:col-span-4">
+                <div className="matrix-command theme-empty-note rounded-none px-3 py-3 text-xs sm:col-span-2 xl:col-span-4">
                   Runtime env will appear here once the selected worktree is
                   running.
                 </div>
               ) : null}
             </div>
 
-            <div className="border border-[rgba(74,255,122,0.14)] bg-[rgba(0,0,0,0.24)] px-4 py-3 text-xs text-[#8fd18f]">
+            <div className="theme-inline-panel theme-text-muted px-4 py-3 text-xs">
               <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold uppercase tracking-[0.18em] text-[#6cb96c]">
+                <p className="theme-text-soft font-semibold uppercase tracking-[0.18em]">
                   Attached tmux clients
                 </p>
-                <span className="text-[#7fe19e]">{tmuxClients.length}</span>
+                <span className="theme-chip-muted">{tmuxClients.length}</span>
               </div>
               <div className="mt-3 space-y-2">
                 {tmuxClients.length ? (
@@ -486,14 +550,14 @@ export function WorktreeTerminal({
                     return (
                       <div
                         key={client.id}
-                        className="border border-[rgba(74,255,122,0.12)] bg-[rgba(0,0,0,0.24)] px-3 py-2"
+                        className="theme-inline-panel px-3 py-2"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="truncate font-mono text-[#d7ffd7]">
+                            <p className="theme-text truncate font-mono">
                               {client.tty}
                             </p>
-                            <p className="text-[11px] text-[#6cb96c]">
+                            <p className="theme-text-soft text-[11px]">
                               pid {client.pid}
                               {client.isControlMode ? " • control" : ""}
                             </p>
