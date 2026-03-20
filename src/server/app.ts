@@ -1,5 +1,4 @@
 import http from "node:http";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -12,6 +11,8 @@ import { createTerminalService, killTmuxSession } from "./services/terminal-serv
 import { RuntimeStore } from "./state/runtime-store.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
+import type { EmbeddedWebAsset } from "./generated/embedded-web-assets.js";
+import type { ViteDevServer } from "vite";
 
 export interface StartServerOptions {
   repo: RepoContext;
@@ -19,8 +20,35 @@ export interface StartServerOptions {
   openBrowser?: boolean;
 }
 
+function isBunRuntime(): boolean {
+  return "Bun" in globalThis;
+}
+
+function isCompiledBunExecutable(): boolean {
+  return process.versions.bun != null && import.meta.url.includes("$bunfs/");
+}
+
+async function loadEmbeddedWebAssets(): Promise<Map<string, EmbeddedWebAsset>> {
+  const { embeddedWebAssets } = await import("./generated/embedded-web-assets.js");
+  return embeddedWebAssets;
+}
+
+function serveEmbeddedWebAsset(
+  assetPath: string,
+  embeddedWebAssets: Map<string, EmbeddedWebAsset>,
+  res: express.Response,
+): boolean {
+  const asset = embeddedWebAssets.get(assetPath);
+  if (!asset) {
+    return false;
+  }
+
+  res.setHeader("Content-Type", asset.contentType);
+  res.send(Buffer.from(asset.data, "base64"));
+  return true;
+}
+
 export async function startServer(options: StartServerOptions): Promise<{ port: number; close: () => Promise<void> }> {
-  const appRoot = fileURLToPath(new URL("../../", import.meta.url));
   const config = await loadConfig({
     path: options.repo.configPath,
     repoRoot: options.repo.repoRoot,
@@ -32,7 +60,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const app = express();
   const server = http.createServer(app);
   let terminalService: WebSocketServer | undefined;
-  let vite: Awaited<ReturnType<typeof import("vite")["createServer"]>> | undefined;
+  let vite: ViteDevServer | undefined;
   let closed = false;
 
   app.use(express.json());
@@ -52,9 +80,11 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     });
   });
 
-  const isDevelopment = process.env.NODE_ENV === "development";
+  const isDevelopment = process.env.NODE_ENV === "development" && !isCompiledBunExecutable();
   if (isDevelopment) {
-    const { createServer } = await import("vite");
+    const appRoot = fileURLToPath(new URL("../../", import.meta.url));
+    const viteModuleId = "vite";
+    const { createServer } = await import(viteModuleId) as typeof import("vite");
     vite = await createServer({
       root: appRoot,
       server: {
@@ -64,17 +94,27 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       appType: "spa",
     });
     app.use(vite.middlewares);
+  } else if (isBunRuntime()) {
+    const embeddedWebAssets = await loadEmbeddedWebAssets();
+    app.get("*", (req, res, next) => {
+      const requestPath = req.path === "/" ? "/index.html" : req.path;
+      if (serveEmbeddedWebAsset(requestPath, embeddedWebAssets, res)) {
+        return;
+      }
+
+      if (!path.extname(req.path) && serveEmbeddedWebAsset("/index.html", embeddedWebAssets, res)) {
+        return;
+      }
+
+      next();
+    });
   } else {
+    const appRoot = fileURLToPath(new URL("../../", import.meta.url));
     const webDistPath = path.resolve(appRoot, "dist/web");
     app.use(express.static(webDistPath));
-    app.get("*", async (_req, res, next) => {
-      try {
-        const indexPath = path.join(webDistPath, "index.html");
-        await fs.access(indexPath);
-        res.sendFile(indexPath);
-      } catch (error) {
-        next(error);
-      }
+    const indexPath = path.join(webDistPath, "index.html");
+    app.get("*", (_req, res) => {
+      res.sendFile(indexPath);
     });
   }
 

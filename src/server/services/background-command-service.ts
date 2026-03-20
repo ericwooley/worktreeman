@@ -4,6 +4,8 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
+import pm2 from "pm2";
+import type { ProcessDescription, StartOptions } from "pm2";
 import type {
   BackgroundCommandConfigEntry,
   BackgroundCommandLogLine,
@@ -13,9 +15,8 @@ import type {
   WorktreeManagerConfig,
   WorktreeRuntime,
 } from "../../shared/types.js";
-import { runCommand } from "../utils/process.js";
 import { buildRuntimeProcessEnv } from "./runtime-service.js";
-const PM2_BIN = path.resolve(import.meta.dirname, "../../../node_modules/.bin/pm2");
+
 const PM2_NAMESPACE = "worktreemanager";
 const LOG_LINES_LIMIT = 400;
 let streamedLogSequence = 0;
@@ -51,39 +52,121 @@ function getPm2MetadataPath(processName: string): string {
   return path.join(os.tmpdir(), `${processName.replace(/[^a-zA-Z0-9_.-]+/g, "_")}.json`);
 }
 
-function buildBackgroundEnv(config: WorktreeManagerConfig, runtime: WorktreeRuntime): NodeJS.ProcessEnv {
+function buildBackgroundEnv(config: WorktreeManagerConfig, runtime: WorktreeRuntime): Record<string, string> {
   void config;
-  return buildRuntimeProcessEnv(runtime);
+  return Object.fromEntries(
+    Object.entries(buildRuntimeProcessEnv(runtime)).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
 }
 
-async function runPm2(args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
-  return runCommand(PM2_BIN, args, { cwd, env });
+async function withPm2<T>(operation: () => Promise<T>): Promise<T> {
+  await new Promise<void>((resolve, reject) => {
+    pm2.connect((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
+
+  try {
+    return await operation();
+  } finally {
+    pm2.disconnect();
+  }
 }
 
-async function listPm2Processes(cwd: string): Promise<Map<string, Pm2ProcessDescription>> {
-  const { stdout } = await runPm2(["jlist"], cwd);
-  const parsed = JSON.parse(stdout) as Array<Record<string, unknown>>;
+function toPm2ProcessDescription(entry: ProcessDescription): [string, Pm2ProcessDescription] | null {
+  const name = typeof entry.name === "string" ? entry.name : null;
+  if (!name) {
+    return null;
+  }
+
+  const pid = typeof entry.pid === "number" ? entry.pid : undefined;
+  const pm2Env = entry.pm2_env ?? {};
+  const createdAt = typeof pm2Env.pm_uptime === "number"
+    ? new Date(pm2Env.pm_uptime).toISOString()
+    : undefined;
+  const status = typeof pm2Env.status === "string" ? pm2Env.status : "unknown";
+  const outLogPath = typeof pm2Env.pm_out_log_path === "string" ? pm2Env.pm_out_log_path : undefined;
+  const errLogPath = typeof pm2Env.pm_err_log_path === "string" ? pm2Env.pm_err_log_path : undefined;
+
+  return [name, { name, pid, status, createdAt, outLogPath, errLogPath }];
+}
+
+async function listPm2Processes(): Promise<Map<string, Pm2ProcessDescription>> {
+  const parsed = await withPm2(() => new Promise<ProcessDescription[]>((resolve, reject) => {
+    pm2.list((error, processList) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(processList);
+    });
+  }));
+
   const entries: Array<[string, Pm2ProcessDescription]> = [];
 
   for (const entry of parsed) {
-    const name = typeof entry.name === "string" ? entry.name : null;
-    if (!name) {
-      continue;
+    const description = toPm2ProcessDescription(entry);
+    if (description) {
+      entries.push(description);
     }
-
-    const pid = typeof entry.pid === "number" ? entry.pid : undefined;
-    const pm2Env = (entry.pm2_env as Record<string, unknown> | undefined) ?? {};
-    const createdAt = typeof pm2Env.pm_uptime === "number"
-      ? new Date(pm2Env.pm_uptime).toISOString()
-      : undefined;
-    const status = typeof pm2Env.status === "string" ? pm2Env.status : "unknown";
-    const outLogPath = typeof pm2Env.pm_out_log_path === "string" ? pm2Env.pm_out_log_path : undefined;
-    const errLogPath = typeof pm2Env.pm_err_log_path === "string" ? pm2Env.pm_err_log_path : undefined;
-
-    entries.push([name, { name, pid, status, createdAt, outLogPath, errLogPath }]);
   }
 
   return new Map(entries);
+}
+
+async function deletePm2Process(processName: string): Promise<void> {
+  await withPm2(() => new Promise<void>((resolve, reject) => {
+    pm2.delete(processName, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  }));
+}
+
+async function startPm2Process(options: StartOptions): Promise<void> {
+  await withPm2(() => new Promise<void>((resolve, reject) => {
+    pm2.start(options, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  }));
+}
+
+async function readLogLines(filePath: string | undefined, source: "stdout" | "stderr"): Promise<BackgroundCommandLogLine[]> {
+  if (!filePath) {
+    return [];
+  }
+
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const lines = raw
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .slice(-LOG_LINES_LIMIT);
+
+    return lines.map((text, index) => ({
+      id: `${source}:history:${index}:${text}`,
+      source,
+      text,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 async function writeMetadata(processName: string, metadata: BackgroundCommandMetadata): Promise<void> {
@@ -109,7 +192,7 @@ export async function listBackgroundCommands(
   worktreePath: string,
   runtime: WorktreeRuntime | undefined,
 ): Promise<BackgroundCommandState[]> {
-  const processes = await listPm2Processes(worktreePath);
+  const processes = await listPm2Processes();
   const commandEntries = getBackgroundCommandEntries(config);
 
   return Object.entries(commandEntries).map(([name, entry]) => {
@@ -146,7 +229,7 @@ export async function startBackgroundCommand(options: {
   }
 
   const processName = getPm2CommandName(options.branch, options.commandName);
-  await runPm2(["delete", processName], options.worktreePath).catch(() => undefined);
+  await deletePm2Process(processName).catch(() => undefined);
 
   const runtime = options.runtime;
 
@@ -166,26 +249,16 @@ export async function startBackgroundCommand(options: {
   await writeMetadata(processName, metadata);
 
   try {
-    await runPm2(
-      [
-        "start",
-        process.env.SHELL || "/usr/bin/bash",
-        "--interpreter",
-        "none",
-        "--namespace",
-        PM2_NAMESPACE,
-        "--name",
-        processName,
-        "--cwd",
-        options.worktreePath,
-        "--time",
-        "--",
-        "-lc",
-        entry.command,
-      ],
-      options.worktreePath,
+    await startPm2Process({
+      script: process.env.SHELL || "/usr/bin/bash",
+      args: ["-lc", entry.command],
+      interpreter: "none",
+      namespace: PM2_NAMESPACE,
+      name: processName,
+      cwd: options.worktreePath,
+      time: true,
       env,
-    );
+    });
   } catch (error) {
     await deleteMetadata(processName);
     throw error;
@@ -212,48 +285,10 @@ export async function startConfiguredBackgroundCommands(options: {
 }
 
 export async function stopBackgroundCommand(branch: string, worktreePath: string, commandName: string): Promise<void> {
+  void worktreePath;
   const processName = getPm2CommandName(branch, commandName);
-  await runPm2(["delete", processName], worktreePath).catch(() => undefined);
+  await deletePm2Process(processName).catch(() => undefined);
   await deleteMetadata(processName);
-}
-
-function parseLogTimestamp(line: string): { timestamp?: string; text: string } {
-  const match = line.match(/^\d+\|[^|]*\|\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}):\s?(.*)$/);
-  if (!match) {
-    return { text: line };
-  }
-
-  return {
-    timestamp: new Date(match[1]).toISOString(),
-    text: match[2] ?? "",
-  };
-}
-
-function parsePm2LogOutput(raw: string): BackgroundCommandLogLine[] {
-  const sections = raw.split(/\n\n+/);
-  const lines: BackgroundCommandLogLine[] = [];
-
-  for (const section of sections) {
-    const header = section.split(/\r?\n/)[0] ?? "";
-    const source = header.includes("error.log") ? "stderr" : "stdout";
-    const bodyLines = section
-      .split(/\r?\n/)
-      .slice(1)
-      .map((line) => line.trimEnd())
-      .filter(Boolean);
-
-    for (const line of bodyLines) {
-      const parsed = parseLogTimestamp(line);
-      lines.push({
-        id: `${source}:${lines.length}:${parsed.timestamp ?? ""}:${parsed.text}`,
-        source,
-        text: parsed.text,
-        timestamp: parsed.timestamp,
-      });
-    }
-  }
-
-  return lines.slice(-LOG_LINES_LIMIT);
 }
 
 function createStreamLogLine(source: "stdout" | "stderr", text: string): BackgroundCommandLogLine {
@@ -322,12 +357,17 @@ export async function getBackgroundCommandLogs(
 
   void entry;
   const processName = getPm2CommandName(branch, commandName);
-  const { stdout, stderr } = await runPm2(["logs", processName, "--nostream", "--lines", String(LOG_LINES_LIMIT)], worktreePath).catch(() => ({ stdout: "", stderr: "" }));
-  const pm2Output = [stdout, stderr].filter(Boolean).join("\n").trim();
+  void worktreePath;
+  const processInfo = (await listPm2Processes().catch(() => new Map<string, Pm2ProcessDescription>())).get(processName);
 
   return {
     commandName,
-    lines: parsePm2LogOutput(pm2Output),
+    lines: processInfo
+      ? [
+          ...(await readLogLines(processInfo.outLogPath, "stdout")),
+          ...(await readLogLines(processInfo.errLogPath, "stderr")),
+        ].slice(-LOG_LINES_LIMIT)
+      : [],
   };
 }
 
@@ -346,7 +386,7 @@ export async function streamBackgroundCommandLogs(options: {
 
   void entry;
   const processName = getPm2CommandName(options.branch, options.commandName);
-  const processInfo = (await listPm2Processes(options.worktreePath)).get(processName);
+  const processInfo = (await listPm2Processes()).get(processName);
 
   if (!processInfo) {
     return () => undefined;
@@ -375,21 +415,22 @@ export async function streamBackgroundCommandLogs(options: {
 }
 
 export async function stopAllBackgroundCommands(branch: string, worktreePath: string): Promise<void> {
-  const processes = await listPm2Processes(worktreePath);
+  void worktreePath;
+  const processes = await listPm2Processes();
   const branchPrefix = `wtm:${branch}:`;
 
   await Promise.all(
     [...processes.keys()]
       .filter((name) => name.startsWith(branchPrefix))
       .map(async (name) => {
-        await runPm2(["delete", name], worktreePath).catch(() => undefined);
+        await deletePm2Process(name).catch(() => undefined);
         await deleteMetadata(name);
       }),
   );
 }
 
 export async function stopAllBackgroundCommandsForShutdown(worktreePath: string): Promise<void> {
-  const processes = await listPm2Processes(worktreePath).catch(() => new Map<string, Pm2ProcessDescription>());
+  const processes = await listPm2Processes().catch(() => new Map<string, Pm2ProcessDescription>());
 
   await Promise.all(
     [...processes.keys()]
@@ -400,7 +441,7 @@ export async function stopAllBackgroundCommandsForShutdown(worktreePath: string)
           return;
         }
 
-        await runPm2(["delete", name], worktreePath).catch(() => undefined);
+        await deletePm2Process(name).catch(() => undefined);
         await deleteMetadata(name);
       }),
   );
