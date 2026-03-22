@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
@@ -15,8 +15,12 @@ import type {
 import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
-import { ProjectManagementPanel } from "./project-management-panel";
 import { WorktreeTerminal } from "./worktree-terminal";
+
+const ProjectManagementPanel = lazy(async () => {
+  const module = await import("./project-management-panel");
+  return { default: module.ProjectManagementPanel };
+});
 
 function getCssVariable(name: string, fallback: string): string {
   if (typeof window === "undefined") {
@@ -883,20 +887,28 @@ export function WorktreeDetail({
             </div>
           </div>
         ) : activeTab === "project-management" ? (
-          <ProjectManagementPanel
-            documents={projectManagementDocuments}
-            availableTags={projectManagementAvailableTags}
-            availableStatuses={projectManagementAvailableStatuses}
-            document={projectManagementDocument}
-            history={projectManagementHistory}
-            loading={projectManagementLoading}
-            saving={projectManagementSaving}
-            onRefresh={onLoadProjectManagementDocuments}
-            onSelectDocument={onLoadProjectManagementDocument}
-            onCreateDocument={onCreateProjectManagementDocument}
-            onUpdateDocument={onUpdateProjectManagementDocument}
-            onAppendBatch={onAppendProjectManagementBatch}
-          />
+          <Suspense
+            fallback={(
+              <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                Loading project management workspace...
+              </div>
+            )}
+          >
+            <ProjectManagementPanel
+              documents={projectManagementDocuments}
+              availableTags={projectManagementAvailableTags}
+              availableStatuses={projectManagementAvailableStatuses}
+              document={projectManagementDocument}
+              history={projectManagementHistory}
+              loading={projectManagementLoading}
+              saving={projectManagementSaving}
+              onRefresh={onLoadProjectManagementDocuments}
+              onSelectDocument={onLoadProjectManagementDocument}
+              onCreateDocument={onCreateProjectManagementDocument}
+              onUpdateDocument={onUpdateProjectManagementDocument}
+              onAppendBatch={onAppendProjectManagementBatch}
+            />
+          </Suspense>
         ) : (
           <div className="mt-4 space-y-4">
             <div className="theme-inline-panel p-4">

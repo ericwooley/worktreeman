@@ -38,6 +38,7 @@ type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restor
 
 interface ProjectManagementAutomergeDocument {
   id: string;
+  number: number;
   title: string;
   markdown: string;
   tags: string[];
@@ -95,6 +96,17 @@ function createEmptyReducedState(headSha = ""): ProjectManagementCacheEntry {
     updatedAt: "",
     automergeDocsById: new Map(),
   };
+}
+
+function getNextDocumentNumber(cache: ProjectManagementCacheEntry): number {
+  let maxNumber = 0;
+  for (const document of cache.documentsById.values()) {
+    if (document.number > maxNumber) {
+      maxNumber = document.number;
+    }
+  }
+
+  return maxNumber + 1;
 }
 
 function normalizeTag(value: string): string {
@@ -204,6 +216,7 @@ function buildSeedMarkdown(): string {
 function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocument>): ProjectManagementDocument {
   return {
     id: doc.id,
+    number: doc.number,
     title: doc.title,
     markdown: doc.markdown,
     tags: Array.from(doc.tags ?? []),
@@ -274,6 +287,7 @@ function reduceBatchIntoCache(
       createdAt: batch.createdAt,
       actorId: entry.actorId,
       documentId: entry.documentId,
+      number: materialized.number,
       title: materialized.title,
       tags: [...materialized.tags],
       status: materialized.status,
@@ -298,6 +312,7 @@ function toListResponse(cache: ReducedProjectManagementState): ProjectManagement
     .filter((document): document is ProjectManagementDocument => Boolean(document))
     .map<ProjectManagementDocumentSummary>((document) => ({
       id: document.id,
+      number: document.number,
       title: document.title,
       tags: [...document.tags],
       status: document.status,
@@ -423,6 +438,7 @@ function createSeedBatch(now: string): StoredProjectManagementBatch {
   let doc = Automerge.init<ProjectManagementAutomergeDocument>({ actor: actorId });
   doc = Automerge.change(doc, "Create Project Outline", (draft) => {
     draft.id = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_ID;
+    draft.number = 1;
     draft.title = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE;
     draft.markdown = buildSeedMarkdown();
     draft.tags = [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG];
@@ -515,6 +531,7 @@ function applyDocumentChange(
   documentId: string,
   doc: Automerge.Doc<ProjectManagementAutomergeDocument> | undefined,
   input: {
+    number: number;
     title: string;
     markdown: string;
     tags: string[];
@@ -534,6 +551,7 @@ function applyDocumentChange(
 
   const nextDoc = Automerge.change(writableDoc, doc ? "Update project management document" : "Create project management document", (draft) => {
     draft.id = documentId;
+    draft.number = draft.number || input.number;
     draft.title = input.title.trim() || DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE;
     if (typeof draft.markdown !== "string") {
       draft.markdown = "";
@@ -593,6 +611,7 @@ async function appendEntries(
       }
 
       const { nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
+        number: existingDoc?.number ?? getNextDocumentNumber(workingState),
         title: entry.title,
         markdown: entry.markdown,
         tags: entry.tags,

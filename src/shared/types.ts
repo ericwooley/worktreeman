@@ -161,6 +161,7 @@ export interface ShutdownStatus {
 
 export interface ProjectManagementDocumentSummary {
   id: string;
+  number: number;
   title: string;
   tags: string[];
   status: string;
@@ -181,6 +182,7 @@ export interface ProjectManagementHistoryEntry {
   createdAt: string;
   actorId: string;
   documentId: string;
+  number: number;
   title: string;
   tags: string[];
   status: string;

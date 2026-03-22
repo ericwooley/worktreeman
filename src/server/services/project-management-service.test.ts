@@ -36,6 +36,7 @@ test("listProjectManagementDocuments bootstraps the branch with Project Outline"
     const revList = await runCommand("git", ["rev-list", "--count", documents.headSha], { cwd: repoRoot });
 
     assert.equal(documents.documents.length, 1);
+    assert.equal(documents.documents[0].number, 1);
     assert.equal(documents.documents[0].title, DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE);
     assert.deepEqual(documents.documents[0].tags, ["plan"]);
     assert.equal(Number(revList.stdout.trim()), 1);
@@ -57,6 +58,7 @@ test("create and update project-management documents persist markdown and normal
     });
 
     assert.equal(created.document.title, "Bug Inbox");
+    assert.equal(created.document.number, 2);
     assert.deepEqual(created.document.tags, ["bug", "research-notes"]);
     assert.equal(created.document.status, "todo");
     assert.equal(created.document.assignee, "Alex");
@@ -111,12 +113,14 @@ test("appendProjectManagementBatch writes multiple document updates in one commi
     const list = await listProjectManagementDocuments(repoRoot);
     const matching = list.documents.filter((entry) => batch.documentIds.includes(entry.id));
     assert.equal(matching.length, 2);
+    assert.deepEqual(matching.map((entry) => entry.number).sort((left, right) => left - right), [2, 3]);
 
     const historyA = await getProjectManagementDocumentHistory(repoRoot, batch.documentIds[0]);
     const historyB = await getProjectManagementDocumentHistory(repoRoot, batch.documentIds[1]);
     assert.equal(historyA.history.length, 1);
     assert.equal(historyB.history.length, 1);
     assert.equal(historyA.history[0].commitSha, historyB.history[0].commitSha);
+    assert.ok(historyA.history[0].number >= 2);
     assert.equal(historyA.history[0].status, "in-progress");
     assert.equal(historyB.history[0].assignee, "Casey");
   } finally {
