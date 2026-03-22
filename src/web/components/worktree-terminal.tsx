@@ -49,6 +49,14 @@ function getTerminalTheme(surfaceMode: TerminalSurfaceMode) {
   };
 }
 
+function decodeOsc52Payload(data: string): string {
+  if (typeof window !== "undefined" && typeof window.atob === "function") {
+    return decodeURIComponent(Array.from(window.atob(data), (char) => `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`).join(""));
+  }
+
+  return data;
+}
+
 export function WorktreeTerminal({
   worktree,
   isTerminalVisible,
@@ -252,11 +260,13 @@ export function WorktreeTerminal({
 
     hostRef.current.replaceChildren();
 
-      const terminal = new Terminal({
+    const terminal = new Terminal({
       cursorBlink: true,
       fontFamily:
         '"MesloLGS NF", "SauceCodePro Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font Mono", monospace',
       fontSize: 13,
+      altClickMovesCursor: false,
+      macOptionClickForcesSelection: true,
       theme: getTerminalTheme(terminalSurfaceMode),
     });
     const fitAddon = new FitAddon();
@@ -264,9 +274,57 @@ export function WorktreeTerminal({
     hostRef.current.style.width = "100%";
     hostRef.current.style.maxWidth = "100%";
     terminal.open(hostRef.current);
+    const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
+      console.log("[terminal] osc52 received", { dataLength: data.length });
+
+      const separatorIndex = data.indexOf(";");
+      if (separatorIndex === -1) {
+        console.log("[terminal] osc52 ignored: invalid payload");
+        return false;
+      }
+
+      const clipboardTarget = data.slice(0, separatorIndex);
+      const encodedPayload = data.slice(separatorIndex + 1);
+      if (!encodedPayload || encodedPayload === "?") {
+        console.log("[terminal] osc52 ignored: clipboard read not supported", { clipboardTarget });
+        return true;
+      }
+
+      try {
+        const decoded = decodeOsc52Payload(encodedPayload);
+        console.log("[terminal] osc52 copy", { clipboardTarget, length: decoded.length });
+        void navigator.clipboard?.writeText(decoded).then(() => {
+          console.log("[terminal] osc52 copy complete", { clipboardTarget, length: decoded.length });
+        }).catch((error) => {
+          console.log("[terminal] osc52 copy failed", error);
+        });
+        return true;
+      } catch (error) {
+        console.log("[terminal] osc52 decode failed", error);
+        return false;
+      }
+    });
     terminal.attachCustomKeyEventHandler((event) => {
       const shortcut = shortcutFromKeyboardEvent(event);
       if (!shortcut) {
+        if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c") {
+          const selection = terminal.getSelection();
+          if (!selection) {
+            return true;
+          }
+
+          console.log("[terminal] keyboard copy shortcut", { length: selection.length });
+          void navigator.clipboard?.writeText(selection).then(() => {
+            lastCopiedSelectionRef.current = selection;
+            console.log("[terminal] keyboard copy complete", { length: selection.length });
+          }).catch((error) => {
+            console.log("[terminal] keyboard copy failed", error);
+            lastCopiedSelectionRef.current = "";
+          });
+          event.preventDefault();
+          return false;
+        }
+
         return true;
       }
 
@@ -409,12 +467,28 @@ export function WorktreeTerminal({
     });
     resizeObserver.observe(hostRef.current);
 
+    const hasDomSelection = () => Boolean(window.getSelection()?.toString());
     const focusTerminal = () => {
+      if (terminal.getSelection() || hasDomSelection()) {
+        console.log("[terminal] focus skipped due to active selection", {
+          terminalSelectionLength: terminal.getSelection().length,
+          domSelectionLength: window.getSelection()?.toString().length ?? 0,
+        });
+        return;
+      }
+
       terminal.focus();
       scheduleResize(true);
     };
-    const copySelection = () => {
-      const selection = terminal.getSelection().trim();
+    const hasTerminalFocus = () => Boolean(hostRef.current?.contains(document.activeElement));
+    const copySelection = (source: string) => {
+      const selection = terminal.getSelection();
+      console.log("[terminal] copy selection attempt", {
+        source,
+        length: selection.length,
+        hasFocus: hasTerminalFocus(),
+      });
+
       if (
         !selection ||
         selection === lastCopiedSelectionRef.current ||
@@ -424,7 +498,10 @@ export function WorktreeTerminal({
       }
 
       lastCopiedSelectionRef.current = selection;
-      void navigator.clipboard.writeText(selection).catch(() => {
+      void navigator.clipboard.writeText(selection).then(() => {
+        console.log("[terminal] copy selection complete", { source, length: selection.length });
+      }).catch((error) => {
+        console.log("[terminal] copy selection failed", error);
         lastCopiedSelectionRef.current = "";
       });
     };
@@ -433,14 +510,91 @@ export function WorktreeTerminal({
       lastHostHeight = Math.round(hostRef.current?.clientHeight ?? 0);
       scheduleResize(true);
     };
-    const handleMouseUp = () => {
-      window.requestAnimationFrame(copySelection);
+    const scheduleCopySelection = (source: string) => {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(() => copySelection(source), 0);
+      });
+    };
+    const handleMouseUp = (event: MouseEvent) => {
+      console.log("[terminal] mouseup", {
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+      });
+      scheduleCopySelection("mouseup");
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      console.log("[terminal] mousedown", {
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+      });
+    };
+    const handleSelectionChange = () => {
+      const selection = terminal.getSelection();
+      const domSelection = window.getSelection()?.toString() ?? "";
+      if (!selection) {
+        lastCopiedSelectionRef.current = "";
+      }
+
+      console.log("[terminal] selection changed", {
+        length: selection.length,
+        domLength: domSelection.length,
+        hasFocus: hasTerminalFocus(),
+      });
+
+      if (selection || domSelection) {
+        scheduleCopySelection("selection-change");
+      }
+    };
+    const handleCopy = (event: ClipboardEvent) => {
+      if (!hasTerminalFocus()) {
+        return;
+      }
+
+      const selection = terminal.getSelection();
+      console.log("[terminal] copy event", {
+        length: selection.length,
+      });
+      if (!selection) {
+        return;
+      }
+
+      event.preventDefault();
+      event.clipboardData?.setData("text/plain", selection);
+      lastCopiedSelectionRef.current = selection;
+    };
+    const handlePaste = (event: ClipboardEvent) => {
+      if (!hasTerminalFocus()) {
+        return;
+      }
+
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      console.log("[terminal] paste event", {
+        length: text.length,
+      });
+      if (!text) {
+        return;
+      }
+
+      event.preventDefault();
+      const payload: TerminalClientMessage = { type: "input", data: text };
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(payload));
+      }
+      terminal.focus();
     };
 
     socket.addEventListener("open", () => scheduleResize(true));
+    terminal.onSelectionChange(handleSelectionChange);
     hostRef.current.addEventListener("click", focusTerminal);
+    hostRef.current.addEventListener("mousedown", handleMouseDown);
     hostRef.current.addEventListener("mouseup", handleMouseUp);
     hostRef.current.addEventListener("focusin", focusTerminal);
+    document.addEventListener("copy", handleCopy, true);
+    document.addEventListener("paste", handlePaste, true);
     window.addEventListener("resize", handleViewportResize);
     window.visualViewport?.addEventListener("resize", handleViewportResize);
     window.addEventListener("focus", handleViewportResize);
@@ -458,8 +612,11 @@ export function WorktreeTerminal({
       }
       resizeObserver.disconnect();
       hostRef.current?.removeEventListener("click", focusTerminal);
+      hostRef.current?.removeEventListener("mousedown", handleMouseDown);
       hostRef.current?.removeEventListener("mouseup", handleMouseUp);
       hostRef.current?.removeEventListener("focusin", focusTerminal);
+      document.removeEventListener("copy", handleCopy, true);
+      document.removeEventListener("paste", handlePaste, true);
       window.removeEventListener("resize", handleViewportResize);
       window.visualViewport?.removeEventListener(
         "resize",
@@ -470,6 +627,7 @@ export function WorktreeTerminal({
       if (outputBuffer) {
         terminal.write(outputBuffer);
       }
+      osc52Disposable.dispose();
       terminal.dispose();
     };
   }, [sessionName, terminalBranch, terminalSurfaceMode]);
