@@ -87,9 +87,16 @@ export function Dashboard() {
     gitComparisonLoading,
     configDocument,
     configDocumentLoading,
+    projectManagement,
+    projectManagementDocument,
+    projectManagementHistory,
+    projectManagementLoading,
+    projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,
-    create,
+     create,
+     appendProjectManagementBatch,
+     createProjectManagementDocument,
     remove,
     start,
     stop,
@@ -99,10 +106,13 @@ export function Dashboard() {
     restartBackgroundCommand,
     stopBackgroundCommand,
     loadBackgroundLogs,
+    loadProjectManagementDocument,
+    loadProjectManagementDocuments,
     loadConfigDocument,
     loadGitComparison,
     saveConfigDocument,
     subscribeToBackgroundLogs,
+    updateProjectManagementDocument,
   } = useDashboardState();
   const { theme, themes, setThemeId } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
@@ -797,6 +807,18 @@ export function Dashboard() {
             onLoadGitComparison={loadGitComparison}
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
+            projectManagementDocuments={projectManagement?.documents ?? []}
+            projectManagementAvailableTags={projectManagement?.availableTags ?? []}
+            projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
+            projectManagementDocument={projectManagementDocument}
+            projectManagementHistory={projectManagementHistory}
+            projectManagementLoading={projectManagementLoading}
+            projectManagementSaving={projectManagementSaving}
+            onLoadProjectManagementDocuments={loadProjectManagementDocuments}
+            onLoadProjectManagementDocument={loadProjectManagementDocument}
+            onCreateProjectManagementDocument={createProjectManagementDocument}
+            onUpdateProjectManagementDocument={updateProjectManagementDocument}
+            onAppendProjectManagementBatch={appendProjectManagementBatch}
           />
         </section>
       </div>

@@ -3,10 +3,19 @@ import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/r
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
 import "@git-diff-view/react/styles/diff-view-pure.css";
-import type { BackgroundCommandLogsResponse, BackgroundCommandState, GitComparisonResponse, WorktreeRecord } from "@shared/types";
+import type {
+  BackgroundCommandLogsResponse,
+  BackgroundCommandState,
+  GitComparisonResponse,
+  ProjectManagementDocument,
+  ProjectManagementDocumentSummary,
+  ProjectManagementHistoryEntry,
+  WorktreeRecord,
+} from "@shared/types";
 import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
+import { ProjectManagementPanel } from "./project-management-panel";
 import { WorktreeTerminal } from "./worktree-terminal";
 
 function getCssVariable(name: string, fallback: string): string {
@@ -205,6 +214,41 @@ interface WorktreeDetailProps {
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
   onSubscribeToBackgroundLogs: (branch: string, commandName: string) => () => void;
   onClearBackgroundLogs: () => void;
+  projectManagementDocuments: ProjectManagementDocumentSummary[];
+  projectManagementAvailableTags: string[];
+  projectManagementAvailableStatuses: string[];
+  projectManagementDocument: ProjectManagementDocument | null;
+  projectManagementHistory: ProjectManagementHistoryEntry[];
+  projectManagementLoading: boolean;
+  projectManagementSaving: boolean;
+  onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
+  onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
+  onCreateProjectManagementDocument: (payload: {
+    title: string;
+    markdown: string;
+    tags: string[];
+    status?: string;
+    assignee?: string;
+  }) => Promise<ProjectManagementDocument | null>;
+  onUpdateProjectManagementDocument: (documentId: string, payload: {
+    title: string;
+    markdown: string;
+    tags: string[];
+    status?: string;
+    assignee?: string;
+    archived?: boolean;
+  }) => Promise<ProjectManagementDocument | null>;
+  onAppendProjectManagementBatch: (payload: {
+    entries: Array<{
+      documentId?: string;
+      title: string;
+      markdown: string;
+      tags: string[];
+      status?: string;
+      assignee?: string;
+      archived?: boolean;
+    }>;
+  }) => Promise<unknown>;
 }
 
 export function WorktreeDetail({
@@ -241,6 +285,18 @@ export function WorktreeDetail({
   onLoadGitComparison,
   onSubscribeToBackgroundLogs,
   onClearBackgroundLogs,
+  projectManagementDocuments,
+  projectManagementAvailableTags,
+  projectManagementAvailableStatuses,
+  projectManagementDocument,
+  projectManagementHistory,
+  projectManagementLoading,
+  projectManagementSaving,
+  onLoadProjectManagementDocuments,
+  onLoadProjectManagementDocument,
+  onCreateProjectManagementDocument,
+  onUpdateProjectManagementDocument,
+  onAppendProjectManagementBatch,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
   const [copied, setCopied] = useState(false);
@@ -503,6 +559,14 @@ export function WorktreeDetail({
       setSelectedGitBaseBranch(gitComparison.baseBranch);
     }
   }, [gitComparison, selectedGitBaseBranch]);
+
+  useEffect(() => {
+    if (activeTab !== "project-management") {
+      return;
+    }
+
+    void onLoadProjectManagementDocuments({ silent: true });
+  }, [activeTab, onLoadProjectManagementDocuments]);
 
   useEffect(() => {
     if (activeTab !== "background" || !worktree?.branch) {
@@ -819,17 +883,20 @@ export function WorktreeDetail({
             </div>
           </div>
         ) : activeTab === "project-management" ? (
-          <div className="mt-4 space-y-4">
-            <div className="theme-inline-panel p-4">
-              <div>
-                <p className="matrix-kicker">Project management</p>
-                <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Planning surface</h2>
-                <p className="mt-2 text-sm theme-text-muted">
-                  TODO: add project planning and management tools here.
-                </p>
-              </div>
-            </div>
-          </div>
+          <ProjectManagementPanel
+            documents={projectManagementDocuments}
+            availableTags={projectManagementAvailableTags}
+            availableStatuses={projectManagementAvailableStatuses}
+            document={projectManagementDocument}
+            history={projectManagementHistory}
+            loading={projectManagementLoading}
+            saving={projectManagementSaving}
+            onRefresh={onLoadProjectManagementDocuments}
+            onSelectDocument={onLoadProjectManagementDocument}
+            onCreateDocument={onCreateProjectManagementDocument}
+            onUpdateDocument={onUpdateProjectManagementDocument}
+            onAppendBatch={onAppendProjectManagementBatch}
+          />
         ) : (
           <div className="mt-4 space-y-4">
             <div className="theme-inline-panel p-4">

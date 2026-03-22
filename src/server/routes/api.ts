@@ -2,14 +2,21 @@ import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type {
+  AppendProjectManagementBatchRequest,
   ApiStateResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   ConfigDocumentResponse,
+  CreateProjectManagementDocumentRequest,
   CreateWorktreeRequest,
   GitComparisonResponse,
+  ProjectManagementBatchResponse,
+  ProjectManagementDocumentResponse,
+  ProjectManagementHistoryResponse,
+  ProjectManagementListResponse,
   TmuxClientInfo,
+  UpdateProjectManagementDocumentRequest,
   WorktreeManagerConfig,
 } from "../../shared/types.js";
 import {
@@ -29,6 +36,14 @@ import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig, parseConfigContents, readConfigContents } from "../services/config-service.js";
 import type { ShutdownStatus } from "../../shared/types.js";
 import { disconnectTmuxClient, ensureRuntimeTerminalSession, ensureTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
+import {
+  appendProjectManagementBatch,
+  createProjectManagementDocument,
+  getProjectManagementDocument,
+  getProjectManagementDocumentHistory,
+  listProjectManagementDocuments,
+  updateProjectManagementDocument,
+} from "../services/project-management-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 
@@ -149,6 +164,111 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const comparison: GitComparisonResponse = await getGitComparison(options.repoRoot, compareBranch, baseBranch);
       res.json(comparison);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/project-management/documents", async (_req, res, next) => {
+    try {
+      const payload: ProjectManagementListResponse = await listProjectManagementDocuments(options.repoRoot);
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/project-management/documents/:id", async (req, res, next) => {
+    try {
+      const payload: ProjectManagementDocumentResponse = await getProjectManagementDocument(
+        options.repoRoot,
+        decodeURIComponent(req.params.id),
+      );
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/project-management/documents/:id/history", async (req, res, next) => {
+    try {
+      const payload: ProjectManagementHistoryResponse = await getProjectManagementDocumentHistory(
+        options.repoRoot,
+        decodeURIComponent(req.params.id),
+      );
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/project-management/documents", async (req, res, next) => {
+    try {
+      const body = req.body as CreateProjectManagementDocumentRequest;
+      if (!body?.title?.trim()) {
+        res.status(400).json({ message: "Document title is required." });
+        return;
+      }
+
+      const payload: ProjectManagementDocumentResponse = await createProjectManagementDocument(options.repoRoot, {
+        title: body.title,
+        markdown: typeof body.markdown === "string" ? body.markdown : "",
+        tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
+        status: typeof body.status === "string" ? body.status : undefined,
+        assignee: typeof body.assignee === "string" ? body.assignee : undefined,
+      });
+      res.status(201).json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/project-management/documents/:id/updates", async (req, res, next) => {
+    try {
+      const body = req.body as UpdateProjectManagementDocumentRequest;
+      if (!body?.title?.trim()) {
+        res.status(400).json({ message: "Document title is required." });
+        return;
+      }
+
+      const payload: ProjectManagementDocumentResponse = await updateProjectManagementDocument(
+        options.repoRoot,
+        decodeURIComponent(req.params.id),
+        {
+          title: body.title,
+          markdown: typeof body.markdown === "string" ? body.markdown : "",
+          tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
+          status: typeof body.status === "string" ? body.status : undefined,
+          assignee: typeof body.assignee === "string" ? body.assignee : undefined,
+          archived: typeof body.archived === "boolean" ? body.archived : undefined,
+        },
+      );
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/project-management/batches", async (req, res, next) => {
+    try {
+      const body = req.body as AppendProjectManagementBatchRequest;
+      if (!Array.isArray(body?.entries) || body.entries.length === 0) {
+        res.status(400).json({ message: "At least one batch entry is required." });
+        return;
+      }
+
+      const payload: ProjectManagementBatchResponse = await appendProjectManagementBatch(options.repoRoot, {
+        entries: body.entries.map((entry) => ({
+          documentId: typeof entry.documentId === "string" ? entry.documentId : undefined,
+          title: String(entry.title ?? ""),
+          markdown: typeof entry.markdown === "string" ? entry.markdown : "",
+          tags: Array.isArray(entry.tags) ? entry.tags.map((tag) => String(tag)) : [],
+          status: typeof entry.status === "string" ? entry.status : undefined,
+          assignee: typeof entry.assignee === "string" ? entry.assignee : undefined,
+          archived: typeof entry.archived === "boolean" ? entry.archived : undefined,
+        })),
+      });
+      res.status(201).json(payload);
     } catch (error) {
       next(error);
     }

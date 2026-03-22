@@ -1,12 +1,19 @@
 import type {
+  AppendProjectManagementBatchRequest,
   ApiStateResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   ConfigDocumentResponse,
+  CreateProjectManagementDocumentRequest,
   GitComparisonResponse,
+  ProjectManagementBatchResponse,
+  ProjectManagementDocumentResponse,
+  ProjectManagementHistoryResponse,
+  ProjectManagementListResponse,
   ShutdownStatus,
   TmuxClientInfo,
+  UpdateProjectManagementDocumentRequest,
   WorktreeRuntime,
 } from "@shared/types";
 
@@ -67,6 +74,46 @@ export function getGitComparison(compareBranch: string, baseBranch?: string): Pr
   }
 
   return request<GitComparisonResponse>(`/api/git/compare?${params.toString()}`);
+}
+
+export function listProjectManagementDocuments(): Promise<ProjectManagementListResponse> {
+  return request<ProjectManagementListResponse>("/api/project-management/documents");
+}
+
+export function getProjectManagementDocument(documentId: string): Promise<ProjectManagementDocumentResponse> {
+  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}`);
+}
+
+export function getProjectManagementHistory(documentId: string): Promise<ProjectManagementHistoryResponse> {
+  return request<ProjectManagementHistoryResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/history`);
+}
+
+export function createProjectManagementDocument(
+  payload: CreateProjectManagementDocumentRequest,
+): Promise<ProjectManagementDocumentResponse> {
+  return request<ProjectManagementDocumentResponse>("/api/project-management/documents", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateProjectManagementDocument(
+  documentId: string,
+  payload: UpdateProjectManagementDocumentRequest,
+): Promise<ProjectManagementDocumentResponse> {
+  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/updates`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function appendProjectManagementBatch(
+  payload: AppendProjectManagementBatchRequest,
+): Promise<ProjectManagementBatchResponse> {
+  return request<ProjectManagementBatchResponse>("/api/project-management/batches", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function createWorktree(branch: string, worktreePath?: string): Promise<EnvSyncResponse | void> {

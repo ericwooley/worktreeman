@@ -1,16 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  AppendProjectManagementBatchRequest,
   ApiStateResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   ConfigDocumentResponse,
+  CreateProjectManagementDocumentRequest,
   GitComparisonResponse,
+  ProjectManagementBatchResponse,
+  ProjectManagementDocument,
+  ProjectManagementHistoryEntry,
+  ProjectManagementListResponse,
   ShutdownStatus,
+  UpdateProjectManagementDocumentRequest,
 } from "@shared/types";
 import {
+  appendProjectManagementBatch as appendProjectManagementBatchRequest,
+  createProjectManagementDocument as createProjectManagementDocumentRequest,
   createWorktree,
   deleteWorktree,
+  getProjectManagementDocument as fetchProjectManagementDocument,
+  getProjectManagementHistory as fetchProjectManagementHistory,
+  listProjectManagementDocuments as fetchProjectManagementDocuments,
   getConfigDocument as fetchConfigDocument,
   getBackgroundCommandLogs as fetchBackgroundCommandLogs,
   getBackgroundCommands as fetchBackgroundCommands,
@@ -25,6 +37,7 @@ import {
   subscribeToBackgroundCommandLogs,
   subscribeToShutdownStatus,
   syncEnvFiles,
+  updateProjectManagementDocument as updateProjectManagementDocumentRequest,
   type EnvSyncResponse,
 } from "../lib/api";
 
@@ -55,6 +68,11 @@ export function useDashboardState() {
   const [gitComparisonLoading, setGitComparisonLoading] = useState(false);
   const [configDocument, setConfigDocument] = useState<ConfigDocumentResponse | null>(null);
   const [configDocumentLoading, setConfigDocumentLoading] = useState(false);
+  const [projectManagement, setProjectManagement] = useState<ProjectManagementListResponse | null>(null);
+  const [projectManagementDocument, setProjectManagementDocument] = useState<ProjectManagementDocument | null>(null);
+  const [projectManagementHistory, setProjectManagementHistory] = useState<ProjectManagementHistoryEntry[]>([]);
+  const [projectManagementLoading, setProjectManagementLoading] = useState(false);
+  const [projectManagementSaving, setProjectManagementSaving] = useState(false);
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -133,6 +151,53 @@ export function useDashboardState() {
 
   const clearBackgroundLogs = useCallback(() => {
     setBackgroundLogs(null);
+  }, []);
+
+  const loadProjectManagementDocumentsState = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setProjectManagementLoading(true);
+    }
+
+    try {
+      const payload = await fetchProjectManagementDocuments();
+      setProjectManagement(payload);
+      setError(null);
+      return payload;
+    } catch (err) {
+      setProjectManagement(null);
+      setError(err instanceof Error ? err.message : "Failed to load project management documents.");
+      return null;
+    } finally {
+      if (!options?.silent) {
+        setProjectManagementLoading(false);
+      }
+    }
+  }, []);
+
+  const loadProjectManagementDocumentState = useCallback(async (documentId: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setProjectManagementLoading(true);
+    }
+
+    try {
+      const [documentPayload, historyPayload] = await Promise.all([
+        fetchProjectManagementDocument(documentId),
+        fetchProjectManagementHistory(documentId),
+      ]);
+      setProjectManagementDocument(documentPayload.document);
+      setProjectManagementHistory(historyPayload.history);
+      setError(null);
+      return documentPayload.document;
+    } catch (err) {
+      setProjectManagementDocument(null);
+      setProjectManagementHistory([]);
+      setError(err instanceof Error ? err.message : "Failed to load project management document.");
+      return null;
+    } finally {
+      if (!options?.silent) {
+        setProjectManagementLoading(false);
+      }
+    }
   }, []);
 
   const actions = useMemo(
@@ -327,8 +392,61 @@ export function useDashboardState() {
           setConfigDocumentLoading(false);
         }
       },
+      loadProjectManagementDocuments: loadProjectManagementDocumentsState,
+      loadProjectManagementDocument: loadProjectManagementDocumentState,
+      async createProjectManagementDocument(payload: CreateProjectManagementDocumentRequest) {
+        setProjectManagementSaving(true);
+        try {
+          const response = await createProjectManagementDocumentRequest(payload);
+          await loadProjectManagementDocumentsState({ silent: true });
+          setProjectManagementDocument(response.document);
+          const history = await fetchProjectManagementHistory(response.document.id);
+          setProjectManagementHistory(history.history);
+          setError(null);
+          return response.document;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to create project management document.");
+          return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async updateProjectManagementDocument(documentId: string, payload: UpdateProjectManagementDocumentRequest) {
+        setProjectManagementSaving(true);
+        try {
+          const response = await updateProjectManagementDocumentRequest(documentId, payload);
+          await loadProjectManagementDocumentsState({ silent: true });
+          setProjectManagementDocument(response.document);
+          const history = await fetchProjectManagementHistory(documentId);
+          setProjectManagementHistory(history.history);
+          setError(null);
+          return response.document;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to update project management document.");
+          return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async appendProjectManagementBatch(payload: AppendProjectManagementBatchRequest) {
+        setProjectManagementSaving(true);
+        try {
+          const response: ProjectManagementBatchResponse = await appendProjectManagementBatchRequest(payload);
+          await loadProjectManagementDocumentsState({ silent: true });
+          if (response.documentIds[0]) {
+            await loadProjectManagementDocumentState(response.documentIds[0], { silent: true });
+          }
+          setError(null);
+          return response;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to append project management batch.");
+          return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
     }),
-    [appendBackgroundLogs, refresh],
+    [appendBackgroundLogs, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, refresh],
   );
 
   return {
@@ -344,6 +462,11 @@ export function useDashboardState() {
     gitComparisonLoading,
     configDocument,
     configDocumentLoading,
+    projectManagement,
+    projectManagementDocument,
+    projectManagementHistory,
+    projectManagementLoading,
+    projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,
     refresh,

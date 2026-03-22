@@ -159,6 +159,94 @@ export interface ShutdownStatus {
   logs: ShutdownLogEntry[];
 }
 
+export interface ProjectManagementDocumentSummary {
+  id: string;
+  title: string;
+  tags: string[];
+  status: string;
+  assignee: string;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+  historyCount: number;
+}
+
+export interface ProjectManagementDocument extends ProjectManagementDocumentSummary {
+  markdown: string;
+}
+
+export interface ProjectManagementHistoryEntry {
+  commitSha: string;
+  batchId: string;
+  createdAt: string;
+  actorId: string;
+  documentId: string;
+  title: string;
+  tags: string[];
+  status: string;
+  assignee: string;
+  archived: boolean;
+  changeCount: number;
+  action: "create" | "update" | "archive" | "restore";
+}
+
+export interface ProjectManagementListResponse {
+  branch: string;
+  headSha: string;
+  documents: ProjectManagementDocumentSummary[];
+  availableTags: string[];
+  availableStatuses: string[];
+}
+
+export interface ProjectManagementDocumentResponse {
+  branch: string;
+  headSha: string;
+  document: ProjectManagementDocument;
+}
+
+export interface ProjectManagementHistoryResponse {
+  branch: string;
+  headSha: string;
+  history: ProjectManagementHistoryEntry[];
+}
+
+export interface ProjectManagementBatchResponse {
+  branch: string;
+  headSha: string;
+  documentIds: string[];
+}
+
+export interface CreateProjectManagementDocumentRequest {
+  title: string;
+  markdown: string;
+  tags: string[];
+  status?: string;
+  assignee?: string;
+}
+
+export interface UpdateProjectManagementDocumentRequest {
+  title: string;
+  markdown: string;
+  tags: string[];
+  status?: string;
+  assignee?: string;
+  archived?: boolean;
+}
+
+export interface ProjectManagementBatchUpdateEntry {
+  documentId?: string;
+  title: string;
+  markdown: string;
+  tags: string[];
+  status?: string;
+  assignee?: string;
+  archived?: boolean;
+}
+
+export interface AppendProjectManagementBatchRequest {
+  entries: ProjectManagementBatchUpdateEntry[];
+}
+
 export type TerminalClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; cols: number; rows: number };
