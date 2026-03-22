@@ -13,6 +13,19 @@ import {
 import { runCommand } from "../utils/process.js";
 import { createBareRepoLayout, ensureBranchWorktree, ensurePrimaryWorktrees } from "./repository-layout-service.js";
 
+const GIT_TEST_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: "worktreeman-tests",
+  GIT_AUTHOR_EMAIL: "worktreeman@example.com",
+  GIT_COMMITTER_NAME: "worktreeman-tests",
+  GIT_COMMITTER_EMAIL: "worktreeman@example.com",
+};
+
+async function commitAll(repoRoot: string, message: string): Promise<void> {
+  await runCommand("git", ["add", "."], { cwd: repoRoot, env: GIT_TEST_ENV });
+  await runCommand("git", ["commit", "-m", message], { cwd: repoRoot, env: GIT_TEST_ENV });
+}
+
 test("createBareRepoLayout writes linked .git file and bare repository", async () => {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-layout-"));
 
@@ -64,5 +77,40 @@ test("ensurePrimaryWorktrees fails in clone mode when wtm-settings is missing", 
     );
   } finally {
     await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("clone flow checks out main and wtm-settings from a remote", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-clone-"));
+  const sourceDir = path.join(tempRoot, "source");
+  const remoteDir = path.join(tempRoot, "remote.git");
+  const targetDir = path.join(tempRoot, "target");
+
+  try {
+    await fs.mkdir(sourceDir, { recursive: true });
+    await runCommand("git", ["init", `--initial-branch=${DEFAULT_WORKTREEMAN_MAIN_BRANCH}`], { cwd: sourceDir });
+
+    await fs.writeFile(path.join(sourceDir, "README.md"), "# test repo\n", "utf8");
+    await commitAll(sourceDir, "initial main commit");
+
+    await runCommand("git", ["checkout", "-b", DEFAULT_WORKTREEMAN_SETTINGS_BRANCH], { cwd: sourceDir });
+    await fs.writeFile(path.join(sourceDir, "worktree.yml"), "worktrees:\n  baseDir: .\n", "utf8");
+    await commitAll(sourceDir, "add settings config");
+
+    await runCommand("git", ["clone", "--bare", sourceDir, remoteDir], { cwd: tempRoot });
+
+    await createBareRepoLayout({ rootDir: targetDir, remoteUrl: remoteDir });
+    await ensurePrimaryWorktrees({ rootDir: targetDir, createMissingBranches: false });
+
+    await fs.access(path.join(targetDir, DEFAULT_WORKTREEMAN_MAIN_BRANCH));
+    await fs.access(path.join(targetDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml"));
+
+    const settingsStatus = await runCommand("git", ["status", "--short", "--branch"], {
+      cwd: path.join(targetDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH),
+    });
+
+    assert.match(settingsStatus.stdout, /## wtm-settings/);
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
   }
 });

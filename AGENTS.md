@@ -8,4 +8,5 @@
 
 ## Keep in mind
 
-There are no users yet, don't worry about breaking changes or maintaining backwards compatibility. Focus on building the best possible experience, and we can iterate on the details later.
+- There are no users yet, don't worry about breaking changes or maintaining backwards compatibility. Focus on building the best possible experience, and we can iterate on the details later.
+- You should always be creating good tests. Asking me about creating tests means your not doing your job

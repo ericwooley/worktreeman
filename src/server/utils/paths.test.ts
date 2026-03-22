@@ -48,3 +48,19 @@ test("findRepoContext resolves config from the bare-layout root", async () => {
     await fs.rm(rootDir, { recursive: true, force: true });
   }
 });
+
+test("findRepoContext fails when wtm-settings exists but no config file is present", async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-paths-"));
+
+  try {
+    await createBareRepoLayout({ rootDir });
+    await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+
+    await assert.rejects(
+      () => findRepoContext(rootDir),
+      /no worktree config was present/,
+    );
+  } finally {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
