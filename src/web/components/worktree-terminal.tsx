@@ -9,6 +9,7 @@ import type {
   TmuxClientInfo,
 } from "@shared/types";
 import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
+import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
 import { shortcutFromKeyboardEvent } from "./command-palette";
@@ -81,7 +82,7 @@ export function WorktreeTerminal({
   onTerminalShortcutToggle: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const sessionName = worktree?.runtime?.tmuxSession ?? null;
+  const sessionName = worktree?.branch ? getTmuxSessionName(worktree.branch) : null;
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
   const [tmuxClients, setTmuxClients] = useState<TmuxClientInfo[]>([]);
   const [currentClientId, setCurrentClientId] = useState<string | null>(null);
@@ -123,7 +124,7 @@ export function WorktreeTerminal({
     window.localStorage.setItem(TERMINAL_SURFACE_MODE_STORAGE_KEY, terminalSurfaceMode);
   }, [terminalSurfaceMode]);
 
-  const drawer = worktree?.runtime ? (
+  const drawer = worktree ? (
     <div
       className="fixed inset-x-0 bottom-0 z-[35] h-[100dvh] transition-transform duration-300 ease-out"
       style={{
@@ -219,7 +220,7 @@ export function WorktreeTerminal({
   };
 
   useEffect(() => {
-    if (!terminalBranch || !worktree?.runtime) {
+    if (!terminalBranch || !worktree) {
       setTmuxClients([]);
       setCurrentClientId(null);
       return;
@@ -247,7 +248,7 @@ export function WorktreeTerminal({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [sessionName, terminalBranch, worktree?.runtime]);
+  }, [sessionName, terminalBranch, worktree]);
 
   useEffect(() => {
     scheduleResizeRef.current?.(true);
@@ -275,32 +276,22 @@ export function WorktreeTerminal({
     hostRef.current.style.maxWidth = "100%";
     terminal.open(hostRef.current);
     const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
-      console.log("[terminal] osc52 received", { dataLength: data.length });
-
       const separatorIndex = data.indexOf(";");
       if (separatorIndex === -1) {
-        console.log("[terminal] osc52 ignored: invalid payload");
         return false;
       }
 
       const clipboardTarget = data.slice(0, separatorIndex);
       const encodedPayload = data.slice(separatorIndex + 1);
       if (!encodedPayload || encodedPayload === "?") {
-        console.log("[terminal] osc52 ignored: clipboard read not supported", { clipboardTarget });
         return true;
       }
 
       try {
         const decoded = decodeOsc52Payload(encodedPayload);
-        console.log("[terminal] osc52 copy", { clipboardTarget, length: decoded.length });
-        void navigator.clipboard?.writeText(decoded).then(() => {
-          console.log("[terminal] osc52 copy complete", { clipboardTarget, length: decoded.length });
-        }).catch((error) => {
-          console.log("[terminal] osc52 copy failed", error);
-        });
+        void navigator.clipboard?.writeText(decoded).catch(() => undefined);
         return true;
-      } catch (error) {
-        console.log("[terminal] osc52 decode failed", error);
+      } catch {
         return false;
       }
     });
@@ -313,12 +304,9 @@ export function WorktreeTerminal({
             return true;
           }
 
-          console.log("[terminal] keyboard copy shortcut", { length: selection.length });
           void navigator.clipboard?.writeText(selection).then(() => {
             lastCopiedSelectionRef.current = selection;
-            console.log("[terminal] keyboard copy complete", { length: selection.length });
-          }).catch((error) => {
-            console.log("[terminal] keyboard copy failed", error);
+          }).catch(() => {
             lastCopiedSelectionRef.current = "";
           });
           event.preventDefault();
@@ -470,10 +458,6 @@ export function WorktreeTerminal({
     const hasDomSelection = () => Boolean(window.getSelection()?.toString());
     const focusTerminal = () => {
       if (terminal.getSelection() || hasDomSelection()) {
-        console.log("[terminal] focus skipped due to active selection", {
-          terminalSelectionLength: terminal.getSelection().length,
-          domSelectionLength: window.getSelection()?.toString().length ?? 0,
-        });
         return;
       }
 
@@ -483,11 +467,6 @@ export function WorktreeTerminal({
     const hasTerminalFocus = () => Boolean(hostRef.current?.contains(document.activeElement));
     const copySelection = (source: string) => {
       const selection = terminal.getSelection();
-      console.log("[terminal] copy selection attempt", {
-        source,
-        length: selection.length,
-        hasFocus: hasTerminalFocus(),
-      });
 
       if (
         !selection ||
@@ -498,10 +477,7 @@ export function WorktreeTerminal({
       }
 
       lastCopiedSelectionRef.current = selection;
-      void navigator.clipboard.writeText(selection).then(() => {
-        console.log("[terminal] copy selection complete", { source, length: selection.length });
-      }).catch((error) => {
-        console.log("[terminal] copy selection failed", error);
+      void navigator.clipboard.writeText(selection).catch(() => {
         lastCopiedSelectionRef.current = "";
       });
     };
@@ -515,22 +491,8 @@ export function WorktreeTerminal({
         window.setTimeout(() => copySelection(source), 0);
       });
     };
-    const handleMouseUp = (event: MouseEvent) => {
-      console.log("[terminal] mouseup", {
-        altKey: event.altKey,
-        ctrlKey: event.ctrlKey,
-        metaKey: event.metaKey,
-        shiftKey: event.shiftKey,
-      });
+    const handleMouseUp = () => {
       scheduleCopySelection("mouseup");
-    };
-    const handleMouseDown = (event: MouseEvent) => {
-      console.log("[terminal] mousedown", {
-        altKey: event.altKey,
-        ctrlKey: event.ctrlKey,
-        metaKey: event.metaKey,
-        shiftKey: event.shiftKey,
-      });
     };
     const handleSelectionChange = () => {
       const selection = terminal.getSelection();
@@ -538,12 +500,6 @@ export function WorktreeTerminal({
       if (!selection) {
         lastCopiedSelectionRef.current = "";
       }
-
-      console.log("[terminal] selection changed", {
-        length: selection.length,
-        domLength: domSelection.length,
-        hasFocus: hasTerminalFocus(),
-      });
 
       if (selection || domSelection) {
         scheduleCopySelection("selection-change");
@@ -555,9 +511,6 @@ export function WorktreeTerminal({
       }
 
       const selection = terminal.getSelection();
-      console.log("[terminal] copy event", {
-        length: selection.length,
-      });
       if (!selection) {
         return;
       }
@@ -572,9 +525,6 @@ export function WorktreeTerminal({
       }
 
       const text = event.clipboardData?.getData("text/plain") ?? "";
-      console.log("[terminal] paste event", {
-        length: text.length,
-      });
       if (!text) {
         return;
       }
@@ -590,7 +540,6 @@ export function WorktreeTerminal({
     socket.addEventListener("open", () => scheduleResize(true));
     terminal.onSelectionChange(handleSelectionChange);
     hostRef.current.addEventListener("click", focusTerminal);
-    hostRef.current.addEventListener("mousedown", handleMouseDown);
     hostRef.current.addEventListener("mouseup", handleMouseUp);
     hostRef.current.addEventListener("focusin", focusTerminal);
     document.addEventListener("copy", handleCopy, true);
@@ -612,7 +561,6 @@ export function WorktreeTerminal({
       }
       resizeObserver.disconnect();
       hostRef.current?.removeEventListener("click", focusTerminal);
-      hostRef.current?.removeEventListener("mousedown", handleMouseDown);
       hostRef.current?.removeEventListener("mouseup", handleMouseUp);
       hostRef.current?.removeEventListener("focusin", focusTerminal);
       document.removeEventListener("copy", handleCopy, true);
@@ -658,9 +606,9 @@ export function WorktreeTerminal({
                 Terminal session info
               </h2>
               <p className="theme-text-muted mt-1 text-sm">
-                {worktree?.runtime
-                  ? `tmux session ${worktree.runtime.tmuxSession} is docked as a fixed terminal overlay`
-                  : "Select a running worktree to attach to its tmux session."}
+                  {worktree
+                    ? `tmux session ${sessionName} is docked as a fixed terminal overlay`
+                    : "Select a worktree to attach to its tmux session."}
               </p>
             </div>
 
@@ -669,7 +617,7 @@ export function WorktreeTerminal({
                   type="button"
                   className="matrix-button rounded-none px-4 py-2 text-sm"
                   onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
-                  disabled={!worktree?.runtime}
+                   disabled={!worktree}
                 >
                 {isTerminalVisible ? "Stow terminal" : "Show terminal"}
               </button>
@@ -689,8 +637,7 @@ export function WorktreeTerminal({
               ))}
               {!visibleEnvEntries.length ? (
                 <div className="matrix-command theme-empty-note rounded-none px-3 py-3 text-xs sm:col-span-2 xl:col-span-4">
-                  Runtime env will appear here once the selected worktree is
-                  running.
+                  Runtime env will appear here after you start the selected worktree environment.
                 </div>
               ) : null}
             </div>

@@ -4,6 +4,7 @@ import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
 import "@git-diff-view/react/styles/diff-view-pure.css";
 import type { BackgroundCommandLogsResponse, BackgroundCommandState, GitComparisonResponse, WorktreeRecord } from "@shared/types";
+import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
@@ -177,8 +178,8 @@ interface WorktreeDetailProps {
   runningCount: number;
   selectedStatusLabel: string;
   onSelectWorktree: (value: string) => void;
-  activeTab: "shell" | "background" | "git";
-  onTabChange: (tab: "shell" | "background" | "git") => void;
+  activeTab: "shell" | "background" | "git" | "project-management";
+  onTabChange: (tab: "shell" | "background" | "git" | "project-management") => void;
   gitView: "graph" | "diff";
   onGitViewChange: (view: "graph" | "diff") => void;
   isTerminalVisible: boolean;
@@ -255,8 +256,8 @@ export function WorktreeDetail({
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
-  const attachCommand = worktree?.runtime
-    ? `tmux attach-session -t '${worktree.runtime.tmuxSession.replace(/'/g, `'\\''`)}'`
+  const attachCommand = worktree
+    ? `tmux attach-session -t '${getTmuxSessionName(worktree.branch).replace(/'/g, `'\\''`)}'`
     : null;
   const selectedBackgroundCommand = useMemo(
     () => backgroundCommands.find((entry) => entry.name === selectedBackgroundCommandName) ?? backgroundCommands[0] ?? null,
@@ -596,6 +597,7 @@ export function WorktreeDetail({
           <MatrixTabButton active={activeTab === "shell"} label="Shell" onClick={() => onTabChange("shell")} />
           <MatrixTabButton active={activeTab === "background"} label="Background commands" onClick={() => onTabChange("background")} />
           <MatrixTabButton active={activeTab === "git"} label="Git status" onClick={() => onTabChange("git")} />
+          <MatrixTabButton active={activeTab === "project-management"} label="Project management" onClick={() => onTabChange("project-management")} />
         </div>
 
         {activeTab === "shell" ? (
@@ -813,6 +815,18 @@ export function WorktreeDetail({
                       : "Choose a background command to inspect logs."}
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        ) : activeTab === "project-management" ? (
+          <div className="mt-4 space-y-4">
+            <div className="theme-inline-panel p-4">
+              <div>
+                <p className="matrix-kicker">Project management</p>
+                <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Planning surface</h2>
+                <p className="mt-2 text-sm theme-text-muted">
+                  TODO: add project planning and management tools here.
+                </p>
               </div>
             </div>
           </div>

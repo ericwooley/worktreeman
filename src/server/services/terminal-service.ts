@@ -9,9 +9,15 @@ import type { TerminalClientMessage, TerminalServerMessage, TmuxClientInfo, Work
 import { runCommand } from "../utils/process.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 
+interface TerminalSessionTarget {
+  branch: string;
+  worktreePath: string;
+  runtime?: WorktreeRuntime;
+}
+
 interface TerminalServiceOptions {
   server: HttpServer;
-  getRuntime(branch: string): WorktreeRuntime | undefined;
+  getTerminalTarget(branch: string): Promise<TerminalSessionTarget | undefined>;
 }
 
 function send(socket: WebSocket, message: TerminalServerMessage): void {
@@ -94,9 +100,22 @@ async function ensureTmuxSession(runtime: WorktreeRuntime, shell: string): Promi
   }
 }
 
-export async function ensureRuntimeTerminalSession(runtime: WorktreeRuntime): Promise<void> {
+export async function ensureTerminalSession(target: { branch: string; worktreePath: string; runtime?: WorktreeRuntime }): Promise<string> {
   const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "bash");
+  const runtime = target.runtime ?? {
+    branch: target.branch,
+    worktreePath: target.worktreePath,
+    env: {},
+    quickLinks: [],
+    allocatedPorts: {},
+    tmuxSession: getTmuxSessionName(target.branch),
+  };
   await ensureTmuxSession(runtime, shell);
+  return runtime.tmuxSession;
+}
+
+export async function ensureRuntimeTerminalSession(runtime: WorktreeRuntime): Promise<void> {
+  await ensureTerminalSession(runtime);
 }
 
 export function getTmuxSessionName(branch: string): string {
@@ -126,8 +145,8 @@ async function getProcessTty(pid: number, cwd: string): Promise<string | null> {
   }
 }
 
-export async function listTmuxClients(runtime: WorktreeRuntime): Promise<TmuxClientInfo[]> {
-  if (!(await hasTmuxSession(runtime.tmuxSession, runtime.worktreePath))) {
+export async function listTmuxClients(target: { tmuxSession: string; worktreePath: string }): Promise<TmuxClientInfo[]> {
+  if (!(await hasTmuxSession(target.tmuxSession, target.worktreePath))) {
     return [];
   }
 
@@ -136,11 +155,11 @@ export async function listTmuxClients(runtime: WorktreeRuntime): Promise<TmuxCli
     [
       "list-clients",
       "-t",
-      runtime.tmuxSession,
+      target.tmuxSession,
       "-F",
       "#{client_tty}\t#{client_pid}\t#{client_name}\t#{session_name}\t#{client_created}\t#{client_activity}\t#{client_control_mode}",
     ],
-    { cwd: runtime.worktreePath },
+    { cwd: target.worktreePath },
   );
 
   return stdout
@@ -162,9 +181,9 @@ export async function listTmuxClients(runtime: WorktreeRuntime): Promise<TmuxCli
     });
 }
 
-export async function disconnectTmuxClient(runtime: WorktreeRuntime, clientId: string): Promise<void> {
+export async function disconnectTmuxClient(target: { worktreePath: string }, clientId: string): Promise<void> {
   await runCommand("tmux", ["detach-client", "-t", clientId], {
-    cwd: runtime.worktreePath,
+    cwd: target.worktreePath,
   });
 }
 
@@ -220,25 +239,31 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       return;
     }
 
-    const runtime = options.getRuntime(branch);
-    if (!runtime) {
-      send(socket, { type: "error", message: `No active runtime for branch ${branch}. Start the environment first.` });
+    const target = await options.getTerminalTarget(branch);
+    if (!target) {
+      send(socket, { type: "error", message: `Unknown worktree ${branch}.` });
       socket.close();
       return;
     }
+
+    const tmuxSession = getTmuxSessionName(target.branch);
 
     // Inject the host env, root config env, and dynamic Docker-derived env directly
     // into the pty process so the tmux session inherits everything in memory.
     const env = {
       ...process.env,
-      ...runtime.env,
-      WORKTREE_BRANCH: runtime.branch,
-      WORKTREE_PATH: runtime.worktreePath,
-      TMUX_SESSION_NAME: runtime.tmuxSession,
+      ...(target.runtime?.env ?? {}),
+      WORKTREE_BRANCH: target.branch,
+      WORKTREE_PATH: target.worktreePath,
+      TMUX_SESSION_NAME: tmuxSession,
     };
 
     try {
-      await ensureRuntimeTerminalSession(runtime);
+      await ensureTerminalSession({
+        branch: target.branch,
+        worktreePath: target.worktreePath,
+        runtime: target.runtime,
+      });
     } catch (error) {
       send(socket, {
         type: "error",
@@ -249,19 +274,19 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     }
 
     try {
-      const term = pty.spawn("tmux", ["attach-session", "-t", runtime.tmuxSession], {
+      const term = pty.spawn("tmux", ["attach-session", "-t", tmuxSession], {
         name: "xterm-256color",
         cols: 120,
         rows: 30,
-        cwd: runtime.worktreePath,
+        cwd: target.worktreePath,
         env,
       });
       activeTerms.add(term);
 
       const resolveCurrentClientId = async () => {
         try {
-          const clients = await listTmuxClients(runtime);
-          const processTty = await getProcessTty(term.pid, runtime.worktreePath);
+          const clients = await listTmuxClients({ tmuxSession, worktreePath: target.worktreePath });
+          const processTty = await getProcessTty(term.pid, target.worktreePath);
           const matchedClient = clients.find((client) => {
             if (processTty && normalizeTty(client.tty) === processTty) {
               return true;
@@ -271,13 +296,13 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
           });
 
           if (!matchedClient) {
-            send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
+            send(socket, { type: "ready", session: tmuxSession, clientId: null });
             return;
           }
 
-          send(socket, { type: "ready", session: runtime.tmuxSession, clientId: matchedClient.id });
+          send(socket, { type: "ready", session: tmuxSession, clientId: matchedClient.id });
         } catch {
-          send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
+          send(socket, { type: "ready", session: tmuxSession, clientId: null });
         }
       };
 

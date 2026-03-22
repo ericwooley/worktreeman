@@ -26,7 +26,7 @@ import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../se
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig } from "../services/config-service.js";
 import type { ShutdownStatus } from "../../shared/types.js";
-import { disconnectTmuxClient, ensureRuntimeTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
+import { disconnectTmuxClient, ensureRuntimeTerminalSession, ensureTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 
@@ -217,12 +217,23 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.get("/worktrees/:branch/runtime/tmux-clients", async (req, res, next) => {
     try {
       const runtime = options.runtimes.get(req.params.branch);
-      if (!runtime) {
-        res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
         return;
       }
 
-      const clients: TmuxClientInfo[] = await listTmuxClients(runtime);
+      const tmuxSession = await ensureTerminalSession({
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        runtime,
+      });
+
+      const clients: TmuxClientInfo[] = await listTmuxClients({
+        tmuxSession,
+        worktreePath: worktree.worktreePath,
+      });
       res.json(clients);
     } catch (error) {
       next(error);
@@ -231,13 +242,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/runtime/tmux-clients/:clientId/disconnect", async (req, res, next) => {
     try {
-      const runtime = options.runtimes.get(req.params.branch);
-      if (!runtime) {
-        res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
         return;
       }
 
-      await disconnectTmuxClient(runtime, decodeURIComponent(req.params.clientId));
+      await disconnectTmuxClient({ worktreePath: worktree.worktreePath }, decodeURIComponent(req.params.clientId));
       res.status(204).send();
     } catch (error) {
       next(error);

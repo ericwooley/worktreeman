@@ -31,6 +31,15 @@ Supported platforms:
 - macOS and Linux are the intended environments
 - Windows is not currently supported for the full runtime flow because `tmux` and the browser terminal path assume a Unix-style shell environment
 
+If you want tmux copy-mode selections to reach your system clipboard from the browser terminal, add this to your `~/.tmux.conf`:
+
+```tmux
+set -s set-clipboard external
+set -g allow-passthrough on
+set -g terminal-features 'xterm-256color:clipboard'
+set -as terminal-overrides ',xterm-256color:Ms=\E]52;%p1%s;%p2%s\a'
+```
+
 ## Install the CLI
 
 Install `worktreeman` globally with npm:

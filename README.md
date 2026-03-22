@@ -43,6 +43,21 @@ worktreeman --help
 - macOS and Linux are the intended platforms because the runtime terminal depends on `tmux` and a Unix-style shell environment
 - Windows is not currently supported for the full runtime flow
 
+## tmux clipboard
+
+For tmux-native copy mode in the browser terminal, add clipboard support to your tmux config:
+
+```tmux
+set -s set-clipboard external
+set -g allow-passthrough on
+set -g terminal-features 'xterm-256color:clipboard'
+set -as terminal-overrides ',xterm-256color:Ms=\E]52;%p1%s;%p2%s\a'
+```
+
+- `set-clipboard external` lets tmux copy-mode push selections to the outer terminal clipboard without accepting clipboard writes from every app inside tmux
+- `allow-passthrough on` helps modern passthrough-friendly terminal flows
+- the `terminal-features` and `terminal-overrides` lines ensure OSC 52 clipboard support is available for `xterm-256color`
+
 ## Docs source
 
 - `docs/*.md` is the source of truth for the standalone docs website

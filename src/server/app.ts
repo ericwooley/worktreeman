@@ -6,6 +6,7 @@ import open from "open";
 import { createApiRouter } from "./routes/api.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
+import { listWorktrees } from "./services/git-service.js";
 import { ShutdownStatusService } from "./services/shutdown-status-service.js";
 import { createTerminalService, killTmuxSession } from "./services/terminal-service.js";
 import { RuntimeStore } from "./state/runtime-store.js";
@@ -237,7 +238,19 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
     terminalService = createTerminalService({
       server,
-      getRuntime: (branch) => runtimes.get(branch),
+      getTerminalTarget: async (branch) => {
+        const worktrees = await listWorktrees(options.repo.repoRoot);
+        const worktree = worktrees.find((entry) => entry.branch === branch);
+        if (!worktree) {
+          return undefined;
+        }
+
+        return {
+          branch: worktree.branch,
+          worktreePath: worktree.worktreePath,
+          runtime: runtimes.get(branch),
+        };
+      },
     });
 
     const url = `http://127.0.0.1:${port}`;

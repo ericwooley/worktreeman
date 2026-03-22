@@ -100,11 +100,13 @@ export function Dashboard() {
   } = useDashboardState();
   const { theme, themes, setThemeId } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
-  const [activeTab, setActiveTab] = useState<"shell" | "background" | "git">(
+  const [activeTab, setActiveTab] = useState<"shell" | "background" | "git" | "project-management">(
     initialParams.get("tab") === "git"
       ? "git"
       : initialParams.get("tab") === "background"
         ? "background"
+        : initialParams.get("tab") === "project-management"
+          ? "project-management"
         : "shell",
   );
   const [gitView, setGitView] = useState<"graph" | "diff">(initialParams.get("git") === "diff" ? "diff" : "graph");
@@ -361,7 +363,7 @@ export function Dashboard() {
     setDeleteConfirmBranch(null);
   };
 
-  const navigateToTab = (tab: "shell" | "background" | "git") => {
+  const navigateToTab = (tab: "shell" | "background" | "git" | "project-management") => {
     setActiveTab(tab);
     if (tab !== "shell") {
       setIsTerminalVisible(false);
@@ -402,6 +404,17 @@ export function Dashboard() {
         badgeLabel: activeTab === "git" ? "Active" : undefined,
         badgeTone: "active",
         action: () => navigateToTab("git"),
+      },
+      {
+        id: "nav-project-management",
+        code: "npm",
+        title: "Open Project management tab",
+        subtitle: "Jump to the project management area.",
+        group: "Navigation",
+        keywords: ["project", "management", "planning", "todo"],
+        badgeLabel: activeTab === "project-management" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToTab("project-management"),
       },
       {
         id: "terminal-toggle",
