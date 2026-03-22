@@ -131,6 +131,13 @@ export function stopBackgroundCommand(branch: string, commandName: string): Prom
   );
 }
 
+export function restartBackgroundCommand(branch: string, commandName: string): Promise<BackgroundCommandState[]> {
+  return request<BackgroundCommandState[]>(
+    `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/restart`,
+    { method: "POST" },
+  );
+}
+
 export function getBackgroundCommandLogs(branch: string, commandName: string): Promise<BackgroundCommandLogsResponse> {
   return request<BackgroundCommandLogsResponse>(
     `/api/worktrees/${encodeURIComponent(branch)}/background-commands/${encodeURIComponent(commandName)}/logs`,

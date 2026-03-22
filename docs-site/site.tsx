@@ -50,7 +50,7 @@ export function DocsSite() {
             <div className="docs-terminal-mark">worktreeman docs</div>
             <p className="docs-rail-title">Install, configure, and run branch-scoped local environments.</p>
             <div className="docs-command-block">
-              <span>$ bun add -g worktreeman</span>
+              <span>$ npm install -g worktreeman</span>
               <span>$ worktreeman init</span>
               <span>$ worktreeman start</span>
             </div>

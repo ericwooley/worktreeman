@@ -26,37 +26,22 @@ bun run build
 - `dist/web` contains the local app frontend used by the CLI server
 - `dist/docs` contains the standalone documentation website generated from Markdown files in `docs/`
 
-## Standalone binaries
+## Package distribution
 
 ```bash
-bun run build:binary
+npm install -g worktreeman
+worktreeman --help
 ```
 
-- `bun run build:binary` builds the default standalone binary at `dist/worktreeman`
-- `bun run build:binary:linux-x64` builds `dist/worktreeman-linux-x64`
-- `bun run build:binary:linux-arm64` builds `dist/worktreeman-linux-arm64`
-- `bun run build:binary:macos-x64` builds `dist/worktreeman-macos-x64`
-- `bun run build:binary:macos-arm64` builds `dist/worktreeman-macos-arm64`
-- `bun run build:binary:all` runs all per-target scripts and is intended for CI or native per-platform runners
-- `bun run build:binary:prepare` only builds the shared frontend and embedded asset inputs used by the binary builds
+- `npx worktreeman --help` runs the published CLI without a global install
+- `npm install -g worktreeman` installs the command globally for repeated local use
+- `npm pack` and `npm publish` use the `prepack` script to build `dist/cli.js` and `dist/web`
 
-Because the compiled CLI embeds the platform-native `node-pty` addon, the safest approach is to build each target on a matching runner:
+## Platform support
 
-- Linux targets on Linux runners
-- macOS targets on macOS runners
-- Use `build:binary:all` in CI only when the work is split across native jobs instead of one machine cross-compiling every target
-
-## Install script
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ericwooley/worktreeman/main/install.sh | bash
-```
-
-- The installer downloads the latest matching GitHub release binary for your OS and CPU
-- It verifies the download with `worktreeman-checksums.txt`
-- It installs to `~/.local/bin/worktreeman` by default
-- Set `INSTALL_DIR=/your/bin/dir` to choose a different install location
-- Set `WORKTREEMAN_VERSION=v0.1.0` to install a specific release tag
+- The published CLI runs on Node.js 20+; Bun is only used to develop and build this repository
+- macOS and Linux are the intended platforms because the runtime terminal depends on `tmux` and a Unix-style shell environment
+- Windows is not currently supported for the full runtime flow
 
 ## Docs source
 

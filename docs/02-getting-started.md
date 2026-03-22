@@ -26,18 +26,29 @@ Install these first:
 
 You also need a Git repository that already contains the app or service stack you want to run.
 
+Supported platforms:
+
+- macOS and Linux are the intended environments
+- Windows is not currently supported for the full runtime flow because `tmux` and the browser terminal path assume a Unix-style shell environment
+
 ## Install the CLI
 
-Install `worktreeman` globally with Bun:
+Install `worktreeman` globally with npm:
 
 ```bash
-bun add -g worktreeman
+npm install -g worktreeman
 ```
 
 Check that the command is available:
 
 ```bash
 worktreeman --help
+```
+
+Or run it without a global install:
+
+```bash
+npx worktreeman --help
 ```
 
 ## Initialize a repository

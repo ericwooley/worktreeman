@@ -291,6 +291,16 @@ export async function stopBackgroundCommand(branch: string, worktreePath: string
   await deleteMetadata(processName);
 }
 
+export async function restartBackgroundCommand(options: {
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  runtime: WorktreeRuntime | undefined;
+  commandName: string;
+}): Promise<void> {
+  await startBackgroundCommand(options);
+}
+
 function createStreamLogLine(source: "stdout" | "stderr", text: string): BackgroundCommandLogLine {
   streamedLogSequence += 1;
 

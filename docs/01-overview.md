@@ -43,3 +43,5 @@ The typical branch workflow usually turns into a mix of shell history, copied co
 `worktreeman` does not replace your application stack. It does not define your services, dependency graph, or startup logic.
 
 You keep those in your repository. `worktreeman` orchestrates them consistently across disposable branch environments.
+
+It currently targets macOS and Linux workflows. Windows is not supported for the full runtime experience because the terminal flow depends on `tmux` and Unix-style shell behavior.

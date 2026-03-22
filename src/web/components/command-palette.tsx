@@ -122,6 +122,7 @@ export function CommandPalette({
   open,
   commands,
   shortcut,
+  initialQuery = "",
   onClose,
   onShortcutChange,
   onShortcutReset,
@@ -138,6 +139,7 @@ export function CommandPalette({
   open: boolean;
   commands: CommandPaletteItem[];
   shortcut: string;
+  initialQuery?: string;
   onClose: (options?: { restoreFocus?: boolean }) => void;
   onShortcutChange: (shortcut: string) => void;
   onShortcutReset: () => void;
@@ -197,7 +199,8 @@ export function CommandPalette({
     }
 
     input.focus();
-    input.select();
+    const cursorPosition = input.value.length;
+    input.setSelectionRange(cursorPosition, cursorPosition);
   };
 
   useEffect(() => {
@@ -324,7 +327,7 @@ export function CommandPalette({
       return;
     }
 
-    setQuery("");
+    setQuery(initialQuery);
     setActiveIndex(0);
     setRecordingShortcutId(null);
 
@@ -335,7 +338,7 @@ export function CommandPalette({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
     };
-  }, [open, scopeKey]);
+  }, [initialQuery, open, scopeKey]);
 
   if (!open) {
     return null;

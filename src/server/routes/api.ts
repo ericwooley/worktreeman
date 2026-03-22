@@ -14,6 +14,7 @@ import {
   getBackgroundCommandLogs,
   getBackgroundCommandEntries,
   listBackgroundCommands,
+  restartBackgroundCommand,
   startBackgroundCommand,
   startConfiguredBackgroundCommands,
   streamBackgroundCommandLogs,
@@ -351,6 +352,44 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const commands: BackgroundCommandState[] = await listBackgroundCommands(
         await loadCurrentConfig(),
+        worktree.branch,
+        worktree.worktreePath,
+        options.runtimes.get(worktree.branch),
+      );
+      res.json(commands);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/background-commands/:name/restart", async (req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const decodedName = decodeURIComponent(req.params.name);
+      const command = getBackgroundCommandEntries(config)[decodedName];
+      if (!command) {
+        res.status(404).json({ message: `Unknown background command ${decodedName}` });
+        return;
+      }
+
+      await restartBackgroundCommand({
+        config,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        runtime: options.runtimes.get(worktree.branch),
+        commandName: decodedName,
+      });
+
+      const commands: BackgroundCommandState[] = await listBackgroundCommands(
+        config,
         worktree.branch,
         worktree.worktreePath,
         options.runtimes.get(worktree.branch),

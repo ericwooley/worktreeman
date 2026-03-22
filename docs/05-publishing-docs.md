@@ -38,7 +38,7 @@ Keep that behavior documented in the repository so startup is predictable.
 ## Common commands
 
 ```bash
-bun add -g worktreeman
+npm install -g worktreeman
 worktreeman init
 worktreeman start
 worktreeman --help

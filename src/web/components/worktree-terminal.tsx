@@ -151,26 +151,28 @@ export function WorktreeTerminal({
             </div>
 
             <div className="flex min-w-0 items-center justify-end gap-2">
-              <div
-                className="flex items-center gap-1"
-                onClick={(event) => event.stopPropagation()}
-                onKeyDown={(event) => event.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  className={`theme-terminal-mode-toggle rounded-none px-2 py-1 text-[11px] uppercase tracking-[0.16em] ${terminalSurfaceMode === "dark" ? "theme-terminal-mode-toggle-active" : "theme-terminal-mode-toggle-idle"}`}
-                  onClick={() => setTerminalSurfaceMode("dark")}
+              {isTerminalVisible ? (
+                <div
+                  className="flex items-center gap-1"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
                 >
-                  Dark
-                </button>
-                <button
-                  type="button"
-                  className={`theme-terminal-mode-toggle rounded-none px-2 py-1 text-[11px] uppercase tracking-[0.16em] ${terminalSurfaceMode === "light" ? "theme-terminal-mode-toggle-active" : "theme-terminal-mode-toggle-idle"}`}
-                  onClick={() => setTerminalSurfaceMode("light")}
-                >
-                  Light
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    className={`theme-terminal-mode-toggle rounded-none px-2 py-1 text-[11px] uppercase tracking-[0.16em] ${terminalSurfaceMode === "dark" ? "theme-terminal-mode-toggle-active" : "theme-terminal-mode-toggle-idle"}`}
+                    onClick={() => setTerminalSurfaceMode("dark")}
+                  >
+                    Dark
+                  </button>
+                  <button
+                    type="button"
+                    className={`theme-terminal-mode-toggle rounded-none px-2 py-1 text-[11px] uppercase tracking-[0.16em] ${terminalSurfaceMode === "light" ? "theme-terminal-mode-toggle-active" : "theme-terminal-mode-toggle-idle"}`}
+                    onClick={() => setTerminalSurfaceMode("light")}
+                  >
+                    Light
+                  </button>
+                </div>
+              ) : null}
 
               {isTerminalVisible ? (
                 <div onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>

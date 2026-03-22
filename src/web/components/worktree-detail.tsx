@@ -198,6 +198,7 @@ interface WorktreeDetailProps {
   gitComparisonLoading: boolean;
   onLoadBackgroundCommands: (branch: string) => Promise<BackgroundCommandState[]>;
   onStartBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
+  onRestartBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onStopBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
@@ -233,6 +234,7 @@ export function WorktreeDetail({
   gitComparisonLoading,
   onLoadBackgroundCommands,
   onStartBackgroundCommand,
+  onRestartBackgroundCommand,
   onStopBackgroundCommand,
   onLoadBackgroundLogs,
   onLoadGitComparison,
@@ -693,7 +695,7 @@ export function WorktreeDetail({
                   </p>
                 </div>
 
-                <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto] xl:min-w-[42rem]">
+                <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto] xl:min-w-[48rem]">
                   <MatrixDropdown
                     label="Command"
                     value={selectedBackgroundCommand?.name ?? null}
@@ -720,6 +722,15 @@ export function WorktreeDetail({
                     onClick={() => worktree && selectedBackgroundCommand ? void onStopBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
                   >
                     Stop
+                  </button>
+
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-3 py-2 text-sm"
+                    disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || isBusy}
+                    onClick={() => worktree && selectedBackgroundCommand ? void onRestartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                  >
+                    Restart
                   </button>
                 </div>
               </div>

@@ -17,8 +17,18 @@ const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
 const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreeman.commandPaletteShortcut";
 const TERMINAL_SHORTCUT_STORAGE_KEY = "worktreeman.terminalShortcut";
 const LEGACY_COMMAND_PALETTE_SHORTCUTS = new Set(["Shift+Space", "Meta+P"]);
-const DEFAULT_TERMINAL_SHORTCUT = "Ctrl+Shift+;";
+const LEGACY_TERMINAL_SHORTCUTS = new Set(["Ctrl+Shift+;"]);
+const DEFAULT_TERMINAL_SHORTCUT = "Ctrl+Shift+'";
+const COMMAND_PALETTE_CODE_MODE_SHORTCUT = "Ctrl+Shift+:";
 type CommandPaletteScope = "main" | "worktree-select" | "theme-select";
+
+function isCommandPaletteCodeModeShortcut(event: KeyboardEvent): boolean {
+  if (event.altKey || event.metaKey || !event.ctrlKey || !event.shiftKey) {
+    return false;
+  }
+
+  return event.code === "Semicolon" || event.key === ":" || event.key === ";";
+}
 
 function normalizeCommandPaletteShortcut(shortcut: string | null): string {
   if (!shortcut || LEGACY_COMMAND_PALETTE_SHORTCUTS.has(shortcut)) {
@@ -29,7 +39,7 @@ function normalizeCommandPaletteShortcut(shortcut: string | null): string {
 }
 
 function normalizeTerminalShortcut(shortcut: string | null): string {
-  if (!shortcut) {
+  if (!shortcut || LEGACY_TERMINAL_SHORTCUTS.has(shortcut)) {
     return DEFAULT_TERMINAL_SHORTCUT;
   }
 
@@ -82,11 +92,11 @@ export function Dashboard() {
     syncEnv,
     loadBackgroundCommands,
     startBackgroundCommand,
+    restartBackgroundCommand,
     stopBackgroundCommand,
     loadBackgroundLogs,
     loadGitComparison,
     subscribeToBackgroundLogs,
-    refresh,
   } = useDashboardState();
   const { theme, themes, setThemeId } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
@@ -104,6 +114,7 @@ export function Dashboard() {
   const [branch, setBranch] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteScope, setCommandPaletteScope] = useState<CommandPaletteScope>("main");
+  const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState("");
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const lastTerminalFocusedElementRef = useRef<HTMLElement | null>(null);
   const lastTerminalShortcutAtRef = useRef(0);
@@ -122,17 +133,19 @@ export function Dashboard() {
     return normalizeTerminalShortcut(window.localStorage.getItem(TERMINAL_SHORTCUT_STORAGE_KEY));
   });
 
-  const openCommandPalette = useCallback((scope: CommandPaletteScope = "main") => {
+  const openCommandPalette = useCallback((scope: CommandPaletteScope = "main", initialQuery = "") => {
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
       lastFocusedElementRef.current = document.activeElement;
     }
 
+    setCommandPaletteInitialQuery(initialQuery);
     setCommandPaletteScope(scope);
     setCommandPaletteOpen(true);
   }, []);
 
   const closeCommandPalette = useCallback((options?: { restoreFocus?: boolean }) => {
     setCommandPaletteOpen(false);
+    setCommandPaletteInitialQuery("");
     setCommandPaletteScope("main");
 
     if (!options?.restoreFocus) {
@@ -243,6 +256,21 @@ export function Dashboard() {
         || tagName === "SELECT",
       );
       const isInsideTerminal = Boolean(target?.closest(".xterm"));
+
+      if (isCommandPaletteCodeModeShortcut(event)) {
+        if (isInsideTerminal) {
+          return;
+        }
+
+        if (isTypingContext && !commandPaletteOpen) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        openCommandPalette("main", ":");
+        return;
+      }
 
       const shortcut = shortcutFromKeyboardEvent(event);
       if (!shortcut) {
@@ -395,15 +423,6 @@ export function Dashboard() {
         action: () => setCommandPaletteScope("worktree-select"),
       },
       {
-        id: "refresh-state",
-        code: "wr",
-        title: "Refresh worktree state",
-        subtitle: "Reload worktrees, runtimes, and current UI state.",
-        group: "Worktree",
-        keywords: ["reload", "refresh", "state"],
-        action: () => void refresh(),
-      },
-      {
         id: "create-worktree",
         code: "wn",
         title: "Create new worktree",
@@ -485,7 +504,7 @@ export function Dashboard() {
     }
 
     return items.sort(comparePaletteItems);
-  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, refresh, selected, start, state?.worktrees, stop, syncEnv, theme]);
+  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, selected, start, state?.worktrees, stop, syncEnv, theme]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     return (state?.worktrees ?? []).map((entry, index) => ({
@@ -563,7 +582,7 @@ export function Dashboard() {
             </div>
 
             <div className="flex w-full flex-col gap-2 pt-12 xl:max-w-[40rem] xl:items-end">
-              <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[34rem] xl:grid-cols-[minmax(14rem,1fr)_minmax(14rem,1fr)_auto]">
+              <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[34rem] xl:grid-cols-[minmax(14rem,1fr)_minmax(14rem,1fr)]">
                 <MatrixDropdown
                   label="Worktree"
                   value={selected?.branch ?? null}
@@ -591,9 +610,6 @@ export function Dashboard() {
                     </div>
                   </div>
                   <span className="theme-text-accent-soft font-mono text-sm">/</span>
-                </button>
-                <button className="matrix-button h-full min-h-[100%] rounded-none px-3 py-2 text-sm" onClick={() => void refresh()} type="button">
-                  Refresh
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
@@ -697,6 +713,7 @@ export function Dashboard() {
             gitComparisonLoading={gitComparisonLoading}
             onLoadBackgroundCommands={loadBackgroundCommands}
             onStartBackgroundCommand={startBackgroundCommand}
+            onRestartBackgroundCommand={restartBackgroundCommand}
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
             onLoadGitComparison={loadGitComparison}
@@ -817,6 +834,7 @@ export function Dashboard() {
         open={commandPaletteOpen}
         commands={paletteCommands}
         shortcut={commandPaletteShortcut}
+        initialQuery={commandPaletteInitialQuery}
         onClose={closeCommandPalette}
         onShortcutChange={setCommandPaletteShortcut}
         onShortcutReset={() => setCommandPaletteShortcut(DEFAULT_COMMAND_PALETTE_SHORTCUT)}

@@ -14,6 +14,7 @@ import {
   getBackgroundCommands as fetchBackgroundCommands,
   getGitComparison as fetchGitComparison,
   getState,
+  restartBackgroundCommand as restartBackgroundProcess,
   startBackgroundCommand as startBackgroundProcess,
   startRuntime,
   stopBackgroundCommand as stopBackgroundProcess,
@@ -23,6 +24,8 @@ import {
   syncEnvFiles,
   type EnvSyncResponse,
 } from "../lib/api";
+
+const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
 
 function areGitComparisonsEqual(left: GitComparisonResponse | null, right: GitComparisonResponse | null) {
   if (left === right) {
@@ -48,8 +51,11 @@ export function useDashboardState() {
   const [gitComparison, setGitComparison] = useState<GitComparisonResponse | null>(null);
   const [gitComparisonLoading, setGitComparisonLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setLoading(true);
+    }
+
     try {
       const payload = await getState();
       setState(payload);
@@ -57,7 +63,9 @@ export function useDashboardState() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load state.");
     } finally {
-      setLoading(false);
+      if (!options?.silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -66,6 +74,30 @@ export function useDashboardState() {
   }, [refresh]);
 
   useEffect(() => subscribeToShutdownStatus(setShutdownStatus), []);
+
+  useEffect(() => {
+    if (busyBranch) {
+      return;
+    }
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void refresh({ silent: true });
+    };
+
+    const interval = window.setInterval(refreshIfVisible, DASHBOARD_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refreshIfVisible);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshIfVisible);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, [busyBranch, refresh]);
 
   const appendBackgroundLogs = useCallback((event: BackgroundCommandLogStreamEvent) => {
     setBackgroundLogs((current) => {
@@ -199,6 +231,20 @@ export function useDashboardState() {
           return commands;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to stop background command.");
+          return [];
+        } finally {
+          setBusyBranch(null);
+        }
+      },
+      async restartBackgroundCommand(branch: string, commandName: string) {
+        setBusyBranch(branch);
+        try {
+          const commands = await restartBackgroundProcess(branch, commandName);
+          setBackgroundCommands(commands);
+          setError(null);
+          return commands;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to restart background command.");
           return [];
         } finally {
           setBusyBranch(null);

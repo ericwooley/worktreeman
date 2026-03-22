@@ -4,57 +4,10 @@ import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
+import pty from "node-pty";
 import type { TerminalClientMessage, TerminalServerMessage, TmuxClientInfo, WorktreeRuntime } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 import { sanitizeBranchName } from "../utils/paths.js";
-
-interface PtySpawnOptions {
-  name: string;
-  cols: number;
-  rows: number;
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-}
-
-interface PtyProcess {
-  pid: number;
-  write(data: string): void;
-  resize(cols: number, rows: number): void;
-  kill(signal?: string): void;
-  onData(listener: (data: string) => void): { dispose(): void };
-  onExit(listener: (event: { exitCode: number | null; signal?: number }) => void): { dispose(): void };
-}
-
-interface PtyRuntime {
-  spawnPty(file: string, args: string[], options: PtySpawnOptions): PtyProcess;
-}
-
-let ptyRuntimePromise: Promise<PtyRuntime> | undefined;
-
-async function loadPtyRuntime(): Promise<PtyRuntime> {
-  if (ptyRuntimePromise) {
-    return ptyRuntimePromise;
-  }
-
-  ptyRuntimePromise = "Bun" in globalThis
-    ? import("./bun-pty-runtime.js") as Promise<PtyRuntime>
-    : (() => {
-      const nodePtyModuleId = "node-pty";
-      return import(nodePtyModuleId);
-    })().then((module) => {
-      const ptyModule = (module.default ?? module) as {
-        spawn(file: string, args: string[], options: PtySpawnOptions): PtyProcess;
-      };
-
-      return {
-        spawnPty(file: string, args: string[], options: PtySpawnOptions) {
-          return ptyModule.spawn(file, args, options);
-        },
-      } satisfies PtyRuntime;
-    });
-
-  return ptyRuntimePromise;
-}
 
 interface TerminalServiceOptions {
   server: HttpServer;
@@ -231,7 +184,7 @@ export async function killTmuxSessionByName(sessionName: string, cwd: string): P
 
 export function createTerminalService(options: TerminalServiceOptions): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
-  const activeTerms = new Set<PtyProcess>();
+  const activeTerms = new Set<pty.IPty>();
 
   const handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(request.url ?? "", "http://localhost");
@@ -295,16 +248,67 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       return;
     }
 
-    let term: PtyProcess;
-
     try {
-      const { spawnPty } = await loadPtyRuntime();
-      term = spawnPty("tmux", ["attach-session", "-t", runtime.tmuxSession], {
+      const term = pty.spawn("tmux", ["attach-session", "-t", runtime.tmuxSession], {
         name: "xterm-256color",
         cols: 120,
         rows: 30,
         cwd: runtime.worktreePath,
         env,
+      });
+      activeTerms.add(term);
+
+      const resolveCurrentClientId = async () => {
+        try {
+          const clients = await listTmuxClients(runtime);
+          const processTty = await getProcessTty(term.pid, runtime.worktreePath);
+          const matchedClient = clients.find((client) => {
+            if (processTty && normalizeTty(client.tty) === processTty) {
+              return true;
+            }
+
+            return client.pid === term.pid;
+          });
+
+          if (!matchedClient) {
+            send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
+            return;
+          }
+
+          send(socket, { type: "ready", session: runtime.tmuxSession, clientId: matchedClient.id });
+        } catch {
+          send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
+        }
+      };
+
+      void resolveCurrentClientId();
+
+      term.onData((data) => {
+        send(socket, { type: "output", data });
+      });
+
+      term.onExit(({ exitCode }) => {
+        activeTerms.delete(term);
+        send(socket, { type: "exit", exitCode });
+        socket.close();
+      });
+
+      socket.on("message", (raw) => {
+        try {
+          const message = JSON.parse(String(raw)) as TerminalClientMessage;
+          if (message.type === "input") {
+            term.write(message.data);
+          } else if (message.type === "resize") {
+            term.resize(message.cols, message.rows);
+          }
+        } catch (error) {
+          send(socket, { type: "error", message: error instanceof Error ? error.message : "Invalid terminal payload." });
+        }
+      });
+
+      socket.on("close", () => {
+        activeTerms.delete(term);
+        term.kill();
       });
     } catch (error) {
       send(socket, {
@@ -312,63 +316,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
         message: error instanceof Error ? error.message : "Failed to start terminal session.",
       });
       socket.close();
-      return;
     }
-
-    activeTerms.add(term);
-
-    const resolveCurrentClientId = async () => {
-      try {
-        const clients = await listTmuxClients(runtime);
-        const processTty = await getProcessTty(term.pid, runtime.worktreePath);
-        const matchedClient = clients.find((client) => {
-          if (processTty && normalizeTty(client.tty) === processTty) {
-            return true;
-          }
-
-          return client.pid === term.pid;
-        });
-
-        if (!matchedClient) {
-          send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
-          return;
-        }
-
-        send(socket, { type: "ready", session: runtime.tmuxSession, clientId: matchedClient.id });
-      } catch {
-        send(socket, { type: "ready", session: runtime.tmuxSession, clientId: null });
-      }
-    };
-
-    void resolveCurrentClientId();
-
-    term.onData((data) => {
-      send(socket, { type: "output", data });
-    });
-
-    term.onExit(({ exitCode }) => {
-      activeTerms.delete(term);
-      send(socket, { type: "exit", exitCode });
-      socket.close();
-    });
-
-    socket.on("message", (raw) => {
-      try {
-        const message = JSON.parse(String(raw)) as TerminalClientMessage;
-        if (message.type === "input") {
-          term.write(message.data);
-        } else if (message.type === "resize") {
-          term.resize(message.cols, message.rows);
-        }
-      } catch (error) {
-        send(socket, { type: "error", message: error instanceof Error ? error.message : "Invalid terminal payload." });
-      }
-    });
-
-    socket.on("close", () => {
-      activeTerms.delete(term);
-      term.kill();
-    });
   });
 
   return wss;
