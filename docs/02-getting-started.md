@@ -62,47 +62,53 @@ npx worktreeman --help
 
 ## Initialize a repository
 
-From the repository root, you can either let `init` ask you questions:
+Create a new managed repository layout:
 
 ```bash
-worktreeman init
+worktreeman create --cwd /path/to/repo
 ```
 
-Or provide the branch up front:
+Or clone an existing remote directly into the managed layout:
 
 ```bash
-worktreeman init main
+worktreeman clone git@github.com:owner/repo.git --cwd /path/to/repo
 ```
 
-That command will:
+That setup creates this required structure:
 
-- locate the Git root
-- ask which branch should hold the shared config when needed
-- ask what `worktrees.baseDir` should be when needed
+```text
+/path/to/repo/
+  .bare/
+  .git
+  main/
+  wtm-settings/
+```
+
+After that, `worktreeman init` will:
+
+- locate the managed bare-layout root
+- create or reuse the `wtm-settings` worktree for the shared config
 - ask which environment variables should get dynamically reserved local ports, such as `PORT` or `VITE_PORT`
-- create or reuse the target branch worktree
-- generate a starter `worktree.yml` in that branch worktree
+- generate a starter `worktree.yml` in `wtm-settings/`
 
 If you want to regenerate the file:
 
 ```bash
-worktreeman init main --force
-```
-
-If you already know the worktree layout you want, you can also pass it directly:
-
-```bash
-worktreeman init main --base-dir ..
+worktreeman init --cwd /path/to/repo --force
 ```
 
 ## Review `worktree.yml`
 
-Before you start the UI, open the generated `worktree.yml` in the target branch worktree and confirm:
+Before you start the UI, open the generated `worktree.yml` in the `wtm-settings` worktree and confirm:
 
 - the worktree base directory is correct
 - the runtime port env vars you want are listed
 - any startup commands are safe to run automatically
 - any long-running processes you want are listed under `backgroundCommands`
+
+Once the UI is running, you can also use the `Config` button in the header to edit the shared file in a built-in Monaco editor modal.
+
+`worktreeman start` reads config from that checked-out `wtm-settings` worktree only and fails if the bare layout is missing or invalid.
 
 ## Use runtime ports
 
@@ -182,7 +188,7 @@ quickLinks:
     url: http://localhost:${PORT}
 
 worktrees:
-  baseDir: .worktrees
+  baseDir: .
 
 startupCommands:
   - bun install
@@ -216,7 +222,7 @@ quickLinks:
     url: postgresql://postgres:postgres@localhost:${DB_PORT}/postgres
 
 worktrees:
-  baseDir: .worktrees
+  baseDir: .
 
 startupCommands:
   - bun install
@@ -248,7 +254,7 @@ quickLinks:
     url: http://localhost:${PORT}
 
 worktrees:
-  baseDir: .worktrees
+  baseDir: .
 
 startupCommands:
   - bun install

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
+import { DEFAULT_WORKTREE_BASE_DIR } from "../../shared/constants.js";
 import type { BackgroundCommandConfigEntry, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
@@ -85,6 +86,10 @@ function parseQuickLinks(value: unknown): QuickLinkConfigEntry[] {
 export async function loadConfig(configSource: string | ConfigSource, repoRoot?: string): Promise<WorktreeManagerConfig> {
   const source = typeof configSource === "string" ? { path: configSource, repoRoot } : configSource;
   const raw = await readConfigContents(source);
+  return parseConfigContents(raw);
+}
+
+export function parseConfigContents(raw: string): WorktreeManagerConfig {
   const parsed = (yaml.load(raw) as Record<string, unknown> | undefined) ?? {};
 
   const env = ensureRecord(parsed.env, "env");
@@ -106,12 +111,12 @@ export async function loadConfig(configSource: string | ConfigSource, repoRoot?:
     startupCommands,
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
     worktrees: {
-      baseDir: String((worktrees as { baseDir?: string }).baseDir ?? ".worktrees"),
+      baseDir: String((worktrees as { baseDir?: string }).baseDir ?? DEFAULT_WORKTREE_BASE_DIR),
     },
   };
 }
 
-async function readConfigContents(source: ConfigSource): Promise<string> {
+export async function readConfigContents(source: ConfigSource): Promise<string> {
   if (!source.gitRef || !source.gitFile) {
     return fs.readFile(source.path, "utf8");
   }

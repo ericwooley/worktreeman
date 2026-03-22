@@ -27,7 +27,7 @@ test("loadConfig parses runtime env, links, and background commands", async () =
         "    command: bun run dev",
         "  Worker: bun run worker",
         "worktrees:",
-        "  baseDir: .worktrees",
+        "  baseDir: .",
         "startupCommands:",
         "  - bun install",
         "",

@@ -3,6 +3,7 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  ConfigDocumentResponse,
   GitComparisonResponse,
   ShutdownStatus,
   TmuxClientInfo,
@@ -46,6 +47,17 @@ async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
 
 export function getState(): Promise<ApiStateResponse> {
   return request<ApiStateResponse>("/api/state");
+}
+
+export function getConfigDocument(): Promise<ConfigDocumentResponse> {
+  return request<ConfigDocumentResponse>("/api/config/document");
+}
+
+export function saveConfigDocument(contents: string): Promise<ConfigDocumentResponse> {
+  return request<ConfigDocumentResponse>("/api/config/document", {
+    method: "PUT",
+    body: JSON.stringify({ contents }),
+  });
 }
 
 export function getGitComparison(compareBranch: string, baseBranch?: string): Promise<GitComparisonResponse> {

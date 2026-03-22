@@ -1,9 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
-import { CONFIG_CANDIDATES, fileExists, findGitRoot, sanitizeBranchName } from "../utils/paths.js";
+import {
+  DEFAULT_WORKTREE_BASE_DIR,
+  DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
+} from "../../shared/constants.js";
+import { CONFIG_CANDIDATES, fileExists, findGitRoot } from "../utils/paths.js";
 import { listWorktrees } from "./git-service.js";
-import { runCommand } from "../utils/process.js";
+import { ensureBranchWorktree as ensureManagedBranchWorktree } from "./repository-layout-service.js";
 
 const WORKTREE_CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json";
 
@@ -17,7 +21,6 @@ export interface InitResult {
 }
 
 export interface InitOptions {
-  branch: string;
   baseDir?: string;
   runtimePorts?: string[];
   force?: boolean;
@@ -56,13 +59,10 @@ export async function initRepository(
   startDir: string,
   options: InitOptions,
 ): Promise<InitResult> {
-  const branch = options.branch.trim();
-  if (!branch) {
-    throw new Error("A branch name is required for init.");
-  }
+  const branch = DEFAULT_WORKTREEMAN_SETTINGS_BRANCH;
 
   const force = options.force ?? false;
-  const baseDir = options.baseDir?.trim() || ".worktrees";
+  const baseDir = options.baseDir?.trim() || DEFAULT_WORKTREE_BASE_DIR;
   const runtimePorts = Array.from(
     new Set(
       (options.runtimePorts ?? [])
@@ -72,9 +72,6 @@ export async function initRepository(
   );
   const currentRepoRoot = await findGitRoot(startDir);
   const { worktreePath, createdWorktree } = await ensureBranchWorktree(currentRepoRoot, branch);
-  await runCommand("git", ["config", "--local", "worktreeman.configRef", branch], {
-    cwd: worktreePath,
-  });
 
   const existingConfig = await Promise.all(
     CONFIG_CANDIDATES.map(async (candidate: string) => {
@@ -90,7 +87,7 @@ export async function initRepository(
   if (existingConfigPath && !force) {
     return {
       branch,
-      repoRoot: worktreePath,
+      repoRoot: currentRepoRoot,
       worktreePath,
       configPath: existingConfigPath,
       created: false,
@@ -105,7 +102,7 @@ export async function initRepository(
 
   return {
     branch,
-    repoRoot: worktreePath,
+    repoRoot: currentRepoRoot,
     worktreePath,
     configPath,
     created: true,
@@ -125,32 +122,10 @@ async function ensureBranchWorktree(
     };
   }
 
-  const targetPath = path.join(path.dirname(repoRoot), sanitizeBranchName(branch));
-  await fs.mkdir(path.dirname(targetPath), { recursive: true });
-
-  if (await gitRefExists(repoRoot, `refs/heads/${branch}`)) {
-    await runCommand("git", ["worktree", "add", targetPath, branch], { cwd: repoRoot });
-  } else if (await gitRefExists(repoRoot, `refs/remotes/origin/${branch}`)) {
-    await runCommand("git", ["worktree", "add", "-b", branch, targetPath, `origin/${branch}`], {
-      cwd: repoRoot,
-    });
-  } else {
-    throw new Error(
-      `Branch ${branch} does not exist locally or on origin, so init cannot create a worktree for it.`,
-    );
-  }
+  const targetPath = await ensureManagedBranchWorktree(repoRoot, branch);
 
   return {
     worktreePath: targetPath,
     createdWorktree: true,
   };
-}
-
-async function gitRefExists(repoRoot: string, ref: string): Promise<boolean> {
-  try {
-    await runCommand("git", ["show-ref", "--verify", "--quiet", ref], { cwd: repoRoot });
-    return true;
-  } catch {
-    return false;
-  }
 }

@@ -1,10 +1,12 @@
 import express from "express";
+import fs from "node:fs/promises";
 import path from "node:path";
 import type {
   ApiStateResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  ConfigDocumentResponse,
   CreateWorktreeRequest,
   GitComparisonResponse,
   TmuxClientInfo,
@@ -24,7 +26,7 @@ import {
 import { createWorktree, getGitComparison, listWorktrees, removeWorktree } from "../services/git-service.js";
 import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
-import { loadConfig } from "../services/config-service.js";
+import { loadConfig, parseConfigContents, readConfigContents } from "../services/config-service.js";
 import type { ShutdownStatus } from "../../shared/types.js";
 import { disconnectTmuxClient, ensureRuntimeTerminalSession, ensureTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
@@ -33,10 +35,9 @@ import type { RuntimeStore } from "../state/runtime-store.js";
 interface ApiRouterOptions {
   repoRoot: string;
   configPath: string;
-  configRef: string;
   configSourceRef: string;
   configFile: string;
-  configWorktreePath?: string;
+  configWorktreePath: string;
   runtimes: RuntimeStore;
   shutdownStatus: ShutdownStatusService;
 }
@@ -47,22 +48,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   const loadCurrentConfig = () => loadConfig({
     path: options.configPath,
     repoRoot: options.repoRoot,
-    gitRef: options.configRef === "WORKTREE" ? undefined : options.configRef,
     gitFile: options.configFile,
   });
 
-  const resolveEnvSyncSourceRoot = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
-    if (options.configWorktreePath) {
-      return options.configWorktreePath;
-    }
-
-    if (path.isAbsolute(options.configPath)) {
-      return path.dirname(options.configPath);
-    }
-
-    return (worktrees.find((entry) => entry.branch === options.configSourceRef)
-      ?? worktrees.find((entry) => entry.branch === "main"))?.worktreePath;
-  };
+  const resolveEnvSyncSourceRoot = async (_worktrees: Awaited<ReturnType<typeof listWorktrees>>) => options.configWorktreePath;
 
   router.get("/state", async (_req, res, next) => {
     try {
@@ -71,6 +60,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const payload: ApiStateResponse = {
         repoRoot: options.repoRoot,
         configPath: options.configPath,
+        configFile: options.configFile,
+        configSourceRef: options.configSourceRef,
+        configWorktreePath: options.configWorktreePath,
         config,
         worktrees: options.runtimes.mergeInto(worktrees),
       };
@@ -96,6 +88,53 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       unsubscribe();
       res.end();
     });
+  });
+
+  router.get("/config/document", async (_req, res, next) => {
+    try {
+      const contents = await readConfigContents({
+        path: options.configPath,
+        repoRoot: options.repoRoot,
+        gitFile: options.configFile,
+      });
+
+      const payload: ConfigDocumentResponse = {
+        branch: options.configSourceRef,
+        filePath: path.join(options.configWorktreePath, options.configFile),
+        contents,
+        editable: true,
+      };
+
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.put("/config/document", async (req, res, next) => {
+    try {
+      const contents = typeof req.body?.contents === "string" ? req.body.contents : "";
+      if (!contents.trim()) {
+        res.status(400).json({ message: "Config contents are required." });
+        return;
+      }
+
+      parseConfigContents(contents);
+
+      const absoluteConfigPath = path.join(options.configWorktreePath, options.configFile);
+      await fs.writeFile(absoluteConfigPath, contents, "utf8");
+
+      const payload: ConfigDocumentResponse = {
+        branch: options.configSourceRef,
+        filePath: absoluteConfigPath,
+        contents,
+        editable: true,
+      };
+
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/git/compare", async (req, res, next) => {

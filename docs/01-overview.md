@@ -33,10 +33,12 @@ The typical branch workflow usually turns into a mix of shell history, copied co
 ## Typical flow
 
 1. Install `worktreeman` from npm.
-2. Run `worktreeman init` or `worktreeman init main` in the repository you want to manage.
-3. Review the generated `worktree.yml`.
-4. Start the local UI with `worktreeman start`.
+2. Run `worktreeman create --cwd /path/to/repo` or `worktreeman clone <remote> --cwd /path/to/repo`.
+3. Review the generated `wtm-settings/worktree.yml`.
+4. Start the local UI with `worktreeman start --cwd /path/to/repo`.
 5. Create a worktree, start its runtime, and use the terminal panel.
+
+`worktreeman` only runs in its required bare layout: `.git` must point to `./.bare`, `.bare/` must be bare, and checked-out worktrees such as `main/` and `wtm-settings/` must live directly under the same root.
 
 ## What it does not do
 

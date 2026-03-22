@@ -1,5 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
+  WORKTREEMAN_BARE_DIR,
+  WORKTREEMAN_GIT_FILE,
+  WORKTREEMAN_GIT_FILE_CONTENT,
+} from "../../shared/constants.js";
 import { runCommand } from "./process.js";
 
 export const CONFIG_CANDIDATES = ["worktree.yml", "worktree.yaml", "worktreeman.yml", "worktreeman.yaml"];
@@ -7,15 +13,11 @@ export const CONFIG_CANDIDATES = ["worktree.yml", "worktree.yaml", "worktreeman.
 export interface RepoContext {
   repoRoot: string;
   gitDir: string;
+  bareDir: string;
   configPath: string;
-  configRef: string;
   configFile: string;
   configSourceRef: string;
-  configWorktreePath?: string;
-}
-
-export interface RepoContextOptions {
-  configRef?: string;
+  configWorktreePath: string;
 }
 
 async function exists(filePath: string): Promise<boolean> {
@@ -35,125 +37,80 @@ export async function findGitRoot(startDir: string): Promise<string> {
   let current = path.resolve(startDir);
 
   while (true) {
-    const gitDir = path.join(current, ".git");
-    if (await exists(gitDir)) {
+    const gitPath = path.join(current, WORKTREEMAN_GIT_FILE);
+    if (await isWorktreemanBareLayoutRoot(current)) {
       return current;
+    }
+
+    if (await exists(gitPath)) {
+      throw new Error(
+        `Git repository found at ${current}, but it is not a valid worktreeman bare layout. Expected ${WORKTREEMAN_GIT_FILE} to contain exactly \`${WORKTREEMAN_GIT_FILE_CONTENT.trim()}\` and ${WORKTREEMAN_BARE_DIR}/ to be a bare repository.`,
+      );
     }
 
     const parent = path.dirname(current);
     if (parent === current) {
-      throw new Error("Unable to locate a git repository from the current directory.");
+      throw new Error(
+        `Unable to locate a worktreeman bare repository layout from ${startDir}. Expected a root containing ${WORKTREEMAN_GIT_FILE} and ${WORKTREEMAN_BARE_DIR}/.`,
+      );
     }
     current = parent;
   }
 }
 
-export async function findRepoContext(startDir: string, options: RepoContextOptions = {}): Promise<RepoContext> {
+export async function findRepoContext(startDir: string): Promise<RepoContext> {
   const repoRoot = await findGitRoot(startDir);
-  const gitDir = path.join(repoRoot, ".git");
-  const preferredRef = options.configRef?.trim();
-  const configRef = await resolveConfigRef(repoRoot, preferredRef);
-
-  const configWorktreePath = await findWorktreePathForRef(repoRoot, configRef);
-  if (configWorktreePath) {
-    for (const candidate of CONFIG_CANDIDATES) {
-      const configPath = path.join(configWorktreePath, candidate);
-      if (await exists(configPath)) {
-        return {
-          repoRoot,
-          gitDir,
-          configPath,
-          configRef: "WORKTREE",
-          configFile: candidate,
-          configSourceRef: configRef,
-          configWorktreePath,
-        };
-      }
-    }
+  const gitDir = path.join(repoRoot, WORKTREEMAN_GIT_FILE);
+  const bareDir = path.join(repoRoot, WORKTREEMAN_BARE_DIR);
+  const configWorktreePath = await findWorktreePathForRef(repoRoot, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH);
+  if (!configWorktreePath) {
+    throw new Error(
+      `Git repository found at ${repoRoot}, but the required settings worktree \`${DEFAULT_WORKTREEMAN_SETTINGS_BRANCH}\` is not checked out. Run \`worktreeman init\` first.`,
+    );
   }
 
   for (const candidate of CONFIG_CANDIDATES) {
-    if (await gitObjectExists(repoRoot, `${configRef}:${candidate}`)) {
-      return {
-        repoRoot,
-        gitDir,
-        configPath: `${candidate} @ ${configRef}`,
-        configRef,
-        configFile: candidate,
-        configSourceRef: configRef,
-      };
-    }
-  }
-
-  for (const candidate of CONFIG_CANDIDATES) {
-    const configPath = path.join(repoRoot, candidate);
+    const configPath = path.join(configWorktreePath, candidate);
     if (await exists(configPath)) {
-      const currentBranch = await tryRunGit(repoRoot, ["branch", "--show-current"]);
       return {
         repoRoot,
         gitDir,
+        bareDir,
         configPath,
-        configRef: "WORKTREE",
         configFile: candidate,
-        configSourceRef: currentBranch ?? configRef,
-        configWorktreePath: repoRoot,
+        configSourceRef: DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
+        configWorktreePath,
       };
     }
   }
 
   throw new Error(
-    `Git repository found at ${repoRoot}, but no worktree config was present in ${configRef} or the current worktree. Expected one of: ${CONFIG_CANDIDATES.join(", ")}`,
+    `Git repository found at ${repoRoot}, but no worktree config was present in ${configWorktreePath}. Expected one of: ${CONFIG_CANDIDATES.join(", ")}`,
   );
 }
 
-async function resolveConfigRef(repoRoot: string, preferredRef?: string): Promise<string> {
-  const normalizedPreferredRef = preferredRef?.trim();
-  if (normalizedPreferredRef) {
-    return normalizedPreferredRef;
-  }
+export async function isWorktreemanBareLayoutRoot(repoRoot: string): Promise<boolean> {
+  const gitFilePath = path.join(repoRoot, WORKTREEMAN_GIT_FILE);
+  const bareDir = path.join(repoRoot, WORKTREEMAN_BARE_DIR);
 
-  const configuredRef = await tryRunGit(repoRoot, ["config", "--local", "--get", "worktreeman.configRef"]);
-  if (configuredRef) {
-    return configuredRef;
-  }
-
-  const remoteHead = await tryRunGit(repoRoot, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-  if (remoteHead) {
-    return remoteHead;
-  }
-
-  for (const ref of ["main", "master", "origin/main", "origin/master"]) {
-    if (await gitObjectExists(repoRoot, ref)) {
-      return ref;
-    }
-  }
-
-  const currentBranch = await tryRunGit(repoRoot, ["branch", "--show-current"]);
-  if (currentBranch) {
-    return currentBranch;
-  }
-
-  throw new Error(
-    "Unable to determine which branch should be used for worktree config lookup. Expected origin/HEAD, main, or master.",
-  );
-}
-
-async function gitObjectExists(repoRoot: string, objectName: string): Promise<boolean> {
   try {
-    await runCommand("git", ["cat-file", "-e", objectName], { cwd: repoRoot });
-    return true;
+    const [gitFileContents, bareStat] = await Promise.all([
+      fs.readFile(gitFilePath, "utf8"),
+      fs.stat(bareDir),
+    ]);
+
+    if (!bareStat.isDirectory()) {
+      return false;
+    }
+
+    if (gitFileContents !== WORKTREEMAN_GIT_FILE_CONTENT) {
+      return false;
+    }
+
+    const result = await runCommand("git", ["rev-parse", "--is-bare-repository"], { cwd: bareDir });
+    return result.stdout.trim() === "true";
   } catch {
     return false;
-  }
-}
-
-async function tryRunGit(repoRoot: string, args: string[]): Promise<string | null> {
-  try {
-    const result = await runCommand("git", args, { cwd: repoRoot });
-    const value = result.stdout.trim();
-    return value ? value : null;
-  } catch {
-    return null;
   }
 }
 

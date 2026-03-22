@@ -39,7 +39,7 @@ export default defineConfig({
   },
   server: {
     watch: {
-      ignored: ["**/dist/**", "**/.worktrees/**"],
+      ignored: ["**/dist/**", "**/.bare/**"],
     },
   },
 });

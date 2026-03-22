@@ -4,17 +4,20 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  ConfigDocumentResponse,
   GitComparisonResponse,
   ShutdownStatus,
 } from "@shared/types";
 import {
   createWorktree,
   deleteWorktree,
+  getConfigDocument as fetchConfigDocument,
   getBackgroundCommandLogs as fetchBackgroundCommandLogs,
   getBackgroundCommands as fetchBackgroundCommands,
   getGitComparison as fetchGitComparison,
   getState,
   restartBackgroundCommand as restartBackgroundProcess,
+  saveConfigDocument as persistConfigDocument,
   startBackgroundCommand as startBackgroundProcess,
   startRuntime,
   stopBackgroundCommand as stopBackgroundProcess,
@@ -50,6 +53,8 @@ export function useDashboardState() {
   const [backgroundLogs, setBackgroundLogs] = useState<BackgroundCommandLogsResponse | null>(null);
   const [gitComparison, setGitComparison] = useState<GitComparisonResponse | null>(null);
   const [gitComparisonLoading, setGitComparisonLoading] = useState(false);
+  const [configDocument, setConfigDocument] = useState<ConfigDocumentResponse | null>(null);
+  const [configDocumentLoading, setConfigDocumentLoading] = useState(false);
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -288,6 +293,40 @@ export function useDashboardState() {
           }
         }
       },
+      async loadConfigDocument(options?: { silent?: boolean }) {
+        if (!options?.silent) {
+          setConfigDocumentLoading(true);
+        }
+
+        try {
+          const document = await fetchConfigDocument();
+          setConfigDocument(document);
+          setError(null);
+          return document;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to load config document.");
+          return null;
+        } finally {
+          if (!options?.silent) {
+            setConfigDocumentLoading(false);
+          }
+        }
+      },
+      async saveConfigDocument(contents: string) {
+        setConfigDocumentLoading(true);
+        try {
+          const document = await persistConfigDocument(contents);
+          setConfigDocument(document);
+          await refresh({ silent: true });
+          setError(null);
+          return document;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to save config document.");
+          return null;
+        } finally {
+          setConfigDocumentLoading(false);
+        }
+      },
     }),
     [appendBackgroundLogs, refresh],
   );
@@ -303,6 +342,8 @@ export function useDashboardState() {
     backgroundLogs,
     gitComparison,
     gitComparisonLoading,
+    configDocument,
+    configDocumentLoading,
     clearLastEnvSync,
     clearBackgroundLogs,
     refresh,

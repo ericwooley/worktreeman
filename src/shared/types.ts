@@ -91,8 +91,18 @@ export interface CreateWorktreeRequest {
 export interface ApiStateResponse {
   repoRoot: string;
   configPath: string;
+  configFile: string;
+  configSourceRef: string;
+  configWorktreePath?: string;
   config: WorktreeManagerConfig;
   worktrees: WorktreeRecord[];
+}
+
+export interface ConfigDocumentResponse {
+  branch: string;
+  filePath: string;
+  contents: string;
+  editable: boolean;
 }
 
 export interface GitBranchOption {

@@ -20,7 +20,7 @@
 - [App plus database and worker](#app-plus-database-and-worker)
 - [Notes on `init`](#notes-on-init)
 
-`worktreeman` reads configuration from one of these files at the repository root:
+`worktreeman` reads configuration from one of these files in the checked-out `wtm-settings` worktree inside the managed bare layout:
 
 - `worktree.yml`
 - `worktree.yaml`
@@ -38,6 +38,8 @@ If you want editor validation and autocomplete, put this at the top of the file:
 ```
 
 You can also keep a top-level `$schema` key in the file body if you want, but the comment form is the primary editor hint used by YAML language servers.
+
+If you start the local UI, the header `Config` action opens the shared `worktree.yml` in a built-in Monaco editor modal and saves directly back to the checked-out settings worktree.
 
 ## Recommended full example
 
@@ -63,7 +65,7 @@ quickLinks:
     url: postgresql://postgres:postgres@localhost:${DB_PORT}/postgres
 
 worktrees:
-  baseDir: .worktrees
+  baseDir: .
 
 startupCommands:
   - bun install
@@ -243,7 +245,7 @@ Example:
 
 ```yml
 worktrees:
-  baseDir: .worktrees
+  baseDir: .
 ```
 
 ## Practical patterns
@@ -265,7 +267,7 @@ quickLinks:
     url: http://localhost:${PORT}
 
 worktrees:
-  baseDir: .worktrees
+  baseDir: .
 
 startupCommands:
   - bun install
@@ -295,7 +297,7 @@ quickLinks:
     url: postgresql://postgres:postgres@localhost:${DB_PORT}/postgres
 
 worktrees:
-  baseDir: .worktrees
+  baseDir: .
 
 startupCommands:
   - bun install
@@ -308,9 +310,11 @@ backgroundCommands:
 
 ## Notes on `init`
 
-`worktreeman init` creates a starter config with the schema header and the basic runtime fields.
+`worktreeman init` creates a starter config in the `wtm-settings` worktree with the schema header and the basic runtime fields.
 
 It also writes the schema header automatically so editors can validate the file.
+
+`worktreeman start` expects the managed bare layout plus the checked-out `wtm-settings` worktree to be present locally and does not fall back to any other repository shape.
 
 You should still review the generated file and adjust:
 

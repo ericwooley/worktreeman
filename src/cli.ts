@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-import path from "node:path";
 import process from "node:process";
-import { confirm, input, select } from "@inquirer/prompts";
+import { confirm, input } from "@inquirer/prompts";
 import {
   boolean,
   command,
@@ -15,11 +14,15 @@ import {
   string,
   subcommands,
 } from "cmd-ts";
+import {
+  DEFAULT_WORKTREE_BASE_DIR,
+  DEFAULT_WORKTREEMAN_MAIN_BRANCH,
+  DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
+} from "./shared/constants.js";
 import { findRepoContext } from "./server/utils/paths.js";
 import { startServer } from "./server/app.js";
-import { listWorktrees } from "./server/services/git-service.js";
 import { initRepository } from "./server/services/init-service.js";
-import { findGitRoot } from "./server/utils/paths.js";
+import { createBareRepoLayout, ensurePrimaryWorktrees } from "./server/services/repository-layout-service.js";
 
 const startCommand = command({
   name: "start",
@@ -42,12 +45,6 @@ const startCommand = command({
       short: "p",
       description: "Port for the local web server. Defaults to PORT or 4312.",
     }),
-    configRef: option({
-      type: optional(string),
-      long: "config-ref",
-      description:
-        "Git ref to load worktree config from. Overrides WORKTREEMAN_CONFIG_REF and git config worktreeman.configRef.",
-    }),
     open: flag({
       type: boolean,
       long: "open",
@@ -64,10 +61,8 @@ const startCommand = command({
       defaultValueIsSerializable: true,
     }),
   },
-  handler: async ({ cwd, port, configRef, open, noOpen }) => {
-    const repo = await findRepoContext(cwd, {
-      configRef: configRef ?? process.env.WORKTREEMAN_CONFIG_REF,
-    });
+  handler: async ({ cwd, port, open, noOpen }) => {
+    const repo = await findRepoContext(cwd);
     let server: Awaited<ReturnType<typeof startServer>>;
 
     try {
@@ -115,13 +110,8 @@ const startCommand = command({
 const initCommand = command({
   name: "init",
   description:
-    "Create a starter worktree.yml, prompting for branch, layout, and dynamic runtime port env vars when they are not provided.",
+    "Create or update the starter worktree.yml in the required wtm-settings worktree.",
   args: {
-    branch: positional({
-      type: optional(string),
-      displayName: "branch",
-      description: "Branch whose worktree should hold the shared worktree.yml config. If omitted, init will ask.",
-    }),
     cwd: option({
       type: string,
       long: "cwd",
@@ -130,12 +120,6 @@ const initCommand = command({
       defaultValueIsSerializable: true,
       description:
         "Directory to start searching from when locating the repository root.",
-    }),
-    baseDir: option({
-      type: optional(string),
-      long: "base-dir",
-      description:
-        "Value to write to worktrees.baseDir in worktree.yml. If omitted in a TTY session, init will ask.",
     }),
     force: flag({
       type: boolean,
@@ -147,36 +131,18 @@ const initCommand = command({
       defaultValueIsSerializable: true,
     }),
   },
-  handler: async ({ branch, cwd, baseDir, force }) => {
+  handler: async ({ cwd, force }) => {
     const interactive = process.stdin.isTTY && process.stdout.isTTY;
 
     if (interactive) {
       process.stdout.write("\nworktreeman init\n");
-      process.stdout.write("Create or reuse a branch worktree, then generate a shared worktree.yml.\n\n");
+      process.stdout.write(`Create or reuse the ${DEFAULT_WORKTREEMAN_SETTINGS_BRANCH} settings worktree, then generate a shared worktree.yml.\n\n`);
     }
-
-    const resolvedBranch =
-      branch ??
-      (interactive
-        ? await promptForBranch()
-        : undefined);
-
-    if (!resolvedBranch?.trim()) {
-      throw new Error(
-        "Branch is required. Pass `worktreeman init <branch>` or run `worktreeman init` in an interactive terminal.",
-      );
-    }
-
-    const suggestedBaseDir = baseDir ?? (interactive ? await detectSuggestedBaseDir(cwd) : ".worktrees");
-    const resolvedBaseDir =
-      baseDir ??
-      (interactive ? await promptForBaseDir(suggestedBaseDir) : suggestedBaseDir);
 
     const resolvedRuntimePorts = interactive ? await promptForRuntimePorts() : [];
 
     let result = await initRepository(cwd, {
-      branch: resolvedBranch,
-      baseDir: resolvedBaseDir,
+      baseDir: DEFAULT_WORKTREE_BASE_DIR,
       runtimePorts: resolvedRuntimePorts,
       force,
     });
@@ -195,8 +161,7 @@ const initCommand = command({
       }
 
       result = await initRepository(cwd, {
-        branch: resolvedBranch,
-        baseDir: resolvedBaseDir,
+        baseDir: DEFAULT_WORKTREE_BASE_DIR,
         runtimePorts: resolvedRuntimePorts,
         force: true,
       });
@@ -220,12 +185,75 @@ const initCommand = command({
   },
 });
 
+const createCommand = command({
+  name: "create",
+  description:
+    "Create a new bare-repo worktreeman layout with .bare, a linked .git file, main, and wtm-settings.",
+  args: {
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory where the managed repository layout should be created.",
+    }),
+  },
+  handler: async ({ cwd }) => {
+    const runtimePorts = process.stdin.isTTY && process.stdout.isTTY ? await promptForRuntimePorts() : [];
+
+    await createBareRepoLayout({ rootDir: cwd });
+    await ensurePrimaryWorktrees({ rootDir: cwd, createMissingBranches: true });
+
+    const result = await initRepository(cwd, {
+      baseDir: DEFAULT_WORKTREE_BASE_DIR,
+      runtimePorts,
+      force: false,
+    });
+
+    process.stdout.write(`Created bare repository layout at ${result.repoRoot}\n`);
+    process.stdout.write(`Created primary worktrees at ${result.repoRoot}/${DEFAULT_WORKTREEMAN_MAIN_BRANCH} and ${result.worktreePath}\n`);
+    process.stdout.write(`Created ${result.configPath}\n`);
+  },
+});
+
+const cloneCommand = command({
+  name: "clone",
+  description:
+    "Clone a remote into the required bare-repo worktreeman layout and check out main plus wtm-settings.",
+  args: {
+    remote: positional({
+      type: string,
+      displayName: "remote",
+      description: "Remote repository URL to clone.",
+    }),
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory where the managed repository layout should be created.",
+    }),
+  },
+  handler: async ({ remote, cwd }) => {
+    await createBareRepoLayout({ rootDir: cwd, remoteUrl: remote });
+    await ensurePrimaryWorktrees({ rootDir: cwd, createMissingBranches: false });
+    const repo = await findRepoContext(cwd);
+
+    process.stdout.write(`Cloned ${remote} into bare repository layout at ${repo.repoRoot}\n`);
+    process.stdout.write(`Checked out ${repo.repoRoot}/${DEFAULT_WORKTREEMAN_MAIN_BRANCH} and ${repo.configWorktreePath}\n`);
+  },
+});
+
 const cli = subcommands({
   name: "worktreeman",
   version: "0.1.0",
   description:
     "Manage git worktrees, runtime env setup, background commands, and tmux-backed terminals from one local UI.",
   cmds: {
+    create: createCommand,
+    clone: cloneCommand,
     start: startCommand,
     init: initCommand,
   },
@@ -240,72 +268,6 @@ run(cli, normalizeArgv(process.argv.slice(2))).catch((error) => {
 
 function normalizeArgv(argv: string[]): string[] {
   return argv.filter((value) => value !== "--");
-}
-
-async function detectSuggestedBaseDir(startDir: string): Promise<string> {
-  try {
-    const repoRoot = await findGitRoot(startDir);
-    const worktrees = await listWorktrees(repoRoot);
-    const repoRootWithSeparator = `${repoRoot}${path.sep}`;
-    const siblingLayout = worktrees.some(
-      (worktree) =>
-        path.dirname(worktree.worktreePath) === path.dirname(repoRoot) &&
-        worktree.worktreePath !== repoRoot &&
-        !worktree.worktreePath.startsWith(repoRootWithSeparator),
-    );
-
-    return siblingLayout ? ".." : ".worktrees";
-  } catch {
-    return ".worktrees";
-  }
-}
-
-async function promptForBranch(): Promise<string> {
-  return input({
-    message: "Which branch should hold the shared worktree.yml config?",
-    default: "main",
-    validate: (value) => (value.trim() ? true : "Branch is required."),
-  });
-}
-
-async function promptForBaseDir(suggestedBaseDir: string): Promise<string> {
-  const defaultChoice = suggestedBaseDir === ".." ? "siblings" : suggestedBaseDir === ".worktrees" ? "nested" : "custom";
-
-  const layout = await select<string>({
-    message: "Where should new branch worktrees be created relative to the config worktree?",
-    default: defaultChoice,
-    choices: [
-      {
-        name: ".worktrees",
-        value: "nested",
-        description: "Nested layout, for example main/.worktrees/feature-x",
-      },
-      {
-        name: "..",
-        value: "siblings",
-        description: "Sibling layout, for example main/, feature-x/, bugfix-y/ under one parent",
-      },
-      {
-        name: "Custom path",
-        value: "custom",
-        description: "Write your own relative or absolute worktrees.baseDir value",
-      },
-    ],
-  });
-
-  if (layout === "nested") {
-    return ".worktrees";
-  }
-
-  if (layout === "siblings") {
-    return "..";
-  }
-
-  return input({
-    message: "Custom value for worktrees.baseDir",
-    default: suggestedBaseDir,
-    validate: (value) => (value.trim() ? true : "baseDir is required."),
-  });
 }
 
 async function promptForRuntimePorts(): Promise<string[]> {

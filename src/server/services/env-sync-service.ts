@@ -3,9 +3,9 @@ import path from "node:path";
 
 const EXCLUDED_DIRECTORIES = new Set([
   ".git",
+  ".bare",
   ".next",
   ".turbo",
-  ".worktrees",
   "build",
   "dist",
   "node_modules",

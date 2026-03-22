@@ -24,7 +24,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const config = await loadConfig({
     path: options.repo.configPath,
     repoRoot: options.repo.repoRoot,
-    gitRef: options.repo.configRef === "WORKTREE" ? undefined : options.repo.configRef,
     gitFile: options.repo.configFile,
   });
   const runtimes = new RuntimeStore();
@@ -39,7 +38,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   app.use("/api", createApiRouter({
     repoRoot: options.repo.repoRoot,
     configPath: options.repo.configPath,
-    configRef: options.repo.configRef,
     configSourceRef: options.repo.configSourceRef,
     configFile: options.repo.configFile,
     configWorktreePath: options.repo.configWorktreePath,
@@ -97,7 +95,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const loadShutdownConfig = () => loadConfig({
     path: options.repo.configPath,
     repoRoot: options.repo.repoRoot,
-    gitRef: options.repo.configRef === "WORKTREE" ? undefined : options.repo.configRef,
     gitFile: options.repo.configFile,
   });
 

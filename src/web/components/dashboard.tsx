@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import Editor from "@monaco-editor/react";
+import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "@shared/constants";
 import {
   CommandPalette,
   DEFAULT_COMMAND_PALETTE_SHORTCUT,
@@ -83,6 +85,8 @@ export function Dashboard() {
     backgroundLogs,
     gitComparison,
     gitComparisonLoading,
+    configDocument,
+    configDocumentLoading,
     clearLastEnvSync,
     clearBackgroundLogs,
     create,
@@ -95,7 +99,9 @@ export function Dashboard() {
     restartBackgroundCommand,
     stopBackgroundCommand,
     loadBackgroundLogs,
+    loadConfigDocument,
     loadGitComparison,
+    saveConfigDocument,
     subscribeToBackgroundLogs,
   } = useDashboardState();
   const { theme, themes, setThemeId } = useTheme();
@@ -113,6 +119,8 @@ export function Dashboard() {
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialParams.get("terminal") === "open");
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
+  const [configEditorOpen, setConfigEditorOpen] = useState(false);
+  const [configDraft, setConfigDraft] = useState("");
   const [branch, setBranch] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteScope, setCommandPaletteScope] = useState<CommandPaletteScope>("main");
@@ -354,6 +362,40 @@ export function Dashboard() {
     setCreateWorktreeModalOpen(false);
   };
 
+  const openConfigEditor = useCallback(async () => {
+    const document = await loadConfigDocument();
+    if (!document) {
+      return;
+    }
+
+    setConfigDraft(document.contents);
+    setConfigEditorOpen(true);
+  }, [loadConfigDocument]);
+
+  const closeConfigEditor = useCallback(() => {
+    setConfigEditorOpen(false);
+    setConfigDraft("");
+  }, []);
+
+  const reloadConfigEditor = useCallback(async () => {
+    const document = await loadConfigDocument();
+    if (!document) {
+      return;
+    }
+
+    setConfigDraft(document.contents);
+  }, [loadConfigDocument]);
+
+  const saveConfigEditor = useCallback(async () => {
+    const document = await saveConfigDocument(configDraft);
+    if (!document) {
+      return;
+    }
+
+    setConfigDraft(document.contents);
+    setConfigEditorOpen(false);
+  }, [configDraft, saveConfigDocument]);
+
   const confirmDelete = async () => {
     if (!deleteConfirmBranch) {
       return;
@@ -455,6 +497,15 @@ export function Dashboard() {
         action: () => setCommandPaletteScope("theme-select"),
       },
       {
+        id: "settings-config-editor",
+        code: "wcfg",
+        title: "Edit worktree config",
+        subtitle: `Open ${DEFAULT_WORKTREEMAN_SETTINGS_BRANCH}/worktree.yml in the built-in editor.`,
+        group: "Settings",
+        keywords: ["config", "settings", "yaml", "worktree.yml", DEFAULT_WORKTREEMAN_SETTINGS_BRANCH],
+        action: () => void openConfigEditor(),
+      },
+      {
         id: "shortcut-settings",
         code: "sc",
         title: "Change command palette shortcut",
@@ -517,7 +568,7 @@ export function Dashboard() {
     }
 
     return items.sort(comparePaletteItems);
-  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, selected, start, state?.worktrees, stop, syncEnv, theme]);
+  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, openConfigEditor, selected, start, state?.worktrees, stop, syncEnv, theme]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     return (state?.worktrees ?? []).map((entry, index) => ({
@@ -623,6 +674,20 @@ export function Dashboard() {
                     </div>
                   </div>
                   <span className="theme-text-accent-soft font-mono text-sm">/</span>
+                </button>
+                <button
+                  type="button"
+                  className="theme-border-subtle theme-dropdown-trigger flex h-full min-h-[100%] w-full items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150 xl:col-span-2"
+                  onClick={() => void openConfigEditor()}
+                >
+                  <div className="min-w-0">
+                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">Config</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="theme-text-strong truncate font-mono text-sm">{state?.configSourceRef ?? DEFAULT_WORKTREEMAN_SETTINGS_BRANCH}</span>
+                      <MatrixBadge tone="neutral" compact>{state?.configFile ?? "worktree.yml"}</MatrixBadge>
+                    </div>
+                  </div>
+                  <span className="theme-text-accent-soft font-mono text-sm">edit</span>
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
@@ -839,6 +904,76 @@ export function Dashboard() {
             ) : (
               <p className="font-mono text-sm theme-chip-muted">No matching `.env*` files found.</p>
             )}
+          </div>
+        </MatrixModal>
+      ) : null}
+
+      {configEditorOpen ? (
+        <MatrixModal
+          kicker="Settings config"
+          title={<>Edit `{configDocument?.filePath ?? state?.configPath ?? "worktree.yml"}`</>}
+          description={configDocument?.editable === false
+            ? "This config is currently available read-only. Open the settings worktree locally to edit it from the app."
+            : "Update the shared worktree config stored in the settings worktree."}
+          closeLabel="Cancel"
+          maxWidthClass="max-w-6xl"
+          onClose={closeConfigEditor}
+          footer={(
+            <>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={closeConfigEditor}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => void reloadConfigEditor()}
+                disabled={configDocumentLoading}
+              >
+                Reload
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                onClick={() => void saveConfigEditor()}
+                disabled={configDocumentLoading || configDocument?.editable === false}
+              >
+                Save config
+              </button>
+            </>
+          )}
+        >
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
+              <MatrixBadge tone="neutral">Branch</MatrixBadge>
+              <span className="font-mono theme-text-strong">{configDocument?.branch ?? state?.configSourceRef ?? DEFAULT_WORKTREEMAN_SETTINGS_BRANCH}</span>
+              <MatrixBadge tone={configDocument?.editable === false ? "warning" : "active"}>
+                {configDocument?.editable === false ? "Read only" : "Editable"}
+              </MatrixBadge>
+            </div>
+            <div className="overflow-hidden border theme-border-subtle">
+              <Editor
+                height="65vh"
+                defaultLanguage="yaml"
+                language="yaml"
+                value={configDraft}
+                onChange={(value) => setConfigDraft(value ?? "")}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  wordWrap: "on",
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  readOnly: configDocument?.editable === false,
+                  tabSize: 2,
+                  insertSpaces: true,
+                }}
+                theme={theme.variant === "light" ? "vs" : "vs-dark"}
+              />
+            </div>
           </div>
         </MatrixModal>
       ) : null}

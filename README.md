@@ -6,16 +6,33 @@ worktreeman is the local app for creating Git worktrees, preparing branch-scoped
 
 ```bash
 bun install
-bun run dev -- init
+bun run dev -- create --cwd /path/to/repo
 bun run dev:watch -- --cwd /path/to/repo
 ```
 
 Then open `http://127.0.0.1:4312`.
 
 - `bun run dev -- <subcommand>` runs the CLI once and exits
-- `bun run dev:watch -- --cwd /path/to/repo` starts the watched local server flow
-- `bun run dev -- init` prompts for branch, worktree layout, and optional dynamic runtime port env vars
-- `bun run dev -- init main --base-dir ..` keeps init non-interactive for sibling worktree layouts
+- `bun run dev -- create --cwd /path/to/repo` bootstraps the required bare layout with `.bare/`, `.git`, `main/`, and `wtm-settings/`
+- `bun run dev -- clone <remote> --cwd /path/to/repo` clones a remote into that same layout and checks out `main/` plus `wtm-settings/`
+- `bun run dev:watch -- --cwd /path/to/repo` starts the watched local server flow and refuses to run outside the required bare layout
+
+## Required repository layout
+
+`worktreeman` only runs in this layout:
+
+```text
+repo-root/
+  .bare/
+  .git          # exactly: gitdir: ./.bare
+  main/
+  wtm-settings/
+```
+
+- `.bare/` must be a bare Git repository
+- `.git` must be a plain text file containing exactly `gitdir: ./.bare`
+- `wtm-settings/worktree.yml` is the only config source
+- generated feature worktrees live directly under the same root, for example `repo-root/feature-x`
 
 ## Build outputs
 

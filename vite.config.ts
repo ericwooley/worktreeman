@@ -18,7 +18,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5155,
     watch: {
-      ignored: ["**/.worktrees/**", "**/dist/**"],
+      ignored: ["**/.bare/**", "**/dist/**"],
     },
   },
 });
