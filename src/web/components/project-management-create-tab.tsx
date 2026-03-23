@@ -1,4 +1,11 @@
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
+import { Suspense, lazy, useState } from "react";
+import { MatrixTabButton } from "./matrix-primitives";
+
+const ProjectManagementWysiwyg = lazy(async () => {
+  const module = await import("./project-management-wysiwyg");
+  return { default: module.ProjectManagementWysiwyg };
+});
 
 interface ProjectManagementCreateTabProps {
   statuses: string[];
@@ -31,14 +38,15 @@ export function ProjectManagementCreateTab({
   onNewAssigneeChange,
   onCreate,
 }: ProjectManagementCreateTabProps) {
+  const [editorMode, setEditorMode] = useState<"markdown" | "wysiwyg">("markdown");
+
   return (
     <div className="border theme-border-subtle p-4">
       <p className="matrix-kicker">Create document</p>
-      <h2 className="mt-2 text-2xl font-semibold theme-text-strong">New markdown document</h2>
-      <p className="mt-2 text-sm theme-text-muted">Create a new project document without crowding the main reading workspace.</p>
+      <h2 className="mt-1 text-xl font-semibold theme-text-strong">New markdown document</h2>
 
-      <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-        <div className="space-y-3">
+      <div className="mt-3 grid gap-3 xl:grid-cols-[20rem_minmax(0,1fr)]">
+        <div className="space-y-2">
           <input
             value={newTitle}
             onChange={(event) => onNewTitleChange(event.target.value)}
@@ -76,15 +84,27 @@ export function ProjectManagementCreateTab({
           </button>
         </div>
 
-        <div className="border theme-border-subtle p-4">
-          <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Initial markdown</p>
-          <textarea
-            value={newMarkdown}
-            onChange={(event) => onNewMarkdownChange(event.target.value)}
-            placeholder="# New document"
-            rows={18}
-            className="matrix-input mt-4 w-full rounded-none px-3 py-2 text-sm outline-none"
-          />
+        <div className="overflow-hidden border theme-border-subtle">
+          <div className="flex items-center justify-between gap-3 border-b theme-border-subtle px-3 py-2">
+            <span className="text-xs uppercase tracking-[0.18em] theme-text-soft">Initial document</span>
+            <div className="flex flex-wrap gap-2">
+              <MatrixTabButton active={editorMode === "markdown"} label="Markdown" onClick={() => setEditorMode("markdown")} />
+              <MatrixTabButton active={editorMode === "wysiwyg"} label="WYSIWYG" onClick={() => setEditorMode("wysiwyg")} />
+            </div>
+          </div>
+          {editorMode === "markdown" ? (
+            <textarea
+              value={newMarkdown}
+              onChange={(event) => onNewMarkdownChange(event.target.value)}
+              placeholder="# New document"
+              rows={20}
+              className="matrix-input min-h-[55vh] w-full rounded-none border-0 px-4 py-3 font-mono text-sm outline-none"
+            />
+          ) : (
+            <Suspense fallback={<div className="px-4 py-6 text-sm theme-empty-note">Loading editor...</div>}>
+              <ProjectManagementWysiwyg value={newMarkdown} onChange={onNewMarkdownChange} height="55vh" />
+            </Suspense>
+          )}
         </div>
       </div>
     </div>

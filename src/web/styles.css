@@ -411,9 +411,7 @@ body,
 
 .theme-terminal-drawer {
   border-top-color: rgb(var(--rgb-base0E) / 0.32);
-  background:
-    linear-gradient(135deg, rgb(var(--rgb-base0D) / 0.24), transparent 48%),
-    linear-gradient(180deg, rgb(var(--rgb-base0E) / 0.34), rgb(var(--rgb-base01) / 0.96));
+  background: rgb(var(--rgb-base01) / 0.96);
   box-shadow:
     inset 0 1px 0 rgb(var(--rgb-base07) / 0.08),
     0 -10px 36px rgb(var(--rgb-base00) / 0.32);
@@ -421,7 +419,7 @@ body,
 
 .theme-terminal-drawer-row {
   border-bottom-color: rgb(var(--rgb-base06) / 0.16);
-  background: linear-gradient(90deg, rgb(var(--rgb-base0B) / 0.1), transparent 38%);
+  background: rgb(var(--rgb-base01) / 0.96);
 }
 
 .theme-terminal-mode-toggle {
@@ -560,7 +558,7 @@ body,
 }
 
 .pm-markdown {
-  line-height: 1.7;
+  line-height: 1.45;
 }
 
 .pm-markdown > :first-child {
@@ -577,22 +575,22 @@ body,
 .pm-markdown h4,
 .pm-markdown h5,
 .pm-markdown h6 {
-  margin: 1.25rem 0 0.75rem;
+  margin: 0.8rem 0 0.35rem;
   color: var(--base06);
   font-weight: 600;
   line-height: 1.25;
 }
 
 .pm-markdown h1 {
-  font-size: 1.5rem;
-}
-
-.pm-markdown h2 {
   font-size: 1.25rem;
 }
 
+.pm-markdown h2 {
+  font-size: 1.05rem;
+}
+
 .pm-markdown h3 {
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .pm-markdown p,
@@ -601,16 +599,16 @@ body,
 .pm-markdown blockquote,
 .pm-markdown pre,
 .pm-markdown table {
-  margin: 0 0 1rem;
+  margin: 0 0 0.5rem;
 }
 
 .pm-markdown ul,
 .pm-markdown ol {
-  padding-left: 1.5rem;
+  padding-left: 1.2rem;
 }
 
 .pm-markdown li + li {
-  margin-top: 0.25rem;
+  margin-top: 0.12rem;
 }
 
 .pm-markdown a {
@@ -652,7 +650,7 @@ body,
 .pm-markdown hr {
   border: 0;
   border-top: 1px solid rgb(var(--rgb-base0B) / 0.14);
-  margin: 1.25rem 0;
+  margin: 0.8rem 0;
 }
 
 .matrix-diff-panel {

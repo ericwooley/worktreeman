@@ -89,6 +89,7 @@ export function ProjectManagementPanel({
   onUpdateDocument,
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
+  const [documentViewMode, setDocumentViewMode] = useState<"document" | "edit">("document");
   const [selectedTag, setSelectedTag] = useState<string>("");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("");
   const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string>("");
@@ -114,6 +115,7 @@ export function ProjectManagementPanel({
       setDraftTags("");
       setDraftStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
       setDraftAssignee("");
+      setDocumentViewMode("document");
       return;
     }
 
@@ -122,6 +124,7 @@ export function ProjectManagementPanel({
     setDraftTags(document.tags.join(", "));
     setDraftStatus(document.status);
     setDraftAssignee(document.assignee);
+    setDocumentViewMode("document");
   }, [document]);
 
   const availableAssignees = useMemo(
@@ -179,6 +182,16 @@ export function ProjectManagementPanel({
     [document?.markdown, draftMarkdown],
   );
 
+  const compactDocumentSummary = document
+    ? [
+      `#${document.number}`,
+      document.status,
+      document.assignee || "Unassigned",
+      document.archived ? "Archived" : "Active",
+      `${document.tags.length} tag${document.tags.length === 1 ? "" : "s"}`,
+    ]
+    : [];
+
   const emptyStateMessage = activeSubTab === "document"
     ? "Select a document from the left rail to inspect its markdown, tags, and history."
     : activeSubTab === "board"
@@ -197,6 +210,7 @@ export function ProjectManagementPanel({
 
   async function handleSelectDocument(documentId: string, options?: { silent?: boolean }) {
     onSubTabChange("document");
+    setDocumentViewMode("document");
     return onSelectDocument(documentId, options);
   }
 
@@ -225,7 +239,7 @@ export function ProjectManagementPanel({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="matrix-kicker">Project management</p>
-          <h2 className="mt-2 text-2xl font-semibold theme-text-strong">Documents</h2>
+          <h2 className="mt-1 text-xl font-semibold theme-text-strong">Documents</h2>
         </div>
         <button
           type="button"
@@ -237,7 +251,7 @@ export function ProjectManagementPanel({
         </button>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
           className={`matrix-button rounded-none px-3 py-1.5 text-xs ${selectedTag === "" ? "theme-pill-emphasis theme-text-strong" : ""}`}
@@ -257,7 +271,7 @@ export function ProjectManagementPanel({
         ))}
       </div>
 
-      <div className="mt-4 grid gap-2">
+      <div className="mt-3 grid gap-2">
         <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
           <select
             value={selectedStatusFilter}
@@ -290,27 +304,26 @@ export function ProjectManagementPanel({
         </div>
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-3 space-y-2">
         {filteredDocuments.length ? filteredDocuments.map((entry) => (
           <button
             key={entry.id}
             type="button"
-            className={`w-full border px-3 py-3 text-left transition-colors ${document?.id === entry.id ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+            className={`w-full border px-3 py-2 text-left transition-colors ${document?.id === entry.id ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
             onClick={() => void handleSelectDocument(entry.id)}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold theme-text-strong">{entry.title}</p>
                 <p className="mt-1 text-xs font-semibold theme-text-strong">#{entry.number}</p>
-                <p className="mt-1 text-xs theme-text-muted">{new Date(entry.updatedAt).toLocaleString()}</p>
-                <p className="mt-1 text-xs theme-text-muted">{entry.status} - {entry.assignee || "Unassigned"}</p>
+                <p className="mt-1 text-[11px] theme-text-muted">{entry.status} - {entry.assignee || "Unassigned"}</p>
               </div>
               <MatrixBadge tone={entry.archived ? "warning" : "neutral"} compact>
                 {entry.archived ? "archived" : entry.historyCount}
               </MatrixBadge>
             </div>
-            <div className="mt-2 flex flex-wrap gap-1">
-              {entry.tags.map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+            <div className="mt-1 flex flex-wrap gap-1">
+              {entry.tags.slice(0, 3).map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
             </div>
           </button>
         )) : (
@@ -320,12 +333,12 @@ export function ProjectManagementPanel({
         )}
       </div>
 
-        <button
-          type="button"
-          className="mt-5 w-full matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-          onClick={() => onSubTabChange("create")}
-        >
-          New document
+      <button
+        type="button"
+        className="mt-4 w-full matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+        onClick={() => onSubTabChange("create")}
+      >
+        New document
         </button>
     </div>
   );
@@ -362,25 +375,25 @@ export function ProjectManagementPanel({
             <div className="grid gap-4 pt-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
               {documentRail}
               <div>
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
             <div>
               <p className="matrix-kicker">Markdown document</p>
-              <h2 className="mt-2 text-2xl font-semibold theme-text-strong">{document?.title ?? "Select a document"}</h2>
-              {document ? <p className="mt-1 text-sm font-semibold theme-text-muted">#{document.number}</p> : null}
-              <p className="mt-2 text-sm theme-text-muted">
-                Edit documents when you need to, otherwise stay in the clean reading view.
-              </p>
+              <h2 className="mt-1 text-2xl font-semibold theme-text-strong">{document?.title ?? "Select a document"}</h2>
+              {document ? (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {compactDocumentSummary.map((item) => <MatrixBadge key={item} tone="neutral" compact>{item}</MatrixBadge>)}
+                  {document.tags.map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className={`matrix-button rounded-none px-3 py-2 text-sm ${editMode ? "theme-pill-emphasis theme-text-strong" : ""}`}
-                disabled={!document}
-                onClick={() => setEditMode((current) => !current)}
-              >
-                {editMode ? "Hide edit" : "Edit"}
-              </button>
-              {editMode ? (
+              {document ? (
+                <div className="flex flex-wrap gap-2">
+                  <MatrixTabButton active={documentViewMode === "document"} label="Document" onClick={() => setDocumentViewMode("document")} />
+                  <MatrixTabButton active={documentViewMode === "edit"} label="Edit" onClick={() => setDocumentViewMode("edit")} />
+                </div>
+              ) : null}
+              {documentViewMode === "edit" ? (
                 <button
                   type="button"
                   className={`matrix-button rounded-none px-3 py-2 text-sm ${useMonacoEditor ? "theme-pill-emphasis theme-text-strong" : ""}`}
@@ -392,7 +405,7 @@ export function ProjectManagementPanel({
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-                disabled={!document || saving || !editMode}
+                disabled={!document || saving || documentViewMode !== "edit"}
                 onClick={() => document ? void onUpdateDocument(document.id, {
                   title: draftTitle,
                   markdown: draftMarkdown,
@@ -407,21 +420,9 @@ export function ProjectManagementPanel({
             </div>
           </div>
 
-          {document ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-              <MatrixDetailField label="Document ID" value={document.id} mono />
-              <MatrixDetailField label="Number" value={`#${document.number}`} />
-              <MatrixDetailField label="Status" value={document.status} />
-              <MatrixDetailField label="Assignee" value={document.assignee || "Unassigned"} />
-              <MatrixDetailField label="Archived" value={document.archived ? "Yes" : "No"} />
-              <MatrixDetailField label="Created" value={new Date(document.createdAt).toLocaleString()} />
-              <MatrixDetailField label="Updated" value={new Date(document.updatedAt).toLocaleString()} />
-            </div>
-          ) : null}
-
-          {document && editMode ? (
-            <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-              <div className="space-y-3">
+          {document && documentViewMode === "edit" ? (
+            <div className="mt-3 grid gap-3 xl:grid-cols-[18rem_minmax(0,1fr)]">
+              <div className="space-y-2 border theme-border-subtle p-3">
                 <input
                   value={draftTitle}
                   onChange={(event) => setDraftTitle(event.target.value)}
@@ -467,40 +468,23 @@ export function ProjectManagementPanel({
                   </button>
                   {document.archived ? <MatrixBadge tone="warning">Archived</MatrixBadge> : null}
                 </div>
-                <div className="overflow-hidden border theme-border-subtle">
+              </div>
+              <div className="overflow-hidden border theme-border-subtle">
                   <Suspense fallback={<div className="px-4 py-6 text-sm theme-empty-note">Loading editor...</div>}>
                     {useMonacoEditor ? (
-                      <ProjectManagementMonacoEditor value={draftMarkdown} onChange={setDraftMarkdown} />
+                      <ProjectManagementMonacoEditor value={draftMarkdown} onChange={setDraftMarkdown} height="68vh" />
                     ) : (
-                      <ProjectManagementWysiwyg value={draftMarkdown} onChange={setDraftMarkdown} />
+                      <ProjectManagementWysiwyg value={draftMarkdown} onChange={setDraftMarkdown} height="68vh" />
                     )}
                   </Suspense>
-                </div>
-              </div>
-              <div className="border theme-border-subtle p-4">
-                <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Preview</p>
-                <div
-                  className="pm-markdown mt-4 text-sm theme-text"
-                  dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
-                />
               </div>
             </div>
           ) : document ? (
-            <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-              <div className="border theme-border-subtle p-4">
-                <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Overview</p>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <MatrixDetailField label="Title" value={document.title} />
-                  <MatrixDetailField label="Tags" value={document.tags.join(", ") || "None"} />
-                </div>
-              </div>
-              <div className="border theme-border-subtle p-4">
-                <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Preview</p>
+            <div className="mt-3 border theme-border-subtle p-4">
                 <div
-                  className="pm-markdown mt-4 text-sm theme-text"
+                  className="pm-markdown text-sm theme-text"
                   dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }}
                 />
-              </div>
             </div>
           ) : (
             <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
