@@ -13,6 +13,11 @@ const ProjectManagementBoardTab = lazy(async () => {
   return { default: module.ProjectManagementBoardTab };
 });
 
+const ProjectManagementDependencyTreeTab = lazy(async () => {
+  const module = await import("./project-management-dependency-tree-tab");
+  return { default: module.ProjectManagementDependencyTreeTab };
+});
+
 const ProjectManagementHistoryTab = lazy(async () => {
   const module = await import("./project-management-history-tab");
   return { default: module.ProjectManagementHistoryTab };
@@ -33,7 +38,7 @@ const ProjectManagementMonacoEditor = lazy(async () => {
   return { default: module.ProjectManagementMonacoEditor };
 });
 
-export type ProjectManagementSubTab = "document" | "board" | "history" | "create";
+export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create";
 
 interface ProjectManagementPanelProps {
   documents: ProjectManagementDocumentSummary[];
@@ -52,6 +57,7 @@ interface ProjectManagementPanelProps {
     title: string;
     markdown: string;
     tags: string[];
+    dependencies?: string[];
     status?: string;
     assignee?: string;
   }) => Promise<ProjectManagementDocument | null>;
@@ -59,10 +65,12 @@ interface ProjectManagementPanelProps {
     title: string;
     markdown: string;
     tags: string[];
+    dependencies?: string[];
     status?: string;
     assignee?: string;
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
+  onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
 }
 
 function parseTags(value: string): string[] {
@@ -87,6 +95,7 @@ export function ProjectManagementPanel({
   onSelectDocument,
   onCreateDocument,
   onUpdateDocument,
+  onUpdateDependencies,
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
   const [documentViewMode, setDocumentViewMode] = useState<"document" | "edit">("document");
@@ -98,6 +107,7 @@ export function ProjectManagementPanel({
   const [draftTitle, setDraftTitle] = useState("");
   const [draftMarkdown, setDraftMarkdown] = useState("");
   const [draftTags, setDraftTags] = useState("");
+  const [dependencyDraft, setDependencyDraft] = useState<string[]>([]);
   const [draftStatus, setDraftStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [draftAssignee, setDraftAssignee] = useState("");
   const [editMode, setEditMode] = useState(false);
@@ -113,6 +123,7 @@ export function ProjectManagementPanel({
       setDraftTitle("");
       setDraftMarkdown("");
       setDraftTags("");
+      setDependencyDraft([]);
       setDraftStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
       setDraftAssignee("");
       setDocumentViewMode("document");
@@ -122,6 +133,7 @@ export function ProjectManagementPanel({
     setDraftTitle(document.title);
     setDraftMarkdown(document.markdown);
     setDraftTags(document.tags.join(", "));
+    setDependencyDraft(Array.isArray(document.dependencies) ? document.dependencies : []);
     setDraftStatus(document.status);
     setDraftAssignee(document.assignee);
     setDocumentViewMode("document");
@@ -219,6 +231,7 @@ export function ProjectManagementPanel({
       title: newTitle,
       markdown: newMarkdown,
       tags: parseTags(newTags),
+      dependencies: [],
       status: newStatus,
       assignee: newAssignee,
     });
@@ -247,10 +260,33 @@ export function ProjectManagementPanel({
       title: targetDocument.title,
       markdown: targetDocument.markdown,
       tags: targetDocument.tags,
+      dependencies: targetDocument.dependencies,
       status: nextStatus,
       assignee: targetDocument.assignee,
       archived: targetDocument.archived,
     });
+  }
+
+  const dependencyOptions = useMemo(
+    () => documents
+      .filter((entry) => entry.id !== document?.id)
+      .sort((left, right) => left.number - right.number),
+    [document?.id, documents],
+  );
+
+  async function handleDependencyDraftToggle(dependencyId: string) {
+    if (!document) {
+      return;
+    }
+
+    const nextDependencies = dependencyDraft.includes(dependencyId)
+      ? dependencyDraft.filter((entry) => entry !== dependencyId)
+      : [...dependencyDraft, dependencyId];
+
+    const updated = await onUpdateDependencies(document.id, nextDependencies);
+    if (updated) {
+      setDependencyDraft(updated.dependencies);
+    }
   }
 
   const documentRail = (
@@ -386,6 +422,7 @@ export function ProjectManagementPanel({
           <div className="flex flex-wrap gap-2 border-b theme-border-subtle pb-4">
             <MatrixTabButton active={activeSubTab === "document"} label="Document" onClick={() => onSubTabChange("document")} />
             <MatrixTabButton active={activeSubTab === "board"} label="Board" onClick={() => onSubTabChange("board")} />
+            <MatrixTabButton active={activeSubTab === "dependency-tree"} label="Dependency tree" onClick={() => onSubTabChange("dependency-tree")} />
             <MatrixTabButton active={activeSubTab === "history"} label="History" onClick={() => onSubTabChange("history")} />
             <MatrixTabButton active={activeSubTab === "create"} label="Create" onClick={() => onSubTabChange("create")} />
           </div>
@@ -402,6 +439,9 @@ export function ProjectManagementPanel({
                 <div className="mt-2 flex flex-wrap gap-1">
                   {compactDocumentSummary.map((item) => <MatrixBadge key={item} tone="neutral" compact>{item}</MatrixBadge>)}
                   {document.tags.map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+                  <MatrixBadge tone="neutral" compact>
+                    {document.dependencies.length} dependenc{document.dependencies.length === 1 ? "y" : "ies"}
+                  </MatrixBadge>
                 </div>
               ) : null}
             </div>
@@ -429,6 +469,7 @@ export function ProjectManagementPanel({
                   title: draftTitle,
                   markdown: draftMarkdown,
                   tags: parseTags(draftTags),
+                  dependencies: document.dependencies,
                   status: draftStatus,
                   assignee: draftAssignee,
                   archived: document.archived,
@@ -442,32 +483,44 @@ export function ProjectManagementPanel({
           {document && documentViewMode === "edit" ? (
             <div className="mt-3 grid gap-3 xl:grid-cols-[18rem_minmax(0,1fr)]">
               <div className="space-y-2 border theme-border-subtle p-3">
-                <input
-                  value={draftTitle}
-                  onChange={(event) => setDraftTitle(event.target.value)}
-                  placeholder="Document title"
-                  className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                />
-                <input
-                  value={draftTags}
-                  onChange={(event) => setDraftTags(event.target.value)}
-                  placeholder="bug, feature, plan"
-                  className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                />
-                <div className="grid gap-3 md:grid-cols-2">
-                  <select
-                    value={draftStatus}
-                    onChange={(event) => setDraftStatus(event.target.value)}
-                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                  >
-                    {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                  </select>
+                <label className="block space-y-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Title</span>
                   <input
-                    value={draftAssignee}
-                    onChange={(event) => setDraftAssignee(event.target.value)}
-                    placeholder="Assignee"
+                    value={draftTitle}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                    placeholder="Document title"
                     className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
                   />
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Tags</span>
+                  <input
+                    value={draftTags}
+                    onChange={(event) => setDraftTags(event.target.value)}
+                    placeholder="bug, feature, plan"
+                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                  />
+                </label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Status</span>
+                    <select
+                      value={draftStatus}
+                      onChange={(event) => setDraftStatus(event.target.value)}
+                      className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                    >
+                      {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                    </select>
+                  </label>
+                  <label className="block space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Assignee</span>
+                    <input
+                      value={draftAssignee}
+                      onChange={(event) => setDraftAssignee(event.target.value)}
+                      placeholder="Assignee"
+                      className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                    />
+                  </label>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -475,12 +528,13 @@ export function ProjectManagementPanel({
                     className="matrix-button rounded-none px-3 py-2 text-sm"
                     disabled={saving}
                     onClick={() => void onUpdateDocument(document.id, {
-                      title: draftTitle,
-                      markdown: draftMarkdown,
-                      tags: parseTags(draftTags),
-                      status: draftStatus,
-                      assignee: draftAssignee,
-                      archived: !document.archived,
+                       title: draftTitle,
+                       markdown: draftMarkdown,
+                       tags: parseTags(draftTags),
+                       dependencies: document.dependencies,
+                       status: draftStatus,
+                       assignee: draftAssignee,
+                       archived: !document.archived,
                     })}
                   >
                     {document.archived ? "Restore" : "Archive"}
@@ -499,11 +553,55 @@ export function ProjectManagementPanel({
               </div>
             </div>
           ) : document ? (
-            <div className="mt-3 border theme-border-subtle p-4">
+            <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
+              <div className="border theme-border-subtle p-4">
                 <div
                   className="pm-markdown text-sm theme-text"
                   dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }}
                 />
+              </div>
+              <div className="border theme-border-subtle p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Dependencies</p>
+                    <p className="mt-1 text-sm theme-text-muted">Pick prerequisite documents without opening the graph.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-2 py-1 text-xs"
+                    onClick={() => onSubTabChange("dependency-tree")}
+                  >
+                    Open graph
+                  </button>
+                </div>
+                <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
+                  {dependencyOptions.length ? dependencyOptions.map((entry) => {
+                    const checked = dependencyDraft.includes(entry.id);
+                    return (
+                      <label
+                        key={entry.id}
+                        className={`flex cursor-pointer items-start gap-3 border px-3 py-2 text-left ${checked ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={checked}
+                          disabled={saving}
+                          onChange={() => void handleDependencyDraftToggle(entry.id)}
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold theme-text-strong">{entry.title}</span>
+                          <span className="mt-1 block text-xs theme-text-muted">#{entry.number} - {entry.status}</span>
+                        </span>
+                      </label>
+                    );
+                  }) : (
+                    <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                      No other documents are available.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
@@ -523,6 +621,18 @@ export function ProjectManagementPanel({
                   onToggleBacklogLane={() => setShowBacklogLane((current) => !current)}
                   onSelectDocument={handleSelectDocument}
                   onMoveDocument={handleMoveDocument}
+                />
+              </Suspense>
+            </div>
+          ) : activeSubTab === "dependency-tree" ? (
+            <div className="pt-4">
+              <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading dependency tree...</div>}>
+                <ProjectManagementDependencyTreeTab
+                  documents={filteredDocuments}
+                  selectedDocumentId={selectedDocumentId}
+                  saving={saving}
+                  onSelectDocument={handleSelectDocument}
+                  onUpdateDependencies={onUpdateDependencies}
                 />
               </Suspense>
             </div>

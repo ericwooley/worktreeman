@@ -14,6 +14,7 @@ import {
   getProjectManagementDocumentHistory,
   listProjectManagementDocuments,
   updateProjectManagementDocument,
+  updateProjectManagementDependencies,
 } from "./project-management-service.js";
 
 async function createTestRepo(): Promise<string> {
@@ -187,6 +188,73 @@ test("documents can be archived and restored with metadata preserved", async () 
 
     const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
     assert.deepEqual(history.history.map((entry) => entry.action), ["create", "archive", "restore"]);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("dependencies persist on create and can be updated independently", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const foundation = await createProjectManagementDocument(repoRoot, {
+      title: "Foundation",
+      markdown: "# Foundation\n",
+      tags: ["plan"],
+    });
+
+    const dependent = await createProjectManagementDocument(repoRoot, {
+      title: "Dependent Feature",
+      markdown: "# Dependent Feature\n",
+      tags: ["feature"],
+      dependencies: [foundation.document.id],
+    });
+
+    assert.deepEqual(dependent.document.dependencies, [foundation.document.id]);
+
+    const outline = await listProjectManagementDocuments(repoRoot);
+    const dependentSummary = outline.documents.find((entry) => entry.id === dependent.document.id);
+    assert.deepEqual(dependentSummary?.dependencies, [foundation.document.id]);
+
+    const updated = await updateProjectManagementDependencies(repoRoot, dependent.document.id, []);
+    assert.deepEqual(updated.document.dependencies, []);
+
+    const history = await getProjectManagementDocumentHistory(repoRoot, dependent.document.id);
+    assert.match(history.history.at(-1)?.diff ?? "", /dependencies:/);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("dependency cycles are rejected", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const alpha = await createProjectManagementDocument(repoRoot, {
+      title: "Alpha",
+      markdown: "# Alpha\n",
+      tags: ["plan"],
+    });
+    const beta = await createProjectManagementDocument(repoRoot, {
+      title: "Beta",
+      markdown: "# Beta\n",
+      tags: ["feature"],
+      dependencies: [alpha.document.id],
+    });
+    const gamma = await createProjectManagementDocument(repoRoot, {
+      title: "Gamma",
+      markdown: "# Gamma\n",
+      tags: ["feature"],
+      dependencies: [beta.document.id],
+    });
+
+    await assert.rejects(
+      updateProjectManagementDependencies(repoRoot, alpha.document.id, [gamma.document.id]),
+      /Dependency cycles are not allowed/,
+    );
+
+    const alphaAfter = await getProjectManagementDocument(repoRoot, alpha.document.id);
+    assert.deepEqual(alphaAfter.document.dependencies, []);
   } finally {
     await destroyTestRepo(repoRoot);
   }

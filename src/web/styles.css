@@ -267,6 +267,81 @@ body,
   background: rgb(var(--rgb-base00) / 0.3);
 }
 
+.react-flow__node.pm-dependency-node,
+.react-flow__node-default.pm-dependency-node {
+  min-width: 180px;
+  border: 1px solid rgb(var(--rgb-base0B) / 0.18) !important;
+  background: rgb(var(--rgb-base00) / 0.92) !important;
+  color: var(--base06) !important;
+  box-shadow: 0 8px 24px rgb(var(--rgb-base00) / 0.22) !important;
+}
+
+.react-flow__node.pm-dependency-node .react-flow__handle,
+.react-flow__node-default.pm-dependency-node .react-flow__handle {
+  border-color: rgb(var(--rgb-base0D) / 0.45);
+  background: var(--base0D);
+}
+
+.react-flow__node.pm-dependency-node-selected,
+.react-flow__node-default.pm-dependency-node-selected,
+.react-flow__node.pm-dependency-node.selected,
+.react-flow__node-default.pm-dependency-node.selected {
+  border-color: rgb(var(--rgb-base0D) / 0.55) !important;
+  box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.22), 0 10px 30px rgb(var(--rgb-base0D) / 0.16) !important;
+}
+
+.react-flow__controls {
+  border: 1px solid rgb(var(--rgb-base0B) / 0.18) !important;
+  background: rgb(var(--rgb-base00) / 0.9) !important;
+  box-shadow: 0 8px 24px rgb(var(--rgb-base00) / 0.22) !important;
+}
+
+.react-flow__controls-button {
+  border-bottom: 1px solid rgb(var(--rgb-base0B) / 0.12) !important;
+  background: rgb(var(--rgb-base00) / 0.92) !important;
+  color: var(--base06) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: rgb(var(--rgb-base02) / 0.92) !important;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor !important;
+}
+
+.react-flow__minimap {
+  border: 1px solid rgb(var(--rgb-base0B) / 0.18) !important;
+  background: rgb(var(--rgb-base00) / 0.9) !important;
+  box-shadow: 0 8px 24px rgb(var(--rgb-base00) / 0.22) !important;
+}
+
+.react-flow__minimap svg {
+  background: rgb(var(--rgb-base00) / 0.88) !important;
+}
+
+.react-flow__minimap-mask {
+  fill: rgb(var(--rgb-base00) / 0.72) !important;
+}
+
+.react-flow__minimap-node {
+  fill: rgb(var(--rgb-base0B) / 0.5) !important;
+  stroke: rgb(var(--rgb-base0B) / 0.7) !important;
+  stroke-width: 1px !important;
+}
+
+.pm-dependency-legend-node {
+  border: 1px solid rgb(var(--rgb-base0B) / 0.18);
+  background: rgb(var(--rgb-base00) / 0.22);
+  padding: 0.2rem 0.45rem;
+  color: var(--base05);
+}
+
+.pm-dependency-legend-arrow {
+  color: var(--base0D);
+  font-weight: 700;
+}
+
 .theme-text {
   color: var(--base05);
 }

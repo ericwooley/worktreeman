@@ -17,7 +17,12 @@ import { WorktreeDetail } from "./worktree-detail";
 import type { ProjectManagementSubTab } from "./project-management-panel";
 
 function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {
-  return value === "document" || value === "history" || value === "create" ? value : "board";
+  return value === "document"
+    || value === "history"
+    || value === "create"
+    || value === "dependency-tree"
+    ? value
+    : "board";
 }
 
 function readDashboardUrlState() {
@@ -133,10 +138,11 @@ export function Dashboard() {
     loadProjectManagementDocuments,
     loadConfigDocument,
     loadGitComparison,
-    saveConfigDocument,
-    subscribeToBackgroundLogs,
-    updateProjectManagementDocument,
-  } = useDashboardState();
+     saveConfigDocument,
+     subscribeToBackgroundLogs,
+     updateProjectManagementDependencies,
+     updateProjectManagementDocument,
+   } = useDashboardState();
   const { theme, themes, setThemeId } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
   const [activeTab, setActiveTab] = useState<"shell" | "background" | "git" | "project-management">(initialUrlState.activeTab);
@@ -157,6 +163,7 @@ export function Dashboard() {
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const lastTerminalFocusedElementRef = useRef<HTMLElement | null>(null);
   const lastTerminalShortcutAtRef = useRef(0);
+  const hasCommittedDashboardHistoryRef = useRef(false);
   const [commandPaletteShortcut, setCommandPaletteShortcut] = useState(() => {
     if (typeof window === "undefined") {
       return DEFAULT_COMMAND_PALETTE_SHORTCUT;
@@ -387,7 +394,20 @@ export function Dashboard() {
     }
 
     const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
-    window.history.replaceState(null, "", nextUrl);
+
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl === currentUrl) {
+      hasCommittedDashboardHistoryRef.current = true;
+      return;
+    }
+
+    if (!hasCommittedDashboardHistoryRef.current) {
+      window.history.replaceState(null, "", nextUrl);
+      hasCommittedDashboardHistoryRef.current = true;
+      return;
+    }
+
+    window.history.pushState(null, "", nextUrl);
   }, [activeTab, gitView, isTerminalVisible, projectManagementSelectedDocumentId, projectManagementSubTab, selectedBranch]);
 
   useEffect(() => {
@@ -882,9 +902,13 @@ export function Dashboard() {
                 onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
                 onLoadProjectManagementDocuments={loadProjectManagementDocuments}
                 onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
-                onCreateProjectManagementDocument={createProjectManagementDocument}
-                onUpdateProjectManagementDocument={updateProjectManagementDocument}
-              />
+            onCreateProjectManagementDocument={createProjectManagementDocument}
+            onUpdateProjectManagementDocument={updateProjectManagementDocument}
+            onUpdateProjectManagementDependencies={async (documentId, dependencyIds) => {
+              setProjectManagementSelectedDocumentId(documentId);
+              return updateProjectManagementDependencies(documentId, { dependencyIds });
+            }}
+          />
         </section>
       </div>
 

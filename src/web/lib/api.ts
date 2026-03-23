@@ -13,6 +13,7 @@ import type {
   ProjectManagementListResponse,
   ShutdownStatus,
   TmuxClientInfo,
+  UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
   WorktreeRuntime,
 } from "@shared/types";
@@ -102,6 +103,16 @@ export function updateProjectManagementDocument(
   payload: UpdateProjectManagementDocumentRequest,
 ): Promise<ProjectManagementDocumentResponse> {
   return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/updates`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateProjectManagementDependencies(
+  documentId: string,
+  payload: UpdateProjectManagementDependenciesRequest,
+): Promise<ProjectManagementDocumentResponse> {
+  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/dependencies`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

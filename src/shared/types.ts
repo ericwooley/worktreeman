@@ -164,6 +164,7 @@ export interface ProjectManagementDocumentSummary {
   number: number;
   title: string;
   tags: string[];
+  dependencies: string[];
   status: string;
   assignee: string;
   archived: boolean;
@@ -223,6 +224,7 @@ export interface CreateProjectManagementDocumentRequest {
   title: string;
   markdown: string;
   tags: string[];
+  dependencies?: string[];
   status?: string;
   assignee?: string;
 }
@@ -231,6 +233,7 @@ export interface UpdateProjectManagementDocumentRequest {
   title: string;
   markdown: string;
   tags: string[];
+  dependencies?: string[];
   status?: string;
   assignee?: string;
   archived?: boolean;
@@ -241,6 +244,7 @@ export interface ProjectManagementBatchUpdateEntry {
   title: string;
   markdown: string;
   tags: string[];
+  dependencies?: string[];
   status?: string;
   assignee?: string;
   archived?: boolean;
@@ -248,6 +252,10 @@ export interface ProjectManagementBatchUpdateEntry {
 
 export interface AppendProjectManagementBatchRequest {
   entries: ProjectManagementBatchUpdateEntry[];
+}
+
+export interface UpdateProjectManagementDependenciesRequest {
+  dependencyIds: string[];
 }
 
 export type TerminalClientMessage =

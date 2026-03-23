@@ -15,6 +15,7 @@ import type {
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  UpdateProjectManagementDependenciesRequest,
   TmuxClientInfo,
   UpdateProjectManagementDocumentRequest,
   WorktreeManagerConfig,
@@ -42,6 +43,7 @@ import {
   getProjectManagementDocument,
   getProjectManagementDocumentHistory,
   listProjectManagementDocuments,
+  updateProjectManagementDependencies,
   updateProjectManagementDocument,
 } from "../services/project-management-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
@@ -214,6 +216,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         title: body.title,
         markdown: typeof body.markdown === "string" ? body.markdown : "",
         tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
+        dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : [],
         status: typeof body.status === "string" ? body.status : undefined,
         assignee: typeof body.assignee === "string" ? body.assignee : undefined,
       });
@@ -238,6 +241,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           title: body.title,
           markdown: typeof body.markdown === "string" ? body.markdown : "",
           tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
+          dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : [],
           status: typeof body.status === "string" ? body.status : undefined,
           assignee: typeof body.assignee === "string" ? body.assignee : undefined,
           archived: typeof body.archived === "boolean" ? body.archived : undefined,
@@ -263,12 +267,27 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           title: String(entry.title ?? ""),
           markdown: typeof entry.markdown === "string" ? entry.markdown : "",
           tags: Array.isArray(entry.tags) ? entry.tags.map((tag) => String(tag)) : [],
+          dependencies: Array.isArray(entry.dependencies) ? entry.dependencies.map((dependencyId) => String(dependencyId)) : [],
           status: typeof entry.status === "string" ? entry.status : undefined,
           assignee: typeof entry.assignee === "string" ? entry.assignee : undefined,
           archived: typeof entry.archived === "boolean" ? entry.archived : undefined,
         })),
       });
       res.status(201).json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/project-management/documents/:id/dependencies", async (req, res, next) => {
+    try {
+      const body = req.body as UpdateProjectManagementDependenciesRequest;
+      const payload: ProjectManagementDocumentResponse = await updateProjectManagementDependencies(
+        options.repoRoot,
+        decodeURIComponent(req.params.id),
+        Array.isArray(body?.dependencyIds) ? body.dependencyIds.map((entry) => String(entry)) : [],
+      );
+      res.json(payload);
     } catch (error) {
       next(error);
     }

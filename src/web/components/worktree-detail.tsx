@@ -297,10 +297,12 @@ interface WorktreeDetailProps {
     title: string;
     markdown: string;
     tags: string[];
+    dependencies?: string[];
     status?: string;
     assignee?: string;
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
+  onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
 }
 
 export function WorktreeDetail({
@@ -351,6 +353,7 @@ export function WorktreeDetail({
   onLoadProjectManagementDocument,
   onCreateProjectManagementDocument,
   onUpdateProjectManagementDocument,
+  onUpdateProjectManagementDependencies,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
   const [copied, setCopied] = useState(false);
@@ -935,6 +938,7 @@ export function WorktreeDetail({
               onSelectDocument={onLoadProjectManagementDocument}
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
+              onUpdateDependencies={onUpdateProjectManagementDependencies}
             />
           </Suspense>
         ) : (

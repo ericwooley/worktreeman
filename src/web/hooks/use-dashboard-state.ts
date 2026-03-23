@@ -11,6 +11,7 @@ import type {
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
   ShutdownStatus,
+  UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
 } from "@shared/types";
 import {
@@ -34,6 +35,7 @@ import {
   subscribeToBackgroundCommandLogs,
   subscribeToShutdownStatus,
   syncEnvFiles,
+  updateProjectManagementDependencies as updateProjectManagementDependenciesRequest,
   updateProjectManagementDocument as updateProjectManagementDocumentRequest,
   type EnvSyncResponse,
 } from "../lib/api";
@@ -420,6 +422,23 @@ export function useDashboardState() {
           return response.document;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management document.");
+          return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async updateProjectManagementDependencies(documentId: string, payload: UpdateProjectManagementDependenciesRequest) {
+        setProjectManagementSaving(true);
+        try {
+          const response = await updateProjectManagementDependenciesRequest(documentId, payload);
+          await loadProjectManagementDocumentsState({ silent: true });
+          setProjectManagementDocument(response.document);
+          const history = await fetchProjectManagementHistory(documentId);
+          setProjectManagementHistory(history.history);
+          setError(null);
+          return response.document;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to update project management dependencies.");
           return null;
         } finally {
           setProjectManagementSaving(false);

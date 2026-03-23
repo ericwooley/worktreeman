@@ -42,6 +42,7 @@ interface ProjectManagementAutomergeDocument {
   title: string;
   markdown: string;
   tags: string[];
+  dependencies: string[];
   status: string;
   assignee: string;
   archived: boolean;
@@ -55,6 +56,7 @@ interface StoredProjectManagementBatchEntry {
   actorId: string;
   title: string;
   tags: string[];
+  dependencies: string[];
   status: string;
   assignee: string;
   archived: boolean;
@@ -134,6 +136,23 @@ function normalizeTags(values: string[]): string[] {
   return normalized;
 }
 
+function normalizeDependencyIds(values: string[] | undefined, documentId?: string): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const value of values ?? []) {
+    const nextValue = value.trim();
+    if (!nextValue || nextValue === documentId || seen.has(nextValue)) {
+      continue;
+    }
+
+    seen.add(nextValue);
+    normalized.push(nextValue);
+  }
+
+  return normalized;
+}
+
 function normalizeStatus(value: string | undefined): string {
   const normalized = value?.trim().toLowerCase() ?? "";
   if (PROJECT_MANAGEMENT_DOCUMENT_STATUSES.includes(normalized as (typeof PROJECT_MANAGEMENT_DOCUMENT_STATUSES)[number])) {
@@ -177,7 +196,11 @@ function cloneCacheEntry(cache: ProjectManagementCacheEntry): ProjectManagementC
     branch: cache.branch,
     headSha: cache.headSha,
     documentsById: new Map(
-      Array.from(cache.documentsById.entries(), ([documentId, document]) => [documentId, { ...document, tags: [...document.tags] }]),
+      Array.from(cache.documentsById.entries(), ([documentId, document]) => [documentId, {
+        ...document,
+        tags: [...document.tags],
+        dependencies: [...document.dependencies],
+      }]),
     ),
     documentOrder: [...cache.documentOrder],
     tagIndex: new Map(Array.from(cache.tagIndex.entries(), ([tag, documentIds]) => [tag, new Set(documentIds)])),
@@ -278,6 +301,7 @@ function serializeDocumentMetadata(document: ProjectManagementDocument | null): 
     `assignee: ${document?.assignee ?? ""}`,
     `archived: ${document?.archived ? "true" : "false"}`,
     `tags: ${(document?.tags ?? []).join(", ")}`,
+    `dependencies: ${(document?.dependencies ?? []).join(", ")}`,
   ].join("\n");
 }
 
@@ -316,6 +340,7 @@ function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocume
     title: doc.title,
     markdown: doc.markdown,
     tags: Array.from(doc.tags ?? []),
+    dependencies: Array.from(doc.dependencies ?? []),
     status: doc.status || DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS,
     assignee: doc.assignee || "",
     archived: Boolean(doc.archived),
@@ -416,6 +441,7 @@ function toListResponse(cache: ReducedProjectManagementState): ProjectManagement
       number: document.number,
       title: document.title,
       tags: [...document.tags],
+      dependencies: [...document.dependencies],
       status: document.status,
       assignee: document.assignee,
       archived: document.archived,
@@ -442,7 +468,7 @@ function toDocumentResponse(cache: ReducedProjectManagementState, documentId: st
   return {
     branch: cache.branch,
     headSha: cache.headSha,
-    document: { ...document, tags: [...document.tags] },
+    document: { ...document, tags: [...document.tags], dependencies: [...document.dependencies] },
   };
 }
 
@@ -547,6 +573,7 @@ function createSeedBatch(now: string): StoredProjectManagementBatch {
     draft.title = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE;
     draft.markdown = buildSeedMarkdown();
     draft.tags = [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG];
+    draft.dependencies = [];
     draft.status = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS;
     draft.assignee = "";
     draft.archived = false;
@@ -570,6 +597,7 @@ function createSeedBatch(now: string): StoredProjectManagementBatch {
       actorId,
       title: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE,
       tags: [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG],
+      dependencies: [],
       status: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS,
       assignee: "",
       archived: false,
@@ -640,6 +668,7 @@ function applyDocumentChange(
     title: string;
     markdown: string;
     tags: string[];
+    dependencies?: string[];
     status?: string;
     assignee?: string;
     archived?: boolean;
@@ -648,6 +677,7 @@ function applyDocumentChange(
   },
 ): { nextDoc: Automerge.Doc<ProjectManagementAutomergeDocument>; action: ProjectManagementDocumentAction; change: Uint8Array } {
   const tags = normalizeTags(input.tags);
+  const dependencies = normalizeDependencyIds(input.dependencies, documentId);
   const status = normalizeStatus(input.status);
   const assignee = normalizeAssignee(input.assignee);
   const writableDoc = doc
@@ -663,6 +693,7 @@ function applyDocumentChange(
     }
     Automerge.updateText(draft as Automerge.Doc<unknown>, ["markdown"], input.markdown);
     draft.tags = tags;
+    draft.dependencies = dependencies;
     draft.status = status;
     draft.assignee = assignee;
     draft.archived = input.archived ?? draft.archived ?? false;
@@ -695,6 +726,7 @@ async function appendEntries(
     title: string;
     markdown: string;
     tags: string[];
+    dependencies?: string[];
     status?: string;
     assignee?: string;
     archived?: boolean;
@@ -714,12 +746,15 @@ async function appendEntries(
       if (entry.documentId && !existingDoc) {
         throw new Error(`Unknown project management document ${documentId}.`);
       }
+      const dependencies = normalizeDependencyIds(entry.dependencies ?? existingDoc?.dependencies ?? [], documentId);
+      assertValidDependencies(workingState, documentId, dependencies);
 
       const { nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
         number: existingDoc?.number ?? getNextDocumentNumber(workingState),
         title: entry.title,
         markdown: entry.markdown,
         tags: entry.tags,
+        dependencies,
         status: entry.status,
         assignee: entry.assignee,
         archived: entry.archived,
@@ -733,6 +768,7 @@ async function appendEntries(
         actorId,
         title: nextDoc.title,
         tags: Array.from(nextDoc.tags ?? []),
+        dependencies: Array.from(nextDoc.dependencies ?? []),
         status: nextDoc.status,
         assignee: nextDoc.assignee,
         archived: nextDoc.archived,
@@ -780,6 +816,53 @@ async function appendEntries(
   throw new Error("Failed to append project management updates.");
 }
 
+function buildDependencyGraph(state: ReducedProjectManagementState): Map<string, string[]> {
+  const graph = new Map<string, string[]>();
+  for (const [documentId, document] of state.documentsById.entries()) {
+    graph.set(documentId, [...document.dependencies]);
+  }
+  return graph;
+}
+
+function hasDependencyPath(graph: Map<string, string[]>, startId: string, targetId: string): boolean {
+  const stack = [startId];
+  const visited = new Set<string>();
+
+  while (stack.length > 0) {
+    const currentId = stack.pop()!;
+    if (currentId === targetId) {
+      return true;
+    }
+    if (visited.has(currentId)) {
+      continue;
+    }
+    visited.add(currentId);
+    for (const dependencyId of graph.get(currentId) ?? []) {
+      if (!visited.has(dependencyId)) {
+        stack.push(dependencyId);
+      }
+    }
+  }
+
+  return false;
+}
+
+function assertValidDependencies(state: ReducedProjectManagementState, documentId: string, dependencyIds: string[]): void {
+  const graph = buildDependencyGraph(state);
+  for (const dependencyId of dependencyIds) {
+    if (!state.documentsById.has(dependencyId)) {
+      throw new Error(`Unknown dependency document ${dependencyId}.`);
+    }
+  }
+
+  graph.set(documentId, [...dependencyIds]);
+  for (const dependencyId of dependencyIds) {
+    if (hasDependencyPath(graph, dependencyId, documentId)) {
+      throw new Error("Dependency cycles are not allowed.");
+    }
+  }
+}
+
 export async function listProjectManagementDocuments(repoRoot: string): Promise<ProjectManagementListResponse> {
   return toListResponse(await getReducedProjectManagementState(repoRoot));
 }
@@ -809,6 +892,7 @@ export async function createProjectManagementDocument(
     title,
     markdown: request.markdown,
     tags: request.tags,
+    dependencies: request.dependencies,
     status: request.status,
     assignee: request.assignee,
   }]);
@@ -831,6 +915,7 @@ export async function updateProjectManagementDocument(
     title,
     markdown: request.markdown,
     tags: request.tags,
+    dependencies: request.dependencies,
     status: request.status,
     assignee: request.assignee,
     archived: request.archived,
@@ -848,6 +933,34 @@ export async function appendProjectManagementBatch(
   }
 
   return appendEntries(repoRoot, request.entries);
+}
+
+export async function updateProjectManagementDependencies(
+  repoRoot: string,
+  documentId: string,
+  dependencyIds: string[],
+): Promise<ProjectManagementDocumentResponse> {
+  const state = await getReducedProjectManagementState(repoRoot);
+  const currentDocument = state.documentsById.get(documentId);
+  if (!currentDocument) {
+    throw new Error(`Unknown project management document ${documentId}.`);
+  }
+
+  const normalizedDependencies = normalizeDependencyIds(dependencyIds, documentId);
+  assertValidDependencies(state, documentId, normalizedDependencies);
+
+  await appendEntries(repoRoot, [{
+    documentId,
+    title: currentDocument.title,
+    markdown: currentDocument.markdown,
+    tags: currentDocument.tags,
+    dependencies: normalizedDependencies,
+    status: currentDocument.status,
+    assignee: currentDocument.assignee,
+    archived: currentDocument.archived,
+  }]);
+
+  return getProjectManagementDocument(repoRoot, documentId);
 }
 
 export function clearProjectManagementCache(repoRoot?: string): void {
