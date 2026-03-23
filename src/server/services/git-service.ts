@@ -228,12 +228,12 @@ async function getWorkingTreeDiff(worktreePath: string): Promise<string> {
   ]);
 
   const sections: string[] = [];
-  if (stagedResult.stdout.trim()) {
-    sections.push("# Staged changes\n", stagedResult.stdout.trimEnd());
-  }
-
   if (unstagedResult.stdout.trim()) {
     sections.push("# Unstaged changes\n", unstagedResult.stdout.trimEnd());
+  }
+
+  if (stagedResult.stdout.trim()) {
+    sections.push("# Staged changes\n", stagedResult.stdout.trimEnd());
   }
 
   const untrackedFiles = untrackedResult.stdout.split(/\r?\n/).filter(Boolean);

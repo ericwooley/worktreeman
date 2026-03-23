@@ -190,6 +190,7 @@ export interface ProjectManagementHistoryEntry {
   archived: boolean;
   changeCount: number;
   action: "create" | "update" | "archive" | "restore";
+  diff: string;
 }
 
 export interface ProjectManagementListResponse {

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 export type MatrixBadgeTone = "active" | "idle" | "warning" | "danger" | "neutral";
 
@@ -68,6 +68,32 @@ export function MatrixDetailField({
       <p className="theme-text-soft text-xs uppercase tracking-[0.18em]">{label}</p>
       <p className={`theme-text-strong mt-2 break-all text-sm ${mono ? "font-mono" : ""}`}>{value}</p>
     </div>
+  );
+}
+
+export function MatrixAccordion({
+  summary,
+  children,
+  defaultOpen = false,
+}: {
+  summary: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <details
+      className="matrix-accordion"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="matrix-accordion-summary">
+        <span className="min-w-0 flex-1">{summary}</span>
+        <span className="matrix-accordion-indicator" aria-hidden="true">+</span>
+      </summary>
+      {open ? <div className="matrix-accordion-content">{children}</div> : null}
+    </details>
   );
 }
 

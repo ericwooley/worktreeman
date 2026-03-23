@@ -15,7 +15,7 @@ import type {
 import type { ProjectManagementSubTab } from "./project-management-panel";
 import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
+import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
 
 const ProjectManagementPanel = lazy(async () => {
@@ -50,6 +50,61 @@ type ParsedDiffSection = {
     hunks: string[];
   }>;
 };
+
+function GitDiffAccordionContent({
+  file,
+  diffMode,
+  diffTheme,
+  diffWrap,
+  diffHighlight,
+  diffFontSize,
+}: {
+  file: ParsedDiffSection["files"][number];
+  diffMode: DiffModeEnum;
+  diffTheme: "light" | "dark";
+  diffWrap: boolean;
+  diffHighlight: boolean;
+  diffFontSize: number;
+}) {
+  const diffFile = useMemo(() => {
+    const primaryFileName = file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName;
+    const oldLang = file.oldFileName !== "/dev/null" ? getLang(file.oldFileName) : "plaintext";
+    const newLang = primaryFileName !== "/dev/null" ? getLang(primaryFileName) : "plaintext";
+    const { oldContent, newContent } = buildDiffContents(file.hunks);
+    const nextDiffFile = new DiffFile(
+      file.oldFileName,
+      oldContent,
+      file.newFileName,
+      newContent,
+      [file.diffText],
+      oldLang,
+      newLang,
+    );
+
+    nextDiffFile.initTheme(diffTheme);
+    if (diffHighlight) {
+      nextDiffFile.init();
+    } else {
+      nextDiffFile.initRaw();
+    }
+    nextDiffFile.buildSplitDiffLines();
+    nextDiffFile.buildUnifiedDiffLines();
+    return nextDiffFile;
+  }, [diffHighlight, diffTheme, file, diffMode, diffWrap, diffFontSize]);
+
+  return (
+    <div className="max-h-[40rem] overflow-auto matrix-diff-file">
+      <DiffView
+        diffFile={diffFile}
+        diffViewMode={diffMode}
+        diffViewTheme={diffTheme}
+        diffViewWrap={diffWrap}
+        diffViewHighlight={diffHighlight}
+        diffViewFontSize={diffFontSize}
+      />
+    </div>
+  );
+}
 
 function buildDiffContents(hunks: string[]) {
   const oldLines: string[] = [];
@@ -427,38 +482,14 @@ export function WorktreeDetail({
 
     return parsedDiffSections.map((section) => ({
       title: section.title,
-      files: section.files.map((file) => {
-        const primaryFileName = file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName;
-        const oldLang = file.oldFileName !== "/dev/null" ? getLang(file.oldFileName) : "plaintext";
-        const newLang = primaryFileName !== "/dev/null" ? getLang(primaryFileName) : "plaintext";
-        const { oldContent, newContent } = buildDiffContents(file.hunks);
-        const diffFile = new DiffFile(
-          file.oldFileName,
-          oldContent,
-          file.newFileName,
-          newContent,
-          [file.diffText],
-          oldLang,
-          newLang,
-        );
-
-        diffFile.initTheme(diffTheme);
-        if (diffHighlight) {
-          diffFile.init();
-        } else {
-          diffFile.initRaw();
-        }
-        diffFile.buildSplitDiffLines();
-        diffFile.buildUnifiedDiffLines();
-
-        return {
-          key: file.key,
-          diffFile,
-          displayName: primaryFileName,
-        };
-      }),
+      files: section.files.map((file) => ({
+        key: file.key,
+        file,
+        displayName: file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName,
+        hunkCount: file.hunks.length,
+      })),
     }));
-  }, [diffHighlight, diffTheme, isDiffTooLargeToRender, parsedDiffSections]);
+  }, [isDiffTooLargeToRender, parsedDiffSections]);
   const diffModeOptions = useMemo<MatrixDropdownOption[]>(() => ([
     { value: String(DiffModeEnum.SplitGitHub), label: "Split GitHub", description: "GitHub-style split view" },
     { value: String(DiffModeEnum.SplitGitLab), label: "Split GitLab", description: "GitLab-style split view" },
@@ -1064,21 +1095,24 @@ export function WorktreeDetail({
                         <div key={section.title} className="space-y-3">
                           <div className="text-xs uppercase tracking-[0.18em] theme-text-emphasis">{section.title}</div>
                           {section.files.map((file) => (
-                            <div key={file.key} className="overflow-hidden matrix-diff-file">
-                              <div className="theme-border-emphasis border-b px-4 py-2 font-mono text-xs theme-text-strong">
-                                {file.displayName}
-                              </div>
-                              <div className="max-h-[40rem] overflow-auto">
-                                <DiffView
-                                  diffFile={file.diffFile}
-                                  diffViewMode={diffMode}
-                                  diffViewTheme={diffTheme}
-                                  diffViewWrap={diffWrap}
-                                  diffViewHighlight={diffHighlight}
-                                  diffViewFontSize={diffFontSize}
-                                />
-                              </div>
-                            </div>
+                            <MatrixAccordion
+                              key={file.key}
+                              summary={(
+                                <div className="flex items-center justify-between gap-3 pr-3">
+                                  <div className="min-w-0 font-mono text-xs theme-text-strong">{file.displayName}</div>
+                                  <div className="text-[11px] theme-text-muted">{file.hunkCount} hunk{file.hunkCount === 1 ? "" : "s"}</div>
+                                </div>
+                              )}
+                            >
+                              <GitDiffAccordionContent
+                                file={file.file}
+                                diffMode={diffMode}
+                                diffTheme={diffTheme}
+                                diffWrap={diffWrap}
+                                diffHighlight={diffHighlight}
+                                diffFontSize={diffFontSize}
+                              />
+                            </MatrixAccordion>
                           ))}
                         </div>
                       ))}

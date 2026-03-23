@@ -213,6 +213,102 @@ function buildSeedMarkdown(): string {
   ].join("\n");
 }
 
+function toDiffLines(value: string): string[] {
+  const normalized = value.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  if (normalized.endsWith("\n")) {
+    lines.pop();
+  }
+  return lines;
+}
+
+function buildUnifiedDiff(before: string, after: string, beforeLabel: string, afterLabel: string): string {
+  const beforeLines = toDiffLines(before);
+  const afterLines = toDiffLines(after);
+  const lengths = Array.from({ length: beforeLines.length + 1 }, () => Array<number>(afterLines.length + 1).fill(0));
+
+  for (let leftIndex = beforeLines.length - 1; leftIndex >= 0; leftIndex -= 1) {
+    for (let rightIndex = afterLines.length - 1; rightIndex >= 0; rightIndex -= 1) {
+      lengths[leftIndex][rightIndex] = beforeLines[leftIndex] === afterLines[rightIndex]
+        ? lengths[leftIndex + 1][rightIndex + 1] + 1
+        : Math.max(lengths[leftIndex + 1][rightIndex], lengths[leftIndex][rightIndex + 1]);
+    }
+  }
+
+  const lines = [`--- ${beforeLabel}`, `+++ ${afterLabel}`, "@@"];
+  let leftIndex = 0;
+  let rightIndex = 0;
+
+  while (leftIndex < beforeLines.length && rightIndex < afterLines.length) {
+    if (beforeLines[leftIndex] === afterLines[rightIndex]) {
+      lines.push(` ${beforeLines[leftIndex]}`);
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+
+    if (lengths[leftIndex + 1][rightIndex] >= lengths[leftIndex][rightIndex + 1]) {
+      lines.push(`-${beforeLines[leftIndex]}`);
+      leftIndex += 1;
+      continue;
+    }
+
+    lines.push(`+${afterLines[rightIndex]}`);
+    rightIndex += 1;
+  }
+
+  while (leftIndex < beforeLines.length) {
+    lines.push(`-${beforeLines[leftIndex]}`);
+    leftIndex += 1;
+  }
+
+  while (rightIndex < afterLines.length) {
+    lines.push(`+${afterLines[rightIndex]}`);
+    rightIndex += 1;
+  }
+
+  return lines.join("\n");
+}
+
+function serializeDocumentMetadata(document: ProjectManagementDocument | null): string {
+  return [
+    `title: ${document?.title ?? ""}`,
+    `number: ${document?.number ?? ""}`,
+    `status: ${document?.status ?? DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS}`,
+    `assignee: ${document?.assignee ?? ""}`,
+    `archived: ${document?.archived ? "true" : "false"}`,
+    `tags: ${(document?.tags ?? []).join(", ")}`,
+  ].join("\n");
+}
+
+function buildProjectManagementDiff(previous: ProjectManagementDocument | null, next: ProjectManagementDocument): string {
+  const sections: string[] = [];
+  const previousMetadata = serializeDocumentMetadata(previous);
+  const nextMetadata = serializeDocumentMetadata(next);
+
+  if (previousMetadata !== nextMetadata) {
+    sections.push(buildUnifiedDiff(previousMetadata, nextMetadata, "metadata:before", "metadata:after"));
+  }
+
+  const previousMarkdown = previous?.markdown ?? "";
+  if (previousMarkdown !== next.markdown) {
+    sections.push(buildUnifiedDiff(previousMarkdown, next.markdown, "markdown:before", "markdown:after"));
+  }
+
+  return sections.join("\n\n");
+}
+
+function ensureProjectManagementDiff(entry: Pick<ProjectManagementHistoryEntry, "diff" | "action">): string {
+  const diff = entry.diff?.trim();
+  if (diff) {
+    return diff;
+  }
+
+  return entry.action === "create"
+    ? "@@\n+Initial document state"
+    : "@@\n No diff available for this history entry.";
+}
+
 function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocument>): ProjectManagementDocument {
   return {
     id: doc.id,
@@ -255,6 +351,7 @@ function reduceBatchIntoCache(
   commitSha: string,
 ) {
   for (const entry of batch.entries) {
+    const previousDocument = cache.documentsById.get(entry.documentId) ?? null;
     let doc = cache.automergeDocsById.get(entry.documentId);
     if (!doc) {
       doc = Automerge.init<ProjectManagementAutomergeDocument>({ actor: entry.actorId });
@@ -295,6 +392,10 @@ function reduceBatchIntoCache(
       archived: materialized.archived,
       changeCount: entry.changes.length,
       action: entry.action,
+      diff: ensureProjectManagementDiff({
+        action: entry.action,
+        diff: buildProjectManagementDiff(previousDocument, materialized),
+      }),
     };
     history.push(historyEntry);
     cache.historyByDocumentId.set(entry.documentId, history);
@@ -349,7 +450,11 @@ function toHistoryResponse(cache: ReducedProjectManagementState, documentId: str
   return {
     branch: cache.branch,
     headSha: cache.headSha,
-    history: (cache.historyByDocumentId.get(documentId) ?? []).map((entry) => ({ ...entry, tags: [...entry.tags] })),
+    history: (cache.historyByDocumentId.get(documentId) ?? []).map((entry) => ({
+      ...entry,
+      tags: [...entry.tags],
+      diff: ensureProjectManagementDiff(entry),
+    })),
   };
 }
 

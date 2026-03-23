@@ -165,7 +165,7 @@ export function ProjectManagementPanel({
   );
 
   const laneStatuses = useMemo(
-    () => statuses.filter((status) => showBacklogLane || status !== "backlog"),
+    () => statuses.filter((status) => status !== "reference" && (showBacklogLane || status !== "backlog")),
     [showBacklogLane, statuses],
   );
 
@@ -232,6 +232,25 @@ export function ProjectManagementPanel({
     setNewStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
     setNewAssignee("");
     await handleSelectDocument(created.id, { silent: true });
+  }
+
+  async function handleMoveDocument(documentId: string, nextStatus: string) {
+    const targetDocument = document?.id === documentId
+      ? document
+      : await onSelectDocument(documentId, { silent: true });
+
+    if (!targetDocument || targetDocument.status === nextStatus) {
+      return;
+    }
+
+    await onUpdateDocument(documentId, {
+      title: targetDocument.title,
+      markdown: targetDocument.markdown,
+      tags: targetDocument.tags,
+      status: nextStatus,
+      assignee: targetDocument.assignee,
+      archived: targetDocument.archived,
+    });
   }
 
   const documentRail = (
@@ -500,8 +519,10 @@ export function ProjectManagementPanel({
                   swimlaneDocuments={swimlaneDocuments}
                   document={document}
                   showBacklogLane={showBacklogLane}
+                  saving={saving}
                   onToggleBacklogLane={() => setShowBacklogLane((current) => !current)}
                   onSelectDocument={handleSelectDocument}
+                  onMoveDocument={handleMoveDocument}
                 />
               </Suspense>
             </div>

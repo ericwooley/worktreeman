@@ -80,6 +80,29 @@ test("create and update project-management documents persist markdown and normal
     const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
     assert.equal(history.history.length, 2);
     assert.deepEqual(history.history.map((entry) => entry.action), ["create", "update"]);
+    assert.match(history.history[1].diff, /-status: todo/);
+    assert.match(history.history[1].diff, /\+status: blocked/);
+    assert.match(history.history[1].diff, /\+\- Investigate login loop|\+Investigate login loop|Investigate login loop/);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("reference status is preserved but excluded from the board status set", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Reference Notes",
+      markdown: "# Reference Notes\n",
+      tags: ["reference"],
+      status: "reference",
+    });
+
+    assert.equal(created.document.status, "reference");
+
+    const list = await listProjectManagementDocuments(repoRoot);
+    assert.equal(list.availableStatuses.includes("reference"), true);
   } finally {
     await destroyTestRepo(repoRoot);
   }
