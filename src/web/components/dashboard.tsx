@@ -14,6 +14,30 @@ import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { useTheme } from "./theme-provider";
 import { WorktreeDetail } from "./worktree-detail";
+import type { ProjectManagementSubTab } from "./project-management-panel";
+
+function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {
+  return value === "document" || value === "history" || value === "create" ? value : "board";
+}
+
+function readDashboardUrlState() {
+  const params = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+
+  return {
+    selectedBranch: params.get("env"),
+    activeTab: params.get("tab") === "git"
+      ? "git"
+      : params.get("tab") === "background"
+        ? "background"
+        : params.get("tab") === "project-management"
+          ? "project-management"
+          : "shell",
+    gitView: params.get("git") === "diff" ? "diff" : "graph",
+    isTerminalVisible: params.get("terminal") === "open",
+    projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),
+    projectManagementSelectedDocumentId: params.get("pmDoc"),
+  } as const;
+}
 
 const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
 const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreeman.commandPaletteShortcut";
@@ -73,7 +97,7 @@ function comparePaletteItems(left: CommandPaletteItem, right: CommandPaletteItem
 }
 
 export function Dashboard() {
-  const initialParams = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const initialUrlState = readDashboardUrlState();
   const {
     state,
     error,
@@ -114,18 +138,14 @@ export function Dashboard() {
     updateProjectManagementDocument,
   } = useDashboardState();
   const { theme, themes, setThemeId } = useTheme();
-  const [selectedBranch, setSelectedBranch] = useState<string | null>(initialParams.get("env"));
-  const [activeTab, setActiveTab] = useState<"shell" | "background" | "git" | "project-management">(
-    initialParams.get("tab") === "git"
-      ? "git"
-      : initialParams.get("tab") === "background"
-        ? "background"
-        : initialParams.get("tab") === "project-management"
-          ? "project-management"
-        : "shell",
+  const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
+  const [activeTab, setActiveTab] = useState<"shell" | "background" | "git" | "project-management">(initialUrlState.activeTab);
+  const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
+    initialUrlState.projectManagementSubTab,
   );
-  const [gitView, setGitView] = useState<"graph" | "diff">(initialParams.get("git") === "diff" ? "diff" : "graph");
-  const [isTerminalVisible, setIsTerminalVisible] = useState(initialParams.get("terminal") === "open");
+  const [projectManagementSelectedDocumentId, setProjectManagementSelectedDocumentId] = useState<string | null>(initialUrlState.projectManagementSelectedDocumentId);
+  const [gitView, setGitView] = useState<"graph" | "diff">(initialUrlState.gitView);
+  const [isTerminalVisible, setIsTerminalVisible] = useState(initialUrlState.isTerminalVisible);
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
   const [configEditorOpen, setConfigEditorOpen] = useState(false);
@@ -348,6 +368,18 @@ export function Dashboard() {
     params.set("tab", activeTab);
     params.set("git", gitView);
 
+    if (activeTab === "project-management") {
+      params.set("pmTab", projectManagementSubTab);
+      if (projectManagementSelectedDocumentId) {
+        params.set("pmDoc", projectManagementSelectedDocumentId);
+      } else {
+        params.delete("pmDoc");
+      }
+    } else {
+      params.delete("pmTab");
+      params.delete("pmDoc");
+    }
+
     if (isTerminalVisible) {
       params.set("terminal", "open");
     } else {
@@ -356,7 +388,30 @@ export function Dashboard() {
 
     const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
     window.history.replaceState(null, "", nextUrl);
-  }, [activeTab, gitView, isTerminalVisible, selectedBranch]);
+  }, [activeTab, gitView, isTerminalVisible, projectManagementSelectedDocumentId, projectManagementSubTab, selectedBranch]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const nextUrlState = readDashboardUrlState();
+      setSelectedBranch(nextUrlState.selectedBranch);
+      setActiveTab(nextUrlState.activeTab);
+      setGitView(nextUrlState.gitView);
+      setIsTerminalVisible(nextUrlState.isTerminalVisible);
+      setProjectManagementSubTab(nextUrlState.projectManagementSubTab);
+      setProjectManagementSelectedDocumentId(nextUrlState.projectManagementSelectedDocumentId);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (!projectManagementSelectedDocumentId || activeTab !== "project-management") {
+      return;
+    }
+
+    void loadProjectManagementDocument(projectManagementSelectedDocumentId, { silent: true });
+  }, [activeTab, loadProjectManagementDocument, projectManagementSelectedDocumentId]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -420,6 +475,15 @@ export function Dashboard() {
       setIsTerminalVisible(false);
     }
   };
+
+  const handleProjectManagementSubTabChange = useCallback((tab: ProjectManagementSubTab) => {
+    setProjectManagementSubTab(tab);
+  }, []);
+
+  const handleLoadProjectManagementDocument = useCallback(async (documentId: string, options?: { silent?: boolean }) => {
+    setProjectManagementSelectedDocumentId(documentId);
+    return loadProjectManagementDocument(documentId, options);
+  }, [loadProjectManagementDocument]);
 
   const mainCommandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     const items: CommandPaletteItem[] = [
@@ -806,18 +870,21 @@ export function Dashboard() {
             onLoadGitComparison={loadGitComparison}
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
-            projectManagementDocuments={projectManagement?.documents ?? []}
-            projectManagementAvailableTags={projectManagement?.availableTags ?? []}
-            projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
-            projectManagementDocument={projectManagementDocument}
-            projectManagementHistory={projectManagementHistory}
-            projectManagementLoading={projectManagementLoading}
-            projectManagementSaving={projectManagementSaving}
-            onLoadProjectManagementDocuments={loadProjectManagementDocuments}
-            onLoadProjectManagementDocument={loadProjectManagementDocument}
-            onCreateProjectManagementDocument={createProjectManagementDocument}
-            onUpdateProjectManagementDocument={updateProjectManagementDocument}
-          />
+                projectManagementDocuments={projectManagement?.documents ?? []}
+                projectManagementAvailableTags={projectManagement?.availableTags ?? []}
+                projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
+                projectManagementActiveSubTab={projectManagementSubTab}
+                projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
+                projectManagementDocument={projectManagementDocument}
+                projectManagementHistory={projectManagementHistory}
+                projectManagementLoading={projectManagementLoading}
+                projectManagementSaving={projectManagementSaving}
+                onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
+                onLoadProjectManagementDocuments={loadProjectManagementDocuments}
+                onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
+                onCreateProjectManagementDocument={createProjectManagementDocument}
+                onUpdateProjectManagementDocument={updateProjectManagementDocument}
+              />
         </section>
       </div>
 

@@ -12,6 +12,7 @@ import type {
   ProjectManagementHistoryEntry,
   WorktreeRecord,
 } from "@shared/types";
+import type { ProjectManagementSubTab } from "./project-management-panel";
 import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
@@ -221,10 +222,13 @@ interface WorktreeDetailProps {
   projectManagementDocuments: ProjectManagementDocumentSummary[];
   projectManagementAvailableTags: string[];
   projectManagementAvailableStatuses: string[];
+  projectManagementActiveSubTab: ProjectManagementSubTab;
+  projectManagementSelectedDocumentId: string | null;
   projectManagementDocument: ProjectManagementDocument | null;
   projectManagementHistory: ProjectManagementHistoryEntry[];
   projectManagementLoading: boolean;
   projectManagementSaving: boolean;
+  onProjectManagementSubTabChange: (tab: ProjectManagementSubTab) => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onCreateProjectManagementDocument: (payload: {
@@ -281,10 +285,13 @@ export function WorktreeDetail({
   projectManagementDocuments,
   projectManagementAvailableTags,
   projectManagementAvailableStatuses,
+  projectManagementActiveSubTab,
+  projectManagementSelectedDocumentId,
   projectManagementDocument,
   projectManagementHistory,
   projectManagementLoading,
   projectManagementSaving,
+  onProjectManagementSubTabChange,
   onLoadProjectManagementDocuments,
   onLoadProjectManagementDocument,
   onCreateProjectManagementDocument,
@@ -886,10 +893,13 @@ export function WorktreeDetail({
               documents={projectManagementDocuments}
               availableTags={projectManagementAvailableTags}
               availableStatuses={projectManagementAvailableStatuses}
+              activeSubTab={projectManagementActiveSubTab}
+              selectedDocumentId={projectManagementSelectedDocumentId}
               document={projectManagementDocument}
               history={projectManagementHistory}
               loading={projectManagementLoading}
               saving={projectManagementSaving}
+              onSubTabChange={onProjectManagementSubTabChange}
               onRefresh={onLoadProjectManagementDocuments}
               onSelectDocument={onLoadProjectManagementDocument}
               onCreateDocument={onCreateProjectManagementDocument}
