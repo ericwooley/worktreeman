@@ -7,9 +7,8 @@ import {
 } from "../../shared/constants.js";
 import { CONFIG_CANDIDATES, fileExists, findGitRoot } from "../utils/paths.js";
 import { listWorktrees } from "./git-service.js";
+import { WORKTREE_CONFIG_SCHEMA_URL, serializeConfigContents } from "./config-service.js";
 import { ensureBranchWorktree as ensureManagedBranchWorktree } from "./repository-layout-service.js";
-
-const WORKTREE_CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json";
 
 export interface InitResult {
   branch: string;
@@ -37,6 +36,7 @@ function buildConfigYaml(
     runtimePorts,
     derivedEnv: {},
     quickLinks: [],
+    aiCommand: "",
     backgroundCommands: {},
     worktrees: {
       baseDir,
@@ -44,11 +44,7 @@ function buildConfigYaml(
     startupCommands: [],
   };
 
-  return yaml.dump(config, {
-    noRefs: true,
-    lineWidth: 120,
-    sortKeys: false,
-  });
+  return serializeConfigContents(config);
 }
 
 function withSchemaHeader(contents: string): string {

@@ -5,6 +5,8 @@ import { DEFAULT_WORKTREE_BASE_DIR } from "../../shared/constants.js";
 import type { BackgroundCommandConfigEntry, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
+export const WORKTREE_CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json";
+
 export interface ConfigSource {
   path: string;
   repoRoot?: string;
@@ -108,12 +110,55 @@ export function parseConfigContents(raw: string): WorktreeManagerConfig {
       : [],
     derivedEnv: ensureRecord(parsed.derivedEnv, "derivedEnv"),
     quickLinks: parseQuickLinks(parsed.quickLinks),
+    aiCommand: typeof parsed.aiCommand === "string" ? parsed.aiCommand : "",
     startupCommands,
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
     worktrees: {
       baseDir: String((worktrees as { baseDir?: string }).baseDir ?? DEFAULT_WORKTREE_BASE_DIR),
     },
   };
+}
+
+function extractSchemaHeader(raw: string): { header: string; body: string } {
+  const match = raw.match(/^(# yaml-language-server: \$schema=.*\n\n?)([\s\S]*)$/);
+  if (!match) {
+    return { header: "", body: raw };
+  }
+
+  return {
+    header: match[1].endsWith("\n\n") ? match[1] : `${match[1]}\n`,
+    body: match[2],
+  };
+}
+
+export function serializeConfigContents(config: Record<string, unknown>, options?: { includeSchemaHeader?: boolean }): string {
+  const body = yaml.dump(config, {
+    noRefs: true,
+    lineWidth: 120,
+    sortKeys: false,
+  });
+
+  if (!options?.includeSchemaHeader) {
+    return body;
+  }
+
+  return `# yaml-language-server: $schema=${WORKTREE_CONFIG_SCHEMA_URL}\n\n${body}`;
+}
+
+export function updateAiCommandInConfigContents(raw: string, aiCommand: string): string {
+  const { header, body } = extractSchemaHeader(raw);
+  const parsed = (yaml.load(body) as Record<string, unknown> | undefined) ?? {};
+
+  if (aiCommand.trim()) {
+    parsed.aiCommand = aiCommand;
+  } else {
+    delete parsed.aiCommand;
+  }
+
+  const nextBody = serializeConfigContents(parsed);
+  const nextContents = `${header}${nextBody}`;
+  parseConfigContents(nextContents);
+  return nextContents;
 }
 
 export async function readConfigContents(source: ConfigSource): Promise<string> {

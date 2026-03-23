@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export type MatrixBadgeTone = "active" | "idle" | "warning" | "danger" | "neutral";
 
@@ -117,7 +118,7 @@ export function MatrixModal({
   title,
   description,
   tone = "neutral",
-  closeLabel = "Close",
+  closeLabel = "Close dialog",
   onClose,
   children,
   footer,
@@ -139,22 +140,52 @@ export function MatrixModal({
   const kickerTone = tone === "danger" ? "theme-text-danger" : "";
   const titleTone = tone === "danger" ? "theme-text-strong" : "theme-text-strong";
   const descriptionTone = tone === "danger" ? "theme-text-danger" : "theme-text-muted";
+  const titleId = useId();
+  const descriptionId = useId();
 
-  return (
-    <div className="theme-overlay fixed inset-0 z-40 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className={`matrix-panel w-full ${maxWidthClass} border ${panelTone} p-4 sm:p-5`}>
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  function handleBackdropClick(event: MouseEvent<HTMLDivElement>) {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }
+
+  const content = (
+    <div
+      className="theme-overlay fixed inset-0 z-40 flex items-center justify-center p-4 backdrop-blur-sm"
+      onClick={handleBackdropClick}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        className={`matrix-panel w-full ${maxWidthClass} border ${panelTone} p-4 sm:p-5`}
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className={`matrix-kicker ${kickerTone}`}>{kicker}</p>
-            <h2 className={`mt-2 text-xl font-semibold ${titleTone}`}>{title}</h2>
-            {description ? <p className={`mt-2 text-sm ${descriptionTone}`}>{description}</p> : null}
+            <h2 id={titleId} className={`mt-2 text-xl font-semibold ${titleTone}`}>{title}</h2>
+            {description ? <p id={descriptionId} className={`mt-2 text-sm ${descriptionTone}`}>{description}</p> : null}
           </div>
           <button
             type="button"
-            className="matrix-button rounded-none px-3 py-2 text-sm"
+            className="matrix-button flex h-10 w-10 items-center justify-center rounded-none p-0 text-lg leading-none"
             onClick={onClose}
+            aria-label={closeLabel}
           >
-            {closeLabel}
+            <span aria-hidden="true">x</span>
           </button>
         </div>
 
@@ -164,4 +195,10 @@ export function MatrixModal({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") {
+    return content;
+  }
+
+  return createPortal(content, document.body);
 }

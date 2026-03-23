@@ -10,3 +10,16 @@
 
 - There are no users yet, don't worry about breaking changes or maintaining backwards compatibility. Focus on building the best possible experience, and we can iterate on the details later.
 - You should always be creating good tests. Asking me about creating tests means your not doing your job
+- I don't care about large chunk sizes
+- There should be no "refresh" buttons. These should either be polls or server side events. Don't add refresh buttons everywhere. 
+
+## AI Instructions
+
+- When this product asks an LLM to update a project-management document, the LLM is producing replacement markdown as plain text in its response body. It is not creating files, not writing `.md` files, and not returning patches.
+- The response should contain only the final document text unless the calling prompt explicitly asks for something else. Do not wrap the result in code fences.
+- The prompt should explicitly state the expected output format. At minimum, say that the model must return the full updated markdown document as raw text.
+- The prompt should explicitly state the job to be done, not just the topic. Tell the model what kind of document it is rewriting, what quality bar is expected, and how the result will be used.
+- For project-management documents, the expected result is an execution-ready plan: concrete steps, clear ordering, explicit assumptions, blockers called out, and language that is directly useful to an engineer or agent working in the selected worktree.
+- Prompts should make it clear that the server will persist the returned text into the existing project-management document and that document history is the rollback mechanism.
+- Prompts should avoid implying that the model should create side artifacts like files, tickets, checklists in separate outputs, or commentary outside the returned document unless that is specifically requested.
+- If a specific output structure is required, spell it out directly in the prompt, for example required headings, checklist style, dependency callouts, or implementation sections.

@@ -11,7 +11,7 @@ import {
   WORKTREEMAN_GIT_FILE_CONTENT,
 } from "../../shared/constants.js";
 import { runCommand } from "../utils/process.js";
-import { createBareRepoLayout, ensureBranchWorktree, ensurePrimaryWorktrees } from "./repository-layout-service.js";
+import { createBareRepoLayout, ensureBranchWorktree, ensurePrimaryWorktrees, resolveCloneRootDir } from "./repository-layout-service.js";
 
 const GIT_TEST_ENV = {
   ...process.env,
@@ -113,4 +113,47 @@ test("clone flow checks out main and wtm-settings from a remote", async () => {
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("clone flow bootstraps missing primary branches when the remote does not have them", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-clone-"));
+  const sourceDir = path.join(tempRoot, "source");
+  const remoteDir = path.join(tempRoot, "remote.git");
+  const targetDir = path.join(tempRoot, "target");
+
+  try {
+    await fs.mkdir(sourceDir, { recursive: true });
+    await runCommand("git", ["init", "--bare", remoteDir], { cwd: tempRoot });
+
+    await createBareRepoLayout({ rootDir: targetDir, remoteUrl: remoteDir });
+    await ensurePrimaryWorktrees({ rootDir: targetDir, createMissingBranches: true });
+
+    await fs.access(path.join(targetDir, DEFAULT_WORKTREEMAN_MAIN_BRANCH));
+    await fs.access(path.join(targetDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH));
+
+    const status = await runCommand("git", ["worktree", "list", "--porcelain"], { cwd: targetDir });
+    assert.match(status.stdout, /branch refs\/heads\/main/);
+    assert.match(status.stdout, /branch refs\/heads\/wtm-settings/);
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveCloneRootDir matches git clone style defaults", () => {
+  assert.equal(
+    resolveCloneRootDir("/tmp/root", "https://github.com/acme/widgets.git"),
+    path.resolve("/tmp/root", "widgets"),
+  );
+  assert.equal(
+    resolveCloneRootDir("/tmp/root", "git@github.com:acme/widgets.git"),
+    path.resolve("/tmp/root", "widgets"),
+  );
+  assert.equal(
+    resolveCloneRootDir("/tmp/root", "https://github.com/acme/widgets.git", "."),
+    path.resolve("/tmp/root"),
+  );
+  assert.equal(
+    resolveCloneRootDir("/tmp/root", "https://github.com/acme/widgets.git", "./someotherfolder"),
+    path.resolve("/tmp/root", "someotherfolder"),
+  );
 });

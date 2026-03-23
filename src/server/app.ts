@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import open from "open";
 import { createApiRouter } from "./routes/api.js";
+import { stopAllAiCommandJobManagers } from "./services/ai-command-job-manager-service.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
@@ -189,6 +190,9 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       logInfo("[shutdown] Closing Vite dev server...");
       await vite.close();
     }
+
+    logInfo("[shutdown] Stopping AI job managers...");
+    await stopAllAiCommandJobManagers();
 
     shutdownStatus.complete("[shutdown] Shutdown complete.");
     process.stdout.write("[shutdown] Shutdown complete.\n");

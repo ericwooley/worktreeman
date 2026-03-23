@@ -44,6 +44,11 @@
         "$ref": "#/$defs/quickLinkEntry"
       }
     },
+    "aiCommand": {
+      "type": "string",
+      "description": "Reusable AI command template run inside a selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted.",
+      "default": ""
+    },
     "startupCommands": {
       "type": "array",
       "description": "Commands run inside the worktree after the environment starts.",

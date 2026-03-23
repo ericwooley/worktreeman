@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AiCommandLogEntry,
+  AiCommandLogSummary,
+  AiCommandLogStreamEvent,
   ApiStateResponse,
+  AiCommandJob,
+  AiCommandSettingsResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
@@ -10,7 +15,9 @@ import type {
   ProjectManagementDocument,
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
+  RunAiCommandRequest,
   ShutdownStatus,
+  UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
 } from "@shared/types";
@@ -24,14 +31,22 @@ import {
   getConfigDocument as fetchConfigDocument,
   getBackgroundCommandLogs as fetchBackgroundCommandLogs,
   getBackgroundCommands as fetchBackgroundCommands,
+  getAiCommandSettings as fetchAiCommandSettings,
+  getAiCommandLog as fetchAiCommandLog,
+  getAiCommandLogs as fetchAiCommandLogs,
   getGitComparison as fetchGitComparison,
   getState,
+  cancelAiCommand as cancelAiCommandRequest,
   restartBackgroundCommand as restartBackgroundProcess,
+  runAiCommand as runAiCommandRequest,
+  saveAiCommandSettings as persistAiCommandSettings,
   saveConfigDocument as persistConfigDocument,
   startBackgroundCommand as startBackgroundProcess,
   startRuntime,
   stopBackgroundCommand as stopBackgroundProcess,
   stopRuntime,
+  subscribeToAiCommandJob,
+  subscribeToAiCommandLog,
   subscribeToBackgroundCommandLogs,
   subscribeToShutdownStatus,
   syncEnvFiles,
@@ -41,6 +56,11 @@ import {
 } from "../lib/api";
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
+
+function toAiCommandRequestPreview(request: string) {
+  const normalized = request.replace(/\s+/g, " ").trim();
+  return normalized.length <= 160 ? normalized : `${normalized.slice(0, 160)}...`;
+}
 
 function areGitComparisonsEqual(left: GitComparisonResponse | null, right: GitComparisonResponse | null) {
   if (left === right) {
@@ -67,11 +87,23 @@ export function useDashboardState() {
   const [gitComparisonLoading, setGitComparisonLoading] = useState(false);
   const [configDocument, setConfigDocument] = useState<ConfigDocumentResponse | null>(null);
   const [configDocumentLoading, setConfigDocumentLoading] = useState(false);
+  const [aiCommandSettings, setAiCommandSettings] = useState<AiCommandSettingsResponse | null>(null);
+  const [aiCommandSettingsLoading, setAiCommandSettingsLoading] = useState(false);
+  const [aiCommandJob, setAiCommandJob] = useState<AiCommandJob | null>(null);
+  const [aiCommandRunningBranch, setAiCommandRunningBranch] = useState<string | null>(null);
+  const [aiCommandLogs, setAiCommandLogs] = useState<AiCommandLogSummary[]>([]);
+  const [aiCommandLogDetail, setAiCommandLogDetail] = useState<AiCommandLogEntry | null>(null);
+  const [aiCommandLogsLoading, setAiCommandLogsLoading] = useState(false);
+  const [runningAiCommandJobs, setRunningAiCommandJobs] = useState<AiCommandJob[]>([]);
   const [projectManagement, setProjectManagement] = useState<ProjectManagementListResponse | null>(null);
   const [projectManagementDocument, setProjectManagementDocument] = useState<ProjectManagementDocument | null>(null);
   const [projectManagementHistory, setProjectManagementHistory] = useState<ProjectManagementHistoryEntry[]>([]);
   const [projectManagementLoading, setProjectManagementLoading] = useState(false);
   const [projectManagementSaving, setProjectManagementSaving] = useState(false);
+  const aiCommandSubscriptionRef = useRef<(() => void) | null>(null);
+  const aiCommandLogSubscriptionRef = useRef<(() => void) | null>(null);
+  const trackedAiCommandBranchRef = useRef<string | null>(null);
+  const trackedAiCommandLogFileRef = useRef<string | null>(null);
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -151,6 +183,114 @@ export function useDashboardState() {
   const clearBackgroundLogs = useCallback(() => {
     setBackgroundLogs(null);
   }, []);
+
+  const clearTrackedAiCommandLogSubscription = useCallback(() => {
+    aiCommandLogSubscriptionRef.current?.();
+    aiCommandLogSubscriptionRef.current = null;
+    trackedAiCommandLogFileRef.current = null;
+  }, []);
+
+  const applyAiLogStreamEvent = useCallback((event: AiCommandLogStreamEvent) => {
+    if (!event.log) {
+      setAiCommandLogDetail(null);
+      return;
+    }
+
+    const log = event.log;
+
+    setAiCommandLogDetail(log);
+    setAiCommandLogs((current) => {
+      const summary: AiCommandLogSummary = {
+        jobId: log.jobId,
+        fileName: log.fileName,
+        timestamp: log.timestamp,
+        branch: log.branch,
+        documentId: log.documentId ?? null,
+        worktreePath: log.worktreePath,
+        command: log.command,
+        requestPreview: toAiCommandRequestPreview(log.request),
+        status: log.status,
+        pid: log.pid ?? null,
+      };
+      const next = current.filter((entry) => entry.fileName !== summary.fileName);
+      next.unshift(summary);
+      return next.sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp));
+    });
+
+    setRunningAiCommandJobs((current) => {
+      const next = current.filter((entry) => entry.fileName !== log.fileName && entry.branch !== log.branch);
+      if (log.status === "running") {
+        next.unshift({
+          jobId: log.jobId,
+          fileName: log.fileName,
+          branch: log.branch,
+          documentId: log.documentId ?? null,
+          command: log.command,
+          input: log.request,
+          status: log.status,
+          startedAt: log.timestamp,
+          completedAt: log.completedAt,
+          stdout: log.response.stdout,
+          stderr: log.response.stderr,
+          pid: log.pid ?? null,
+          exitCode: log.exitCode ?? null,
+          processName: log.processName ?? null,
+          error: log.error?.message ?? null,
+        });
+      }
+      return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+    });
+  }, []);
+
+  const upsertRunningAiJob = useCallback((job: AiCommandJob | null) => {
+    if (!job) {
+      return;
+    }
+
+    setRunningAiCommandJobs((current) => {
+      const next = current.filter((entry) => entry.branch !== job.branch);
+      if (job.status === "running") {
+        next.push(job);
+      }
+
+      return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+    });
+  }, []);
+
+  const trackAiCommandJob = useCallback((branch: string | null) => {
+    if (trackedAiCommandBranchRef.current === branch) {
+      return;
+    }
+
+    aiCommandSubscriptionRef.current?.();
+    aiCommandSubscriptionRef.current = null;
+    trackedAiCommandBranchRef.current = branch;
+    setAiCommandJob(null);
+    setAiCommandRunningBranch(null);
+
+    if (!branch) {
+      return;
+    }
+
+    aiCommandSubscriptionRef.current = subscribeToAiCommandJob(branch, (event) => {
+      setAiCommandJob(event.job);
+      setAiCommandRunningBranch(event.job?.status === "running" ? branch : null);
+      upsertRunningAiJob(event.job);
+
+      if (event.job?.status === "failed") {
+        setError(event.job.error || event.job.stderr || `AI command failed for ${branch}.`);
+      }
+    });
+  }, [upsertRunningAiJob]);
+
+  useEffect(() => {
+    return () => {
+      aiCommandSubscriptionRef.current?.();
+      clearTrackedAiCommandLogSubscription();
+      aiCommandSubscriptionRef.current = null;
+      trackedAiCommandBranchRef.current = null;
+    };
+  }, [clearTrackedAiCommandLogSubscription]);
 
   const loadProjectManagementDocumentsState = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -391,6 +531,131 @@ export function useDashboardState() {
           setConfigDocumentLoading(false);
         }
       },
+      async loadAiCommandSettings(options?: { silent?: boolean }) {
+        if (!options?.silent) {
+          setAiCommandSettingsLoading(true);
+        }
+
+        try {
+          const settings = await fetchAiCommandSettings();
+          setAiCommandSettings(settings);
+          setError(null);
+          return settings;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to load AI command settings.");
+          return null;
+        } finally {
+          if (!options?.silent) {
+            setAiCommandSettingsLoading(false);
+          }
+        }
+      },
+      async saveAiCommandSettings(payload: UpdateAiCommandSettingsRequest) {
+        setAiCommandSettingsLoading(true);
+        try {
+          const settings = await persistAiCommandSettings(payload);
+          setAiCommandSettings(settings);
+          await refresh({ silent: true });
+          setError(null);
+          return settings;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to save AI command settings.");
+          return null;
+        } finally {
+          setAiCommandSettingsLoading(false);
+        }
+      },
+      async loadAiCommandLogs(options?: { silent?: boolean }) {
+        if (!options?.silent) {
+          setAiCommandLogsLoading(true);
+        }
+
+        try {
+          const payload = await fetchAiCommandLogs();
+          setAiCommandLogs(payload.logs);
+          setRunningAiCommandJobs(payload.runningJobs);
+          if (trackedAiCommandLogFileRef.current) {
+            const selectedStillExists = payload.logs.some((entry) => entry.fileName === trackedAiCommandLogFileRef.current)
+              || payload.runningJobs.some((entry) => entry.fileName === trackedAiCommandLogFileRef.current);
+            if (!selectedStillExists) {
+              clearTrackedAiCommandLogSubscription();
+              setAiCommandLogDetail(null);
+            }
+          }
+          setError(null);
+          return payload;
+        } catch (err) {
+          setAiCommandLogs([]);
+          setRunningAiCommandJobs([]);
+          setError(err instanceof Error ? err.message : "Failed to load AI logs.");
+          return null;
+        } finally {
+          if (!options?.silent) {
+            setAiCommandLogsLoading(false);
+          }
+        }
+      },
+      async loadAiCommandLog(fileName: string, options?: { silent?: boolean }) {
+        if (!options?.silent) {
+          setAiCommandLogsLoading(true);
+        }
+
+        try {
+          if (trackedAiCommandLogFileRef.current !== fileName) {
+            clearTrackedAiCommandLogSubscription();
+            trackedAiCommandLogFileRef.current = fileName;
+            aiCommandLogSubscriptionRef.current = subscribeToAiCommandLog(fileName, applyAiLogStreamEvent);
+          }
+
+          const payload = await fetchAiCommandLog(fileName);
+          setAiCommandLogDetail(payload.log);
+          setError(null);
+          return payload.log;
+        } catch (err) {
+          clearTrackedAiCommandLogSubscription();
+          setAiCommandLogDetail(null);
+          setError(err instanceof Error ? err.message : "Failed to load AI log.");
+          return null;
+        } finally {
+          if (!options?.silent) {
+            setAiCommandLogsLoading(false);
+          }
+        }
+      },
+      async runAiCommand(branch: string, payload: RunAiCommandRequest) {
+        try {
+          trackAiCommandJob(branch);
+          const result = await runAiCommandRequest(branch, payload);
+          setAiCommandJob(result.job);
+          setAiCommandRunningBranch(result.job.status === "running" ? branch : null);
+          upsertRunningAiJob(result.job);
+          if (payload.documentId) {
+            void loadProjectManagementDocumentsState({ silent: true });
+          }
+          setError(null);
+          return result.job;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to run AI command.");
+          return null;
+        }
+      },
+      async cancelAiCommand(branch: string) {
+        try {
+          const result = await cancelAiCommandRequest(branch);
+          setAiCommandJob(result.job);
+          setAiCommandRunningBranch(result.job.status === "running" ? branch : null);
+          upsertRunningAiJob(result.job);
+          const payload = await fetchAiCommandLogs();
+          setAiCommandLogs(payload.logs);
+          setRunningAiCommandJobs(payload.runningJobs);
+          setError(null);
+          return result.job;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to cancel AI command.");
+          return null;
+        }
+      },
+      trackAiCommandJob,
       loadProjectManagementDocuments: loadProjectManagementDocumentsState,
       loadProjectManagementDocument: loadProjectManagementDocumentState,
       async createProjectManagementDocument(payload: CreateProjectManagementDocumentRequest) {
@@ -445,7 +710,7 @@ export function useDashboardState() {
         }
       },
     }),
-    [appendBackgroundLogs, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, refresh],
+    [appendBackgroundLogs, applyAiLogStreamEvent, clearTrackedAiCommandLogSubscription, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, refresh, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {
@@ -461,6 +726,14 @@ export function useDashboardState() {
     gitComparisonLoading,
     configDocument,
     configDocumentLoading,
+    aiCommandSettings,
+    aiCommandSettingsLoading,
+    aiCommandJob,
+    aiCommandRunningBranch,
+    aiCommandLogs,
+    aiCommandLogDetail,
+    aiCommandLogsLoading,
+    runningAiCommandJobs,
     projectManagement,
     projectManagementDocument,
     projectManagementHistory,

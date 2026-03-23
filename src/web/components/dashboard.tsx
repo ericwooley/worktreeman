@@ -21,6 +21,7 @@ function parseProjectManagementSubTab(value: string | null): ProjectManagementSu
     || value === "history"
     || value === "create"
     || value === "dependency-tree"
+    || value === "ai-log"
     ? value
     : "board";
 }
@@ -116,6 +117,13 @@ export function Dashboard() {
     gitComparisonLoading,
     configDocument,
     configDocumentLoading,
+    aiCommandSettings,
+    aiCommandSettingsLoading,
+    aiCommandJob,
+    aiCommandLogs,
+    aiCommandLogDetail,
+    aiCommandLogsLoading,
+    runningAiCommandJobs,
     projectManagement,
     projectManagementDocument,
     projectManagementHistory,
@@ -123,8 +131,8 @@ export function Dashboard() {
     projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,
-     create,
-     createProjectManagementDocument,
+    create,
+    createProjectManagementDocument,
     remove,
     start,
     stop,
@@ -137,12 +145,18 @@ export function Dashboard() {
     loadProjectManagementDocument,
     loadProjectManagementDocuments,
     loadConfigDocument,
+    loadAiCommandSettings,
+    loadAiCommandLog,
+    loadAiCommandLogs,
     loadGitComparison,
-     saveConfigDocument,
-     subscribeToBackgroundLogs,
-     updateProjectManagementDependencies,
-     updateProjectManagementDocument,
-   } = useDashboardState();
+    runAiCommand,
+    cancelAiCommand,
+    saveAiCommandSettings,
+    saveConfigDocument,
+    subscribeToBackgroundLogs,
+    updateProjectManagementDependencies,
+    updateProjectManagementDocument,
+  } = useDashboardState();
   const { theme, themes, setThemeId } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
   const [activeTab, setActiveTab] = useState<"shell" | "background" | "git" | "project-management">(initialUrlState.activeTab);
@@ -155,7 +169,9 @@ export function Dashboard() {
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
   const [configEditorOpen, setConfigEditorOpen] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState("");
+  const [aiCommandDraft, setAiCommandDraft] = useState("");
   const [branch, setBranch] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteScope, setCommandPaletteScope] = useState<CommandPaletteScope>("main");
@@ -433,6 +449,10 @@ export function Dashboard() {
     void loadProjectManagementDocument(projectManagementSelectedDocumentId, { silent: true });
   }, [activeTab, loadProjectManagementDocument, projectManagementSelectedDocumentId]);
 
+  useEffect(() => {
+    void loadAiCommandSettings({ silent: true });
+  }, [loadAiCommandSettings]);
+
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!branch.trim()) {
@@ -479,6 +499,39 @@ export function Dashboard() {
     setConfigDraft(document.contents);
     setConfigEditorOpen(false);
   }, [configDraft, saveConfigDocument]);
+
+  const openAiSettings = useCallback(async () => {
+    const settings = await loadAiCommandSettings();
+    if (!settings) {
+      return;
+    }
+
+    setAiCommandDraft(settings.aiCommand);
+    setAiSettingsOpen(true);
+  }, [loadAiCommandSettings]);
+
+  const closeAiSettings = useCallback(() => {
+    setAiSettingsOpen(false);
+  }, []);
+
+  const reloadAiSettings = useCallback(async () => {
+    const settings = await loadAiCommandSettings();
+    if (!settings) {
+      return;
+    }
+
+    setAiCommandDraft(settings.aiCommand);
+  }, [loadAiCommandSettings]);
+
+  const persistAiSettings = useCallback(async () => {
+    const settings = await saveAiCommandSettings({ aiCommand: aiCommandDraft });
+    if (!settings) {
+      return;
+    }
+
+    setAiCommandDraft(settings.aiCommand);
+    setAiSettingsOpen(false);
+  }, [aiCommandDraft, saveAiCommandSettings]);
 
   const confirmDelete = async () => {
     if (!deleteConfirmBranch) {
@@ -590,6 +643,15 @@ export function Dashboard() {
         action: () => setCommandPaletteScope("theme-select"),
       },
       {
+        id: "settings-ai-command",
+        code: "sai",
+        title: "Edit AI command",
+        subtitle: "Configure the reusable AI command template used by UI Magic.",
+        group: "Settings",
+        keywords: ["ai", "command", "ui magic", "$WTM_AI_INPUT"],
+        action: () => void openAiSettings(),
+      },
+      {
         id: "settings-config-editor",
         code: "wcfg",
         title: "Edit worktree config",
@@ -661,7 +723,7 @@ export function Dashboard() {
     }
 
     return items.sort(comparePaletteItems);
-  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, openConfigEditor, selected, start, state?.worktrees, stop, syncEnv, theme]);
+  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, openAiSettings, openConfigEditor, selected, start, state?.worktrees, stop, syncEnv, theme]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     return (state?.worktrees ?? []).map((entry, index) => ({
@@ -782,6 +844,24 @@ export function Dashboard() {
                   </div>
                   <span className="theme-text-accent-soft font-mono text-sm">edit</span>
                 </button>
+                <button
+                  type="button"
+                  className="theme-border-subtle theme-dropdown-trigger flex h-full min-h-[100%] w-full items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150 xl:col-span-2"
+                  onClick={() => void openAiSettings()}
+                >
+                  <div className="min-w-0">
+                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">AI command</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="theme-text-strong truncate font-mono text-sm">
+                        {aiCommandSettings?.aiCommand?.trim() ? aiCommandSettings.aiCommand : "$WTM_AI_INPUT not configured"}
+                      </span>
+                      <MatrixBadge tone={aiCommandSettings?.aiCommand?.includes("$WTM_AI_INPUT") ? "active" : "warning"} compact>
+                        {aiCommandSettings?.aiCommand?.includes("$WTM_AI_INPUT") ? "Ready" : "Needs template"}
+                      </MatrixBadge>
+                    </div>
+                  </div>
+                  <span className="theme-text-accent-soft font-mono text-sm">magic</span>
+                </button>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
                 <MatrixBadge tone="neutral">Command palette</MatrixBadge>
@@ -890,23 +970,45 @@ export function Dashboard() {
             onLoadGitComparison={loadGitComparison}
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
-                projectManagementDocuments={projectManagement?.documents ?? []}
-                projectManagementAvailableTags={projectManagement?.availableTags ?? []}
-                projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
-                projectManagementActiveSubTab={projectManagementSubTab}
-                projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
-                projectManagementDocument={projectManagementDocument}
-                projectManagementHistory={projectManagementHistory}
-                projectManagementLoading={projectManagementLoading}
-                projectManagementSaving={projectManagementSaving}
-                onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
-                onLoadProjectManagementDocuments={loadProjectManagementDocuments}
-                onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
+            projectManagementDocuments={projectManagement?.documents ?? []}
+            projectManagementAvailableTags={projectManagement?.availableTags ?? []}
+            projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
+            projectManagementActiveSubTab={projectManagementSubTab}
+            projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
+            projectManagementDocument={projectManagementDocument}
+            projectManagementHistory={projectManagementHistory}
+            projectManagementLoading={projectManagementLoading}
+            projectManagementSaving={projectManagementSaving}
+            projectManagementAiLogs={aiCommandLogs}
+            projectManagementAiLogDetail={aiCommandLogDetail}
+            projectManagementAiLogsLoading={aiCommandLogsLoading}
+            projectManagementRunningAiJobs={runningAiCommandJobs}
+            onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
+            onLoadProjectManagementDocuments={loadProjectManagementDocuments}
+            onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
+            onLoadProjectManagementAiLogs={loadAiCommandLogs}
+            onLoadProjectManagementAiLog={loadAiCommandLog}
             onCreateProjectManagementDocument={createProjectManagementDocument}
             onUpdateProjectManagementDocument={updateProjectManagementDocument}
             onUpdateProjectManagementDependencies={async (documentId, dependencyIds) => {
               setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementDependencies(documentId, { dependencyIds });
+            }}
+            projectManagementAiCommandConfigured={Boolean(aiCommandSettings?.aiCommand?.includes("$WTM_AI_INPUT"))}
+            projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
+            onRunProjectManagementAiCommand={async (payload) => {
+              if (!selected?.branch) {
+                return null;
+              }
+
+              return runAiCommand(selected.branch, payload);
+            }}
+            onCancelProjectManagementAiCommand={async () => {
+              if (!selected?.branch) {
+                return null;
+              }
+
+              return cancelAiCommand(selected.branch);
             }}
           />
         </section>
@@ -1088,6 +1190,68 @@ export function Dashboard() {
           </div>
         </MatrixModal>
       ) : null}
+
+      {aiSettingsOpen ? (
+        <MatrixModal
+          kicker="AI command"
+          title="Configure UI Magic"
+          description="Set the reusable command template run inside the selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted."
+          closeLabel="Cancel"
+          maxWidthClass="max-w-3xl"
+          onClose={closeAiSettings}
+          footer={(
+            <>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={closeAiSettings}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => void reloadAiSettings()}
+                disabled={aiCommandSettingsLoading}
+              >
+                Reload
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                onClick={() => void persistAiSettings()}
+                disabled={aiCommandSettingsLoading || !aiCommandDraft.includes("$WTM_AI_INPUT")}
+              >
+                Save AI command
+              </button>
+            </>
+          )}
+        >
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
+              <MatrixBadge tone="neutral">Stored in config</MatrixBadge>
+              <span className="font-mono theme-text-strong">{aiCommandSettings?.filePath ?? state?.configPath ?? "worktree.yml"}</span>
+              <MatrixBadge tone={aiCommandDraft.includes("$WTM_AI_INPUT") ? "active" : "warning"}>
+                {aiCommandDraft.includes("$WTM_AI_INPUT") ? "Template valid" : "Missing $WTM_AI_INPUT"}
+              </MatrixBadge>
+            </div>
+            <label className="block space-y-2">
+              <span className="text-xs uppercase tracking-[0.18em] theme-text-soft">AI Command template</span>
+              <input
+                value={aiCommandDraft}
+                onChange={(event) => setAiCommandDraft(event.target.value)}
+                placeholder="opencode run $WTM_AI_INPUT"
+                className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
+                autoFocus
+              />
+            </label>
+            <div className="border theme-border-subtle p-3 text-sm theme-text-muted">
+              Use `$WTM_AI_INPUT` exactly once or more in the command. The generated document-editing prompt will be shell-quoted before execution.
+            </div>
+          </div>
+        </MatrixModal>
+      ) : null}
+
 
       <CommandPalette
         open={commandPaletteOpen}

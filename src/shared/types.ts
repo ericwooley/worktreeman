@@ -12,6 +12,7 @@ export interface WorktreeManagerConfig {
   runtimePorts: string[];
   derivedEnv: Record<string, string>;
   quickLinks: QuickLinkConfigEntry[];
+  aiCommand: string;
   startupCommands: string[];
   backgroundCommands: Record<string, BackgroundCommandConfigEntry>;
   worktrees: {
@@ -103,6 +104,16 @@ export interface ConfigDocumentResponse {
   filePath: string;
   contents: string;
   editable: boolean;
+}
+
+export interface AiCommandSettingsResponse {
+  branch: string;
+  filePath: string;
+  aiCommand: string;
+}
+
+export interface UpdateAiCommandSettingsRequest {
+  aiCommand: string;
 }
 
 export interface GitBranchOption {
@@ -256,6 +267,97 @@ export interface AppendProjectManagementBatchRequest {
 
 export interface UpdateProjectManagementDependenciesRequest {
   dependencyIds: string[];
+}
+
+export interface RunAiCommandRequest {
+  input: string;
+  documentId?: string;
+}
+
+export type AiCommandJobStatus = "running" | "completed" | "failed";
+
+export interface AiCommandJob {
+  jobId: string;
+  fileName: string;
+  branch: string;
+  documentId?: string | null;
+  command: string;
+  input: string;
+  status: AiCommandJobStatus;
+  startedAt: string;
+  completedAt?: string;
+  stdout: string;
+  stderr: string;
+  pid?: number | null;
+  exitCode?: number | null;
+  processName?: string | null;
+  logPath?: string | null;
+  error?: string | null;
+}
+
+export interface RunAiCommandResponse {
+  job: AiCommandJob;
+}
+
+export interface AiCommandStreamEvent {
+  type: "snapshot" | "update";
+  job: AiCommandJob | null;
+}
+
+export interface AiCommandLogError {
+  name?: string;
+  message: string;
+  stack?: string;
+}
+
+export type AiCommandLogStatus = "running" | "completed" | "failed";
+
+export interface AiCommandLogSummary {
+  jobId: string;
+  fileName: string;
+  timestamp: string;
+  branch: string;
+  documentId?: string | null;
+  worktreePath: string;
+  command: string;
+  requestPreview: string;
+  status: AiCommandLogStatus;
+  pid?: number | null;
+}
+
+export interface AiCommandLogEntry {
+  jobId: string;
+  fileName: string;
+  timestamp: string;
+  branch: string;
+  documentId?: string | null;
+  worktreePath: string;
+  command: string;
+  request: string;
+  response: {
+    stdout: string;
+    stderr: string;
+  };
+  status: AiCommandLogStatus;
+  pid?: number | null;
+  exitCode?: number | null;
+  processName?: string | null;
+  completedAt?: string;
+  error: AiCommandLogError | null;
+}
+
+export interface AiCommandLogsResponse {
+  logs: AiCommandLogSummary[];
+  runningJobs: AiCommandJob[];
+}
+
+export interface AiCommandLogResponse {
+  log: AiCommandLogEntry;
+}
+
+export interface AiCommandLogStreamEvent {
+  type: "snapshot" | "update";
+  log: AiCommandLogEntry | null;
 }
 
 export type TerminalClientMessage =

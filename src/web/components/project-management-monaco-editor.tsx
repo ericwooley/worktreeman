@@ -5,12 +5,14 @@ interface ProjectManagementMonacoEditorProps {
   value: string;
   onChange: (value: string) => void;
   height?: string;
+  readOnly?: boolean;
 }
 
 export function ProjectManagementMonacoEditor({
   value,
   onChange,
   height = "65vh",
+  readOnly = false,
 }: ProjectManagementMonacoEditorProps) {
   const { theme } = useTheme();
 
@@ -27,6 +29,7 @@ export function ProjectManagementMonacoEditor({
         wordWrap: "on",
         scrollBeyondLastLine: false,
         automaticLayout: true,
+        readOnly,
       }}
       theme={theme.variant === "light" ? "vs" : "vs-dark"}
     />

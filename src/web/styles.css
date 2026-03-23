@@ -267,6 +267,58 @@ body,
   background: rgb(var(--rgb-base00) / 0.3);
 }
 
+.pm-inline-toast {
+  border-color: rgb(var(--rgb-base09) / 0.24);
+  background: rgb(var(--rgb-base09) / 0.14);
+  color: var(--base09);
+}
+
+.pm-ai-button-running {
+  animation: pm-ai-pulse 1.1s ease-in-out infinite;
+  border-color: rgb(var(--rgb-base0D) / 0.42);
+  box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.16), 0 0 22px rgb(var(--rgb-base0D) / 0.14);
+}
+
+.pm-ai-running-state {
+  border: 1px solid rgb(var(--rgb-base0D) / 0.18);
+  background:
+    radial-gradient(circle at top, rgb(var(--rgb-base0D) / 0.12), transparent 48%),
+    rgb(var(--rgb-base00) / 0.46);
+}
+
+.pm-ai-spinner {
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 2px solid rgb(var(--rgb-base0D) / 0.16);
+  border-top-color: rgb(var(--rgb-base0D) / 0.82);
+  border-radius: 999px;
+  animation: pm-ai-spin 0.9s linear infinite;
+  box-shadow: 0 0 20px rgb(var(--rgb-base0D) / 0.12);
+}
+
+@keyframes pm-ai-pulse {
+  0%,
+  100% {
+    transform: translateY(0);
+    box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.16), 0 0 16px rgb(var(--rgb-base0D) / 0.1);
+  }
+
+  50% {
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.22), 0 0 28px rgb(var(--rgb-base0D) / 0.18);
+  }
+}
+
+@keyframes pm-ai-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .react-flow__node.pm-dependency-node,
 .react-flow__node-default.pm-dependency-node {
   min-width: 180px;

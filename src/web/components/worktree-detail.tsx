@@ -4,6 +4,9 @@ import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
 import "@git-diff-view/react/styles/diff-view-pure.css";
 import type {
+  AiCommandLogEntry,
+  AiCommandLogSummary,
+  AiCommandJob,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   GitComparisonResponse,
@@ -283,9 +286,17 @@ interface WorktreeDetailProps {
   projectManagementHistory: ProjectManagementHistoryEntry[];
   projectManagementLoading: boolean;
   projectManagementSaving: boolean;
+  projectManagementAiLogs: AiCommandLogSummary[];
+  projectManagementAiLogDetail: AiCommandLogEntry | null;
+  projectManagementAiLogsLoading: boolean;
+  projectManagementRunningAiJobs: AiCommandJob[];
+  projectManagementAiCommandConfigured: boolean;
+  projectManagementAiJob: AiCommandJob | null;
   onProjectManagementSubTabChange: (tab: ProjectManagementSubTab) => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
+  onLoadProjectManagementAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
+  onLoadProjectManagementAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCreateProjectManagementDocument: (payload: {
     title: string;
     markdown: string;
@@ -303,6 +314,8 @@ interface WorktreeDetailProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
+  onRunProjectManagementAiCommand: (payload: { input: string; documentId: string }) => Promise<AiCommandJob | null>;
+  onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;
 }
 
 export function WorktreeDetail({
@@ -348,12 +361,22 @@ export function WorktreeDetail({
   projectManagementHistory,
   projectManagementLoading,
   projectManagementSaving,
+  projectManagementAiLogs,
+  projectManagementAiLogDetail,
+  projectManagementAiLogsLoading,
+  projectManagementRunningAiJobs,
+  projectManagementAiCommandConfigured,
+  projectManagementAiJob,
   onProjectManagementSubTabChange,
   onLoadProjectManagementDocuments,
   onLoadProjectManagementDocument,
+  onLoadProjectManagementAiLogs,
+  onLoadProjectManagementAiLog,
   onCreateProjectManagementDocument,
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
+  onRunProjectManagementAiCommand,
+  onCancelProjectManagementAiCommand,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
   const [copied, setCopied] = useState(false);
@@ -933,12 +956,23 @@ export function WorktreeDetail({
               history={projectManagementHistory}
               loading={projectManagementLoading}
               saving={projectManagementSaving}
+              aiLogs={projectManagementAiLogs}
+              aiLogDetail={projectManagementAiLogDetail}
+              aiLogsLoading={projectManagementAiLogsLoading}
+              runningAiJobs={projectManagementRunningAiJobs}
+              aiCommandConfigured={projectManagementAiCommandConfigured}
+              aiJob={projectManagementAiJob}
+              selectedWorktreeBranch={worktree?.branch ?? null}
               onSubTabChange={onProjectManagementSubTabChange}
               onRefresh={onLoadProjectManagementDocuments}
               onSelectDocument={onLoadProjectManagementDocument}
+              onLoadAiLogs={onLoadProjectManagementAiLogs}
+              onLoadAiLog={onLoadProjectManagementAiLog}
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
+              onRunAiCommand={onRunProjectManagementAiCommand}
+              onCancelAiCommand={onCancelProjectManagementAiCommand}
             />
           </Suspense>
         ) : (

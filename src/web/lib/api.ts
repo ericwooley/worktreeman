@@ -1,6 +1,11 @@
 import type {
   AppendProjectManagementBatchRequest,
   ApiStateResponse,
+  AiCommandLogResponse,
+  AiCommandLogStreamEvent,
+  AiCommandLogsResponse,
+  AiCommandSettingsResponse,
+  AiCommandStreamEvent,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
@@ -11,8 +16,11 @@ import type {
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  RunAiCommandRequest,
+  RunAiCommandResponse,
   ShutdownStatus,
   TmuxClientInfo,
+  UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
   WorktreeRuntime,
@@ -66,6 +74,89 @@ export function saveConfigDocument(contents: string): Promise<ConfigDocumentResp
     method: "PUT",
     body: JSON.stringify({ contents }),
   });
+}
+
+export function getAiCommandSettings(): Promise<AiCommandSettingsResponse> {
+  return request<AiCommandSettingsResponse>("/api/settings/ai-command");
+}
+
+export function saveAiCommandSettings(payload: UpdateAiCommandSettingsRequest): Promise<AiCommandSettingsResponse> {
+  return request<AiCommandSettingsResponse>("/api/settings/ai-command", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function runAiCommand(branch: string, payload: RunAiCommandRequest): Promise<RunAiCommandResponse> {
+  return request<RunAiCommandResponse>(`/api/worktrees/${encodeURIComponent(branch)}/ai-command/run`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function cancelAiCommand(branch: string): Promise<RunAiCommandResponse> {
+  return request<RunAiCommandResponse>(`/api/worktrees/${encodeURIComponent(branch)}/ai-command/cancel`, {
+    method: "POST",
+  });
+}
+
+export function subscribeToAiCommandJob(
+  branch: string,
+  onEvent: (event: AiCommandStreamEvent) => void,
+): () => void {
+  let closed = false;
+  const source = new EventSource(`/api/worktrees/${encodeURIComponent(branch)}/ai-command/stream`);
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as AiCommandStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+
+    source.close();
+    onEvent({ type: "update", job: null });
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
+}
+
+export function getAiCommandLogs(): Promise<AiCommandLogsResponse> {
+  return request<AiCommandLogsResponse>("/api/ai/logs");
+}
+
+export function getAiCommandLog(fileName: string): Promise<AiCommandLogResponse> {
+  return request<AiCommandLogResponse>(`/api/ai/logs/${encodeURIComponent(fileName)}`);
+}
+
+export function subscribeToAiCommandLog(
+  fileName: string,
+  onEvent: (event: AiCommandLogStreamEvent) => void,
+): () => void {
+  let closed = false;
+  const source = new EventSource(`/api/ai/logs/${encodeURIComponent(fileName)}/stream`);
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as AiCommandLogStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+
+    source.close();
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
 }
 
 export function getGitComparison(compareBranch: string, baseBranch?: string): Promise<GitComparisonResponse> {

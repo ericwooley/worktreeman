@@ -14,12 +14,14 @@ interface ProjectManagementWysiwygProps {
   value: string;
   onChange: (value: string) => void;
   height?: string;
+  readOnly?: boolean;
 }
 
 export function ProjectManagementWysiwyg({
   value,
   onChange,
   height = "65vh",
+  readOnly = false,
 }: ProjectManagementWysiwygProps) {
   const { theme } = useTheme();
   const editorRef = useRef<ToastEditorHandle | null>(null);
@@ -37,9 +39,10 @@ export function ProjectManagementWysiwyg({
 
   return (
     <div
-      className={`pm-wysiwyg-shell border theme-border-subtle ${theme.variant === "dark" ? "pm-wysiwyg-shell-dark" : "pm-wysiwyg-shell-light"}`}
+      className={`relative pm-wysiwyg-shell border theme-border-subtle ${theme.variant === "dark" ? "pm-wysiwyg-shell-dark" : "pm-wysiwyg-shell-light"}`}
       data-theme-variant={theme.variant}
     >
+      {readOnly ? <div className="absolute inset-0 z-10 cursor-not-allowed" aria-hidden="true" /> : null}
       <Editor
         ref={editorRef as never}
         initialValue={value}
@@ -49,6 +52,9 @@ export function ProjectManagementWysiwyg({
         useCommandShortcut
         hideModeSwitch
         onChange={() => {
+          if (readOnly) {
+            return;
+          }
           const nextValue = editorRef.current?.getInstance().getMarkdown() ?? "";
           lastValueRef.current = nextValue;
           onChange(nextValue);

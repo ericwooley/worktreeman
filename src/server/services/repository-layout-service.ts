@@ -22,6 +22,17 @@ interface CreateLayoutOptions extends EnsureLayoutOptions {
   remoteUrl?: string;
 }
 
+export function resolveCloneRootDir(baseDir: string, remoteUrl: string, directory?: string): string {
+  if (directory?.trim()) {
+    return path.resolve(baseDir, directory);
+  }
+
+  const trimmedRemote = remoteUrl.trim().replace(/[\\/]+$/, "");
+  const lastSegment = trimmedRemote.split(/[/:]/).filter(Boolean).pop() ?? "repo";
+  const repoName = lastSegment.replace(/\.git$/i, "") || "repo";
+  return path.resolve(baseDir, repoName);
+}
+
 export async function createBareRepoLayout(options: CreateLayoutOptions): Promise<void> {
   const rootDir = path.resolve(options.rootDir);
   const bareDir = path.join(rootDir, WORKTREEMAN_BARE_DIR);

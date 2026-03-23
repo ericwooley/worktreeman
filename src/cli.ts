@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import path from "node:path";
 import process from "node:process";
 import { confirm, input } from "@inquirer/prompts";
 import {
@@ -22,7 +23,7 @@ import {
 import { findRepoContext } from "./server/utils/paths.js";
 import { startServer } from "./server/app.js";
 import { initRepository } from "./server/services/init-service.js";
-import { createBareRepoLayout, ensurePrimaryWorktrees } from "./server/services/repository-layout-service.js";
+import { createBareRepoLayout, ensurePrimaryWorktrees, resolveCloneRootDir } from "./server/services/repository-layout-service.js";
 
 const startCommand = command({
   name: "start",
@@ -227,22 +228,28 @@ const cloneCommand = command({
       displayName: "remote",
       description: "Remote repository URL to clone.",
     }),
+    directory: positional({
+      type: optional(string),
+      displayName: "directory",
+      description: "Optional target directory. Defaults to the remote repository name.",
+    }),
     cwd: option({
       type: string,
       long: "cwd",
       short: "c",
       defaultValue: () => process.cwd(),
       defaultValueIsSerializable: true,
-      description: "Directory where the managed repository layout should be created.",
+      description: "Base directory used to resolve the clone target directory.",
     }),
   },
-  handler: async ({ remote, cwd }) => {
-    await createBareRepoLayout({ rootDir: cwd, remoteUrl: remote });
-    await ensurePrimaryWorktrees({ rootDir: cwd, createMissingBranches: false });
-    const repo = await findRepoContext(cwd);
+  handler: async ({ remote, directory, cwd }) => {
+    const rootDir = resolveCloneRootDir(cwd, remote, directory);
+    await createBareRepoLayout({ rootDir, remoteUrl: remote });
+    await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+    const repo = await findRepoContext(rootDir);
 
     process.stdout.write(`Cloned ${remote} into bare repository layout at ${repo.repoRoot}\n`);
-    process.stdout.write(`Checked out ${repo.repoRoot}/${DEFAULT_WORKTREEMAN_MAIN_BRANCH} and ${repo.configWorktreePath}\n`);
+    process.stdout.write(`Checked out ${path.join(repo.repoRoot, DEFAULT_WORKTREEMAN_MAIN_BRANCH)} and ${repo.configWorktreePath}\n`);
   },
 });
 

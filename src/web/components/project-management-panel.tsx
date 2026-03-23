@@ -1,12 +1,15 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import type {
+  AiCommandLogEntry,
+  AiCommandLogSummary,
+  AiCommandJob,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
 } from "@shared/types";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { marked } from "marked";
-import { MatrixBadge, MatrixDetailField, MatrixTabButton } from "./matrix-primitives";
+import { MatrixBadge, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 
 const ProjectManagementBoardTab = lazy(async () => {
   const module = await import("./project-management-board-tab");
@@ -28,6 +31,11 @@ const ProjectManagementCreateTab = lazy(async () => {
   return { default: module.ProjectManagementCreateTab };
 });
 
+const ProjectManagementAiLogTab = lazy(async () => {
+  const module = await import("./project-management-ai-log-tab");
+  return { default: module.ProjectManagementAiLogTab };
+});
+
 const ProjectManagementWysiwyg = lazy(async () => {
   const module = await import("./project-management-wysiwyg");
   return { default: module.ProjectManagementWysiwyg };
@@ -38,7 +46,7 @@ const ProjectManagementMonacoEditor = lazy(async () => {
   return { default: module.ProjectManagementMonacoEditor };
 });
 
-export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create";
+export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "ai-log";
 
 interface ProjectManagementPanelProps {
   documents: ProjectManagementDocumentSummary[];
@@ -50,8 +58,17 @@ interface ProjectManagementPanelProps {
   history: ProjectManagementHistoryEntry[];
   loading: boolean;
   saving: boolean;
+  aiCommandConfigured: boolean;
+  aiJob: AiCommandJob | null;
+  aiLogs: AiCommandLogSummary[];
+  aiLogDetail: AiCommandLogEntry | null;
+  aiLogsLoading: boolean;
+  runningAiJobs: AiCommandJob[];
+  selectedWorktreeBranch: string | null;
   onSubTabChange: (tab: ProjectManagementSubTab) => void;
   onRefresh: (options?: { silent?: boolean }) => Promise<unknown>;
+  onLoadAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
+  onLoadAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onSelectDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onCreateDocument: (payload: {
     title: string;
@@ -71,6 +88,8 @@ interface ProjectManagementPanelProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
+  onRunAiCommand: (payload: { input: string; documentId: string }) => Promise<AiCommandJob | null>;
+  onCancelAiCommand: () => Promise<AiCommandJob | null>;
 }
 
 function parseTags(value: string): string[] {
@@ -90,12 +109,23 @@ export function ProjectManagementPanel({
   history,
   loading,
   saving,
+  aiCommandConfigured,
+  aiJob,
+  aiLogs,
+  aiLogDetail,
+  aiLogsLoading,
+  runningAiJobs,
+  selectedWorktreeBranch,
   onSubTabChange,
   onRefresh,
+  onLoadAiLogs,
+  onLoadAiLog,
   onSelectDocument,
   onCreateDocument,
   onUpdateDocument,
   onUpdateDependencies,
+  onRunAiCommand,
+  onCancelAiCommand,
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
   const [documentViewMode, setDocumentViewMode] = useState<"document" | "edit">("document");
@@ -104,40 +134,77 @@ export function ProjectManagementPanel({
   const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string>("");
   const [archiveFilter, setArchiveFilter] = useState<"active" | "archived" | "all">("active");
   const [showBacklogLane, setShowBacklogLane] = useState(false);
-  const [draftTitle, setDraftTitle] = useState("");
-  const [draftMarkdown, setDraftMarkdown] = useState("");
-  const [draftTags, setDraftTags] = useState("");
-  const [dependencyDraft, setDependencyDraft] = useState<string[]>([]);
-  const [draftStatus, setDraftStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
-  const [draftAssignee, setDraftAssignee] = useState("");
-  const [editMode, setEditMode] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editMarkdown, setEditMarkdown] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [dependencySelection, setDependencySelection] = useState<string[]>([]);
+  const [editStatus, setEditStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
+  const [editAssignee, setEditAssignee] = useState("");
   const [useMonacoEditor, setUseMonacoEditor] = useState(false);
   const [newTitle, setNewTitle] = useState("Project Outline");
   const [newTags, setNewTags] = useState("plan");
   const [newMarkdown, setNewMarkdown] = useState("# Project Outline\n");
   const [newStatus, setNewStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [newAssignee, setNewAssignee] = useState("");
+  const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
+  const [aiChangeRequest, setAiChangeRequest] = useState("");
+  const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
+  const [aiRequestModalOpen, setAiRequestModalOpen] = useState(false);
+  const aiRunning = aiJob?.status === "running";
 
   useEffect(() => {
     if (!document) {
-      setDraftTitle("");
-      setDraftMarkdown("");
-      setDraftTags("");
-      setDependencyDraft([]);
-      setDraftStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
-      setDraftAssignee("");
+      setEditTitle("");
+      setEditMarkdown("");
+      setEditTags("");
+      setDependencySelection([]);
+      setEditStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
+      setEditAssignee("");
       setDocumentViewMode("document");
+      setAiChangeRequest("");
       return;
     }
 
-    setDraftTitle(document.title);
-    setDraftMarkdown(document.markdown);
-    setDraftTags(document.tags.join(", "));
-    setDependencyDraft(Array.isArray(document.dependencies) ? document.dependencies : []);
-    setDraftStatus(document.status);
-    setDraftAssignee(document.assignee);
+    setEditTitle(document.title);
+    setEditMarkdown(document.markdown);
+    setEditTags(document.tags.join(", "));
+    setDependencySelection(Array.isArray(document.dependencies) ? document.dependencies : []);
+    setEditStatus(document.status);
+    setEditAssignee(document.assignee);
     setDocumentViewMode("document");
+    setAiFailureToast(null);
+    setAiRequestModalOpen(false);
   }, [document]);
+
+  useEffect(() => {
+    if (!aiJob) {
+      return;
+    }
+
+    if (aiJob.status === "completed") {
+      setAiRunSummary(`AI updated the saved document on ${aiJob.branch}. Use history to roll back if needed.`);
+      setAiChangeRequest("");
+      setAiRequestModalOpen(false);
+      if (document && aiJob.documentId === document.id) {
+        void onSelectDocument(document.id, { silent: true });
+      }
+      return;
+    }
+
+    if (aiJob.status === "failed") {
+      setAiRunSummary(null);
+      setAiFailureToast(aiJob.error || aiJob.stderr || "⚡ request failed. Check the AI logs for details.");
+    }
+  }, [aiJob]);
+
+  useEffect(() => {
+    if (!aiFailureToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setAiFailureToast(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [aiFailureToast]);
 
   const availableAssignees = useMemo(
     () => Array.from(new Set(documents.map((entry) => entry.assignee).filter(Boolean))).sort((left, right) => left.localeCompare(right)),
@@ -190,8 +257,8 @@ export function ProjectManagementPanel({
   );
 
   const renderedMarkdown = useMemo(
-    () => marked.parse(draftMarkdown || document?.markdown || ""),
-    [document?.markdown, draftMarkdown],
+    () => marked.parse(editMarkdown || document?.markdown || ""),
+    [document?.markdown, editMarkdown],
   );
 
   const compactDocumentSummary = document
@@ -274,20 +341,69 @@ export function ProjectManagementPanel({
     [document?.id, documents],
   );
 
-  async function handleDependencyDraftToggle(dependencyId: string) {
-    if (!document) {
+  async function handleDependencySelectionToggle(dependencyId: string) {
+    if (!document || aiRunning) {
       return;
     }
 
-    const nextDependencies = dependencyDraft.includes(dependencyId)
-      ? dependencyDraft.filter((entry) => entry !== dependencyId)
-      : [...dependencyDraft, dependencyId];
+    const nextDependencies = dependencySelection.includes(dependencyId)
+      ? dependencySelection.filter((entry) => entry !== dependencyId)
+      : [...dependencySelection, dependencyId];
 
     const updated = await onUpdateDependencies(document.id, nextDependencies);
     if (updated) {
-      setDependencyDraft(updated.dependencies);
+      setDependencySelection(updated.dependencies);
     }
   }
+
+  async function handleRunUiMagic() {
+    if (!document) {
+      setAiFailureToast("Select a document before running \u26a1.");
+      return false;
+    }
+
+    if (!selectedWorktreeBranch) {
+      setAiFailureToast("Select a worktree before running \u26a1.");
+      return false;
+    }
+
+    if (!aiCommandConfigured) {
+      setAiFailureToast("Configure an AI Command with $WTM_AI_INPUT in settings first.");
+      return false;
+    }
+
+    if (aiRunning) {
+      setAiFailureToast("\u26a1 is already running for this worktree.");
+      return false;
+    }
+
+    const requestedChange = aiChangeRequest.trim();
+    if (!requestedChange) {
+      setAiFailureToast("Tell \u26a1 what to change before running it.");
+      return false;
+    }
+
+    setAiRunSummary(null);
+    setAiFailureToast(null);
+
+    const job = await onRunAiCommand({ input: requestedChange, documentId: document.id });
+    if (!job) {
+      setAiFailureToast("\u26a1 request failed. Check the AI command output for details.");
+      return false;
+    }
+
+    setAiRunSummary(`AI started for ${job.branch}. The saved document will update on the server when it finishes.`);
+    setAiRequestModalOpen(false);
+    return true;
+  }
+
+  useEffect(() => {
+    if (activeSubTab !== "ai-log") {
+      return;
+    }
+
+    void onLoadAiLogs({ silent: true });
+  }, [activeSubTab, onLoadAiLogs]);
 
   const documentRail = (
     <div className="theme-inline-panel p-4">
@@ -424,6 +540,7 @@ export function ProjectManagementPanel({
             <MatrixTabButton active={activeSubTab === "board"} label="Board" onClick={() => onSubTabChange("board")} />
             <MatrixTabButton active={activeSubTab === "dependency-tree"} label="Dependency tree" onClick={() => onSubTabChange("dependency-tree")} />
             <MatrixTabButton active={activeSubTab === "history"} label="History" onClick={() => onSubTabChange("history")} />
+            <MatrixTabButton active={activeSubTab === "ai-log"} label="AI Log" onClick={() => onSubTabChange("ai-log")} />
             <MatrixTabButton active={activeSubTab === "create"} label="Create" onClick={() => onSubTabChange("create")} />
           </div>
 
@@ -431,6 +548,18 @@ export function ProjectManagementPanel({
             <div className="grid gap-4 pt-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
               {documentRail}
               <div>
+          {aiFailureToast ? (
+            <div className="pm-inline-toast mb-3 flex items-center justify-between gap-3 border px-3 py-2 text-sm">
+              <span>{aiFailureToast}</span>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-2 py-1 text-xs"
+                onClick={() => setAiFailureToast(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
             <div>
               <p className="matrix-kicker">Markdown document</p>
@@ -457,21 +586,44 @@ export function ProjectManagementPanel({
                   type="button"
                   className={`matrix-button rounded-none px-3 py-2 text-sm ${useMonacoEditor ? "theme-pill-emphasis theme-text-strong" : ""}`}
                   onClick={() => setUseMonacoEditor((current) => !current)}
+                  disabled={aiRunning}
                 >
                   {useMonacoEditor ? "Use WYSIWYG" : "Use Monaco"}
                 </button>
               ) : null}
+              {documentViewMode === "edit" ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${aiRunning ? "pm-ai-button-running" : ""}`}
+                    onClick={() => setAiRequestModalOpen(true)}
+                    title={aiRunning ? "\u26a1 is running" : "Open AI request"}
+                    disabled={!document || aiRunning}
+                  >
+                    {aiRunning ? "⚡ Running..." : "⚡ AI"}
+                  </button>
+                  {aiRunning ? (
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      onClick={() => void onCancelAiCommand()}
+                    >
+                      Cancel AI
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-                disabled={!document || saving || documentViewMode !== "edit"}
+                disabled={!document || saving || aiRunning || documentViewMode !== "edit"}
                 onClick={() => document ? void onUpdateDocument(document.id, {
-                  title: draftTitle,
-                  markdown: draftMarkdown,
-                  tags: parseTags(draftTags),
+                  title: editTitle,
+                  markdown: editMarkdown,
+                  tags: parseTags(editTags),
                   dependencies: document.dependencies,
-                  status: draftStatus,
-                  assignee: draftAssignee,
+                  status: editStatus,
+                  assignee: editAssignee,
                   archived: document.archived,
                 }) : undefined}
               >
@@ -480,24 +632,34 @@ export function ProjectManagementPanel({
             </div>
           </div>
 
+          {document ? (
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              {!aiCommandConfigured ? <MatrixBadge tone="warning">Configure AI Command in settings</MatrixBadge> : null}
+               {aiRunning ? <MatrixBadge tone="warning">Document editing locked while AI updates the saved document</MatrixBadge> : null}
+               {aiRunSummary ? <MatrixBadge tone="active">{aiRunSummary}</MatrixBadge> : null}
+            </div>
+          ) : null}
+
           {document && documentViewMode === "edit" ? (
             <div className="mt-3 grid gap-3 xl:grid-cols-[18rem_minmax(0,1fr)]">
               <div className="space-y-2 border theme-border-subtle p-3">
                 <label className="block space-y-1">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Title</span>
                   <input
-                    value={draftTitle}
-                    onChange={(event) => setDraftTitle(event.target.value)}
+                    value={editTitle}
+                    onChange={(event) => setEditTitle(event.target.value)}
                     placeholder="Document title"
+                    disabled={aiRunning}
                     className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
                   />
                 </label>
                 <label className="block space-y-1">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Tags</span>
                   <input
-                    value={draftTags}
-                    onChange={(event) => setDraftTags(event.target.value)}
+                    value={editTags}
+                    onChange={(event) => setEditTags(event.target.value)}
                     placeholder="bug, feature, plan"
+                    disabled={aiRunning}
                     className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
                   />
                 </label>
@@ -505,8 +667,9 @@ export function ProjectManagementPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Status</span>
                     <select
-                      value={draftStatus}
-                      onChange={(event) => setDraftStatus(event.target.value)}
+                      value={editStatus}
+                      onChange={(event) => setEditStatus(event.target.value)}
+                      disabled={aiRunning}
                       className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
                     >
                       {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
@@ -515,9 +678,10 @@ export function ProjectManagementPanel({
                   <label className="block space-y-1">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Assignee</span>
                     <input
-                      value={draftAssignee}
-                      onChange={(event) => setDraftAssignee(event.target.value)}
+                      value={editAssignee}
+                      onChange={(event) => setEditAssignee(event.target.value)}
                       placeholder="Assignee"
+                      disabled={aiRunning}
                       className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
                     />
                   </label>
@@ -526,16 +690,16 @@ export function ProjectManagementPanel({
                   <button
                     type="button"
                     className="matrix-button rounded-none px-3 py-2 text-sm"
-                    disabled={saving}
+                    disabled={saving || aiRunning}
                     onClick={() => void onUpdateDocument(document.id, {
-                       title: draftTitle,
-                       markdown: draftMarkdown,
-                       tags: parseTags(draftTags),
-                       dependencies: document.dependencies,
-                       status: draftStatus,
-                       assignee: draftAssignee,
-                       archived: !document.archived,
-                    })}
+                        title: editTitle,
+                        markdown: editMarkdown,
+                        tags: parseTags(editTags),
+                        dependencies: document.dependencies,
+                        status: editStatus,
+                        assignee: editAssignee,
+                        archived: !document.archived,
+                     })}
                   >
                     {document.archived ? "Restore" : "Archive"}
                   </button>
@@ -543,13 +707,32 @@ export function ProjectManagementPanel({
                 </div>
               </div>
               <div className="overflow-hidden border theme-border-subtle">
+                {aiRunning ? (
+                  <div className="pm-ai-running-state flex h-[68vh] flex-col items-center justify-center gap-4 px-6 text-center">
+                    <div className="pm-ai-spinner" aria-hidden="true" />
+                    <div>
+                      <p className="text-lg font-semibold theme-text-strong">AI Running</p>
+                      <p className="mt-2 text-sm theme-text-muted">
+                        The saved document is being updated on the server. You can leave this view and come back later.
+                      </p>
+                      <button
+                        type="button"
+                        className="matrix-button mt-4 rounded-none px-3 py-2 text-sm"
+                        onClick={() => void onCancelAiCommand()}
+                      >
+                        Cancel AI job
+                      </button>
+                    </div>
+                  </div>
+                ) : (
                   <Suspense fallback={<div className="px-4 py-6 text-sm theme-empty-note">Loading editor...</div>}>
                     {useMonacoEditor ? (
-                      <ProjectManagementMonacoEditor value={draftMarkdown} onChange={setDraftMarkdown} height="68vh" />
+                      <ProjectManagementMonacoEditor value={editMarkdown} onChange={setEditMarkdown} height="68vh" readOnly={aiRunning} />
                     ) : (
-                      <ProjectManagementWysiwyg value={draftMarkdown} onChange={setDraftMarkdown} height="68vh" />
+                      <ProjectManagementWysiwyg value={editMarkdown} onChange={setEditMarkdown} height="68vh" readOnly={aiRunning} />
                     )}
                   </Suspense>
+                )}
               </div>
             </div>
           ) : document ? (
@@ -576,19 +759,19 @@ export function ProjectManagementPanel({
                 </div>
                 <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
                   {dependencyOptions.length ? dependencyOptions.map((entry) => {
-                    const checked = dependencyDraft.includes(entry.id);
+                    const checked = dependencySelection.includes(entry.id);
                     return (
                       <label
                         key={entry.id}
                         className={`flex cursor-pointer items-start gap-3 border px-3 py-2 text-left ${checked ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
                       >
                         <input
-                          type="checkbox"
-                          className="mt-1"
-                          checked={checked}
-                          disabled={saving}
-                          onChange={() => void handleDependencyDraftToggle(entry.id)}
-                        />
+                            type="checkbox"
+                            className="mt-1"
+                            checked={checked}
+                            disabled={saving || aiRunning}
+                            onChange={() => void handleDependencySelectionToggle(entry.id)}
+                          />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-semibold theme-text-strong">{entry.title}</span>
                           <span className="mt-1 block text-xs theme-text-muted">#{entry.number} - {entry.status}</span>
@@ -642,6 +825,20 @@ export function ProjectManagementPanel({
                 <ProjectManagementHistoryTab history={history} />
               </Suspense>
             </div>
+          ) : activeSubTab === "ai-log" ? (
+            <div className="pt-4">
+              <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading AI logs...</div>}>
+                <ProjectManagementAiLogTab
+                  logs={aiLogs}
+                  logDetail={aiLogDetail}
+                  loading={aiLogsLoading}
+                  runningJobs={runningAiJobs}
+                  onRefresh={onLoadAiLogs}
+                  onSelectLog={onLoadAiLog}
+                  onCancelJob={onCancelAiCommand}
+                />
+              </Suspense>
+            </div>
           ) : (
             <div className="pt-4">
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading create form...</div>}>
@@ -665,6 +862,51 @@ export function ProjectManagementPanel({
           )}
         </div>
       </div>
+
+      {aiRequestModalOpen && document && documentViewMode === "edit" ? (
+        <MatrixModal
+          kicker="AI request"
+          title={<>Update `{document.title}`</>}
+          description="Describe the change you want, then run AI to update the saved document on the server for this worktree."
+          closeLabel="Close AI request"
+          maxWidthClass="max-w-2xl"
+          onClose={() => setAiRequestModalOpen(false)}
+          footer={(
+            <button
+              type="submit"
+              form="pm-ai-request-form"
+              className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+              disabled={aiRunning}
+            >
+              {aiRunning ? "\u26a1 Running..." : "Run \u26a1"}
+            </button>
+          )}
+        >
+          <form
+            id="pm-ai-request-form"
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleRunUiMagic();
+            }}
+          >
+            <div>
+              <label className="block space-y-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">What should change?</span>
+                <textarea
+                  value={aiChangeRequest}
+                  onChange={(event) => setAiChangeRequest(event.target.value)}
+                  placeholder="Example: tighten this into a runnable implementation checklist, call out blocked steps, and turn vague notes into concrete tasks."
+                  disabled={aiRunning}
+                  rows={10}
+                  autoFocus
+                  className="matrix-input min-h-[16rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+                />
+              </label>
+            </div>
+          </form>
+        </MatrixModal>
+      ) : null}
     </div>
   );
 }
