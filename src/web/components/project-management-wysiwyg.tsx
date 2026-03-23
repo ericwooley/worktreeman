@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Editor } from "@toast-ui/react-editor";
 import "@toast-ui/editor/dist/toastui-editor.css";
+import { useTheme } from "./theme-provider";
 
 interface ToastEditorHandle {
   getInstance(): {
@@ -20,6 +21,7 @@ export function ProjectManagementWysiwyg({
   onChange,
   height = "65vh",
 }: ProjectManagementWysiwygProps) {
+  const { theme } = useTheme();
   const editorRef = useRef<ToastEditorHandle | null>(null);
   const lastValueRef = useRef(value);
 
@@ -34,7 +36,10 @@ export function ProjectManagementWysiwyg({
   }, [value]);
 
   return (
-    <div className="border theme-border-subtle bg-white text-black">
+    <div
+      className={`pm-wysiwyg-shell border theme-border-subtle ${theme.variant === "dark" ? "pm-wysiwyg-shell-dark" : "pm-wysiwyg-shell-light"}`}
+      data-theme-variant={theme.variant}
+    >
       <Editor
         ref={editorRef as never}
         initialValue={value}
