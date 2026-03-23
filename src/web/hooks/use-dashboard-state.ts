@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
-  AppendProjectManagementBatchRequest,
   ApiStateResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
@@ -8,7 +7,6 @@ import type {
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
   GitComparisonResponse,
-  ProjectManagementBatchResponse,
   ProjectManagementDocument,
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
@@ -16,7 +14,6 @@ import type {
   UpdateProjectManagementDocumentRequest,
 } from "@shared/types";
 import {
-  appendProjectManagementBatch as appendProjectManagementBatchRequest,
   createProjectManagementDocument as createProjectManagementDocumentRequest,
   createWorktree,
   deleteWorktree,
@@ -423,23 +420,6 @@ export function useDashboardState() {
           return response.document;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management document.");
-          return null;
-        } finally {
-          setProjectManagementSaving(false);
-        }
-      },
-      async appendProjectManagementBatch(payload: AppendProjectManagementBatchRequest) {
-        setProjectManagementSaving(true);
-        try {
-          const response: ProjectManagementBatchResponse = await appendProjectManagementBatchRequest(payload);
-          await loadProjectManagementDocumentsState({ silent: true });
-          if (response.documentIds[0]) {
-            await loadProjectManagementDocumentState(response.documentIds[0], { silent: true });
-          }
-          setError(null);
-          return response;
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to append project management batch.");
           return null;
         } finally {
           setProjectManagementSaving(false);

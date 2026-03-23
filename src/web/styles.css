@@ -559,6 +559,102 @@ body,
   color: var(--base08);
 }
 
+.pm-markdown {
+  line-height: 1.7;
+}
+
+.pm-markdown > :first-child {
+  margin-top: 0;
+}
+
+.pm-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.pm-markdown h1,
+.pm-markdown h2,
+.pm-markdown h3,
+.pm-markdown h4,
+.pm-markdown h5,
+.pm-markdown h6 {
+  margin: 1.25rem 0 0.75rem;
+  color: var(--base06);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.pm-markdown h1 {
+  font-size: 1.5rem;
+}
+
+.pm-markdown h2 {
+  font-size: 1.25rem;
+}
+
+.pm-markdown h3 {
+  font-size: 1.1rem;
+}
+
+.pm-markdown p,
+.pm-markdown ul,
+.pm-markdown ol,
+.pm-markdown blockquote,
+.pm-markdown pre,
+.pm-markdown table {
+  margin: 0 0 1rem;
+}
+
+.pm-markdown ul,
+.pm-markdown ol {
+  padding-left: 1.5rem;
+}
+
+.pm-markdown li + li {
+  margin-top: 0.25rem;
+}
+
+.pm-markdown a {
+  color: var(--base0D);
+  text-decoration: underline;
+}
+
+.pm-markdown strong {
+  color: var(--base06);
+}
+
+.pm-markdown code {
+  border: 1px solid rgb(var(--rgb-base0B) / 0.14);
+  background: rgb(var(--rgb-base00) / 0.32);
+  padding: 0.1rem 0.3rem;
+  color: var(--base0C);
+}
+
+.pm-markdown pre {
+  overflow-x: auto;
+  border: 1px solid rgb(var(--rgb-base0B) / 0.14);
+  background: rgb(var(--rgb-base00) / 0.4);
+  padding: 0.85rem 1rem;
+}
+
+.pm-markdown pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.pm-markdown blockquote {
+  border-left: 3px solid rgb(var(--rgb-base0D) / 0.5);
+  margin-left: 0;
+  padding-left: 1rem;
+  color: var(--base04);
+}
+
+.pm-markdown hr {
+  border: 0;
+  border-top: 1px solid rgb(var(--rgb-base0B) / 0.14);
+  margin: 1.25rem 0;
+}
+
 .matrix-diff-panel {
   border: 1px solid rgb(var(--rgb-base0E) / 0.26);
   background: linear-gradient(180deg, rgb(var(--rgb-base0E) / 0.2), rgb(var(--rgb-base00) / 0.24));

@@ -242,17 +242,6 @@ interface WorktreeDetailProps {
     assignee?: string;
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
-  onAppendProjectManagementBatch: (payload: {
-    entries: Array<{
-      documentId?: string;
-      title: string;
-      markdown: string;
-      tags: string[];
-      status?: string;
-      assignee?: string;
-      archived?: boolean;
-    }>;
-  }) => Promise<unknown>;
 }
 
 export function WorktreeDetail({
@@ -300,7 +289,6 @@ export function WorktreeDetail({
   onLoadProjectManagementDocument,
   onCreateProjectManagementDocument,
   onUpdateProjectManagementDocument,
-  onAppendProjectManagementBatch,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
   const [copied, setCopied] = useState(false);
@@ -906,7 +894,6 @@ export function WorktreeDetail({
               onSelectDocument={onLoadProjectManagementDocument}
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
-              onAppendBatch={onAppendProjectManagementBatch}
             />
           </Suspense>
         ) : (

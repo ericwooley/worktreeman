@@ -95,7 +95,6 @@ export function Dashboard() {
     clearLastEnvSync,
     clearBackgroundLogs,
      create,
-     appendProjectManagementBatch,
      createProjectManagementDocument,
     remove,
     start,
@@ -818,7 +817,6 @@ export function Dashboard() {
             onLoadProjectManagementDocument={loadProjectManagementDocument}
             onCreateProjectManagementDocument={createProjectManagementDocument}
             onUpdateProjectManagementDocument={updateProjectManagementDocument}
-            onAppendProjectManagementBatch={appendProjectManagementBatch}
           />
         </section>
       </div>

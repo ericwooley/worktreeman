@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type {
-  AppendProjectManagementBatchRequest,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
@@ -37,18 +36,6 @@ interface ProjectManagementPanelProps {
     assignee?: string;
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
-  onAppendBatch: (payload: AppendProjectManagementBatchRequest) => Promise<unknown>;
-}
-
-interface BatchEntryDraft {
-  key: string;
-  documentId: string;
-  title: string;
-  markdown: string;
-  tags: string;
-  status: string;
-  assignee: string;
-  archived: boolean;
 }
 
 function parseTags(value: string): string[] {
@@ -56,19 +43,6 @@ function parseTags(value: string): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
-}
-
-function createBatchEntryDraft(): BatchEntryDraft {
-  return {
-    key: crypto.randomUUID(),
-    documentId: "",
-    title: "",
-    markdown: "# Batch document\n",
-    tags: "",
-    status: PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0],
-    assignee: "",
-    archived: false,
-  };
 }
 
 export function ProjectManagementPanel({
@@ -83,7 +57,6 @@ export function ProjectManagementPanel({
   onSelectDocument,
   onCreateDocument,
   onUpdateDocument,
-  onAppendBatch,
 }: ProjectManagementPanelProps) {
   const { theme } = useTheme();
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
@@ -104,7 +77,6 @@ export function ProjectManagementPanel({
   const [newMarkdown, setNewMarkdown] = useState("# Project Outline\n");
   const [newStatus, setNewStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [newAssignee, setNewAssignee] = useState("");
-  const [batchEntries, setBatchEntries] = useState<BatchEntryDraft[]>([createBatchEntryDraft()]);
 
   useEffect(() => {
     if (!document) {
@@ -412,7 +384,7 @@ export function ProjectManagementPanel({
               <h2 className="mt-2 text-2xl font-semibold theme-text-strong">{document?.title ?? "Select a document"}</h2>
               {document ? <p className="mt-1 text-sm font-semibold theme-text-muted">#{document.number}</p> : null}
               <p className="mt-2 text-sm theme-text-muted">
-                Automerge changes are committed onto the project-management branch while this view shows the reduced markdown snapshot.
+                Edit documents when you need to, otherwise stay in the clean reading view.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -536,7 +508,7 @@ export function ProjectManagementPanel({
               <div className="border theme-border-subtle p-4">
                 <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Preview</p>
                 <div
-                  className="prose prose-invert mt-4 max-w-none text-sm theme-text"
+                  className="pm-markdown mt-4 text-sm theme-text"
                   dangerouslySetInnerHTML={{ __html: renderedMarkdown }}
                 />
               </div>
@@ -553,7 +525,7 @@ export function ProjectManagementPanel({
               <div className="border theme-border-subtle p-4">
                 <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Preview</p>
                 <div
-                  className="prose prose-invert mt-4 max-w-none text-sm theme-text"
+                  className="pm-markdown mt-4 text-sm theme-text"
                   dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }}
                 />
               </div>
@@ -569,113 +541,7 @@ export function ProjectManagementPanel({
       <div className="theme-inline-panel p-4">
         <p className="matrix-kicker">History</p>
         <h2 className="mt-2 text-2xl font-semibold theme-text-strong">Commit timeline</h2>
-        <p className="mt-2 text-sm theme-text-muted">Each entry reflects a committed Automerge batch reduced into the latest view.</p>
-
-        <div className="mt-5 border theme-border-subtle p-3">
-          <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Batch editor</p>
-          <p className="mt-2 text-sm theme-text-muted">Stage multiple document updates and commit them together.</p>
-          <div className="mt-3 space-y-3">
-            {batchEntries.map((entry, index) => (
-              <div key={entry.key} className="border theme-border-subtle p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold theme-text-strong">Entry {index + 1}</p>
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-2 py-1 text-xs"
-                    disabled={batchEntries.length === 1 || saving}
-                    onClick={() => setBatchEntries((current) => current.filter((candidate) => candidate.key !== entry.key))}
-                  >
-                    Remove
-                  </button>
-                </div>
-                <div className="mt-3 space-y-2">
-                  <select
-                    value={entry.documentId}
-                    onChange={(event) => setBatchEntries((current) => current.map((candidate) => candidate.key === entry.key ? { ...candidate, documentId: event.target.value } : candidate))}
-                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                  >
-                    <option value="">Create new document</option>
-                    {documents.map((documentOption) => <option key={documentOption.id} value={documentOption.id}>{documentOption.title}</option>)}
-                  </select>
-                  <input
-                    value={entry.title}
-                    onChange={(event) => setBatchEntries((current) => current.map((candidate) => candidate.key === entry.key ? { ...candidate, title: event.target.value } : candidate))}
-                    placeholder="Document title"
-                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                  />
-                  <input
-                    value={entry.tags}
-                    onChange={(event) => setBatchEntries((current) => current.map((candidate) => candidate.key === entry.key ? { ...candidate, tags: event.target.value } : candidate))}
-                    placeholder="bug, feature, plan"
-                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                  />
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <select
-                      value={entry.status}
-                      onChange={(event) => setBatchEntries((current) => current.map((candidate) => candidate.key === entry.key ? { ...candidate, status: event.target.value } : candidate))}
-                      className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                    >
-                      {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                    </select>
-                    <input
-                      value={entry.assignee}
-                      onChange={(event) => setBatchEntries((current) => current.map((candidate) => candidate.key === entry.key ? { ...candidate, assignee: event.target.value } : candidate))}
-                      placeholder="Assignee"
-                      className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                    />
-                  </div>
-                  <label className="flex items-center gap-2 text-xs theme-text-muted">
-                    <input
-                      type="checkbox"
-                      checked={entry.archived}
-                      onChange={(event) => setBatchEntries((current) => current.map((candidate) => candidate.key === entry.key ? { ...candidate, archived: event.target.checked } : candidate))}
-                    />
-                    Archive after commit
-                  </label>
-                  <textarea
-                    value={entry.markdown}
-                    onChange={(event) => setBatchEntries((current) => current.map((candidate) => candidate.key === entry.key ? { ...candidate, markdown: event.target.value } : candidate))}
-                    rows={6}
-                    className="matrix-input w-full rounded-none px-3 py-2 text-sm outline-none"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              disabled={saving}
-              onClick={() => setBatchEntries((current) => [...current, createBatchEntryDraft()])}
-            >
-              Add batch row
-            </button>
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-              disabled={saving || batchEntries.every((entry) => !entry.title.trim())}
-              onClick={async () => {
-                await onAppendBatch({
-                  entries: batchEntries
-                    .filter((entry) => entry.title.trim())
-                    .map((entry) => ({
-                      documentId: entry.documentId || undefined,
-                      title: entry.title,
-                      markdown: entry.markdown,
-                      tags: parseTags(entry.tags),
-                      status: entry.status,
-                      assignee: entry.assignee,
-                      archived: entry.archived,
-                    })),
-                });
-                setBatchEntries([createBatchEntryDraft()]);
-              }}
-            >
-              Commit batch
-            </button>
-          </div>
-        </div>
+        <p className="mt-2 text-sm theme-text-muted">See how the document changed over time without exposing storage mechanics.</p>
 
         <div className="mt-4 space-y-3">
           {history.length ? history.slice().reverse().map((entry) => (
