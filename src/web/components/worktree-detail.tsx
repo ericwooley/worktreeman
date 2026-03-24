@@ -5,11 +5,13 @@ import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-vi
 import "@git-diff-view/react/styles/diff-view-pure.css";
 import type {
   AiCommandConfig,
+  AiCommandId,
   AiCommandLogEntry,
   AiCommandLogSummary,
   AiCommandJob,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  CommitGitChangesResponse,
   GitComparisonResponse,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
@@ -277,6 +279,8 @@ interface WorktreeDetailProps {
   onStopBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
+  onMergeGitBranch: (compareBranch: string, baseBranch?: string) => Promise<GitComparisonResponse | null>;
+  onCommitGitChanges: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<CommitGitChangesResponse | null>;
   onSubscribeToBackgroundLogs: (branch: string, commandName: string) => () => void;
   onClearBackgroundLogs: () => void;
   projectManagementDocuments: ProjectManagementDocumentSummary[];
@@ -353,6 +357,8 @@ export function WorktreeDetail({
   onStopBackgroundCommand,
   onLoadBackgroundLogs,
   onLoadGitComparison,
+  onMergeGitBranch,
+  onCommitGitChanges,
   onSubscribeToBackgroundLogs,
   onClearBackgroundLogs,
   projectManagementDocuments,
@@ -506,6 +512,21 @@ export function WorktreeDetail({
   const isDiffTooLargeToRender = gitDiffMetrics.chars > DIFF_RENDER_MAX_CHARS
     || gitDiffMetrics.lines > DIFF_RENDER_MAX_LINES
     || parsedDiffFileCount > DIFF_RENDER_MAX_FILES;
+  const canMergeToBaseBranch = Boolean(
+    worktree?.branch
+    && gitComparison
+    && gitComparison.compareBranch === worktree.branch
+    && gitComparison.baseBranch !== gitComparison.compareBranch
+    && gitComparison.ahead > 0
+    && gitComparison.behind === 0
+    && !gitComparison.workingTreeSummary.dirty,
+  );
+  const canCommitDiffChanges = Boolean(
+    worktree?.branch
+    && gitComparison
+    && gitComparison.compareBranch === worktree.branch
+    && gitComparison.workingTreeSummary.dirty,
+  );
   const gitDiffFiles = useMemo(() => {
     if (isDiffTooLargeToRender) {
       return [];
@@ -1002,8 +1023,34 @@ export function WorktreeDetail({
                     emptyLabel="No branches available"
                     onChange={setSelectedGitBaseBranch}
                   />
-                          <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => onGitViewChange("graph")} />
-                   <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => onGitViewChange("diff")} />
+                  <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => onGitViewChange("graph")} />
+                  <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => onGitViewChange("diff")} />
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={!canCommitDiffChanges || gitComparisonLoading || !worktree?.branch}
+                      onClick={() => {
+                        if (!worktree?.branch || !gitComparison) {
+                          return;
+                        }
+                        void onCommitGitChanges(worktree.branch, gitComparison.baseBranch, "simple");
+                      }}
+                    >
+                      AI commit
+                    </button>
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={!canMergeToBaseBranch || gitComparisonLoading || !worktree?.branch}
+                      onClick={() => {
+                        if (!worktree?.branch || !gitComparison) {
+                        return;
+                      }
+                      void onMergeGitBranch(worktree.branch, gitComparison.baseBranch);
+                    }}
+                  >
+                    Merge to {gitComparison?.baseBranch ?? "main"}
+                  </button>
                 </div>
               </div>
 
@@ -1013,6 +1060,20 @@ export function WorktreeDetail({
                   <MatrixDetailField label="Compare" value={gitComparison.compareBranch} mono />
                   <MatrixDetailField label="Ahead" value={String(gitComparison.ahead)} mono />
                   <MatrixDetailField label="Behind" value={String(gitComparison.behind)} mono />
+                </div>
+              ) : null}
+
+              {gitComparison && !canMergeToBaseBranch ? (
+                <div className="mt-3 text-xs theme-text-muted">
+                  {gitComparison.behind > 0
+                    ? "Bring this branch up to date with the base branch before merging."
+                    : gitComparison.ahead === 0
+                      ? "No branch commits are waiting to merge."
+                      : gitComparison.workingTreeSummary.dirty
+                        ? "Commit or stash local changes before merging to the base branch."
+                        : gitComparison.baseBranch === gitComparison.compareBranch
+                          ? "Select a different base branch to merge into."
+                          : "Merge is not available for the current comparison."}
                 </div>
               ) : null}
 

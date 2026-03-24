@@ -274,7 +274,7 @@ async function createApiTestRepo(): Promise<Awaited<ReturnType<typeof findRepoCo
 
   const nextContents = updateAiCommandInConfigContents(currentContents, {
     smart: "printf %s $WTM_AI_INPUT",
-    simple: "printf %s $WTM_AI_INPUT",
+    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
 
@@ -331,7 +331,7 @@ test.afterEach(async () => {
   await stopAllAiCommandJobManagers();
 });
 
-test("startServer fails fast when the initial tmux session cannot be prepared", async () => {
+test("startServer fails fast when the initial tmux session cannot be prepared", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
 
   await assert.rejects(
@@ -349,7 +349,7 @@ test("startServer fails fast when the initial tmux session cannot be prepared", 
   await fs.rm(repo.repoRoot, { recursive: true, force: true });
 });
 
-test("terminal tmux session resolution uses repoRoot when runtime is missing", async () => {
+test("terminal tmux session resolution uses repoRoot when runtime is missing", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
 
   try {
@@ -391,7 +391,7 @@ async function waitForPathToDisappear(targetPath: string, timeoutMs = 5000) {
   }, timeoutMs);
 }
 
-test("AI command logs are written under the resolved repo root .logs directory", async () => {
+test("AI command logs are written under the resolved repo root .logs directory", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -468,7 +468,7 @@ test("AI command logs are written under the resolved repo root .logs directory",
   }
 });
 
-test("AI command settings save writes both schema hints and aiCommands", async () => {
+test("AI command settings save writes both schema hints and aiCommands", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);
 
@@ -502,7 +502,123 @@ test("AI command settings save writes both schema hints and aiCommands", async (
   }
 });
 
-test("config document save commits the edited config file", async () => {
+test("git compare merge merges a feature branch into main", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "merge.txt"), "hello merge\n", "utf8");
+    await runCommand("git", ["add", "merge.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "add merge file"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-merge/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { baseBranch: string; compareBranch: string; behind: number };
+    assert.equal(payload.baseBranch, "main");
+    assert.equal(payload.compareBranch, "feature-merge");
+    assert.equal(payload.behind, 0);
+
+    await fs.access(path.join(mainPath, "merge.txt"));
+    const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: mainPath });
+    assert.match(stdout.trim(), /Merge branch 'feature-merge'|add merge file/);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare merge rejects branches with local changes", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-dirty-merge" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "dirty.txt"), "dirty\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-dirty-merge/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 500);
+    const payload = await response.text();
+    assert.match(payload, /uncommitted changes/i);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare commit creates a commit using the simple AI command by default", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-commit" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "commit.txt"), "commit me\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-commit/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      branch: string;
+      commandId: string;
+      message: string;
+      commitSha: string;
+      comparison: { compareBranch: string; workingTreeSummary: { dirty: boolean } };
+    };
+    assert.equal(payload.branch, "feature-ai-commit");
+    assert.equal(payload.commandId, "simple");
+    assert.equal(payload.message, "commit me");
+    assert.ok(payload.commitSha.length > 0);
+    assert.equal(payload.comparison.compareBranch, "feature-ai-commit");
+    assert.equal(payload.comparison.workingTreeSummary.dirty, false);
+
+    const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: feature.worktreePath });
+    assert.equal(stdout.trim(), "commit me");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("config document save commits the edited config file", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);
 
@@ -542,7 +658,7 @@ test("config document save commits the edited config file", async () => {
   }
 });
 
-test("AI command settings save commits the config file", async () => {
+test("AI command settings save commits the config file", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);
 
@@ -571,7 +687,7 @@ test("AI command settings save commits the config file", async () => {
   }
 });
 
-test("AI log routes list logs and expose running jobs", async () => {
+test("AI log routes list logs and expose running jobs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.setManualProcess("wtm:ai:running-log", {
@@ -638,7 +754,7 @@ test("AI log routes list logs and expose running jobs", async () => {
   }
 });
 
-test("AI log detail stream emits live updates and completion for running logs", async () => {
+test("AI log detail stream emits live updates and completion for running logs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.setManualProcess("wtm:ai:stream-log", {
@@ -715,7 +831,7 @@ test("AI log detail stream emits live updates and completion for running logs", 
   }
 });
 
-test("missing AI processes reconcile stale running logs to a failed terminal state", async () => {
+test("missing AI processes reconcile stale running logs to a failed terminal state", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   await writeAiLogFixture({
@@ -766,7 +882,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
   }
 });
 
-test("project-management AI runs update the saved document on the server", async () => {
+test("project-management AI runs update the saved document on the server", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   let capturedCommand = "";
@@ -812,11 +928,13 @@ test("project-management AI runs update the saved document on the server", async
       job: {
         branch: string;
         documentId?: string | null;
+        commandId: string;
         status: string;
       };
     };
     assert.equal(runPayload.job.branch, "feature-ai-log");
     assert.equal(runPayload.job.documentId, outline.id);
+    assert.equal(runPayload.job.commandId, "simple");
     assert.equal(runPayload.job.status, "running");
 
     assert.equal(capturedCommand.includes("tighten this plan"), true);
@@ -853,7 +971,7 @@ test("project-management AI runs update the saved document on the server", async
   }
 });
 
-test("project-management AI document updates ignore stderr while logs retain it", async () => {
+test("project-management AI document updates ignore stderr while logs retain it", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -915,7 +1033,7 @@ test("project-management AI document updates ignore stderr while logs retain it"
   }
 });
 
-test("project-management AI rejects unknown target documents and logs the failure", async () => {
+test("project-management AI rejects unknown target documents and logs the failure", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   const server = await startApiServer(repo, {
@@ -952,7 +1070,7 @@ test("project-management AI rejects unknown target documents and logs the failur
   }
 });
 
-test("AI cancel route deletes the running process and returns the settled failed job", async () => {
+test("AI cancel route deletes the running process and returns the settled failed job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
     path: repo.configPath,
@@ -1014,7 +1132,7 @@ test("AI cancel route deletes the running process and returns the settled failed
   }
 });
 
-test("AI cancel route returns 409 when the running job has no process name", async () => {
+test("AI cancel route returns 409 when the running job has no process name", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
     path: repo.configPath,

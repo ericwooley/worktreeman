@@ -162,6 +162,23 @@ export interface GitComparisonResponse {
   workingTreeSummary: GitWorkingTreeSummary;
 }
 
+export interface MergeGitBranchRequest {
+  baseBranch?: string;
+}
+
+export interface CommitGitChangesRequest {
+  baseBranch?: string;
+  commandId?: AiCommandId;
+}
+
+export interface CommitGitChangesResponse {
+  branch: string;
+  commandId: AiCommandId;
+  message: string;
+  commitSha: string;
+  comparison: GitComparisonResponse;
+}
+
 export interface ShutdownLogEntry {
   id: number;
   level: "info" | "error";

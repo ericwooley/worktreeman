@@ -18,10 +18,13 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  CommitGitChangesRequest,
+  CommitGitChangesResponse,
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
   CreateWorktreeRequest,
   GitComparisonResponse,
+  MergeGitBranchRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
@@ -45,7 +48,7 @@ import {
   stopAllBackgroundCommands,
   stopBackgroundCommand,
 } from "../services/background-command-service.js";
-import { createWorktree, getGitComparison, listWorktrees, removeWorktree } from "../services/git-service.js";
+import { commitGitChanges, createWorktree, getGitComparison, listWorktrees, mergeGitBranch, removeWorktree } from "../services/git-service.js";
 import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig, parseConfigContents, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
@@ -275,6 +278,14 @@ function toAiCommandLogPreview(request: string): string {
 
 function parseAiCommandId(value: unknown): AiCommandId {
   return value === "simple" ? "simple" : "smart";
+}
+
+function resolveRequestedAiCommandId(value: unknown, options?: { documentId?: string | null }): AiCommandId {
+  if (value === "smart" || value === "simple") {
+    return value;
+  }
+
+  return options?.documentId ? "simple" : "smart";
 }
 
 function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiCommandId): string {
@@ -1055,6 +1066,66 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     }
   });
 
+  router.post("/git/compare/:branch/merge", async (req, res, next) => {
+    try {
+      const compareBranch = decodeURIComponent(req.params.branch);
+      const body = req.body as MergeGitBranchRequest | undefined;
+      const baseBranch = typeof body?.baseBranch === "string" ? body.baseBranch : undefined;
+
+      if (!compareBranch.trim()) {
+        res.status(400).json({ message: "compareBranch is required" });
+        return;
+      }
+
+      const comparison: GitComparisonResponse = await mergeGitBranch(options.repoRoot, compareBranch, baseBranch);
+      res.json(comparison);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/git/compare/:branch/commit", async (req, res, next) => {
+    try {
+      const branch = decodeURIComponent(req.params.branch).trim();
+      const body = req.body as CommitGitChangesRequest | undefined;
+
+      if (!branch) {
+        res.status(400).json({ message: "branch is required" });
+        return;
+      }
+
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${branch}` });
+        return;
+      }
+
+      const runtime = options.runtimes.get(worktree.branch);
+      const env = runtime
+        ? buildRuntimeProcessEnv(runtime)
+        : {
+          ...process.env,
+          ...config.env,
+          WORKTREE_BRANCH: worktree.branch,
+          WORKTREE_PATH: worktree.worktreePath,
+        };
+
+      const payload: CommitGitChangesResponse = await commitGitChanges({
+        repoRoot: options.repoRoot,
+        branch,
+        baseBranch: typeof body?.baseBranch === "string" ? body.baseBranch : undefined,
+        aiCommands: config.aiCommands,
+        commandId: parseAiCommandId(body?.commandId ?? "simple"),
+        env,
+      });
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/project-management/documents", async (_req, res, next) => {
     try {
       const payload: ProjectManagementListResponse = await listProjectManagementDocuments(options.repoRoot);
@@ -1271,8 +1342,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
-      commandId = parseAiCommandId(body?.commandId);
       const documentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
+      commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
 
       if (!worktree) {
         await writeImmediateAiFailureLog({

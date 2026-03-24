@@ -5,6 +5,7 @@ import type {
   AiCommandLogStreamEvent,
   ApiStateResponse,
   AiCommandJob,
+  AiCommandId,
   AiCommandSettingsResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
@@ -37,6 +38,8 @@ import {
   getGitComparison as fetchGitComparison,
   getState,
   cancelAiCommand as cancelAiCommandRequest,
+  commitGitChanges as commitGitChangesRequest,
+  mergeGitBranch as mergeGitBranchRequest,
   restartBackgroundCommand as restartBackgroundProcess,
   runAiCommand as runAiCommandRequest,
   saveAiCommandSettings as persistAiCommandSettings,
@@ -497,6 +500,36 @@ export function useDashboardState() {
           if (!options?.silent) {
             setGitComparisonLoading(false);
           }
+        }
+      },
+      async mergeGitBranch(compareBranch: string, baseBranch?: string) {
+        setGitComparisonLoading(true);
+        try {
+          const comparison = await mergeGitBranchRequest(compareBranch, baseBranch ? { baseBranch } : undefined);
+          setGitComparison(comparison);
+          await refresh({ silent: true });
+          setError(null);
+          return comparison;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to merge branch.");
+          return null;
+        } finally {
+          setGitComparisonLoading(false);
+        }
+      },
+      async commitGitChanges(branch: string, baseBranch?: string, commandId: AiCommandId = "simple") {
+        setGitComparisonLoading(true);
+        try {
+          const result = await commitGitChangesRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
+          setGitComparison(result.comparison);
+          await refresh({ silent: true });
+          setError(null);
+          return result;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to commit changes.");
+          return null;
+        } finally {
+          setGitComparisonLoading(false);
         }
       },
       async loadConfigDocument(options?: { silent?: boolean }) {

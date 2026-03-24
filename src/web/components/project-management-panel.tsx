@@ -161,7 +161,7 @@ export function ProjectManagementPanel({
   const [aiChangeRequest, setAiChangeRequest] = useState("");
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
   const [aiRequestModalOpen, setAiRequestModalOpen] = useState(false);
-  const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("smart");
+  const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("simple");
   const aiRunning = aiJob?.status === "running";
   const aiCommandOptions = useMemo<MatrixDropdownOption[]>(() => ([
     {
@@ -190,7 +190,7 @@ export function ProjectManagementPanel({
       setEditAssignee("");
       setDocumentViewMode("document");
       setAiChangeRequest("");
-      setSelectedAiCommandId("smart");
+      setSelectedAiCommandId("simple");
       return;
     }
 
@@ -203,7 +203,7 @@ export function ProjectManagementPanel({
       setDocumentViewMode("document");
       setAiFailureToast(null);
       setAiRequestModalOpen(false);
-      setSelectedAiCommandId("smart");
+      setSelectedAiCommandId("simple");
   }, [document]);
 
   useEffect(() => {

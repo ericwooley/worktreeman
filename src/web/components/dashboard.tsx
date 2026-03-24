@@ -170,6 +170,8 @@ export function Dashboard() {
     loadAiCommandLog,
     loadAiCommandLogs,
     loadGitComparison,
+    mergeGitBranch,
+    commitGitChanges,
     runAiCommand,
     cancelAiCommand,
     saveAiCommandSettings,
@@ -997,6 +999,8 @@ export function Dashboard() {
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
             onLoadGitComparison={loadGitComparison}
+            onMergeGitBranch={mergeGitBranch}
+            onCommitGitChanges={commitGitChanges}
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
             projectManagementDocuments={projectManagement?.documents ?? []}
