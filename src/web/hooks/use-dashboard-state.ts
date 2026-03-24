@@ -206,6 +206,7 @@ export function useDashboardState() {
         timestamp: log.timestamp,
         branch: log.branch,
         documentId: log.documentId ?? null,
+        commandId: log.commandId,
         worktreePath: log.worktreePath,
         command: log.command,
         requestPreview: toAiCommandRequestPreview(log.request),
@@ -225,6 +226,7 @@ export function useDashboardState() {
           fileName: log.fileName,
           branch: log.branch,
           documentId: log.documentId ?? null,
+          commandId: log.commandId,
           command: log.command,
           input: log.request,
           status: log.status,
@@ -341,10 +343,10 @@ export function useDashboardState() {
 
   const actions = useMemo(
     () => ({
-      async create(branch: string, worktreePath?: string) {
+      async create(branch: string) {
         setBusyBranch(branch);
         try {
-          const result = await createWorktree(branch, worktreePath);
+          const result = await createWorktree(branch);
           await refresh();
           if (result) {
             setLastEnvSync({ branch, copiedFiles: result.copiedFiles });

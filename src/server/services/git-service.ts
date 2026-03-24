@@ -91,7 +91,7 @@ export async function createWorktree(
 ): Promise<WorktreeRecord> {
   const baseDir = resolveWorktreeBaseDir(repoRoot, config.worktrees.baseDir);
   const safeBranch = sanitizeBranchName(request.branch);
-  const targetPath = request.path ? path.resolve(repoRoot, request.path) : path.join(baseDir, safeBranch);
+  const targetPath = path.join(baseDir, safeBranch);
 
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await runCommand("git", ["worktree", "add", targetPath, "-b", request.branch], { cwd: repoRoot });

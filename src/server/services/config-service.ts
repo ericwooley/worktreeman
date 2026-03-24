@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import { DEFAULT_WORKTREE_BASE_DIR } from "../../shared/constants.js";
-import type { BackgroundCommandConfigEntry, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
+import type { AiCommandConfig, BackgroundCommandConfigEntry, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
 export const WORKTREE_CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json";
@@ -85,6 +85,27 @@ function parseQuickLinks(value: unknown): QuickLinkConfigEntry[] {
   });
 }
 
+function parseAiCommands(value: unknown, legacyAiCommand: unknown): AiCommandConfig {
+  const smart = typeof legacyAiCommand === "string" ? legacyAiCommand : "";
+
+  if (value == null) {
+    return {
+      smart,
+      simple: "",
+    };
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("aiCommands must be a mapping/object.");
+  }
+
+  const aiCommands = value as Record<string, unknown>;
+  return {
+    smart: typeof aiCommands.smart === "string" ? aiCommands.smart : smart,
+    simple: typeof aiCommands.simple === "string" ? aiCommands.simple : "",
+  };
+}
+
 export async function loadConfig(configSource: string | ConfigSource, repoRoot?: string): Promise<WorktreeManagerConfig> {
   const source = typeof configSource === "string" ? { path: configSource, repoRoot } : configSource;
   const raw = await readConfigContents(source);
@@ -110,7 +131,7 @@ export function parseConfigContents(raw: string): WorktreeManagerConfig {
       : [],
     derivedEnv: ensureRecord(parsed.derivedEnv, "derivedEnv"),
     quickLinks: parseQuickLinks(parsed.quickLinks),
-    aiCommand: typeof parsed.aiCommand === "string" ? parsed.aiCommand : "",
+    aiCommands: parseAiCommands(parsed.aiCommands, parsed.aiCommand),
     startupCommands,
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
     worktrees: {
@@ -132,7 +153,13 @@ function extractSchemaHeader(raw: string): { header: string; body: string } {
 }
 
 export function serializeConfigContents(config: Record<string, unknown>, options?: { includeSchemaHeader?: boolean }): string {
-  const body = yaml.dump(config, {
+  const { $schema: _ignoredSchema, ...rest } = config;
+  const normalizedConfig = {
+    $schema: WORKTREE_CONFIG_SCHEMA_URL,
+    ...rest,
+  };
+
+  const body = yaml.dump(normalizedConfig, {
     noRefs: true,
     lineWidth: 120,
     sortKeys: false,
@@ -145,18 +172,24 @@ export function serializeConfigContents(config: Record<string, unknown>, options
   return `# yaml-language-server: $schema=${WORKTREE_CONFIG_SCHEMA_URL}\n\n${body}`;
 }
 
-export function updateAiCommandInConfigContents(raw: string, aiCommand: string): string {
-  const { header, body } = extractSchemaHeader(raw);
+export function updateAiCommandInConfigContents(raw: string, aiCommands: AiCommandConfig): string {
+  const { body } = extractSchemaHeader(raw);
   const parsed = (yaml.load(body) as Record<string, unknown> | undefined) ?? {};
 
-  if (aiCommand.trim()) {
-    parsed.aiCommand = aiCommand;
+  const nextAiCommands: AiCommandConfig = {
+    smart: typeof aiCommands.smart === "string" ? aiCommands.smart : "",
+    simple: typeof aiCommands.simple === "string" ? aiCommands.simple : "",
+  };
+
+  if (nextAiCommands.smart.trim() || nextAiCommands.simple.trim()) {
+    parsed.aiCommands = nextAiCommands;
   } else {
-    delete parsed.aiCommand;
+    delete parsed.aiCommands;
   }
 
-  const nextBody = serializeConfigContents(parsed);
-  const nextContents = `${header}${nextBody}`;
+  delete parsed.aiCommand;
+
+  const nextContents = serializeConfigContents(parsed, { includeSchemaHeader: true });
   parseConfigContents(nextContents);
   return nextContents;
 }

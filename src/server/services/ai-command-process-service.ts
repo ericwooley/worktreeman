@@ -1,12 +1,20 @@
 import fs from "node:fs/promises";
+import { createWriteStream } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
-import readline from "node:readline";
 import process from "node:process";
-import pm2 from "pm2";
-import type { ProcessDescription, StartOptions } from "pm2";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 
-const PM2_NAMESPACE = "worktreeman-ai";
+const ANSI_ESCAPE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
+
+interface ManagedAiCommandProcess {
+  description: AiCommandProcessDescription;
+  child: ChildProcessByStdio<null, Readable, Readable> | null;
+  stdout: string;
+  stderr: string;
+}
+
+const aiCommandProcesses = new Map<string, ManagedAiCommandProcess>();
 
 export interface AiCommandProcessDescription {
   name: string;
@@ -23,87 +31,67 @@ export function getAiCommandProcessName(jobId: string): string {
 }
 
 export function isAiCommandProcessActive(status: string | undefined): boolean {
-  return status === "online" || status === "launching" || status === "waiting restart";
+  return status === "online" || status === "launching";
 }
 
-async function withPm2<T>(operation: () => Promise<T>): Promise<T> {
-  await new Promise<void>((resolve, reject) => {
-    pm2.connect((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    });
-  });
-
-  try {
-    return await operation();
-  } finally {
-    pm2.disconnect();
-  }
+function cloneProcessDescription(processInfo: AiCommandProcessDescription): AiCommandProcessDescription {
+  return { ...processInfo };
 }
 
-function toAiCommandProcessDescription(entry: ProcessDescription): [string, AiCommandProcessDescription] | null {
-  const name = typeof entry.name === "string" ? entry.name : null;
-  if (!name) {
-    return null;
+function sanitizeAiCommandOutput(raw: string): string {
+  return raw
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "")
+    .replace(ANSI_ESCAPE_PATTERN, "");
+}
+
+function appendManagedOutput(processName: string, source: "stdout" | "stderr", chunk: string) {
+  const managed = aiCommandProcesses.get(processName);
+  if (!managed) {
+    return;
   }
 
-  const pid = typeof entry.pid === "number" ? entry.pid : undefined;
-  const pm2Env = entry.pm2_env ?? {};
-  const createdAt = typeof pm2Env.pm_uptime === "number"
-    ? new Date(pm2Env.pm_uptime).toISOString()
-    : undefined;
-  const status = typeof pm2Env.status === "string" ? pm2Env.status : "unknown";
-  const outLogPath = typeof pm2Env.pm_out_log_path === "string" ? pm2Env.pm_out_log_path : undefined;
-  const errLogPath = typeof pm2Env.pm_err_log_path === "string" ? pm2Env.pm_err_log_path : undefined;
-  const candidateExitCode = (pm2Env as Record<string, unknown>).exit_code;
-  const exitCode = typeof candidateExitCode === "number" ? candidateExitCode : null;
+  if (source === "stdout") {
+    managed.stdout += chunk;
+    return;
+  }
 
-  return [name, { name, pid, status, createdAt, outLogPath, errLogPath, exitCode }];
+  managed.stderr += chunk;
 }
 
 export async function listAiCommandProcesses(): Promise<Map<string, AiCommandProcessDescription>> {
-  const parsed = await withPm2(() => new Promise<ProcessDescription[]>((resolve, reject) => {
-    pm2.list((error, processList) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve(processList);
-    });
-  }));
-
-  const entries: Array<[string, AiCommandProcessDescription]> = [];
-  for (const entry of parsed) {
-    const description = toAiCommandProcessDescription(entry);
-    if (description && description[0].startsWith("wtm:ai:")) {
-      entries.push(description);
-    }
-  }
-
-  return new Map(entries);
+  return new Map(
+    Array.from(aiCommandProcesses.entries()).map(([name, managed]) => [name, cloneProcessDescription(managed.description)]),
+  );
 }
 
 export async function getAiCommandProcess(processName: string): Promise<AiCommandProcessDescription | null> {
-  const processes = await listAiCommandProcesses();
-  return processes.get(processName) ?? null;
+  const managed = aiCommandProcesses.get(processName);
+  return managed ? cloneProcessDescription(managed.description) : null;
 }
 
 export async function deleteAiCommandProcess(processName: string): Promise<void> {
-  await withPm2(() => new Promise<void>((resolve, reject) => {
-    pm2.delete(processName, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
+  const managed = aiCommandProcesses.get(processName);
+  if (!managed) {
+    return;
+  }
 
-      resolve();
+  const child = managed.child;
+  if (child && !child.killed) {
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        child.off("close", finish);
+        child.off("error", finish);
+        resolve();
+      };
+
+      child.on("close", finish);
+      child.on("error", finish);
+      child.kill("SIGTERM");
     });
-  }));
+  }
+
+  aiCommandProcesses.delete(processName);
 }
 
 export async function startAiCommandProcess(options: {
@@ -116,48 +104,108 @@ export async function startAiCommandProcess(options: {
 }): Promise<AiCommandProcessDescription> {
   await fs.mkdir(path.dirname(options.outFile), { recursive: true });
   await fs.mkdir(path.dirname(options.errFile), { recursive: true });
-  await fs.writeFile(options.outFile, "", { flag: "a" });
-  await fs.writeFile(options.errFile, "", { flag: "a" });
+  await fs.writeFile(options.outFile, "");
+  await fs.writeFile(options.errFile, "");
   await deleteAiCommandProcess(options.processName).catch(() => undefined);
 
-  const normalizedEnv = Object.fromEntries(
-    Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-  );
-
-  const startOptions: StartOptions & { out_file: string; error_file: string } = {
-    script: process.env.SHELL || "/usr/bin/bash",
-    args: ["-lc", options.command],
-    interpreter: "none",
-    namespace: PM2_NAMESPACE,
-    name: options.processName,
+  const shellPath = process.env.SHELL || "/usr/bin/bash";
+  const child = spawn(shellPath, ["-lc", options.command], {
     cwd: options.worktreePath,
-    env: normalizedEnv,
-    time: true,
-    autorestart: false,
-    out_file: options.outFile,
-    error_file: options.errFile,
-  };
+    env: Object.fromEntries(
+      Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
-  await withPm2(() => new Promise<void>((resolve, reject) => {
-    pm2.start(startOptions, (error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    });
-  }));
-
-  return await getAiCommandProcess(options.processName) ?? {
+  const description: AiCommandProcessDescription = {
     name: options.processName,
+    pid: child.pid,
     status: "launching",
+    createdAt: new Date().toISOString(),
     outLogPath: options.outFile,
     errLogPath: options.errFile,
+    exitCode: null,
   };
+  aiCommandProcesses.set(options.processName, {
+    description,
+    child,
+    stdout: "",
+    stderr: "",
+  });
+
+  const stdoutStream = createWriteStream(options.outFile, { flags: "a" });
+  const stderrStream = createWriteStream(options.errFile, { flags: "a" });
+  let settled = false;
+
+  const finalize = async (status: string, exitCode: number | null) => {
+    const managed = aiCommandProcesses.get(options.processName);
+    if (managed) {
+      managed.description.status = status;
+      managed.description.exitCode = exitCode;
+      managed.child = null;
+    }
+
+    await Promise.all([
+      new Promise<void>((resolve) => stdoutStream.end(resolve)),
+      new Promise<void>((resolve) => stderrStream.end(resolve)),
+    ]);
+  };
+
+  child.stdout.on("data", (chunk) => {
+    const sanitized = sanitizeAiCommandOutput(chunk.toString());
+    if (!sanitized) {
+      return;
+    }
+
+    appendManagedOutput(options.processName, "stdout", sanitized);
+    stdoutStream.write(sanitized);
+  });
+
+  child.stderr.on("data", (chunk) => {
+    const sanitized = sanitizeAiCommandOutput(chunk.toString());
+    if (!sanitized) {
+      return;
+    }
+
+    appendManagedOutput(options.processName, "stderr", sanitized);
+    stderrStream.write(sanitized);
+  });
+
+  child.on("spawn", () => {
+    const managed = aiCommandProcesses.get(options.processName);
+    if (managed) {
+      managed.description.status = "online";
+      managed.description.pid = child.pid;
+    }
+  });
+
+  child.on("error", (error) => {
+    if (settled) {
+      return;
+    }
+
+    settled = true;
+    const sanitized = sanitizeAiCommandOutput(error.message);
+    appendManagedOutput(options.processName, "stderr", `${sanitized}\n`);
+    stderrStream.write(`${sanitized}\n`);
+    void finalize("errored", null);
+  });
+
+  child.on("close", (code, signal) => {
+    if (settled) {
+      return;
+    }
+
+    settled = true;
+    const exitCode = typeof code === "number" ? code : null;
+    const status = signal ? "stopped" : exitCode === 0 ? "stopped" : "errored";
+    void finalize(status, exitCode);
+  });
+
+  return cloneProcessDescription(description);
 }
 
-async function readProcessLog(filePath: string | undefined): Promise<string> {
+async function readPersistedProcessLog(filePath: string | undefined): Promise<string> {
   if (!filePath) {
     return "";
   }
@@ -170,68 +218,20 @@ async function readProcessLog(filePath: string | undefined): Promise<string> {
 }
 
 export async function readAiCommandProcessLogs(processInfo: AiCommandProcessDescription | null): Promise<{ stdout: string; stderr: string }> {
+  if (!processInfo) {
+    return { stdout: "", stderr: "" };
+  }
+
+  const managed = aiCommandProcesses.get(processInfo.name);
+  if (managed) {
+    return {
+      stdout: managed.stdout,
+      stderr: managed.stderr,
+    };
+  }
+
   return {
-    stdout: await readProcessLog(processInfo?.outLogPath),
-    stderr: await readProcessLog(processInfo?.errLogPath),
-  };
-}
-
-function bindLineStream(
-  stream: NodeJS.ReadableStream,
-  onChunk: (chunk: string) => void,
-): () => void {
-  const lineReader = readline.createInterface({ input: stream });
-
-  lineReader.on("line", (line) => {
-    onChunk(`${line}\n`);
-  });
-
-  return () => {
-    lineReader.removeAllListeners();
-    lineReader.close();
-  };
-}
-
-function followFile(filePath: string, onChunk: (chunk: string) => void) {
-  const child = spawn("tail", ["-n", "0", "-F", filePath], {
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-
-  const disposeReader = bindLineStream(child.stdout, onChunk);
-  return {
-    child,
-    dispose: () => {
-      disposeReader();
-      child.kill();
-    },
-  };
-}
-
-export async function streamAiCommandProcessLogs(options: {
-  processInfo: AiCommandProcessDescription | null;
-  onStdout?: (chunk: string) => void;
-  onStderr?: (chunk: string) => void;
-  onError?: (message: string) => void;
-}): Promise<() => void> {
-  const followers: Array<{ child: ReturnType<typeof spawn>; dispose: () => void }> = [];
-
-  if (options.processInfo?.outLogPath && options.onStdout) {
-    followers.push(followFile(options.processInfo.outLogPath, options.onStdout));
-  }
-
-  if (options.processInfo?.errLogPath && options.onStderr) {
-    followers.push(followFile(options.processInfo.errLogPath, options.onStderr));
-  }
-
-  for (const follower of followers) {
-    follower.child.on("error", (error) => {
-      options.onError?.(`AI log stream failed: ${error.message}`);
-    });
-  }
-
-  return () => {
-    for (const follower of followers) {
-      follower.dispose();
-    }
+    stdout: await readPersistedProcessLog(processInfo.outLogPath),
+    stderr: await readPersistedProcessLog(processInfo.errLogPath),
   };
 }

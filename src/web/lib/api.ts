@@ -218,10 +218,10 @@ export function appendProjectManagementBatch(
   });
 }
 
-export function createWorktree(branch: string, worktreePath?: string): Promise<EnvSyncResponse | void> {
+export function createWorktree(branch: string): Promise<EnvSyncResponse | void> {
   return request<EnvSyncResponse | void>("/api/worktrees", {
     method: "POST",
-    body: JSON.stringify({ branch, path: worktreePath }),
+    body: JSON.stringify({ branch }),
   });
 }
 

@@ -26,6 +26,7 @@ type InjectedAiProcesses = NonNullable<RouterOptions["aiProcesses"]>;
 type StartAiQueueJob = (payload: {
   branch: string;
   documentId: string;
+  commandId: "smart" | "simple";
   input: string;
   renderedCommand: string;
   worktreePath: string;
@@ -132,7 +133,7 @@ function createFakeAiProcesses() {
       scriptedStates.delete(processName);
     },
     isProcessActive(status) {
-      return status === "online" || status === "launching" || status === "waiting restart";
+      return status === "online" || status === "launching";
     },
   };
 
@@ -159,6 +160,7 @@ async function writeAiLogFixture(options: {
   repoRoot: string;
   fileName: string;
   branch: string;
+  commandId?: "smart" | "simple";
   worktreePath: string;
   command: string;
   request: string;
@@ -180,6 +182,7 @@ async function writeAiLogFixture(options: {
     startedAt: timestamp,
     completedAt: options.completedAt ?? null,
     branch: options.branch,
+    commandId: options.commandId ?? "smart",
     worktreePath: options.worktreePath,
     command: options.command,
     pid: options.pid ?? null,
@@ -268,7 +271,10 @@ async function createApiTestRepo(): Promise<Awaited<ReturnType<typeof findRepoCo
     gitFile: repo.configFile,
   });
 
-  const nextContents = updateAiCommandInConfigContents(currentContents, "printf %s $WTM_AI_INPUT");
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "printf %s $WTM_AI_INPUT",
+    simple: "printf %s $WTM_AI_INPUT",
+  });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
 
   const config = await loadConfig({
@@ -457,6 +463,40 @@ test("AI command logs are written under the resolved repo root .logs directory",
     await server.close();
     await waitForPathToDisappear(path.join(resolveAiLogsDir(repo.repoRoot), "cancel-job.stdout.log")).catch(() => undefined);
     await waitForPathToDisappear(path.join(resolveAiLogsDir(repo.repoRoot), "cancel-job.stderr.log")).catch(() => undefined);
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("AI command settings save writes both schema hints and aiCommands", async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const response = await fetch(`${server.baseUrl}/api/settings/ai-command`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        aiCommands: {
+          smart: "opencode run $WTM_AI_INPUT --mode smart",
+          simple: "opencode run $WTM_AI_INPUT --mode simple",
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      aiCommands: { smart: string; simple: string };
+      filePath: string;
+    };
+    assert.equal(payload.aiCommands.smart, "opencode run $WTM_AI_INPUT --mode smart");
+    assert.equal(payload.aiCommands.simple, "opencode run $WTM_AI_INPUT --mode simple");
+
+    const savedContents = await fs.readFile(repo.configPath, "utf8");
+    assert.match(savedContents, /^# yaml-language-server: \$schema=/);
+    assert.match(savedContents, /^\$schema: https:\/\//m);
+    assert.match(savedContents, /aiCommands:\n  smart: opencode run \$WTM_AI_INPUT --mode smart\n  simple: opencode run \$WTM_AI_INPUT --mode simple/);
+  } finally {
+    await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
 });
@@ -743,6 +783,68 @@ test("project-management AI runs update the saved document on the server", async
   }
 });
 
+test("project-management AI document updates ignore stderr while logs retain it", async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n" },
+    { status: "stopped", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await fetch(`${server.baseUrl}/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string; markdown?: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const runResponse = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-log/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "rewrite cleanly",
+        documentId: outline.id,
+      }),
+    });
+    assert.equal(runResponse.status, 200);
+
+    await waitFor(async () => {
+      const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
+      return updated.document.markdown.includes("Only stdout belongs here.");
+    });
+
+    const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
+    assert.equal(updated.document.markdown, "# Clean Markdown\n\nOnly stdout belongs here.");
+    assert.equal(updated.document.markdown.includes("> build · gpt-4.1"), false);
+
+    const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+    assert.equal(logsResponse.status, 200);
+    const logsPayload = await logsResponse.json() as {
+      logs: Array<{ fileName: string }>;
+    };
+
+    const detailResponse = await fetch(`${server.baseUrl}/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].fileName)}`);
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json() as {
+      log: {
+        response: { stdout: string; stderr: string };
+      };
+    };
+
+    assert.equal(detailPayload.log.response.stdout, "# Clean Markdown\n\nOnly stdout belongs here.\n");
+    assert.equal(detailPayload.log.response.stderr, "> build · gpt-4.1\n");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management AI rejects unknown target documents and logs the failure", async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
@@ -852,6 +954,7 @@ test("AI cancel route returns 409 when the running job has no process name", asy
   await createWorktree(repo.repoRoot, config, { branch: "feature-ai-no-process" });
   await startAiCommandJob({
     branch: "feature-ai-no-process",
+    commandId: "smart",
     input: "wait",
     command: "printf %s 'wait'",
     repoRoot: repo.repoRoot,

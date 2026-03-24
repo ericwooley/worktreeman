@@ -5,6 +5,8 @@ import path from "node:path";
 import process from "node:process";
 import type {
   AppendProjectManagementBatchRequest,
+  AiCommandConfig,
+  AiCommandId,
   ApiStateResponse,
   AiCommandJob,
   AiCommandLogEntry,
@@ -99,6 +101,7 @@ interface ApiRouterOptions {
   onEnqueueProjectManagementAiJob?: (payload: {
     branch: string;
     documentId: string;
+    commandId: AiCommandId;
     input: string;
     renderedCommand: string;
     worktreePath: string;
@@ -148,6 +151,7 @@ async function writeAiRequestLog(options: {
   repoRoot: string;
   branch: string;
   documentId?: string | null;
+  commandId: AiCommandId;
   worktreePath: string;
   renderedCommand: string;
   input: string;
@@ -172,6 +176,7 @@ async function writeAiRequestLog(options: {
     completedAt: options.completedAt ?? null,
     branch: options.branch,
     documentId: options.documentId ?? null,
+    commandId: options.commandId,
     worktreePath: options.worktreePath,
     command: options.renderedCommand,
     pid: options.pid ?? null,
@@ -205,6 +210,7 @@ async function safeWriteAiRequestLog(options: {
   repoRoot: string;
   branch: string;
   documentId?: string | null;
+  commandId: AiCommandId;
   worktreePath: string;
   renderedCommand: string;
   input: string;
@@ -258,6 +264,14 @@ function toAiCommandLogPreview(request: string): string {
   return formatLogSnippet(request, 160);
 }
 
+function parseAiCommandId(value: unknown): AiCommandId {
+  return value === "simple" ? "simple" : "smart";
+}
+
+function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiCommandId): string {
+  return (aiCommands[commandId] ?? "").trim();
+}
+
 function buildProjectManagementAiPrompt(options: {
   branch: string;
   worktreePath: string;
@@ -301,6 +315,7 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
     completedAt?: unknown;
     branch?: unknown;
     documentId?: unknown;
+    commandId?: unknown;
     worktreePath?: unknown;
     command?: unknown;
     pid?: unknown;
@@ -319,9 +334,10 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
     fileName,
     timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
     branch: typeof parsed.branch === "string" ? parsed.branch : "",
-      worktreePath: typeof parsed.worktreePath === "string" ? parsed.worktreePath : "",
-      documentId: typeof parsed.documentId === "string" ? parsed.documentId : null,
-      command: typeof parsed.command === "string" ? parsed.command : "",
+    documentId: typeof parsed.documentId === "string" ? parsed.documentId : null,
+    commandId: parseAiCommandId(parsed.commandId),
+    worktreePath: typeof parsed.worktreePath === "string" ? parsed.worktreePath : "",
+    command: typeof parsed.command === "string" ? parsed.command : "",
     request,
     response: {
       stdout: typeof parsed.response?.stdout === "string" ? parsed.response.stdout : "",
@@ -343,6 +359,7 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
     timestamp: entry.timestamp,
     branch: entry.branch,
     documentId: entry.documentId ?? null,
+    commandId: entry.commandId,
     worktreePath: entry.worktreePath,
     command: entry.command,
     requestPreview: toAiCommandLogPreview(entry.request),
@@ -390,6 +407,7 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
     fileName: entry.fileName,
     branch: entry.branch,
     documentId: entry.documentId ?? null,
+    commandId: entry.commandId,
     command: entry.command,
     input: entry.request,
     status: entry.status,
@@ -427,6 +445,7 @@ async function reconcileAiCommandLogEntry(options: {
       repoRoot: options.repoRoot,
       branch: options.entry.branch,
       documentId: options.entry.documentId ?? null,
+      commandId: options.entry.commandId,
       worktreePath: options.entry.worktreePath,
       renderedCommand: options.entry.command,
       input: options.entry.request,
@@ -460,6 +479,7 @@ async function reconcileAiCommandLogEntry(options: {
       repoRoot: options.repoRoot,
       branch: options.entry.branch,
       documentId: options.entry.documentId ?? null,
+      commandId: options.entry.commandId,
       worktreePath: options.entry.worktreePath,
       renderedCommand: options.entry.command,
       input: options.entry.request,
@@ -491,6 +511,7 @@ async function reconcileAiCommandLogEntry(options: {
     repoRoot: options.repoRoot,
     branch: options.entry.branch,
     documentId: options.entry.documentId ?? null,
+    commandId: options.entry.commandId,
     worktreePath: options.entry.worktreePath,
     renderedCommand: options.entry.command,
     input: options.entry.request,
@@ -537,6 +558,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   const writeImmediateAiFailureLog = async (details: {
     branch: string;
     documentId?: string | null;
+    commandId: AiCommandId;
     worktreePath: string;
     renderedCommand: string;
     input: string;
@@ -549,6 +571,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       repoRoot: options.repoRoot,
       branch: details.branch,
       documentId: details.documentId ?? null,
+      commandId: details.commandId,
       worktreePath: details.worktreePath,
       renderedCommand: details.renderedCommand,
       input: details.input,
@@ -561,9 +584,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     });
   };
 
-  const startPm2AiCommandJob = async (details: {
+  const startAiProcessJob = async (details: {
     branch: string;
     documentId?: string | null;
+    commandId: AiCommandId;
     input: string;
     renderedCommand: string;
     worktreePath: string;
@@ -571,6 +595,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   }) => startAiCommandJob({
     branch: details.branch,
     documentId: details.documentId ?? null,
+    commandId: details.commandId,
     input: details.input,
     command: details.renderedCommand,
     repoRoot: options.repoRoot,
@@ -665,6 +690,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   const enqueueProjectManagementDocumentAiJob = async (details: {
     branch: string;
     documentId: string;
+    commandId: AiCommandId;
     input: string;
     renderedCommand: string;
     worktreePath: string;
@@ -673,6 +699,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     repoRoot: options.repoRoot,
     payload: {
       branch: details.branch,
+      commandId: details.commandId,
       worktreePath: details.worktreePath,
       input: details.input,
       renderedCommand: details.renderedCommand,
@@ -684,9 +711,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         notifyStarted: context.notifyStarted,
       })
       : async (payload, context) => {
-      const startedJob = await startPm2AiCommandJob({
+      const startedJob = await startAiProcessJob({
         branch: payload.branch,
         documentId: payload.documentId,
+        commandId: payload.commandId,
         input: payload.input,
         renderedCommand: payload.renderedCommand,
         worktreePath: payload.worktreePath,
@@ -788,7 +816,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const payload: AiCommandSettingsResponse = {
         branch: options.configSourceRef,
         filePath: path.join(options.configWorktreePath, options.configFile),
-        aiCommand: config.aiCommand ?? "",
+        aiCommands: config.aiCommands,
       };
       res.json(payload);
     } catch (error) {
@@ -799,13 +827,16 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.put("/settings/ai-command", async (req, res, next) => {
     try {
       const body = req.body as UpdateAiCommandSettingsRequest;
-      const aiCommand = typeof body?.aiCommand === "string" ? body.aiCommand : "";
+      const aiCommands: AiCommandConfig = {
+        smart: typeof body?.aiCommands?.smart === "string" ? body.aiCommands.smart : "",
+        simple: typeof body?.aiCommands?.simple === "string" ? body.aiCommands.simple : "",
+      };
       const currentContents = await readConfigContents({
         path: options.configPath,
         repoRoot: options.repoRoot,
         gitFile: options.configFile,
       });
-      const nextContents = updateAiCommandInConfigContents(currentContents, aiCommand);
+      const nextContents = updateAiCommandInConfigContents(currentContents, aiCommands);
 
       const absoluteConfigPath = path.join(options.configWorktreePath, options.configFile);
       await fs.writeFile(absoluteConfigPath, nextContents, "utf8");
@@ -813,7 +844,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const payload: AiCommandSettingsResponse = {
         branch: options.configSourceRef,
         filePath: absoluteConfigPath,
-        aiCommand,
+        aiCommands,
       };
 
       res.json(payload);
@@ -1190,6 +1221,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     let input = "";
     let renderedCommand = "";
     let worktreePath = "";
+    let commandId: AiCommandId = "smart";
 
     try {
       const config = await loadCurrentConfig();
@@ -1197,12 +1229,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
+      commandId = parseAiCommandId(body?.commandId);
       const documentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
 
       if (!worktree) {
         await writeImmediateAiFailureLog({
           branch: req.params.branch,
           documentId,
+          commandId,
           worktreePath: "",
           renderedCommand: "",
           input,
@@ -1214,11 +1248,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       worktreePath = worktree.worktreePath;
 
-      const template = (config.aiCommand ?? "").trim();
+      const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
         await writeImmediateAiFailureLog({
           branch: worktree.branch,
           documentId,
+          commandId,
           worktreePath,
           renderedCommand: template,
           input,
@@ -1232,6 +1267,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         await writeImmediateAiFailureLog({
           branch: worktree.branch,
           documentId,
+          commandId,
           worktreePath,
           renderedCommand: template,
           input,
@@ -1245,6 +1281,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         await writeImmediateAiFailureLog({
           branch: worktree.branch,
           documentId,
+          commandId,
           worktreePath,
           renderedCommand: template,
           input,
@@ -1270,6 +1307,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           await writeImmediateAiFailureLog({
             branch: worktree.branch,
             documentId,
+            commandId,
             worktreePath,
             renderedCommand: template,
             input,
@@ -1303,6 +1341,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const runDetails = {
         branch: worktree.branch,
         documentId,
+        commandId,
         input,
         renderedCommand,
         worktreePath,
@@ -1312,12 +1351,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         ? await enqueueProjectManagementDocumentAiJob({
           branch: runDetails.branch,
           documentId,
+          commandId: runDetails.commandId,
           input: runDetails.input,
           renderedCommand: runDetails.renderedCommand,
           worktreePath: runDetails.worktreePath,
           env: runDetails.env,
         })
-        : await startPm2AiCommandJob(runDetails);
+        : await startAiProcessJob(runDetails);
 
       const payload: RunAiCommandResponse = { job };
       res.json(payload);
@@ -1372,6 +1412,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           repoRoot: options.repoRoot,
           branch: persistedLog.branch,
           documentId: persistedLog.documentId ?? null,
+          commandId: persistedLog.commandId,
           worktreePath: persistedLog.worktreePath,
           renderedCommand: persistedLog.command,
           input: persistedLog.request,

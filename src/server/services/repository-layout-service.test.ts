@@ -10,6 +10,7 @@ import {
   WORKTREEMAN_GIT_FILE,
   WORKTREEMAN_GIT_FILE_CONTENT,
 } from "../../shared/constants.js";
+import { WORKTREE_CONFIG_SCHEMA_URL } from "./config-service.js";
 import { runCommand } from "../utils/process.js";
 import { createBareRepoLayout, ensureBranchWorktree, ensurePrimaryWorktrees, resolveCloneRootDir } from "./repository-layout-service.js";
 import { initRepository } from "./init-service.js";
@@ -157,7 +158,11 @@ test("clone flow can initialize settings config after bootstrapping missing prim
     });
 
     assert.equal(initResult.created, true);
-    await fs.access(path.join(targetDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml"));
+    const configPath = path.join(targetDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml");
+    await fs.access(configPath);
+    const configContents = await fs.readFile(configPath, "utf8");
+    assert.match(configContents, /^# yaml-language-server: \$schema=/);
+    assert.match(configContents, new RegExp(`^\\$schema: ${WORKTREE_CONFIG_SCHEMA_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"));
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
   }

@@ -1,13 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import yaml from "js-yaml";
 import {
   DEFAULT_WORKTREE_BASE_DIR,
   DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
 } from "../../shared/constants.js";
 import { CONFIG_CANDIDATES, fileExists, findGitRoot } from "../utils/paths.js";
 import { listWorktrees } from "./git-service.js";
-import { WORKTREE_CONFIG_SCHEMA_URL, serializeConfigContents } from "./config-service.js";
+import { serializeConfigContents } from "./config-service.js";
 import { ensureBranchWorktree as ensureManagedBranchWorktree } from "./repository-layout-service.js";
 
 export interface InitResult {
@@ -36,7 +35,10 @@ function buildConfigYaml(
     runtimePorts,
     derivedEnv: {},
     quickLinks: [],
-    aiCommand: "",
+    aiCommands: {
+      smart: "",
+      simple: "",
+    },
     backgroundCommands: {},
     worktrees: {
       baseDir,
@@ -44,11 +46,7 @@ function buildConfigYaml(
     startupCommands: [],
   };
 
-  return serializeConfigContents(config);
-}
-
-function withSchemaHeader(contents: string): string {
-  return `# yaml-language-server: $schema=${WORKTREE_CONFIG_SCHEMA_URL}\n\n${contents}`;
+  return serializeConfigContents(config, { includeSchemaHeader: true });
 }
 
 export async function initRepository(
@@ -91,9 +89,7 @@ export async function initRepository(
     };
   }
 
-  const contents = withSchemaHeader(
-    buildConfigYaml(baseDir, runtimePorts),
-  );
+  const contents = buildConfigYaml(baseDir, runtimePorts);
   await fs.writeFile(configPath, contents, "utf8");
 
   return {

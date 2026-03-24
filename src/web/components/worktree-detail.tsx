@@ -4,6 +4,7 @@ import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
 import "@git-diff-view/react/styles/diff-view-pure.css";
 import type {
+  AiCommandConfig,
   AiCommandLogEntry,
   AiCommandLogSummary,
   AiCommandJob,
@@ -291,7 +292,7 @@ interface WorktreeDetailProps {
   projectManagementAiLogDetail: AiCommandLogEntry | null;
   projectManagementAiLogsLoading: boolean;
   projectManagementRunningAiJobs: AiCommandJob[];
-  projectManagementAiCommandConfigured: boolean;
+  projectManagementAiCommands: AiCommandConfig | null;
   projectManagementAiJob: AiCommandJob | null;
   onProjectManagementSubTabChange: (tab: ProjectManagementSubTab) => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
@@ -315,7 +316,7 @@ interface WorktreeDetailProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
-  onRunProjectManagementAiCommand: (payload: { input: string; documentId: string }) => Promise<AiCommandJob | null>;
+  onRunProjectManagementAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;
 }
 
@@ -367,7 +368,7 @@ export function WorktreeDetail({
   projectManagementAiLogDetail,
   projectManagementAiLogsLoading,
   projectManagementRunningAiJobs,
-  projectManagementAiCommandConfigured,
+  projectManagementAiCommands,
   projectManagementAiJob,
   onProjectManagementSubTabChange,
   onLoadProjectManagementDocuments,
@@ -964,8 +965,8 @@ export function WorktreeDetail({
               aiLogDetail={projectManagementAiLogDetail}
               aiLogsLoading={projectManagementAiLogsLoading}
               runningAiJobs={projectManagementRunningAiJobs}
-              aiCommandConfigured={projectManagementAiCommandConfigured}
-              aiJob={projectManagementAiJob}
+                  aiCommands={projectManagementAiCommands}
+                  aiJob={projectManagementAiJob}
               selectedWorktreeBranch={worktree?.branch ?? null}
               onSubTabChange={onProjectManagementSubTabChange}
               onRefresh={onLoadProjectManagementDocuments}

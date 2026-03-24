@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_WORKTREEMAN_MAIN_BRANCH, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "../../shared/constants.js";
+import { WORKTREE_CONFIG_SCHEMA_URL } from "./config-service.js";
 import { initRepository } from "./init-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "./repository-layout-service.js";
 
@@ -27,6 +28,8 @@ test("initRepository creates the shared config in wtm-settings with root-level w
     assert.equal(result.created, true);
     assert.equal(result.worktreePath, path.join(rootDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH));
     assert.equal(result.configPath, configPath);
+    assert.match(configContents, new RegExp(`^# yaml-language-server: \\$schema=${WORKTREE_CONFIG_SCHEMA_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.match(configContents, new RegExp(`^\\$schema: ${WORKTREE_CONFIG_SCHEMA_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"));
     assert.match(configContents, /baseDir: \./);
     assert.match(configContents, /runtimePorts:\n  - PORT\n  - WEB_PORT/);
 
@@ -68,6 +71,8 @@ test("initRepository preserves an existing config unless force is set", async ()
     });
 
     const overwrittenContents = await fs.readFile(first.configPath, "utf8");
+    assert.match(overwrittenContents, /^# yaml-language-server: \$schema=/);
+    assert.match(overwrittenContents, /^\$schema: https:\/\//m);
     assert.doesNotMatch(overwrittenContents, /CUSTOM: keep-me/);
     assert.match(overwrittenContents, /runtimePorts:\n  - WEB_PORT/);
   } finally {
