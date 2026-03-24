@@ -923,6 +923,7 @@ export function Dashboard() {
           ) : null}
 
           <WorktreeDetail
+            repoRoot={state?.repoRoot ?? null}
             worktree={selected}
             worktreeOptions={worktreeOptions}
             worktreeCount={state?.worktrees.length ?? 0}

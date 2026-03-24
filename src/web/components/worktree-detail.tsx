@@ -244,6 +244,7 @@ function parseDiffSections(raw: string) {
 }
 
 interface WorktreeDetailProps {
+  repoRoot: string | null;
   worktree: WorktreeRecord | null;
   worktreeOptions: MatrixDropdownOption[];
   worktreeCount: number;
@@ -319,6 +320,7 @@ interface WorktreeDetailProps {
 }
 
 export function WorktreeDetail({
+  repoRoot,
   worktree,
   worktreeOptions,
   worktreeCount,
@@ -392,8 +394,10 @@ export function WorktreeDetail({
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
-  const attachCommand = worktree
-    ? `tmux attach-session -t '${getTmuxSessionName(worktree.branch).replace(/'/g, `'\\''`)}'`
+  const tmuxSessionName = worktree?.runtime?.tmuxSession
+    ?? (worktree?.branch && repoRoot ? getTmuxSessionName(repoRoot, worktree.branch) : null);
+  const attachCommand = tmuxSessionName
+    ? `tmux attach-session -t '${tmuxSessionName.replace(/'/g, `'\\''`)}'`
     : null;
   const selectedBackgroundCommand = useMemo(
     () => backgroundCommands.find((entry) => entry.name === selectedBackgroundCommandName) ?? backgroundCommands[0] ?? null,
@@ -1175,6 +1179,7 @@ export function WorktreeDetail({
 
       <div className="min-w-0 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
         <WorktreeTerminal
+          repoRoot={repoRoot}
           worktree={worktree}
           isTerminalVisible={isTerminalVisible}
           onTerminalVisibilityChange={onTerminalVisibilityChange}

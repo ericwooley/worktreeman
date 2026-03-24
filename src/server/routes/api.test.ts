@@ -16,6 +16,9 @@ import { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
 import { clearAiCommandJobs, startAiCommandJob } from "../services/ai-command-service.js";
 import { stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
+import { startServer } from "../app.js";
+import { resolveTmuxSessionName } from "../services/terminal-service.js";
+import { getTmuxSessionName } from "../../shared/tmux.js";
 import type { AiCommandJob } from "../../shared/types.js";
 
 type RouterOptions = Parameters<typeof createApiRouter>[0];
@@ -319,6 +322,41 @@ async function startApiServer(
 test.afterEach(async () => {
   clearAiCommandJobs();
   await stopAllAiCommandJobManagers();
+});
+
+test("startServer fails fast when the initial tmux session cannot be prepared", async () => {
+  const repo = await createApiTestRepo();
+
+  await assert.rejects(
+    () => startServer({
+      repo,
+      port: 0,
+      openBrowser: false,
+      prepareInitialTerminalSession: async () => {
+        throw new Error("Unable to determine tmux session for main.");
+      },
+    }),
+    /Failed to prepare tmux session for startup worktree main: Unable to determine tmux session for main\./,
+  );
+
+  await fs.rm(repo.repoRoot, { recursive: true, force: true });
+});
+
+test("terminal tmux session resolution uses repoRoot when runtime is missing", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    assert.equal(
+      resolveTmuxSessionName({
+        repoRoot: repo.repoRoot,
+        branch: "main",
+        worktreePath: path.join(repo.repoRoot, "main"),
+      }),
+      getTmuxSessionName(repo.repoRoot, "main"),
+    );
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
 });
 
 async function waitFor(condition: () => Promise<boolean>, timeoutMs = 5000) {

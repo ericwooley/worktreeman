@@ -246,6 +246,11 @@ const cloneCommand = command({
     const rootDir = resolveCloneRootDir(cwd, remote, directory);
     await createBareRepoLayout({ rootDir, remoteUrl: remote });
     await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+    await initRepository(rootDir, {
+      baseDir: DEFAULT_WORKTREE_BASE_DIR,
+      runtimePorts: [],
+      force: false,
+    });
     const repo = await findRepoContext(rootDir);
 
     process.stdout.write(`Cloned ${remote} into bare repository layout at ${repo.repoRoot}\n`);

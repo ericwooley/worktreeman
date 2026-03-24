@@ -1146,9 +1146,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const { runtime } = await createRuntime(config, worktree.branch, worktree.worktreePath);
+      const { runtime } = await createRuntime(config, options.repoRoot, worktree.branch, worktree.worktreePath);
       options.runtimes.set(runtime);
-      await ensureRuntimeTerminalSession(runtime);
+      await ensureRuntimeTerminalSession(runtime, options.repoRoot);
       await runStartupCommands(config.startupCommands, worktree.worktreePath, buildRuntimeProcessEnv(runtime));
       await startConfiguredBackgroundCommands({
         config,
@@ -1444,6 +1444,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const tmuxSession = await ensureTerminalSession({
+        repoRoot: options.repoRoot,
         branch: worktree.branch,
         worktreePath: worktree.worktreePath,
         runtime,
@@ -1491,7 +1492,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         await killTmuxSession(runtime);
         options.runtimes.delete(worktree.branch);
       } else {
-        await killTmuxSessionByName(getTmuxSessionName(worktree.branch), worktree.worktreePath);
+        await killTmuxSessionByName(getTmuxSessionName(options.repoRoot, worktree.branch), worktree.worktreePath);
       }
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);

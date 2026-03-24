@@ -12,6 +12,7 @@ import {
 } from "../../shared/constants.js";
 import { runCommand } from "../utils/process.js";
 import { createBareRepoLayout, ensureBranchWorktree, ensurePrimaryWorktrees, resolveCloneRootDir } from "./repository-layout-service.js";
+import { initRepository } from "./init-service.js";
 
 const GIT_TEST_ENV = {
   ...process.env,
@@ -134,6 +135,29 @@ test("clone flow bootstraps missing primary branches when the remote does not ha
     const status = await runCommand("git", ["worktree", "list", "--porcelain"], { cwd: targetDir });
     assert.match(status.stdout, /branch refs\/heads\/main/);
     assert.match(status.stdout, /branch refs\/heads\/wtm-settings/);
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("clone flow can initialize settings config after bootstrapping missing primary branches", async () => {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-clone-"));
+  const remoteDir = path.join(tempRoot, "remote.git");
+  const targetDir = path.join(tempRoot, "target");
+
+  try {
+    await runCommand("git", ["init", "--bare", remoteDir], { cwd: tempRoot });
+
+    await createBareRepoLayout({ rootDir: targetDir, remoteUrl: remoteDir });
+    await ensurePrimaryWorktrees({ rootDir: targetDir, createMissingBranches: true });
+
+    const initResult = await initRepository(targetDir, {
+      runtimePorts: [],
+      force: false,
+    });
+
+    assert.equal(initResult.created, true);
+    await fs.access(path.join(targetDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml"));
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
   }

@@ -6,10 +6,11 @@ import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
 import pty from "node-pty";
 import type { TerminalClientMessage, TerminalServerMessage, TmuxClientInfo, WorktreeRuntime } from "../../shared/types.js";
+import { getTmuxSessionName as getSharedTmuxSessionName } from "../../shared/tmux.js";
 import { runCommand } from "../utils/process.js";
-import { sanitizeBranchName } from "../utils/paths.js";
 
 interface TerminalSessionTarget {
+  repoRoot?: string;
   branch: string;
   worktreePath: string;
   runtime?: WorktreeRuntime;
@@ -18,6 +19,10 @@ interface TerminalSessionTarget {
 interface TerminalServiceOptions {
   server: HttpServer;
   getTerminalTarget(branch: string): Promise<TerminalSessionTarget | undefined>;
+}
+
+export function resolveTmuxSessionName(target: TerminalSessionTarget): string | null {
+  return target.runtime?.tmuxSession ?? (target.repoRoot ? getTmuxSessionName(target.repoRoot, target.branch) : null);
 }
 
 function send(socket: WebSocket, message: TerminalServerMessage): void {
@@ -100,26 +105,35 @@ async function ensureTmuxSession(runtime: WorktreeRuntime, shell: string): Promi
   }
 }
 
-export async function ensureTerminalSession(target: { branch: string; worktreePath: string; runtime?: WorktreeRuntime }): Promise<string> {
+export async function ensureTerminalSession(target: TerminalSessionTarget): Promise<string> {
   const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "bash");
+  const tmuxSession = resolveTmuxSessionName(target);
+  if (!tmuxSession) {
+    throw new Error(`Unable to determine tmux session for ${target.branch}.`);
+  }
   const runtime = target.runtime ?? {
     branch: target.branch,
     worktreePath: target.worktreePath,
     env: {},
     quickLinks: [],
     allocatedPorts: {},
-    tmuxSession: getTmuxSessionName(target.branch),
+    tmuxSession,
   };
   await ensureTmuxSession(runtime, shell);
   return runtime.tmuxSession;
 }
 
-export async function ensureRuntimeTerminalSession(runtime: WorktreeRuntime): Promise<void> {
-  await ensureTerminalSession(runtime);
+export async function ensureRuntimeTerminalSession(runtime: WorktreeRuntime, repoRoot: string): Promise<void> {
+  await ensureTerminalSession({
+    repoRoot,
+    branch: runtime.branch,
+    worktreePath: runtime.worktreePath,
+    runtime,
+  });
 }
 
-export function getTmuxSessionName(branch: string): string {
-  return `wt-${sanitizeBranchName(branch)}`;
+export function getTmuxSessionName(repoRoot: string, branch: string): string {
+  return getSharedTmuxSessionName(repoRoot, branch);
 }
 
 function parseTmuxTimestamp(value: string): string | undefined {
@@ -246,7 +260,12 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       return;
     }
 
-    const tmuxSession = getTmuxSessionName(target.branch);
+    const tmuxSession = resolveTmuxSessionName(target);
+    if (!tmuxSession) {
+      send(socket, { type: "error", message: `Unable to determine tmux session for ${target.branch}.` });
+      socket.close();
+      return;
+    }
 
     // Inject the host env, root config env, and dynamic Docker-derived env directly
     // into the pty process so the tmux session inherits everything in memory.
@@ -260,6 +279,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
 
     try {
       await ensureTerminalSession({
+        repoRoot: target.repoRoot,
         branch: target.branch,
         worktreePath: target.worktreePath,
         runtime: target.runtime,

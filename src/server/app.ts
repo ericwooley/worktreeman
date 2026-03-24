@@ -3,13 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import open from "open";
+import { DEFAULT_WORKTREEMAN_MAIN_BRANCH } from "../shared/constants.js";
 import { createApiRouter } from "./routes/api.js";
 import { stopAllAiCommandJobManagers } from "./services/ai-command-job-manager-service.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
 import { ShutdownStatusService } from "./services/shutdown-status-service.js";
-import { createTerminalService, killTmuxSession } from "./services/terminal-service.js";
+import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
 import { RuntimeStore } from "./state/runtime-store.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
@@ -19,6 +20,7 @@ export interface StartServerOptions {
   repo: RepoContext;
   port?: number;
   openBrowser?: boolean;
+  prepareInitialTerminalSession?: (target: { repoRoot: string; branch: string; worktreePath: string }) => Promise<string | void>;
 }
 
 export async function startServer(options: StartServerOptions): Promise<{ port: number; close: () => Promise<void> }> {
@@ -81,6 +83,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   });
 
   const port = options.port ?? Number(process.env.PORT || 4312);
+  const prepareInitialTerminalSession = options.prepareInitialTerminalSession ?? ensureTerminalSession;
 
   const formatStartupError = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -247,12 +250,31 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
         }
 
         return {
+          repoRoot: options.repo.repoRoot,
           branch: worktree.branch,
           worktreePath: worktree.worktreePath,
           runtime: runtimes.get(branch),
         };
       },
     });
+
+    const startupWorktrees = await listWorktrees(options.repo.repoRoot);
+    const startupWorktree = startupWorktrees.find((entry) => entry.branch === DEFAULT_WORKTREEMAN_MAIN_BRANCH)
+      ?? startupWorktrees[0];
+
+    if (startupWorktree) {
+      try {
+        await prepareInitialTerminalSession({
+          repoRoot: options.repo.repoRoot,
+          branch: startupWorktree.branch,
+          worktreePath: startupWorktree.worktreePath,
+        });
+      } catch (error) {
+        throw new Error(
+          `Failed to prepare tmux session for startup worktree ${startupWorktree.branch}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
 
     const url = `http://127.0.0.1:${port}`;
     if (options.openBrowser ?? true) {
