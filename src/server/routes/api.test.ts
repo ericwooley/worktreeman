@@ -11,6 +11,7 @@ import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
 import { loadConfig, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { findRepoContext } from "../utils/paths.js";
+import { runCommand } from "../utils/process.js";
 import { RuntimeStore } from "../state/runtime-store.js";
 import { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
@@ -495,6 +496,75 @@ test("AI command settings save writes both schema hints and aiCommands", async (
     assert.match(savedContents, /^# yaml-language-server: \$schema=/);
     assert.match(savedContents, /^\$schema: https:\/\//m);
     assert.match(savedContents, /aiCommands:\n  smart: opencode run \$WTM_AI_INPUT --mode smart\n  simple: opencode run \$WTM_AI_INPUT --mode simple/);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("config document save commits the edited config file", async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const nextContents = [
+      "# yaml-language-server: $schema=https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json",
+      "",
+      "$schema: https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json",
+      "env:",
+      "  NODE_ENV: development",
+      "worktrees:",
+      "  baseDir: .",
+      "aiCommands:",
+      "  smart: printf %s $WTM_AI_INPUT",
+      "  simple: printf %s $WTM_AI_INPUT",
+      "runtimePorts:",
+      "  - PORT",
+      "",
+    ].join("\n");
+
+    const response = await fetch(`${server.baseUrl}/api/config/document`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: nextContents }),
+    });
+
+    assert.equal(response.status, 200);
+
+    const logMessage = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: repo.configWorktreePath });
+    assert.equal(logMessage.stdout.trim(), "config: update worktree config");
+
+    const status = await runCommand("git", ["status", "--short", "--", repo.configFile], { cwd: repo.configWorktreePath });
+    assert.equal(status.stdout.trim(), "");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("AI command settings save commits the config file", async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const response = await fetch(`${server.baseUrl}/api/settings/ai-command`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        aiCommands: {
+          smart: "opencode run $WTM_AI_INPUT --mode smart",
+          simple: "opencode run $WTM_AI_INPUT --mode simple",
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+
+    const logMessage = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: repo.configWorktreePath });
+    assert.equal(logMessage.stdout.trim(), "config: update ai commands");
+
+    const status = await runCommand("git", ["status", "--short", "--", repo.configFile], { cwd: repo.configWorktreePath });
+    assert.equal(status.stdout.trim(), "");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

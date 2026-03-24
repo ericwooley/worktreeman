@@ -73,6 +73,7 @@ import {
 } from "../services/project-management-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
+import { runCommand } from "../utils/process.js";
 
 interface ApiRouterOptions {
   repoRoot: string;
@@ -110,6 +111,14 @@ interface ApiRouterOptions {
     notifyStarted: (job: AiCommandJob) => void;
   }) => Promise<void>;
 }
+
+const CONFIG_COMMIT_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
+  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
+  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
+  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+};
 
 function createAiLogIdentifiers(branch: string, date = new Date()) {
   return {
@@ -546,6 +555,37 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     gitFile: options.configFile,
   });
 
+  const commitConfigEdit = async (message: string) => {
+    const relativeConfigPath = options.configFile;
+    const worktreePath = options.configWorktreePath;
+
+    const stagedBeforeCommit = await runCommand("git", ["status", "--short", "--", relativeConfigPath], {
+      cwd: worktreePath,
+      env: CONFIG_COMMIT_ENV,
+    });
+    if (!stagedBeforeCommit.stdout.trim()) {
+      return;
+    }
+
+    await runCommand("git", ["add", "--", relativeConfigPath], {
+      cwd: worktreePath,
+      env: CONFIG_COMMIT_ENV,
+    });
+
+    const stagedConfigDiff = await runCommand("git", ["diff", "--cached", "--name-only", "--", relativeConfigPath], {
+      cwd: worktreePath,
+      env: CONFIG_COMMIT_ENV,
+    });
+    if (!stagedConfigDiff.stdout.trim()) {
+      return;
+    }
+
+    await runCommand("git", ["commit", "-m", message, "--", relativeConfigPath], {
+      cwd: worktreePath,
+      env: CONFIG_COMMIT_ENV,
+    });
+  };
+
   const loadResolvedAiLog = async (fileName: string) => {
     const entry = await readAiCommandLogEntry(options.repoRoot, fileName);
     return reconcileAiCommandLogEntry({
@@ -796,6 +836,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const absoluteConfigPath = path.join(options.configWorktreePath, options.configFile);
       await fs.writeFile(absoluteConfigPath, contents, "utf8");
+      await commitConfigEdit("config: update worktree config");
 
       const payload: ConfigDocumentResponse = {
         branch: options.configSourceRef,
@@ -840,6 +881,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const absoluteConfigPath = path.join(options.configWorktreePath, options.configFile);
       await fs.writeFile(absoluteConfigPath, nextContents, "utf8");
+      await commitConfigEdit("config: update ai commands");
 
       const payload: AiCommandSettingsResponse = {
         branch: options.configSourceRef,
