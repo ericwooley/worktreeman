@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_WORKTREEMAN_MAIN_BRANCH, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "../../shared/constants.js";
+import { getTmuxRepoName, getTmuxSessionName } from "../../shared/tmux.js";
 import { initRepository } from "../services/init-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { runCommand } from "./process.js";
@@ -63,4 +64,37 @@ test("findRepoContext fails when wtm-settings exists but no config file is prese
   } finally {
     await fs.rm(rootDir, { recursive: true, force: true });
   }
+});
+
+test("findRepoContext resolves once initRepository creates the missing settings config", async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-paths-"));
+
+  try {
+    await createBareRepoLayout({ rootDir });
+    await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+
+    await assert.rejects(
+      () => findRepoContext(rootDir),
+      /no worktree config was present/,
+    );
+
+    await initRepository(rootDir, { baseDir: ".", runtimePorts: [], force: false });
+
+    const repo = await findRepoContext(rootDir);
+    assert.equal(repo.configPath, path.join(rootDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml"));
+  } finally {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("tmux session names include repository identity and branch", () => {
+  assert.equal(getTmuxRepoName("/home/alice/projects/whatever"), "projects_whatever");
+  assert.equal(getTmuxSessionName("/home/alice/projects/whatever", "main"), "wt-projects_whatever-main");
+  assert.equal(getTmuxSessionName("/home/alice/client-a", "main"), "wt-client-a-main");
+  assert.equal(getTmuxSessionName("/home/alice/client-b", "main"), "wt-client-b-main");
+});
+
+test("tmux session names normalize Windows and nested paths consistently", () => {
+  assert.equal(getTmuxRepoName("C:\\Users\\alice\\src\\some-other-repo"), "src_some-other-repo");
+  assert.equal(getTmuxSessionName("/srv/repos/example-app", "feature/add search"), "wt-repos_example-app-feature-add-search");
 });

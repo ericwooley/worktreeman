@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Editor from "@monaco-editor/react";
 import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "@shared/constants";
+import type { AiCommandConfig, AiCommandId } from "@shared/types";
 import {
   CommandPalette,
   DEFAULT_COMMAND_PALETTE_SHORTCUT,
@@ -53,6 +54,26 @@ const LEGACY_TERMINAL_SHORTCUTS = new Set(["Ctrl+Shift+;"]);
 const DEFAULT_TERMINAL_SHORTCUT = "Ctrl+Shift+'";
 const COMMAND_PALETTE_CODE_MODE_SHORTCUT = "Ctrl+Shift+:";
 type CommandPaletteScope = "main" | "worktree-select" | "theme-select";
+
+const EMPTY_AI_COMMANDS: AiCommandConfig = {
+  smart: "",
+  simple: "",
+};
+
+function normalizeAiCommands(aiCommands?: Partial<AiCommandConfig> | null): AiCommandConfig {
+  return {
+    smart: typeof aiCommands?.smart === "string" ? aiCommands.smart : "",
+    simple: typeof aiCommands?.simple === "string" ? aiCommands.simple : "",
+  };
+}
+
+function isAiCommandTemplateReady(template: string): boolean {
+  return template.includes("$WTM_AI_INPUT");
+}
+
+function getAiCommandLabel(commandId: AiCommandId): string {
+  return commandId === "simple" ? "Simple AI" : "Smart AI";
+}
 
 function isCommandPaletteCodeModeShortcut(event: KeyboardEvent): boolean {
   if (event.altKey || event.metaKey || !event.ctrlKey || !event.shiftKey) {
@@ -149,6 +170,9 @@ export function Dashboard() {
     loadAiCommandLog,
     loadAiCommandLogs,
     loadGitComparison,
+    mergeGitBranch,
+    generateGitCommitMessage,
+    commitGitChanges,
     runAiCommand,
     cancelAiCommand,
     saveAiCommandSettings,
@@ -171,7 +195,7 @@ export function Dashboard() {
   const [configEditorOpen, setConfigEditorOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState("");
-  const [aiCommandDraft, setAiCommandDraft] = useState("");
+  const [aiCommandDrafts, setAiCommandDrafts] = useState<AiCommandConfig>(EMPTY_AI_COMMANDS);
   const [branch, setBranch] = useState("");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteScope, setCommandPaletteScope] = useState<CommandPaletteScope>("main");
@@ -506,7 +530,7 @@ export function Dashboard() {
       return;
     }
 
-    setAiCommandDraft(settings.aiCommand);
+    setAiCommandDrafts(normalizeAiCommands(settings.aiCommands));
     setAiSettingsOpen(true);
   }, [loadAiCommandSettings]);
 
@@ -520,18 +544,18 @@ export function Dashboard() {
       return;
     }
 
-    setAiCommandDraft(settings.aiCommand);
+    setAiCommandDrafts(normalizeAiCommands(settings.aiCommands));
   }, [loadAiCommandSettings]);
 
   const persistAiSettings = useCallback(async () => {
-    const settings = await saveAiCommandSettings({ aiCommand: aiCommandDraft });
+    const settings = await saveAiCommandSettings({ aiCommands: normalizeAiCommands(aiCommandDrafts) });
     if (!settings) {
       return;
     }
 
-    setAiCommandDraft(settings.aiCommand);
+    setAiCommandDrafts(normalizeAiCommands(settings.aiCommands));
     setAiSettingsOpen(false);
-  }, [aiCommandDraft, saveAiCommandSettings]);
+  }, [aiCommandDrafts, saveAiCommandSettings]);
 
   const confirmDelete = async () => {
     if (!deleteConfirmBranch) {
@@ -552,6 +576,14 @@ export function Dashboard() {
   const handleProjectManagementSubTabChange = useCallback((tab: ProjectManagementSubTab) => {
     setProjectManagementSubTab(tab);
   }, []);
+
+  const configuredAiCommands = normalizeAiCommands(aiCommandSettings?.aiCommands);
+  const aiCommandDraftValues = normalizeAiCommands(aiCommandDrafts);
+  const aiCommandStatusBadges = (["smart", "simple"] as const).map((commandId) => ({
+    commandId,
+    label: getAiCommandLabel(commandId),
+    ready: isAiCommandTemplateReady(configuredAiCommands[commandId]),
+  }));
 
   const handleLoadProjectManagementDocument = useCallback(async (documentId: string, options?: { silent?: boolean }) => {
     setProjectManagementSelectedDocumentId(documentId);
@@ -850,14 +882,13 @@ export function Dashboard() {
                   onClick={() => void openAiSettings()}
                 >
                   <div className="min-w-0">
-                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">AI command</p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className="theme-text-strong truncate font-mono text-sm">
-                        {aiCommandSettings?.aiCommand?.trim() ? aiCommandSettings.aiCommand : "$WTM_AI_INPUT not configured"}
-                      </span>
-                      <MatrixBadge tone={aiCommandSettings?.aiCommand?.includes("$WTM_AI_INPUT") ? "active" : "warning"} compact>
-                        {aiCommandSettings?.aiCommand?.includes("$WTM_AI_INPUT") ? "Ready" : "Needs template"}
-                      </MatrixBadge>
+                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">AI commands</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {aiCommandStatusBadges.map((entry) => (
+                        <MatrixBadge key={entry.commandId} tone={entry.ready ? "active" : "warning"} compact>
+                          {entry.label} {entry.ready ? "ready" : "missing"}
+                        </MatrixBadge>
+                      ))}
                     </div>
                   </div>
                   <span className="theme-text-accent-soft font-mono text-sm">magic</span>
@@ -923,6 +954,7 @@ export function Dashboard() {
           ) : null}
 
           <WorktreeDetail
+            repoRoot={state?.repoRoot ?? null}
             worktree={selected}
             worktreeOptions={worktreeOptions}
             worktreeCount={state?.worktrees.length ?? 0}
@@ -968,6 +1000,9 @@ export function Dashboard() {
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
             onLoadGitComparison={loadGitComparison}
+            onMergeGitBranch={mergeGitBranch}
+            onGenerateGitCommitMessage={generateGitCommitMessage}
+            onCommitGitChanges={commitGitChanges}
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
             projectManagementDocuments={projectManagement?.documents ?? []}
@@ -994,7 +1029,7 @@ export function Dashboard() {
               setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementDependencies(documentId, { dependencyIds });
             }}
-            projectManagementAiCommandConfigured={Boolean(aiCommandSettings?.aiCommand?.includes("$WTM_AI_INPUT"))}
+            projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
             onRunProjectManagementAiCommand={async (payload) => {
               if (!selected?.branch) {
@@ -1195,7 +1230,7 @@ export function Dashboard() {
         <MatrixModal
           kicker="AI command"
           title="Configure UI Magic"
-          description="Set the reusable command template run inside the selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted."
+          description="Set the reusable Smart AI and Simple AI command templates run inside the selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted."
           closeLabel="Cancel"
           maxWidthClass="max-w-3xl"
           onClose={closeAiSettings}
@@ -1216,39 +1251,52 @@ export function Dashboard() {
               >
                 Reload
               </button>
-              <button
-                type="button"
-                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-                onClick={() => void persistAiSettings()}
-                disabled={aiCommandSettingsLoading || !aiCommandDraft.includes("$WTM_AI_INPUT")}
-              >
-                Save AI command
-              </button>
+                <button
+                  type="button"
+                  className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                  onClick={() => void persistAiSettings()}
+                  disabled={aiCommandSettingsLoading}
+                >
+                  Save AI commands
+                </button>
             </>
           )}
         >
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
-              <MatrixBadge tone="neutral">Stored in config</MatrixBadge>
-              <span className="font-mono theme-text-strong">{aiCommandSettings?.filePath ?? state?.configPath ?? "worktree.yml"}</span>
-              <MatrixBadge tone={aiCommandDraft.includes("$WTM_AI_INPUT") ? "active" : "warning"}>
-                {aiCommandDraft.includes("$WTM_AI_INPUT") ? "Template valid" : "Missing $WTM_AI_INPUT"}
-              </MatrixBadge>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
+                <MatrixBadge tone="neutral">Stored in config</MatrixBadge>
+                <span className="font-mono theme-text-strong">{aiCommandSettings?.filePath ?? state?.configPath ?? "worktree.yml"}</span>
+                {(["smart", "simple"] as const).map((commandId) => (
+                  <MatrixBadge key={commandId} tone={isAiCommandTemplateReady(aiCommandDraftValues[commandId]) ? "active" : "warning"}>
+                    {getAiCommandLabel(commandId)} {isAiCommandTemplateReady(aiCommandDraftValues[commandId]) ? "ready" : "missing $WTM_AI_INPUT"}
+                  </MatrixBadge>
+                ))}
+              </div>
+              <div className="grid gap-3">
+                <label className="block space-y-2">
+                  <span className="text-xs uppercase tracking-[0.18em] theme-text-soft">Smart AI command template</span>
+                  <input
+                    value={aiCommandDraftValues.smart}
+                    onChange={(event) => setAiCommandDrafts((current) => ({ ...current, smart: event.target.value }))}
+                    placeholder="opencode run $WTM_AI_INPUT"
+                    className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
+                    autoFocus
+                  />
+                </label>
+                <label className="block space-y-2">
+                  <span className="text-xs uppercase tracking-[0.18em] theme-text-soft">Simple AI command template</span>
+                  <input
+                    value={aiCommandDraftValues.simple}
+                    onChange={(event) => setAiCommandDrafts((current) => ({ ...current, simple: event.target.value }))}
+                    placeholder="opencode run --model gpt-5-mini $WTM_AI_INPUT"
+                    className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
+                  />
+                </label>
+              </div>
+              <div className="border theme-border-subtle p-3 text-sm theme-text-muted">
+                Use `$WTM_AI_INPUT` in each command you want to run. The generated document-editing prompt will be shell-quoted before execution.
+              </div>
             </div>
-            <label className="block space-y-2">
-              <span className="text-xs uppercase tracking-[0.18em] theme-text-soft">AI Command template</span>
-              <input
-                value={aiCommandDraft}
-                onChange={(event) => setAiCommandDraft(event.target.value)}
-                placeholder="opencode run $WTM_AI_INPUT"
-                className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
-                autoFocus
-              />
-            </label>
-            <div className="border theme-border-subtle p-3 text-sm theme-text-muted">
-              Use `$WTM_AI_INPUT` exactly once or more in the command. The generated document-editing prompt will be shell-quoted before execution.
-            </div>
-          </div>
         </MatrixModal>
       ) : null}
 

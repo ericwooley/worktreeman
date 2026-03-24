@@ -44,10 +44,8 @@
         "$ref": "#/$defs/quickLinkEntry"
       }
     },
-    "aiCommand": {
-      "type": "string",
-      "description": "Reusable AI command template run inside a selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted.",
-      "default": ""
+    "aiCommands": {
+      "$ref": "#/$defs/aiCommandConfig"
     },
     "startupCommands": {
       "type": "array",
@@ -92,6 +90,26 @@
           }
         }
       ]
+    },
+    "aiCommandConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "smart": {
+          "type": "string",
+          "description": "Higher-context AI command template run inside a selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted.",
+          "default": ""
+        },
+        "simple": {
+          "type": "string",
+          "description": "Faster or lighter-weight AI command template run inside a selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted.",
+          "default": ""
+        }
+      },
+      "default": {
+        "smart": "",
+        "simple": ""
+      }
     },
     "quickLinkEntry": {
       "type": "object",

@@ -1,6 +1,10 @@
 import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary } from "@shared/types";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric } from "./matrix-primitives";
 
+function getAiCommandLabel(commandId: "smart" | "simple") {
+  return commandId === "simple" ? "Simple AI" : "Smart AI";
+}
+
 interface ProjectManagementAiLogTabProps {
   logs: AiCommandLogSummary[];
   logDetail: AiCommandLogEntry | null;
@@ -108,7 +112,10 @@ export function ProjectManagementAiLogTab({
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold theme-text-strong">{job.branch}</span>
-                        <MatrixBadge tone={getStatusTone(job.status)} compact>{job.status}</MatrixBadge>
+                        <div className="flex items-center gap-2">
+                          <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
+                          <MatrixBadge tone={getStatusTone(job.status)} compact>{job.status}</MatrixBadge>
+                        </div>
                       </div>
                       <p className="mt-2 text-xs theme-text-muted">Started {new Date(job.startedAt).toLocaleString()}</p>
                       {job.pid ? <p className="mt-1 text-xs theme-text-muted">PID {job.pid}</p> : null}
@@ -146,7 +153,10 @@ export function ProjectManagementAiLogTab({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm font-semibold">{log.branch}</span>
-                    <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
+                    <div className="flex items-center gap-2">
+                      <MatrixBadge tone="neutral" compact>{getAiCommandLabel(log.commandId)}</MatrixBadge>
+                      <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
+                    </div>
                   </div>
                   <p className="mt-1 text-xs theme-text-muted">{new Date(log.timestamp).toLocaleString()}</p>
                   <p className="mt-2 line-clamp-3 text-xs theme-text-muted">{log.requestPreview}</p>
@@ -166,6 +176,7 @@ export function ProjectManagementAiLogTab({
               <div className="flex flex-wrap items-center gap-2">
                 <p className="matrix-kicker">AI log detail</p>
                 <MatrixBadge tone={getStatusTone(logDetail.status)} compact>{logDetail.status}</MatrixBadge>
+                <MatrixBadge tone="neutral" compact>{getAiCommandLabel(logDetail.commandId)}</MatrixBadge>
                 <MatrixBadge tone="neutral" compact>{logDetail.fileName}</MatrixBadge>
                 {logDetail.status === "running" ? <MatrixBadge tone="warning" compact>live</MatrixBadge> : null}
                 {logDetail.status === "running" ? (
@@ -185,6 +196,7 @@ export function ProjectManagementAiLogTab({
                 <MatrixDetailField label="Timestamp" value={new Date(logDetail.timestamp).toLocaleString()} />
                 <MatrixDetailField label="PID" value={logDetail.pid ? String(logDetail.pid) : "Unavailable"} />
                 <MatrixDetailField label="Exit code" value={typeof logDetail.exitCode === "number" ? String(logDetail.exitCode) : "Pending"} />
+                <MatrixDetailField label="AI command" value={getAiCommandLabel(logDetail.commandId)} />
                 <MatrixDetailField label="Worktree path" value={logDetail.worktreePath} mono />
                 <MatrixDetailField label="Command" value={logDetail.command} mono />
               </div>

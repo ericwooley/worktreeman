@@ -11,11 +11,15 @@ import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
 import { loadConfig, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { findRepoContext } from "../utils/paths.js";
+import { runCommand } from "../utils/process.js";
 import { RuntimeStore } from "../state/runtime-store.js";
 import { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
 import { clearAiCommandJobs, startAiCommandJob } from "../services/ai-command-service.js";
 import { stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
+import { startServer } from "../app.js";
+import { resolveTmuxSessionName } from "../services/terminal-service.js";
+import { getTmuxSessionName } from "../../shared/tmux.js";
 import type { AiCommandJob } from "../../shared/types.js";
 
 type RouterOptions = Parameters<typeof createApiRouter>[0];
@@ -23,6 +27,7 @@ type InjectedAiProcesses = NonNullable<RouterOptions["aiProcesses"]>;
 type StartAiQueueJob = (payload: {
   branch: string;
   documentId: string;
+  commandId: "smart" | "simple";
   input: string;
   renderedCommand: string;
   worktreePath: string;
@@ -129,7 +134,7 @@ function createFakeAiProcesses() {
       scriptedStates.delete(processName);
     },
     isProcessActive(status) {
-      return status === "online" || status === "launching" || status === "waiting restart";
+      return status === "online" || status === "launching";
     },
   };
 
@@ -156,6 +161,7 @@ async function writeAiLogFixture(options: {
   repoRoot: string;
   fileName: string;
   branch: string;
+  commandId?: "smart" | "simple";
   worktreePath: string;
   command: string;
   request: string;
@@ -177,6 +183,7 @@ async function writeAiLogFixture(options: {
     startedAt: timestamp,
     completedAt: options.completedAt ?? null,
     branch: options.branch,
+    commandId: options.commandId ?? "smart",
     worktreePath: options.worktreePath,
     command: options.command,
     pid: options.pid ?? null,
@@ -265,7 +272,10 @@ async function createApiTestRepo(): Promise<Awaited<ReturnType<typeof findRepoCo
     gitFile: repo.configFile,
   });
 
-  const nextContents = updateAiCommandInConfigContents(currentContents, "printf %s $WTM_AI_INPUT");
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "printf %s $WTM_AI_INPUT",
+    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+  });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
 
   const config = await loadConfig({
@@ -321,6 +331,41 @@ test.afterEach(async () => {
   await stopAllAiCommandJobManagers();
 });
 
+test("startServer fails fast when the initial tmux session cannot be prepared", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+
+  await assert.rejects(
+    () => startServer({
+      repo,
+      port: 0,
+      openBrowser: false,
+      prepareInitialTerminalSession: async () => {
+        throw new Error("Unable to determine tmux session for main.");
+      },
+    }),
+    /Failed to prepare tmux session for startup worktree main: Unable to determine tmux session for main\./,
+  );
+
+  await fs.rm(repo.repoRoot, { recursive: true, force: true });
+});
+
+test("terminal tmux session resolution uses repoRoot when runtime is missing", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    assert.equal(
+      resolveTmuxSessionName({
+        repoRoot: repo.repoRoot,
+        branch: "main",
+        worktreePath: path.join(repo.repoRoot, "main"),
+      }),
+      getTmuxSessionName(repo.repoRoot, "main"),
+    );
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 async function waitFor(condition: () => Promise<boolean>, timeoutMs = 5000) {
   const start = Date.now();
 
@@ -346,7 +391,7 @@ async function waitForPathToDisappear(targetPath: string, timeoutMs = 5000) {
   }, timeoutMs);
 }
 
-test("AI command logs are written under the resolved repo root .logs directory", async () => {
+test("AI command logs are written under the resolved repo root .logs directory", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -423,7 +468,298 @@ test("AI command logs are written under the resolved repo root .logs directory",
   }
 });
 
-test("AI log routes list logs and expose running jobs", async () => {
+test("AI command settings save writes both schema hints and aiCommands", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const response = await fetch(`${server.baseUrl}/api/settings/ai-command`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        aiCommands: {
+          smart: "opencode run $WTM_AI_INPUT --mode smart",
+          simple: "opencode run $WTM_AI_INPUT --mode simple",
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      aiCommands: { smart: string; simple: string };
+      filePath: string;
+    };
+    assert.equal(payload.aiCommands.smart, "opencode run $WTM_AI_INPUT --mode smart");
+    assert.equal(payload.aiCommands.simple, "opencode run $WTM_AI_INPUT --mode simple");
+
+    const savedContents = await fs.readFile(repo.configPath, "utf8");
+    assert.match(savedContents, /^# yaml-language-server: \$schema=/);
+    assert.match(savedContents, /^\$schema: https:\/\//m);
+    assert.match(savedContents, /aiCommands:\n  smart: opencode run \$WTM_AI_INPUT --mode smart\n  simple: opencode run \$WTM_AI_INPUT --mode simple/);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare merge merges a feature branch into main", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "merge.txt"), "hello merge\n", "utf8");
+    await runCommand("git", ["add", "merge.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "add merge file"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-merge/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { baseBranch: string; compareBranch: string; behind: number };
+    assert.equal(payload.baseBranch, "main");
+    assert.equal(payload.compareBranch, "feature-merge");
+    assert.equal(payload.behind, 0);
+
+    await fs.access(path.join(mainPath, "merge.txt"));
+    const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: mainPath });
+    assert.match(stdout.trim(), /Merge branch 'feature-merge'|add merge file/);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare merge rejects branches with local changes", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-dirty-merge" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "dirty.txt"), "dirty\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-dirty-merge/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 500);
+    const payload = await response.text();
+    assert.match(payload, /uncommitted changes/i);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare commit creates a commit using the simple AI command by default", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-commit" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "commit.txt"), "commit me\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-commit/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      branch: string;
+      commandId: string;
+      message: string;
+      commitSha: string;
+      comparison: { compareBranch: string; workingTreeSummary: { dirty: boolean } };
+    };
+    assert.equal(payload.branch, "feature-ai-commit");
+    assert.equal(payload.commandId, "simple");
+    assert.equal(payload.message, "commit me");
+    assert.ok(payload.commitSha.length > 0);
+    assert.equal(payload.comparison.compareBranch, "feature-ai-commit");
+    assert.equal(payload.comparison.workingTreeSummary.dirty, false);
+
+    const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: feature.worktreePath });
+    assert.equal(stdout.trim(), "commit me");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare commit-message previews a simple AI message without committing", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-preview" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "preview.txt"), "preview me\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-preview/commit-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      branch: string;
+      commandId: string;
+      message: string;
+    };
+    assert.equal(payload.branch, "feature-ai-preview");
+    assert.equal(payload.commandId, "simple");
+    assert.equal(payload.message, "commit me");
+
+    const { stdout } = await runCommand("git", ["status", "--short"], { cwd: feature.worktreePath });
+    assert.match(stdout, /preview.txt/);
+    await assert.rejects(
+      () => runCommand("git", ["rev-parse", "--verify", "HEAD"], { cwd: feature.worktreePath }),
+      /code 128/i,
+    );
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare commit accepts an edited message", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-edit" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "edited.txt"), "edited\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-edit/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main", message: "edited commit message" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { message: string };
+    assert.equal(payload.message, "edited commit message");
+
+    const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: feature.worktreePath });
+    assert.equal(stdout.trim(), "edited commit message");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("config document save commits the edited config file", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const nextContents = [
+      "# yaml-language-server: $schema=https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json",
+      "",
+      "$schema: https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json",
+      "env:",
+      "  NODE_ENV: development",
+      "worktrees:",
+      "  baseDir: .",
+      "aiCommands:",
+      "  smart: printf %s $WTM_AI_INPUT",
+      "  simple: printf %s $WTM_AI_INPUT",
+      "runtimePorts:",
+      "  - PORT",
+      "",
+    ].join("\n");
+
+    const response = await fetch(`${server.baseUrl}/api/config/document`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: nextContents }),
+    });
+
+    assert.equal(response.status, 200);
+
+    const logMessage = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: repo.configWorktreePath });
+    assert.equal(logMessage.stdout.trim(), "config: update worktree config");
+
+    const status = await runCommand("git", ["status", "--short", "--", repo.configFile], { cwd: repo.configWorktreePath });
+    assert.equal(status.stdout.trim(), "");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("AI command settings save commits the config file", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const response = await fetch(`${server.baseUrl}/api/settings/ai-command`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        aiCommands: {
+          smart: "opencode run $WTM_AI_INPUT --mode smart",
+          simple: "opencode run $WTM_AI_INPUT --mode simple",
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+
+    const logMessage = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: repo.configWorktreePath });
+    assert.equal(logMessage.stdout.trim(), "config: update ai commands");
+
+    const status = await runCommand("git", ["status", "--short", "--", repo.configFile], { cwd: repo.configWorktreePath });
+    assert.equal(status.stdout.trim(), "");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("AI log routes list logs and expose running jobs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.setManualProcess("wtm:ai:running-log", {
@@ -490,7 +826,7 @@ test("AI log routes list logs and expose running jobs", async () => {
   }
 });
 
-test("AI log detail stream emits live updates and completion for running logs", async () => {
+test("AI log detail stream emits live updates and completion for running logs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.setManualProcess("wtm:ai:stream-log", {
@@ -567,7 +903,7 @@ test("AI log detail stream emits live updates and completion for running logs", 
   }
 });
 
-test("missing AI processes reconcile stale running logs to a failed terminal state", async () => {
+test("missing AI processes reconcile stale running logs to a failed terminal state", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   await writeAiLogFixture({
@@ -618,7 +954,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
   }
 });
 
-test("project-management AI runs update the saved document on the server", async () => {
+test("project-management AI runs update the saved document on the server", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   let capturedCommand = "";
@@ -664,11 +1000,13 @@ test("project-management AI runs update the saved document on the server", async
       job: {
         branch: string;
         documentId?: string | null;
+        commandId: string;
         status: string;
       };
     };
     assert.equal(runPayload.job.branch, "feature-ai-log");
     assert.equal(runPayload.job.documentId, outline.id);
+    assert.equal(runPayload.job.commandId, "simple");
     assert.equal(runPayload.job.status, "running");
 
     assert.equal(capturedCommand.includes("tighten this plan"), true);
@@ -705,7 +1043,69 @@ test("project-management AI runs update the saved document on the server", async
   }
 });
 
-test("project-management AI rejects unknown target documents and logs the failure", async () => {
+test("project-management AI document updates ignore stderr while logs retain it", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n" },
+    { status: "stopped", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await fetch(`${server.baseUrl}/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string; markdown?: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const runResponse = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-log/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "rewrite cleanly",
+        documentId: outline.id,
+      }),
+    });
+    assert.equal(runResponse.status, 200);
+
+    await waitFor(async () => {
+      const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
+      return updated.document.markdown.includes("Only stdout belongs here.");
+    });
+
+    const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
+    assert.equal(updated.document.markdown, "# Clean Markdown\n\nOnly stdout belongs here.");
+    assert.equal(updated.document.markdown.includes("> build · gpt-4.1"), false);
+
+    const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+    assert.equal(logsResponse.status, 200);
+    const logsPayload = await logsResponse.json() as {
+      logs: Array<{ fileName: string }>;
+    };
+
+    const detailResponse = await fetch(`${server.baseUrl}/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].fileName)}`);
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json() as {
+      log: {
+        response: { stdout: string; stderr: string };
+      };
+    };
+
+    assert.equal(detailPayload.log.response.stdout, "# Clean Markdown\n\nOnly stdout belongs here.\n");
+    assert.equal(detailPayload.log.response.stderr, "> build · gpt-4.1\n");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management AI rejects unknown target documents and logs the failure", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   const server = await startApiServer(repo, {
@@ -742,7 +1142,7 @@ test("project-management AI rejects unknown target documents and logs the failur
   }
 });
 
-test("AI cancel route deletes the running process and returns the settled failed job", async () => {
+test("AI cancel route deletes the running process and returns the settled failed job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
     path: repo.configPath,
@@ -804,7 +1204,7 @@ test("AI cancel route deletes the running process and returns the settled failed
   }
 });
 
-test("AI cancel route returns 409 when the running job has no process name", async () => {
+test("AI cancel route returns 409 when the running job has no process name", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
     path: repo.configPath,
@@ -814,6 +1214,7 @@ test("AI cancel route returns 409 when the running job has no process name", asy
   await createWorktree(repo.repoRoot, config, { branch: "feature-ai-no-process" });
   await startAiCommandJob({
     branch: "feature-ai-no-process",
+    commandId: "smart",
     input: "wait",
     command: "printf %s 'wait'",
     repoRoot: repo.repoRoot,

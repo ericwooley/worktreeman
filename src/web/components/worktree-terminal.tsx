@@ -59,6 +59,7 @@ function decodeOsc52Payload(data: string): string {
 }
 
 export function WorktreeTerminal({
+  repoRoot,
   worktree,
   isTerminalVisible,
   onTerminalVisibilityChange,
@@ -70,6 +71,7 @@ export function WorktreeTerminal({
   terminalShortcut,
   onTerminalShortcutToggle,
 }: {
+  repoRoot: string | null;
   worktree: WorktreeRecord | null;
   isTerminalVisible: boolean;
   onTerminalVisibilityChange: (visible: boolean) => void;
@@ -82,7 +84,8 @@ export function WorktreeTerminal({
   onTerminalShortcutToggle: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const sessionName = worktree?.branch ? getTmuxSessionName(worktree.branch) : null;
+  const sessionName = worktree?.runtime?.tmuxSession
+    ?? (worktree?.branch && repoRoot ? getTmuxSessionName(repoRoot, worktree.branch) : null);
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
   const [tmuxClients, setTmuxClients] = useState<TmuxClientInfo[]>([]);
   const [currentClientId, setCurrentClientId] = useState<string | null>(null);
@@ -519,31 +522,12 @@ export function WorktreeTerminal({
       event.clipboardData?.setData("text/plain", selection);
       lastCopiedSelectionRef.current = selection;
     };
-    const handlePaste = (event: ClipboardEvent) => {
-      if (!hasTerminalFocus()) {
-        return;
-      }
-
-      const text = event.clipboardData?.getData("text/plain") ?? "";
-      if (!text) {
-        return;
-      }
-
-      event.preventDefault();
-      const payload: TerminalClientMessage = { type: "input", data: text };
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(payload));
-      }
-      terminal.focus();
-    };
-
     socket.addEventListener("open", () => scheduleResize(true));
     terminal.onSelectionChange(handleSelectionChange);
     hostRef.current.addEventListener("click", focusTerminal);
     hostRef.current.addEventListener("mouseup", handleMouseUp);
     hostRef.current.addEventListener("focusin", focusTerminal);
     document.addEventListener("copy", handleCopy, true);
-    document.addEventListener("paste", handlePaste, true);
     window.addEventListener("resize", handleViewportResize);
     window.visualViewport?.addEventListener("resize", handleViewportResize);
     window.addEventListener("focus", handleViewportResize);
@@ -564,7 +548,6 @@ export function WorktreeTerminal({
       hostRef.current?.removeEventListener("mouseup", handleMouseUp);
       hostRef.current?.removeEventListener("focusin", focusTerminal);
       document.removeEventListener("copy", handleCopy, true);
-      document.removeEventListener("paste", handlePaste, true);
       window.removeEventListener("resize", handleViewportResize);
       window.visualViewport?.removeEventListener(
         "resize",

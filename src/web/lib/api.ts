@@ -9,9 +9,14 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  CommitGitChangesRequest,
+  CommitGitChangesResponse,
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
+  GenerateGitCommitMessageRequest,
+  GenerateGitCommitMessageResponse,
   GitComparisonResponse,
+  MergeGitBranchRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
@@ -168,6 +173,30 @@ export function getGitComparison(compareBranch: string, baseBranch?: string): Pr
   return request<GitComparisonResponse>(`/api/git/compare?${params.toString()}`);
 }
 
+export function mergeGitBranch(compareBranch: string, payload?: MergeGitBranchRequest): Promise<GitComparisonResponse> {
+  return request<GitComparisonResponse>(`/api/git/compare/${encodeURIComponent(compareBranch)}/merge`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export function commitGitChanges(branch: string, payload?: CommitGitChangesRequest): Promise<CommitGitChangesResponse> {
+  return request<CommitGitChangesResponse>(`/api/git/compare/${encodeURIComponent(branch)}/commit`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export function generateGitCommitMessage(
+  branch: string,
+  payload?: GenerateGitCommitMessageRequest,
+): Promise<GenerateGitCommitMessageResponse> {
+  return request<GenerateGitCommitMessageResponse>(`/api/git/compare/${encodeURIComponent(branch)}/commit-message`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
 export function listProjectManagementDocuments(): Promise<ProjectManagementListResponse> {
   return request<ProjectManagementListResponse>("/api/project-management/documents");
 }
@@ -218,10 +247,10 @@ export function appendProjectManagementBatch(
   });
 }
 
-export function createWorktree(branch: string, worktreePath?: string): Promise<EnvSyncResponse | void> {
+export function createWorktree(branch: string): Promise<EnvSyncResponse | void> {
   return request<EnvSyncResponse | void>("/api/worktrees", {
     method: "POST",
-    body: JSON.stringify({ branch, path: worktreePath }),
+    body: JSON.stringify({ branch }),
   });
 }
 

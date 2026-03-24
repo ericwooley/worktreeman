@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type {
+  AiCommandId,
+  AiCommandConfig,
+  CommitGitChangesResponse,
   CreateWorktreeRequest,
+  GenerateGitCommitMessageResponse,
   GitBranchOption,
   GitCompareCommit,
   GitComparisonResponse,
@@ -11,7 +15,26 @@ import type {
 } from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 import { resolveWorktreeBaseDir } from "./config-service.js";
+import { ensureBranchWorktree } from "./repository-layout-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
+
+const GIT_MERGE_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
+  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
+  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
+  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+};
+
+const GIT_COMMIT_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
+  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
+  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
+  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+};
+
+const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 interface ParsedPorcelainEntry {
   worktreePath: string;
@@ -91,7 +114,7 @@ export async function createWorktree(
 ): Promise<WorktreeRecord> {
   const baseDir = resolveWorktreeBaseDir(repoRoot, config.worktrees.baseDir);
   const safeBranch = sanitizeBranchName(request.branch);
-  const targetPath = request.path ? path.resolve(repoRoot, request.path) : path.join(baseDir, safeBranch);
+  const targetPath = path.join(baseDir, safeBranch);
 
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   await runCommand("git", ["worktree", "add", targetPath, "-b", request.branch], { cwd: repoRoot });
@@ -116,6 +139,36 @@ function parseGitBranchName(raw: string): string {
     .replace(/^refs\/heads\//, "")
     .replace(/^refs\/remotes\//, "")
     .replace(/^origin\//, "");
+}
+
+function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiCommandId): string {
+  return (aiCommands[commandId] ?? "").trim();
+}
+
+function quoteShellArg(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function formatCommitMessagePrompt(options: { branch: string; baseBranch: string }): string {
+  return [
+    `Write a concise git commit message for the current changes on branch ${options.branch} relative to ${options.baseBranch}.`,
+    "Inspect the repository state yourself, including staged, unstaged, and untracked changes as needed.",
+    "Return only the final commit message text as plain text.",
+    "Use 1 or 2 short sentences focused on why the change exists.",
+    "Do not use markdown, bullets, quotes, prefixes, or code fences.",
+    "Avoid mentioning generated output, AI, or the prompt.",
+  ].join("\n");
+}
+
+function normalizeCommitMessage(raw: string): string {
+  return raw
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
 function parseCommitLines(stdout: string): GitCompareCommit[] {
@@ -161,6 +214,15 @@ async function resolveDefaultBranch(repoRoot: string): Promise<string> {
   }
 
   return branch;
+}
+
+async function gitRefHasCommit(repoRoot: string, ref: string): Promise<boolean> {
+  try {
+    await runCommand("git", ["rev-parse", "--verify", `${ref}^{commit}`], { cwd: repoRoot });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function listBranchOptions(repoRoot: string, worktrees: WorktreeRecord[], defaultBranch: string): Promise<GitBranchOption[]> {
@@ -257,6 +319,40 @@ async function getWorkingTreeDiff(worktreePath: string): Promise<string> {
   return sections.join("\n\n").trim();
 }
 
+async function generateCommitMessage(options: {
+  worktreePath: string;
+  branch: string;
+  baseBranch: string;
+  aiCommands: AiCommandConfig;
+  commandId: AiCommandId;
+  env: NodeJS.ProcessEnv;
+}): Promise<string> {
+  const template = resolveAiCommandTemplate(options.aiCommands, options.commandId);
+  if (!template) {
+    throw new Error(`${options.commandId === "simple" ? "Simple AI" : "Smart AI"} is not configured.`);
+  }
+
+  if (!template.includes("$WTM_AI_INPUT")) {
+    throw new Error(`${options.commandId === "simple" ? "Simple AI" : "Smart AI"} must include $WTM_AI_INPUT.`);
+  }
+
+  const prompt = formatCommitMessagePrompt({
+    branch: options.branch,
+    baseBranch: options.baseBranch,
+  });
+  const command = template.split("$WTM_AI_INPUT").join(quoteShellArg(prompt));
+  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", command], {
+    cwd: options.worktreePath,
+    env: options.env,
+  });
+  const message = normalizeCommitMessage(stdout);
+  if (!message) {
+    throw new Error("AI did not return a commit message.");
+  }
+
+  return message;
+}
+
 export async function getGitComparison(repoRoot: string, compareBranch: string, baseBranch?: string): Promise<GitComparisonResponse> {
   const defaultBranch = await resolveDefaultBranch(repoRoot);
   const normalizedCompareBranch = parseGitBranchName(compareBranch);
@@ -264,6 +360,85 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
   const worktrees = await listWorktrees(repoRoot);
   const selectedWorktree = worktrees.find((entry) => entry.branch === normalizedCompareBranch);
   const compareCwd = selectedWorktree?.worktreePath ?? repoRoot;
+
+  const commitFormat = "%H%x09%h%x09%an%x09%aI%x09%s";
+  const [branches, workingTreeDiff, workingTreeSummary, baseHasCommit, compareHasCommit] = await Promise.all([
+    listBranchOptions(repoRoot, worktrees, defaultBranch),
+    getWorkingTreeDiff(compareCwd),
+    getWorkingTreeSummary(compareCwd),
+    gitRefHasCommit(repoRoot, normalizedBaseBranch),
+    gitRefHasCommit(repoRoot, normalizedCompareBranch),
+  ]);
+
+  if (!baseHasCommit && !compareHasCommit) {
+    return {
+      defaultBranch,
+      baseBranch: normalizedBaseBranch,
+      compareBranch: normalizedCompareBranch,
+      mergeBase: null,
+      ahead: 0,
+      behind: 0,
+      branches,
+      baseCommits: [],
+      compareCommits: [],
+      diff: "",
+      workingTreeDiff,
+      effectiveDiff: workingTreeDiff.trim(),
+      workingTreeSummary,
+    };
+  }
+
+  if (!baseHasCommit && compareHasCommit) {
+    const [compareCommitsResult, diffResult, aheadResult] = await Promise.all([
+      runCommand("git", ["log", "--reverse", `--format=${commitFormat}`, normalizedCompareBranch], { cwd: repoRoot }),
+      runCommand("git", ["diff", EMPTY_TREE_HASH, normalizedCompareBranch], { cwd: repoRoot }),
+      runCommand("git", ["rev-list", "--count", normalizedCompareBranch], { cwd: repoRoot }),
+    ]);
+    const branchDiff = diffResult.stdout.trim();
+    const localDiff = workingTreeDiff.trim();
+
+    return {
+      defaultBranch,
+      baseBranch: normalizedBaseBranch,
+      compareBranch: normalizedCompareBranch,
+      mergeBase: null,
+      ahead: Number(aheadResult.stdout.trim() || 0),
+      behind: 0,
+      branches,
+      baseCommits: [],
+      compareCommits: parseCommitLines(compareCommitsResult.stdout),
+      diff: diffResult.stdout,
+      workingTreeDiff,
+      effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
+      workingTreeSummary,
+    };
+  }
+
+  if (baseHasCommit && !compareHasCommit) {
+    const [baseCommitsResult, diffResult, behindResult] = await Promise.all([
+      runCommand("git", ["log", "--reverse", `--format=${commitFormat}`, normalizedBaseBranch], { cwd: repoRoot }),
+      runCommand("git", ["diff", normalizedBaseBranch, EMPTY_TREE_HASH], { cwd: repoRoot }),
+      runCommand("git", ["rev-list", "--count", normalizedBaseBranch], { cwd: repoRoot }),
+    ]);
+    const branchDiff = diffResult.stdout.trim();
+    const localDiff = workingTreeDiff.trim();
+
+    return {
+      defaultBranch,
+      baseBranch: normalizedBaseBranch,
+      compareBranch: normalizedCompareBranch,
+      mergeBase: null,
+      ahead: 0,
+      behind: Number(behindResult.stdout.trim() || 0),
+      branches,
+      baseCommits: parseCommitLines(baseCommitsResult.stdout),
+      compareCommits: [],
+      diff: diffResult.stdout,
+      workingTreeDiff,
+      effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
+      workingTreeSummary,
+    };
+  }
 
   const { stdout: mergeBaseStdout } = await runCommand("git", ["merge-base", normalizedBaseBranch, normalizedCompareBranch], { cwd: repoRoot });
   const mergeBaseHash = mergeBaseStdout.trim();
@@ -273,15 +448,11 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
   });
   const [behindRaw, aheadRaw] = leftRightStdout.trim().split(/\s+/);
 
-  const commitFormat = "%H%x09%h%x09%an%x09%aI%x09%s";
-  const [baseCommitsResult, compareCommitsResult, diffResult, mergeBaseResult, branches, workingTreeDiff, workingTreeSummary] = await Promise.all([
+  const [baseCommitsResult, compareCommitsResult, diffResult, mergeBaseResult] = await Promise.all([
     runCommand("git", ["log", "--reverse", `--format=${commitFormat}`, `${mergeBaseHash}..${normalizedBaseBranch}`], { cwd: repoRoot }),
     runCommand("git", ["log", "--reverse", `--format=${commitFormat}`, `${mergeBaseHash}..${normalizedCompareBranch}`], { cwd: repoRoot }),
     runCommand("git", ["diff", `${normalizedBaseBranch}...${normalizedCompareBranch}`], { cwd: repoRoot }),
     runCommand("git", ["show", "-s", `--format=${commitFormat}`, mergeBaseHash], { cwd: repoRoot }),
-    listBranchOptions(repoRoot, worktrees, defaultBranch),
-    getWorkingTreeDiff(compareCwd),
-    getWorkingTreeSummary(compareCwd),
   ]);
 
   const branchDiff = diffResult.stdout.trim();
@@ -301,5 +472,163 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
     workingTreeDiff,
     effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
     workingTreeSummary,
+  };
+}
+
+export async function mergeGitBranch(repoRoot: string, compareBranch: string, baseBranch?: string): Promise<GitComparisonResponse> {
+  const normalizedCompareBranch = parseGitBranchName(compareBranch);
+  if (!normalizedCompareBranch) {
+    throw new Error("A compare branch is required for merge.");
+  }
+
+  const normalizedBaseBranch = parseGitBranchName(baseBranch ?? await resolveDefaultBranch(repoRoot));
+  if (!normalizedBaseBranch) {
+    throw new Error("A base branch is required for merge.");
+  }
+
+  if (normalizedCompareBranch === normalizedBaseBranch) {
+    throw new Error(`Cannot merge branch ${normalizedCompareBranch} into itself.`);
+  }
+
+  const worktrees = await listWorktrees(repoRoot);
+  const compareWorktree = worktrees.find((entry) => entry.branch === normalizedCompareBranch);
+  if (compareWorktree) {
+    const compareSummary = await getWorkingTreeSummary(compareWorktree.worktreePath);
+    if (compareSummary.dirty) {
+      throw new Error(`Branch ${normalizedCompareBranch} has uncommitted changes. Commit or stash them before merging.`);
+    }
+  }
+
+  const baseWorktreePath = worktrees.find((entry) => entry.branch === normalizedBaseBranch)?.worktreePath
+    ?? await ensureBranchWorktree(repoRoot, normalizedBaseBranch);
+  const baseSummary = await getWorkingTreeSummary(baseWorktreePath);
+  if (baseSummary.dirty) {
+    throw new Error(`Base branch ${normalizedBaseBranch} has uncommitted changes. Clean it up before merging.`);
+  }
+
+  try {
+    await runCommand("git", ["merge", "--no-edit", normalizedCompareBranch], {
+      cwd: baseWorktreePath,
+      env: GIT_MERGE_ENV,
+    });
+  } catch (error) {
+    try {
+      await runCommand("git", ["merge", "--abort"], {
+        cwd: baseWorktreePath,
+        env: GIT_MERGE_ENV,
+        allowExitCodes: [1],
+      });
+    } catch {
+      // ignore abort cleanup errors
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to merge ${normalizedCompareBranch} into ${normalizedBaseBranch}: ${message}`);
+  }
+
+  return getGitComparison(repoRoot, normalizedCompareBranch, normalizedBaseBranch);
+}
+
+export async function commitGitChanges(options: {
+  repoRoot: string;
+  branch: string;
+  baseBranch?: string;
+  aiCommands: AiCommandConfig;
+  commandId: AiCommandId;
+  env: NodeJS.ProcessEnv;
+  message?: string;
+}): Promise<CommitGitChangesResponse> {
+  const normalizedBranch = parseGitBranchName(options.branch);
+  if (!normalizedBranch) {
+    throw new Error("A branch is required to create a commit.");
+  }
+
+  const worktrees = await listWorktrees(options.repoRoot);
+  const worktree = worktrees.find((entry) => entry.branch === normalizedBranch);
+  if (!worktree) {
+    throw new Error(`Unknown worktree ${normalizedBranch}.`);
+  }
+
+  const baseBranch = parseGitBranchName(options.baseBranch ?? await resolveDefaultBranch(options.repoRoot));
+  const workingTreeSummary = await getWorkingTreeSummary(worktree.worktreePath);
+  if (!workingTreeSummary.dirty) {
+    throw new Error(`Branch ${normalizedBranch} has no local changes to commit.`);
+  }
+
+  const message = options.message?.trim()
+    ? normalizeCommitMessage(options.message)
+    : await generateCommitMessage({
+      worktreePath: worktree.worktreePath,
+      branch: normalizedBranch,
+      baseBranch,
+      aiCommands: options.aiCommands,
+      commandId: options.commandId,
+      env: options.env,
+    });
+
+  if (!message) {
+    throw new Error("Commit message is required.");
+  }
+
+  await runCommand("git", ["add", "-A"], {
+    cwd: worktree.worktreePath,
+    env: GIT_COMMIT_ENV,
+  });
+  await runCommand("git", ["commit", "-m", message], {
+    cwd: worktree.worktreePath,
+    env: GIT_COMMIT_ENV,
+  });
+  const { stdout: commitSha } = await runCommand("git", ["rev-parse", "HEAD"], {
+    cwd: worktree.worktreePath,
+    env: GIT_COMMIT_ENV,
+  });
+
+  return {
+    branch: normalizedBranch,
+    commandId: options.commandId,
+    message,
+    commitSha: commitSha.trim(),
+    comparison: await getGitComparison(options.repoRoot, normalizedBranch, baseBranch),
+  };
+}
+
+export async function generateGitCommitMessage(options: {
+  repoRoot: string;
+  branch: string;
+  baseBranch?: string;
+  aiCommands: AiCommandConfig;
+  commandId: AiCommandId;
+  env: NodeJS.ProcessEnv;
+}): Promise<GenerateGitCommitMessageResponse> {
+  const normalizedBranch = parseGitBranchName(options.branch);
+  if (!normalizedBranch) {
+    throw new Error("A branch is required to generate a commit message.");
+  }
+
+  const worktrees = await listWorktrees(options.repoRoot);
+  const worktree = worktrees.find((entry) => entry.branch === normalizedBranch);
+  if (!worktree) {
+    throw new Error(`Unknown worktree ${normalizedBranch}.`);
+  }
+
+  const baseBranch = parseGitBranchName(options.baseBranch ?? await resolveDefaultBranch(options.repoRoot));
+  const workingTreeSummary = await getWorkingTreeSummary(worktree.worktreePath);
+  if (!workingTreeSummary.dirty) {
+    throw new Error(`Branch ${normalizedBranch} has no local changes to commit.`);
+  }
+
+  const message = await generateCommitMessage({
+    worktreePath: worktree.worktreePath,
+    branch: normalizedBranch,
+    baseBranch,
+    aiCommands: options.aiCommands,
+    commandId: options.commandId,
+    env: options.env,
+  });
+
+  return {
+    branch: normalizedBranch,
+    commandId: options.commandId,
+    message,
   };
 }

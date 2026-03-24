@@ -38,6 +38,7 @@ export async function runStartupCommands(
 
 export async function createRuntime(
   config: WorktreeManagerConfig,
+  repoRoot: string,
   branch: string,
   worktreePath: string,
 ): Promise<RuntimeResult> {
@@ -60,7 +61,7 @@ export async function createRuntime(
       env,
       quickLinks,
       allocatedPorts,
-      tmuxSession: getTmuxSessionName(branch),
+      tmuxSession: getTmuxSessionName(repoRoot, branch),
       runtimeStartedAt: new Date().toISOString(),
     },
   };

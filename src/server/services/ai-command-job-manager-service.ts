@@ -2,13 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { PgBoss } from "pg-boss";
-import type { AiCommandJob } from "../../shared/types.js";
+import type { AiCommandId, AiCommandJob } from "../../shared/types.js";
 
 const PROJECT_MANAGEMENT_AI_QUEUE = "project-management-ai-update";
 const JOB_START_TIMEOUT_MS = 10000;
 
 export interface ProjectManagementAiQueuePayload {
   branch: string;
+  commandId: AiCommandId;
   worktreePath: string;
   input: string;
   renderedCommand: string;

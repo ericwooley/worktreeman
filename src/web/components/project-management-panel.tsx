@@ -1,5 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import type {
+  AiCommandConfig,
+  AiCommandId,
   AiCommandLogEntry,
   AiCommandLogSummary,
   AiCommandJob,
@@ -9,6 +11,7 @@ import type {
 } from "@shared/types";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { marked } from "marked";
+import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 
 const ProjectManagementBoardTab = lazy(async () => {
@@ -58,7 +61,7 @@ interface ProjectManagementPanelProps {
   history: ProjectManagementHistoryEntry[];
   loading: boolean;
   saving: boolean;
-  aiCommandConfigured: boolean;
+  aiCommands: AiCommandConfig | null;
   aiJob: AiCommandJob | null;
   aiLogs: AiCommandLogSummary[];
   aiLogDetail: AiCommandLogEntry | null;
@@ -88,8 +91,16 @@ interface ProjectManagementPanelProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
-  onRunAiCommand: (payload: { input: string; documentId: string }) => Promise<AiCommandJob | null>;
+  onRunAiCommand: (payload: { input: string; documentId: string; commandId: AiCommandId }) => Promise<AiCommandJob | null>;
   onCancelAiCommand: () => Promise<AiCommandJob | null>;
+}
+
+function getAiCommandLabel(commandId: AiCommandId): string {
+  return commandId === "simple" ? "Simple AI" : "Smart AI";
+}
+
+function isAiCommandReady(aiCommands: AiCommandConfig | null, commandId: AiCommandId): boolean {
+  return Boolean(aiCommands?.[commandId]?.includes("$WTM_AI_INPUT"));
 }
 
 function parseTags(value: string): string[] {
@@ -109,7 +120,7 @@ export function ProjectManagementPanel({
   history,
   loading,
   saving,
-  aiCommandConfigured,
+  aiCommands,
   aiJob,
   aiLogs,
   aiLogDetail,
@@ -150,7 +161,24 @@ export function ProjectManagementPanel({
   const [aiChangeRequest, setAiChangeRequest] = useState("");
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
   const [aiRequestModalOpen, setAiRequestModalOpen] = useState(false);
+  const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("simple");
   const aiRunning = aiJob?.status === "running";
+  const aiCommandOptions = useMemo<MatrixDropdownOption[]>(() => ([
+    {
+      value: "smart",
+      label: "Smart AI",
+      description: "Best quality rewrite path",
+      badgeLabel: isAiCommandReady(aiCommands, "smart") ? "Ready" : "Missing",
+      badgeTone: isAiCommandReady(aiCommands, "smart") ? "active" : "idle",
+    },
+    {
+      value: "simple",
+      label: "Simple AI",
+      description: "Faster lightweight rewrite path",
+      badgeLabel: isAiCommandReady(aiCommands, "simple") ? "Ready" : "Missing",
+      badgeTone: isAiCommandReady(aiCommands, "simple") ? "active" : "idle",
+    },
+  ]), [aiCommands]);
 
   useEffect(() => {
     if (!document) {
@@ -162,6 +190,7 @@ export function ProjectManagementPanel({
       setEditAssignee("");
       setDocumentViewMode("document");
       setAiChangeRequest("");
+      setSelectedAiCommandId("simple");
       return;
     }
 
@@ -171,9 +200,10 @@ export function ProjectManagementPanel({
     setDependencySelection(Array.isArray(document.dependencies) ? document.dependencies : []);
     setEditStatus(document.status);
     setEditAssignee(document.assignee);
-    setDocumentViewMode("document");
-    setAiFailureToast(null);
-    setAiRequestModalOpen(false);
+      setDocumentViewMode("document");
+      setAiFailureToast(null);
+      setAiRequestModalOpen(false);
+      setSelectedAiCommandId("simple");
   }, [document]);
 
   useEffect(() => {
@@ -182,7 +212,7 @@ export function ProjectManagementPanel({
     }
 
     if (aiJob.status === "completed") {
-      setAiRunSummary(`AI updated the saved document on ${aiJob.branch}. Use history to roll back if needed.`);
+      setAiRunSummary(`${getAiCommandLabel(aiJob.commandId)} updated the saved document on ${aiJob.branch}. Use history to roll back if needed.`);
       setAiChangeRequest("");
       setAiRequestModalOpen(false);
       if (document && aiJob.documentId === document.id) {
@@ -367,8 +397,8 @@ export function ProjectManagementPanel({
       return false;
     }
 
-    if (!aiCommandConfigured) {
-      setAiFailureToast("Configure an AI Command with $WTM_AI_INPUT in settings first.");
+    if (!isAiCommandReady(aiCommands, selectedAiCommandId)) {
+      setAiFailureToast(`Configure ${getAiCommandLabel(selectedAiCommandId)} with $WTM_AI_INPUT in settings first.`);
       return false;
     }
 
@@ -386,13 +416,13 @@ export function ProjectManagementPanel({
     setAiRunSummary(null);
     setAiFailureToast(null);
 
-    const job = await onRunAiCommand({ input: requestedChange, documentId: document.id });
+    const job = await onRunAiCommand({ input: requestedChange, documentId: document.id, commandId: selectedAiCommandId });
     if (!job) {
-      setAiFailureToast("\u26a1 request failed. Check the AI command output for details.");
+      setAiFailureToast(`${getAiCommandLabel(selectedAiCommandId)} request failed. Check the AI command output for details.`);
       return false;
     }
 
-    setAiRunSummary(`AI started for ${job.branch}. The saved document will update on the server when it finishes.`);
+    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} started for ${job.branch}. The saved document will update on the server when it finishes.`);
     setAiRequestModalOpen(false);
     return true;
   }
@@ -634,7 +664,8 @@ export function ProjectManagementPanel({
 
           {document ? (
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              {!aiCommandConfigured ? <MatrixBadge tone="warning">Configure AI Command in settings</MatrixBadge> : null}
+              {!isAiCommandReady(aiCommands, "smart") ? <MatrixBadge tone="warning">Configure Smart AI in settings</MatrixBadge> : null}
+              {!isAiCommandReady(aiCommands, "simple") ? <MatrixBadge tone="warning">Configure Simple AI in settings</MatrixBadge> : null}
                {aiRunning ? <MatrixBadge tone="warning">Document editing locked while AI updates the saved document</MatrixBadge> : null}
                {aiRunSummary ? <MatrixBadge tone="active">{aiRunSummary}</MatrixBadge> : null}
             </div>
@@ -867,7 +898,7 @@ export function ProjectManagementPanel({
         <MatrixModal
           kicker="AI request"
           title={<>Update `{document.title}`</>}
-          description="Describe the change you want, then run AI to update the saved document on the server for this worktree."
+          description="Pick Smart AI or Simple AI, describe the change you want, then run it to update the saved document on the server for this worktree."
           closeLabel="Close AI request"
           maxWidthClass="max-w-2xl"
           onClose={() => setAiRequestModalOpen(false)}
@@ -890,6 +921,16 @@ export function ProjectManagementPanel({
               void handleRunUiMagic();
             }}
           >
+            <div>
+              <MatrixDropdown
+                label="AI command"
+                value={selectedAiCommandId}
+                options={aiCommandOptions}
+                placeholder="Choose AI command"
+                onChange={(value) => setSelectedAiCommandId(value === "simple" ? "simple" : "smart")}
+                disabled={aiRunning}
+              />
+            </div>
             <div>
               <label className="block space-y-2">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">What should change?</span>

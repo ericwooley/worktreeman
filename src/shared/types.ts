@@ -7,12 +7,19 @@ export interface QuickLinkConfigEntry {
   url: string;
 }
 
+export type AiCommandId = "smart" | "simple";
+
+export interface AiCommandConfig {
+  smart: string;
+  simple: string;
+}
+
 export interface WorktreeManagerConfig {
   env: Record<string, string>;
   runtimePorts: string[];
   derivedEnv: Record<string, string>;
   quickLinks: QuickLinkConfigEntry[];
-  aiCommand: string;
+  aiCommands: AiCommandConfig;
   startupCommands: string[];
   backgroundCommands: Record<string, BackgroundCommandConfigEntry>;
   worktrees: {
@@ -86,7 +93,6 @@ export interface WorktreeRecord {
 
 export interface CreateWorktreeRequest {
   branch: string;
-  path?: string;
 }
 
 export interface ApiStateResponse {
@@ -109,11 +115,11 @@ export interface ConfigDocumentResponse {
 export interface AiCommandSettingsResponse {
   branch: string;
   filePath: string;
-  aiCommand: string;
+  aiCommands: AiCommandConfig;
 }
 
 export interface UpdateAiCommandSettingsRequest {
-  aiCommand: string;
+  aiCommands: AiCommandConfig;
 }
 
 export interface GitBranchOption {
@@ -154,6 +160,35 @@ export interface GitComparisonResponse {
   workingTreeDiff: string;
   effectiveDiff: string;
   workingTreeSummary: GitWorkingTreeSummary;
+}
+
+export interface MergeGitBranchRequest {
+  baseBranch?: string;
+}
+
+export interface CommitGitChangesRequest {
+  baseBranch?: string;
+  commandId?: AiCommandId;
+  message?: string;
+}
+
+export interface GenerateGitCommitMessageRequest {
+  baseBranch?: string;
+  commandId?: AiCommandId;
+}
+
+export interface GenerateGitCommitMessageResponse {
+  branch: string;
+  commandId: AiCommandId;
+  message: string;
+}
+
+export interface CommitGitChangesResponse {
+  branch: string;
+  commandId: AiCommandId;
+  message: string;
+  commitSha: string;
+  comparison: GitComparisonResponse;
 }
 
 export interface ShutdownLogEntry {
@@ -272,6 +307,7 @@ export interface UpdateProjectManagementDependenciesRequest {
 export interface RunAiCommandRequest {
   input: string;
   documentId?: string;
+  commandId?: AiCommandId;
 }
 
 export type AiCommandJobStatus = "running" | "completed" | "failed";
@@ -281,6 +317,7 @@ export interface AiCommandJob {
   fileName: string;
   branch: string;
   documentId?: string | null;
+  commandId: AiCommandId;
   command: string;
   input: string;
   status: AiCommandJobStatus;
@@ -318,6 +355,7 @@ export interface AiCommandLogSummary {
   timestamp: string;
   branch: string;
   documentId?: string | null;
+  commandId: AiCommandId;
   worktreePath: string;
   command: string;
   requestPreview: string;
@@ -331,6 +369,7 @@ export interface AiCommandLogEntry {
   timestamp: string;
   branch: string;
   documentId?: string | null;
+  commandId: AiCommandId;
   worktreePath: string;
   command: string;
   request: string;
