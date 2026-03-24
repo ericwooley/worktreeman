@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -80,7 +81,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     res.status(500).json({ message });
   });
 
-  const port = options.port ?? Number(process.env.PORT || 4312);
+  const preferredPort = resolvePreferredPort(options.port);
+  const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null);
 
   const formatStartupError = (error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -254,6 +256,12 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       },
     });
 
+    if (fellBackFrom !== undefined) {
+      process.stdout.write(
+        `[startup] Port ${fellBackFrom} is already in use on 127.0.0.1. Using ${port} instead.\n`,
+      );
+    }
+
     const url = `http://127.0.0.1:${port}`;
     if (options.openBrowser ?? true) {
       await open(url);
@@ -267,4 +275,81 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     port,
     close,
   };
+}
+
+function resolvePreferredPort(explicitPort?: number): number {
+  if (typeof explicitPort === "number" && Number.isInteger(explicitPort) && explicitPort > 0) {
+    return explicitPort;
+  }
+
+  const envPort = Number(process.env.PORT);
+  if (Number.isInteger(envPort) && envPort > 0) {
+    return envPort;
+  }
+
+  return 4312;
+}
+
+async function resolveStartupPort(preferredPort: number, allowFallback: boolean): Promise<{
+  port: number;
+  fellBackFrom?: number;
+}> {
+  if (!allowFallback || await isLocalPortAvailable(preferredPort)) {
+    return { port: preferredPort };
+  }
+
+  return {
+    port: await allocateLocalPort(),
+    fellBackFrom: preferredPort,
+  };
+}
+
+async function isLocalPortAvailable(port: number): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    const server = net.createServer();
+
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") {
+        resolve(false);
+        return;
+      }
+
+      reject(error);
+    });
+
+    server.listen(port, "127.0.0.1", () => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(true);
+      });
+    });
+  });
+}
+
+async function allocateLocalPort(): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Unable to allocate a local port for the worktreeman server.")));
+        return;
+      }
+
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(address.port);
+      });
+    });
+  });
 }

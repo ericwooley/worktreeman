@@ -74,3 +74,31 @@ test("initRepository preserves an existing config unless force is set", async ()
     await fs.rm(rootDir, { recursive: true, force: true });
   }
 });
+
+test("initRepository can create a new bare layout when explicitly asked", async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-init-create-"));
+  const projectDir = path.join(rootDir, "project");
+
+  try {
+    const result = await initRepository(projectDir, {
+      runtimePorts: ["PORT"],
+      force: false,
+      createLayoutIfMissing: true,
+    });
+
+    const configPath = path.join(projectDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml");
+    const configContents = await fs.readFile(configPath, "utf8");
+
+    assert.equal(result.repoRoot, projectDir);
+    assert.equal(result.worktreePath, path.join(projectDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH));
+    assert.equal(result.created, true);
+    assert.equal(result.createdWorktree, false);
+    assert.match(configContents, /runtimePorts:\n  - PORT/);
+
+    await fs.access(path.join(projectDir, ".bare"));
+    await fs.access(path.join(projectDir, DEFAULT_WORKTREEMAN_MAIN_BRANCH));
+    await fs.access(path.join(projectDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH));
+  } finally {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});

@@ -1,14 +1,22 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import yaml from "js-yaml";
 import {
   DEFAULT_WORKTREE_BASE_DIR,
   DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
 } from "../../shared/constants.js";
-import { CONFIG_CANDIDATES, fileExists, findGitRoot } from "../utils/paths.js";
+import {
+  CONFIG_CANDIDATES,
+  WorktreemanRepoNotFoundError,
+  fileExists,
+  findGitRoot,
+} from "../utils/paths.js";
 import { listWorktrees } from "./git-service.js";
 import { WORKTREE_CONFIG_SCHEMA_URL, serializeConfigContents } from "./config-service.js";
-import { ensureBranchWorktree as ensureManagedBranchWorktree } from "./repository-layout-service.js";
+import {
+  createBareRepoLayout,
+  ensureBranchWorktree as ensureManagedBranchWorktree,
+  ensurePrimaryWorktrees,
+} from "./repository-layout-service.js";
 
 export interface InitResult {
   branch: string;
@@ -23,6 +31,7 @@ export interface InitOptions {
   baseDir?: string;
   runtimePorts?: string[];
   force?: boolean;
+  createLayoutIfMissing?: boolean;
 }
 
 function buildConfigYaml(
@@ -66,7 +75,10 @@ export async function initRepository(
         .filter(Boolean),
     ),
   );
-  const currentRepoRoot = await findGitRoot(startDir);
+  const currentRepoRoot = await resolveRepoRootForInit(
+    startDir,
+    options.createLayoutIfMissing ?? false,
+  );
   const { worktreePath, createdWorktree } = await ensureBranchWorktree(currentRepoRoot, branch);
 
   const existingConfig = await Promise.all(
@@ -104,6 +116,21 @@ export async function initRepository(
     created: true,
     createdWorktree,
   };
+}
+
+async function resolveRepoRootForInit(startDir: string, createLayoutIfMissing: boolean): Promise<string> {
+  try {
+    return await findGitRoot(startDir);
+  } catch (error) {
+    if (!(error instanceof WorktreemanRepoNotFoundError) || !createLayoutIfMissing) {
+      throw error;
+    }
+
+    const rootDir = path.resolve(startDir);
+    await createBareRepoLayout({ rootDir });
+    await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+    return rootDir;
+  }
 }
 
 async function ensureBranchWorktree(

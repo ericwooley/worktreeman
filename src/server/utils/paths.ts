@@ -20,6 +20,20 @@ export interface RepoContext {
   configWorktreePath: string;
 }
 
+export class InvalidWorktreemanLayoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidWorktreemanLayoutError";
+  }
+}
+
+export class WorktreemanRepoNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorktreemanRepoNotFoundError";
+  }
+}
+
 async function exists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -43,14 +57,14 @@ export async function findGitRoot(startDir: string): Promise<string> {
     }
 
     if (await exists(gitPath)) {
-      throw new Error(
+      throw new InvalidWorktreemanLayoutError(
         `Git repository found at ${current}, but it is not a valid worktreeman bare layout. Expected ${WORKTREEMAN_GIT_FILE} to contain exactly \`${WORKTREEMAN_GIT_FILE_CONTENT.trim()}\` and ${WORKTREEMAN_BARE_DIR}/ to be a bare repository.`,
       );
     }
 
     const parent = path.dirname(current);
     if (parent === current) {
-      throw new Error(
+      throw new WorktreemanRepoNotFoundError(
         `Unable to locate a worktreeman bare repository layout from ${startDir}. Expected a root containing ${WORKTREEMAN_GIT_FILE} and ${WORKTREEMAN_BARE_DIR}/.`,
       );
     }

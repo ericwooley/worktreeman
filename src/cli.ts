@@ -25,6 +25,8 @@ import { startServer } from "./server/app.js";
 import { initRepository } from "./server/services/init-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees, resolveCloneRootDir } from "./server/services/repository-layout-service.js";
 
+const normalizedArgv = normalizeArgv(process.argv.slice(2));
+
 const startCommand = command({
   name: "start",
   description:
@@ -38,13 +40,13 @@ const startCommand = command({
       defaultValue: () => process.cwd(),
       defaultValueIsSerializable: true,
       description:
-        "Directory to start searching from when locating the repository root.",
+        "Directory to start searching from when locating the repository root. If no project exists there, init creates one in that directory.",
     }),
     port: option({
       type: optional(number),
       long: "port",
       short: "p",
-      description: "Port for the local web server. Defaults to PORT or 4312.",
+      description: "Port for the local web server. Defaults to PORT or 4312, then falls back to another open port.",
     }),
     open: flag({
       type: boolean,
@@ -134,6 +136,7 @@ const initCommand = command({
   },
   handler: async ({ cwd, force }) => {
     const interactive = process.stdin.isTTY && process.stdout.isTTY;
+    const createLayoutIfMissing = cliArgvIncludesOption(normalizedArgv, "cwd", "c");
 
     if (interactive) {
       process.stdout.write("\nworktreeman init\n");
@@ -146,6 +149,7 @@ const initCommand = command({
       baseDir: DEFAULT_WORKTREE_BASE_DIR,
       runtimePorts: resolvedRuntimePorts,
       force,
+      createLayoutIfMissing,
     });
 
     if (!result.created && !force && interactive) {
@@ -165,6 +169,7 @@ const initCommand = command({
         baseDir: DEFAULT_WORKTREE_BASE_DIR,
         runtimePorts: resolvedRuntimePorts,
         force: true,
+        createLayoutIfMissing,
       });
     }
 
@@ -266,7 +271,7 @@ const cli = subcommands({
   },
 });
 
-run(cli, normalizeArgv(process.argv.slice(2))).catch((error) => {
+run(cli, normalizedArgv).catch((error) => {
   process.stderr.write(
     `${error instanceof Error ? error.message : String(error)}\n`,
   );
@@ -275,6 +280,20 @@ run(cli, normalizeArgv(process.argv.slice(2))).catch((error) => {
 
 function normalizeArgv(argv: string[]): string[] {
   return argv.filter((value) => value !== "--");
+}
+
+function cliArgvIncludesOption(argv: string[], longName: string, shortName?: string): boolean {
+  return argv.some((value) => {
+    if (value === `--${longName}` || value.startsWith(`--${longName}=`)) {
+      return true;
+    }
+
+    if (!shortName) {
+      return false;
+    }
+
+    return value === `-${shortName}` || value.startsWith(`-${shortName}`);
+  });
 }
 
 async function promptForRuntimePorts(): Promise<string[]> {

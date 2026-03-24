@@ -23,7 +23,7 @@
     "clean:web-dist": "node --input-type=module -e \"import fs from 'node:fs'; fs.rmSync('dist/web', { recursive: true, force: true });\"",
     "dev": "NODE_ENV=development tsx src/cli.ts",
     "dev:watch": "NODE_ENV=development tsx watch src/cli.ts start",
-    "test": "tsx --test src/server/routes/api.test.ts src/server/services/config-service.test.ts src/server/services/init-service.test.ts src/server/services/project-management-service.test.ts src/server/services/repository-layout-service.test.ts src/server/utils/paths.test.ts",
+    "test": "tsx --test src/server/app.test.ts src/server/routes/api.test.ts src/server/services/config-service.test.ts src/server/services/init-service.test.ts src/server/services/project-management-service.test.ts src/server/services/repository-layout-service.test.ts src/server/utils/paths.test.ts",
     "check:web": "vite build --mode production",
     "check:docs": "vite build --config vite.docs.config.ts --mode production",
     "check:server": "tsc -p tsconfig.node.json --noEmit",
