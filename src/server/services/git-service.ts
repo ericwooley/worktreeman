@@ -5,6 +5,7 @@ import type {
   AiCommandConfig,
   CommitGitChangesResponse,
   CreateWorktreeRequest,
+  GenerateGitCommitMessageResponse,
   GitBranchOption,
   GitCompareCommit,
   GitComparisonResponse,
@@ -535,10 +536,73 @@ export async function commitGitChanges(options: {
   aiCommands: AiCommandConfig;
   commandId: AiCommandId;
   env: NodeJS.ProcessEnv;
+  message?: string;
 }): Promise<CommitGitChangesResponse> {
   const normalizedBranch = parseGitBranchName(options.branch);
   if (!normalizedBranch) {
     throw new Error("A branch is required to create a commit.");
+  }
+
+  const worktrees = await listWorktrees(options.repoRoot);
+  const worktree = worktrees.find((entry) => entry.branch === normalizedBranch);
+  if (!worktree) {
+    throw new Error(`Unknown worktree ${normalizedBranch}.`);
+  }
+
+  const baseBranch = parseGitBranchName(options.baseBranch ?? await resolveDefaultBranch(options.repoRoot));
+  const workingTreeSummary = await getWorkingTreeSummary(worktree.worktreePath);
+  if (!workingTreeSummary.dirty) {
+    throw new Error(`Branch ${normalizedBranch} has no local changes to commit.`);
+  }
+
+  const message = options.message?.trim()
+    ? normalizeCommitMessage(options.message)
+    : await generateCommitMessage({
+      worktreePath: worktree.worktreePath,
+      branch: normalizedBranch,
+      baseBranch,
+      aiCommands: options.aiCommands,
+      commandId: options.commandId,
+      env: options.env,
+    });
+
+  if (!message) {
+    throw new Error("Commit message is required.");
+  }
+
+  await runCommand("git", ["add", "-A"], {
+    cwd: worktree.worktreePath,
+    env: GIT_COMMIT_ENV,
+  });
+  await runCommand("git", ["commit", "-m", message], {
+    cwd: worktree.worktreePath,
+    env: GIT_COMMIT_ENV,
+  });
+  const { stdout: commitSha } = await runCommand("git", ["rev-parse", "HEAD"], {
+    cwd: worktree.worktreePath,
+    env: GIT_COMMIT_ENV,
+  });
+
+  return {
+    branch: normalizedBranch,
+    commandId: options.commandId,
+    message,
+    commitSha: commitSha.trim(),
+    comparison: await getGitComparison(options.repoRoot, normalizedBranch, baseBranch),
+  };
+}
+
+export async function generateGitCommitMessage(options: {
+  repoRoot: string;
+  branch: string;
+  baseBranch?: string;
+  aiCommands: AiCommandConfig;
+  commandId: AiCommandId;
+  env: NodeJS.ProcessEnv;
+}): Promise<GenerateGitCommitMessageResponse> {
+  const normalizedBranch = parseGitBranchName(options.branch);
+  if (!normalizedBranch) {
+    throw new Error("A branch is required to generate a commit message.");
   }
 
   const worktrees = await listWorktrees(options.repoRoot);
@@ -562,24 +626,9 @@ export async function commitGitChanges(options: {
     env: options.env,
   });
 
-  await runCommand("git", ["add", "-A"], {
-    cwd: worktree.worktreePath,
-    env: GIT_COMMIT_ENV,
-  });
-  await runCommand("git", ["commit", "-m", message], {
-    cwd: worktree.worktreePath,
-    env: GIT_COMMIT_ENV,
-  });
-  const { stdout: commitSha } = await runCommand("git", ["rev-parse", "HEAD"], {
-    cwd: worktree.worktreePath,
-    env: GIT_COMMIT_ENV,
-  });
-
   return {
     branch: normalizedBranch,
     commandId: options.commandId,
     message,
-    commitSha: commitSha.trim(),
-    comparison: await getGitComparison(options.repoRoot, normalizedBranch, baseBranch),
   };
 }

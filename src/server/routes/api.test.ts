@@ -618,6 +618,78 @@ test("git compare commit creates a commit using the simple AI command by default
   }
 });
 
+test("git compare commit-message previews a simple AI message without committing", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-preview" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "preview.txt"), "preview me\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-preview/commit-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      branch: string;
+      commandId: string;
+      message: string;
+    };
+    assert.equal(payload.branch, "feature-ai-preview");
+    assert.equal(payload.commandId, "simple");
+    assert.equal(payload.message, "commit me");
+
+    const { stdout } = await runCommand("git", ["status", "--short"], { cwd: feature.worktreePath });
+    assert.match(stdout, /preview.txt/);
+    await assert.rejects(
+      () => runCommand("git", ["rev-parse", "--verify", "HEAD"], { cwd: feature.worktreePath }),
+      /code 128/i,
+    );
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare commit accepts an edited message", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-edit" });
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "edited.txt"), "edited\n", "utf8");
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-edit/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main", message: "edited commit message" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { message: string };
+    assert.equal(payload.message, "edited commit message");
+
+    const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: feature.worktreePath });
+    assert.equal(stdout.trim(), "edited commit message");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("config document save commits the edited config file", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);

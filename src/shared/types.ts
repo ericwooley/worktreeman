@@ -169,6 +169,18 @@ export interface MergeGitBranchRequest {
 export interface CommitGitChangesRequest {
   baseBranch?: string;
   commandId?: AiCommandId;
+  message?: string;
+}
+
+export interface GenerateGitCommitMessageRequest {
+  baseBranch?: string;
+  commandId?: AiCommandId;
+}
+
+export interface GenerateGitCommitMessageResponse {
+  branch: string;
+  commandId: AiCommandId;
+  message: string;
 }
 
 export interface CommitGitChangesResponse {

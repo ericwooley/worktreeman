@@ -13,6 +13,8 @@ import type {
   CommitGitChangesResponse,
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
+  GenerateGitCommitMessageRequest,
+  GenerateGitCommitMessageResponse,
   GitComparisonResponse,
   MergeGitBranchRequest,
   ProjectManagementBatchResponse,
@@ -180,6 +182,16 @@ export function mergeGitBranch(compareBranch: string, payload?: MergeGitBranchRe
 
 export function commitGitChanges(branch: string, payload?: CommitGitChangesRequest): Promise<CommitGitChangesResponse> {
   return request<CommitGitChangesResponse>(`/api/git/compare/${encodeURIComponent(branch)}/commit`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export function generateGitCommitMessage(
+  branch: string,
+  payload?: GenerateGitCommitMessageRequest,
+): Promise<GenerateGitCommitMessageResponse> {
+  return request<GenerateGitCommitMessageResponse>(`/api/git/compare/${encodeURIComponent(branch)}/commit-message`, {
     method: "POST",
     body: JSON.stringify(payload ?? {}),
   });

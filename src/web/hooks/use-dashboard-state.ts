@@ -10,8 +10,10 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
+  CommitGitChangesResponse,
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
+  GenerateGitCommitMessageResponse,
   GitComparisonResponse,
   ProjectManagementDocument,
   ProjectManagementHistoryEntry,
@@ -26,6 +28,7 @@ import {
   createProjectManagementDocument as createProjectManagementDocumentRequest,
   createWorktree,
   deleteWorktree,
+  generateGitCommitMessage as generateGitCommitMessageRequest,
   getProjectManagementDocument as fetchProjectManagementDocument,
   getProjectManagementHistory as fetchProjectManagementHistory,
   listProjectManagementDocuments as fetchProjectManagementDocuments,
@@ -76,6 +79,12 @@ function areGitComparisonsEqual(left: GitComparisonResponse | null, right: GitCo
 
   return JSON.stringify(left) === JSON.stringify(right);
 }
+
+export type CommitChangesPayload = {
+  baseBranch?: string;
+  commandId?: AiCommandId;
+  message?: string;
+};
 
 export function useDashboardState() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
@@ -517,10 +526,26 @@ export function useDashboardState() {
           setGitComparisonLoading(false);
         }
       },
-      async commitGitChanges(branch: string, baseBranch?: string, commandId: AiCommandId = "simple") {
+      async generateGitCommitMessage(branch: string, baseBranch?: string, commandId: AiCommandId = "simple"): Promise<GenerateGitCommitMessageResponse | null> {
         setGitComparisonLoading(true);
         try {
-          const result = await commitGitChangesRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
+          const result = await generateGitCommitMessageRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
+          setError(null);
+          return result;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to generate commit message.");
+          return null;
+        } finally {
+          setGitComparisonLoading(false);
+        }
+      },
+      async commitGitChanges(
+        branch: string,
+        payload?: { baseBranch?: string; commandId?: AiCommandId; message?: string },
+      ): Promise<CommitGitChangesResponse | null> {
+        setGitComparisonLoading(true);
+        try {
+          const result = await commitGitChangesRequest(branch, payload ?? {});
           setGitComparison(result.comparison);
           await refresh({ silent: true });
           setError(null);

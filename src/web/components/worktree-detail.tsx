@@ -20,8 +20,9 @@ import type {
 } from "@shared/types";
 import type { ProjectManagementSubTab } from "./project-management-panel";
 import { getTmuxSessionName } from "../lib/tmux";
+import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
+import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
 
 const ProjectManagementPanel = lazy(async () => {
@@ -280,7 +281,8 @@ interface WorktreeDetailProps {
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
   onMergeGitBranch: (compareBranch: string, baseBranch?: string) => Promise<GitComparisonResponse | null>;
-  onCommitGitChanges: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<CommitGitChangesResponse | null>;
+  onGenerateGitCommitMessage: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<{ message: string } | null>;
+  onCommitGitChanges: (branch: string, payload?: CommitChangesPayload) => Promise<CommitGitChangesResponse | null>;
   onSubscribeToBackgroundLogs: (branch: string, commandName: string) => () => void;
   onClearBackgroundLogs: () => void;
   projectManagementDocuments: ProjectManagementDocumentSummary[];
@@ -358,6 +360,7 @@ export function WorktreeDetail({
   onLoadBackgroundLogs,
   onLoadGitComparison,
   onMergeGitBranch,
+  onGenerateGitCommitMessage,
   onCommitGitChanges,
   onSubscribeToBackgroundLogs,
   onClearBackgroundLogs,
@@ -397,6 +400,9 @@ export function WorktreeDetail({
   const [diffWrap, setDiffWrap] = useState(false);
   const [diffHighlight, setDiffHighlight] = useState(false);
   const [diffFontSize, setDiffFontSize] = useState(13);
+  const [commitModalOpen, setCommitModalOpen] = useState(false);
+  const [commitMessageDraft, setCommitMessageDraft] = useState("");
+  const [commitMessageLoading, setCommitMessageLoading] = useState(false);
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
@@ -527,6 +533,7 @@ export function WorktreeDetail({
     && gitComparison.compareBranch === worktree.branch
     && gitComparison.workingTreeSummary.dirty,
   );
+  const commitMessagePreview = commitMessageDraft.trim();
   const gitDiffFiles = useMemo(() => {
     if (isDiffTooLargeToRender) {
       return [];
@@ -734,6 +741,40 @@ export function WorktreeDetail({
     await navigator.clipboard.writeText(attachCommand);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const openCommitModal = async () => {
+    if (!worktree?.branch || !gitComparison) {
+      return;
+    }
+
+    setCommitModalOpen(true);
+    setCommitMessageDraft("");
+    setCommitMessageLoading(true);
+
+    try {
+      const result = await onGenerateGitCommitMessage(worktree.branch, gitComparison.baseBranch, "simple");
+      setCommitMessageDraft(result?.message ?? "");
+    } finally {
+      setCommitMessageLoading(false);
+    }
+  };
+
+  const submitCommit = async () => {
+    if (!worktree?.branch || !gitComparison || !commitMessagePreview) {
+      return;
+    }
+
+    const result = await onCommitGitChanges(worktree.branch, {
+      baseBranch: gitComparison.baseBranch,
+      commandId: "simple",
+      message: commitMessageDraft,
+    });
+
+    if (result) {
+      setCommitModalOpen(false);
+      setCommitMessageDraft("");
+    }
   };
 
   return (
@@ -1033,7 +1074,7 @@ export function WorktreeDetail({
                         if (!worktree?.branch || !gitComparison) {
                           return;
                         }
-                        void onCommitGitChanges(worktree.branch, gitComparison.baseBranch, "simple");
+                        void openCommitModal();
                       }}
                     >
                       AI commit
@@ -1238,6 +1279,58 @@ export function WorktreeDetail({
           </div>
         )}
       </div>
+
+      {commitModalOpen ? (
+        <MatrixModal
+          kicker="AI commit"
+          title={<>Review commit message</>}
+          description="Generate a draft commit message with Simple AI, edit it if needed, then commit from the diff tab."
+          closeLabel="Close commit dialog"
+          maxWidthClass="max-w-2xl"
+          onClose={() => {
+            if (commitMessageLoading || gitComparisonLoading) {
+              return;
+            }
+            setCommitModalOpen(false);
+          }}
+          footer={(
+            <button
+              type="submit"
+              form="git-ai-commit-form"
+              className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+              disabled={commitMessageLoading || gitComparisonLoading || !commitMessagePreview}
+            >
+              {gitComparisonLoading ? "Committing..." : "Commit"}
+            </button>
+          )}
+        >
+          <form
+            id="git-ai-commit-form"
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCommit();
+            }}
+          >
+            <div className="grid gap-3 text-sm md:grid-cols-2">
+              <MatrixDetailField label="Branch" value={worktree?.branch ?? "-"} mono />
+              <MatrixDetailField label="Base" value={gitComparison?.baseBranch ?? "-"} mono />
+            </div>
+            <label className="block space-y-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Commit message</span>
+              <textarea
+                value={commitMessageDraft}
+                onChange={(event) => setCommitMessageDraft(event.target.value)}
+                placeholder={commitMessageLoading ? "Generating commit message..." : "Write the commit message"}
+                disabled={commitMessageLoading || gitComparisonLoading}
+                rows={8}
+                autoFocus
+                className="matrix-input min-h-[14rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+              />
+            </label>
+          </form>
+        </MatrixModal>
+      ) : null}
 
       <div className="min-w-0 xl:flex xl:min-h-0 xl:flex-1 xl:flex-col">
         <WorktreeTerminal
