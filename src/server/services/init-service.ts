@@ -38,12 +38,25 @@ function buildConfigYaml(
   baseDir: string,
   runtimePorts: string[],
 ): string {
+  const hasRuntimePort = (name: string) => runtimePorts.includes(name);
+  const derivedEnv: Record<string, string> = {};
+
+  if (hasRuntimePort("SERVER_PORT")) {
+    derivedEnv.APP_URL = "http://127.0.0.1:${SERVER_PORT}";
+  } else if (hasRuntimePort("PORT")) {
+    derivedEnv.APP_URL = "http://127.0.0.1:${PORT}";
+  }
+
+  if (hasRuntimePort("SERVER_PORT") && hasRuntimePort("VITE_PORT")) {
+    derivedEnv.BACKEND_SERVER_PORT = "${SERVER_PORT}";
+  }
+
   const config = {
     env: {
       NODE_ENV: "development",
     },
     runtimePorts,
-    derivedEnv: {},
+    derivedEnv,
     quickLinks: [],
     aiCommands: {
       smart: "",

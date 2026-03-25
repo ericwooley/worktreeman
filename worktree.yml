@@ -7,12 +7,12 @@ runtimePorts:
   - VITE_PORT
   - DB_PORT
   - REDIS_PORT
-  - BACKEND_SERVER_PORT
 
 derivedEnv:
   DATABASE_URL: postgres://postgres:postgres@localhost:${DB_PORT}/app
   REDIS_URL: redis://localhost:${REDIS_PORT}
   APP_URL: http://127.0.0.1:${SERVER_PORT}
+  BACKEND_SERVER_PORT: ${SERVER_PORT}
 
 worktrees:
   baseDir: ..

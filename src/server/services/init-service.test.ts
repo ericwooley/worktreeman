@@ -32,6 +32,7 @@ test("initRepository creates the shared config in wtm-settings with root-level w
     assert.match(configContents, new RegExp(`^\\$schema: ${WORKTREE_CONFIG_SCHEMA_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"));
     assert.match(configContents, /baseDir: \./);
     assert.match(configContents, /runtimePorts:\n  - PORT\n  - WEB_PORT/);
+    assert.match(configContents, /derivedEnv:\n  APP_URL: http:\/\/127\.0\.0\.1:\$\{PORT\}/);
 
     await fs.access(path.join(rootDir, DEFAULT_WORKTREEMAN_MAIN_BRANCH));
     await fs.access(path.join(rootDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH));
@@ -75,6 +76,27 @@ test("initRepository preserves an existing config unless force is set", async ()
     assert.match(overwrittenContents, /^\$schema: https:\/\//m);
     assert.doesNotMatch(overwrittenContents, /CUSTOM: keep-me/);
     assert.match(overwrittenContents, /runtimePorts:\n  - WEB_PORT/);
+  } finally {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("initRepository links Vite proxy defaults to the allocated backend server port", async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-init-"));
+
+  try {
+    await createBareRepoLayout({ rootDir });
+    await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+
+    await initRepository(rootDir, {
+      runtimePorts: ["SERVER_PORT", "VITE_PORT"],
+      force: true,
+    });
+
+    const configPath = path.join(rootDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml");
+    const configContents = await fs.readFile(configPath, "utf8");
+
+    assert.match(configContents, /derivedEnv:\n  APP_URL: http:\/\/127\.0\.0\.1:\$\{SERVER_PORT\}\n  BACKEND_SERVER_PORT: \$\{SERVER_PORT\}/);
   } finally {
     await fs.rm(rootDir, { recursive: true, force: true });
   }
