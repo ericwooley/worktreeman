@@ -7,6 +7,8 @@ interface ThemeContextValue {
   theme: Base16Theme;
   themes: Base16Theme[];
   setThemeId: (themeId: string) => void;
+  setPreviewThemeId: (themeId: string) => void;
+  clearPreviewTheme: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -36,16 +38,25 @@ function applyTheme(theme: Base16Theme) {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [themeId, setThemeIdState] = useState(resolveInitialTheme().id);
+  const [previewThemeId, setPreviewThemeIdState] = useState<string | null>(null);
 
   const theme = useMemo(
     () => getThemeById(themeId) ?? getThemeById(DEFAULT_THEME_ID) ?? BASE16_THEMES[0],
     [themeId],
   );
 
+  const appliedTheme = useMemo(
+    () => getThemeById(previewThemeId) ?? theme,
+    [previewThemeId, theme],
+  );
+
   useEffect(() => {
-    applyTheme(theme);
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme.id);
-  }, [theme]);
+    applyTheme(appliedTheme);
+  }, [appliedTheme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeId);
+  }, [themeId]);
 
   const value = useMemo<ThemeContextValue>(() => ({
     theme,
@@ -54,7 +65,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       if (!getThemeById(nextThemeId)) {
         return;
       }
+      setPreviewThemeIdState(null);
       setThemeIdState(nextThemeId);
+    },
+    setPreviewThemeId: (nextThemeId: string) => {
+      if (!getThemeById(nextThemeId)) {
+        return;
+      }
+      setPreviewThemeIdState(nextThemeId);
+    },
+    clearPreviewTheme: () => {
+      setPreviewThemeIdState(null);
     },
   }), [theme]);
 

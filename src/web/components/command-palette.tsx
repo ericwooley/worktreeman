@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MatrixBadge, type MatrixBadgeTone } from "./matrix-primitives";
 
@@ -6,6 +6,7 @@ export const DEFAULT_COMMAND_PALETTE_SHORTCUT = "Ctrl+Shift+P";
 
 export interface CommandPaletteItem {
   id: string;
+  value?: string;
   code: string;
   title: string;
   subtitle?: string;
@@ -17,6 +18,8 @@ export interface CommandPaletteItem {
   closeOnSelect?: boolean;
   action: () => void;
 }
+
+type CommandPaletteActiveItemChangeSource = "initial" | "keyboard" | "mouse" | "query";
 
 export interface CommandPaletteShortcutSetting {
   id: string;
@@ -134,6 +137,8 @@ export function CommandPalette({
   codeModeHint = "Prefix with `:`",
   autoExecuteExactCode = true,
   scopeKey = "default",
+  initialActiveItemId,
+  onActiveItemChange,
   shortcutSettings,
 }: {
   open: boolean;
@@ -151,9 +156,13 @@ export function CommandPalette({
   codeModeHint?: string;
   autoExecuteExactCode?: boolean;
   scopeKey?: string;
+  initialActiveItemId?: string;
+  onActiveItemChange?: (command: CommandPaletteItem | null, source: CommandPaletteActiveItemChangeSource) => void;
   shortcutSettings: CommandPaletteShortcutSetting[];
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const activeChangeSourceRef = useRef<CommandPaletteActiveItemChangeSource>("initial");
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [recordingShortcutId, setRecordingShortcutId] = useState<string | null>(null);
@@ -173,6 +182,15 @@ export function CommandPalette({
       : [],
     [codeQuery, commands, isCodeMode],
   );
+
+  const resolveInitialActiveIndex = useCallback(() => {
+    if (!commands.length || !initialActiveItemId) {
+      return 0;
+    }
+
+    const nextIndex = commands.findIndex((command) => command.id === initialActiveItemId);
+    return nextIndex >= 0 ? nextIndex : 0;
+  }, [commands, initialActiveItemId]);
 
   const filteredCommands = useMemo(() => {
     if (isCodeMode) {
@@ -221,8 +239,30 @@ export function CommandPalette({
   }, [open]);
 
   useEffect(() => {
+    activeChangeSourceRef.current = "query";
     setActiveIndex(0);
   }, [query]);
+
+  useEffect(() => {
+    if (!onActiveItemChange) {
+      return;
+    }
+
+    if (!open) {
+      onActiveItemChange(null, activeChangeSourceRef.current);
+      return;
+    }
+
+    onActiveItemChange(filteredCommands[activeIndex] ?? null, activeChangeSourceRef.current);
+  }, [activeIndex, filteredCommands, onActiveItemChange, open]);
+
+  useEffect(() => {
+    if (!open || activeChangeSourceRef.current !== "keyboard") {
+      return;
+    }
+
+    itemRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, open]);
 
   useEffect(() => {
     if (!open || !autoExecuteExactCode || !isCodeMode || !exactCodeMatch || exactCodeMatch.disabled) {
@@ -279,12 +319,14 @@ export function CommandPalette({
 
       if (event.key === "ArrowDown") {
         event.preventDefault();
+        activeChangeSourceRef.current = "keyboard";
         setActiveIndex((current) => (current + 1) % filteredCommands.length);
         return;
       }
 
       if (event.key === "ArrowUp") {
         event.preventDefault();
+        activeChangeSourceRef.current = "keyboard";
         setActiveIndex((current) => (current - 1 + filteredCommands.length) % filteredCommands.length);
         return;
       }
@@ -328,7 +370,8 @@ export function CommandPalette({
     }
 
     setQuery(initialQuery);
-    setActiveIndex(0);
+    activeChangeSourceRef.current = "initial";
+    setActiveIndex(resolveInitialActiveIndex());
     setRecordingShortcutId(null);
 
     const frame = window.requestAnimationFrame(focusInput);
@@ -338,7 +381,7 @@ export function CommandPalette({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
     };
-  }, [initialQuery, open, scopeKey]);
+  }, [initialQuery, open, resolveInitialActiveIndex, scopeKey]);
 
   if (!open) {
     return null;
@@ -376,12 +419,18 @@ export function CommandPalette({
             return (
               <button
                 key={command.id}
+                ref={(node) => {
+                  itemRefs.current[index] = node;
+                }}
                 type="button"
                  className={`flex w-full items-start justify-between gap-3 border-b px-4 py-3 text-left transition-colors last:border-b-0 ${active
-                  ? "theme-border-subtle theme-row-active"
-                  : "theme-border-faint bg-transparent theme-row-idle"} ${command.disabled ? "opacity-60" : ""}`}
+                   ? "theme-border-subtle theme-row-active"
+                   : "theme-border-faint bg-transparent theme-row-idle"} ${command.disabled ? "opacity-60" : ""}`}
                 disabled={command.disabled}
-                onMouseEnter={() => setActiveIndex(index)}
+                onMouseEnter={() => {
+                  activeChangeSourceRef.current = "mouse";
+                  setActiveIndex(index);
+                }}
                 onClick={() => {
                   if (command.disabled) {
                     return;

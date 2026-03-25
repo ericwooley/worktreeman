@@ -191,7 +191,7 @@ export function Dashboard() {
     updateProjectManagementDependencies,
     updateProjectManagementDocument,
   } = useDashboardState();
-  const { theme, themes, setThemeId } = useTheme();
+  const { theme, themes, setThemeId, setPreviewThemeId, clearPreviewTheme } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
   const [activeTab, setActiveTab] = useState<"shell" | "background" | "git" | "project-management">(initialUrlState.activeTab);
   const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
@@ -258,6 +258,25 @@ export function Dashboard() {
       }
     });
   }, []);
+
+  const handleCommandPaletteClose = useCallback((options?: { restoreFocus?: boolean }) => {
+    clearPreviewTheme();
+    closeCommandPalette(options);
+  }, [clearPreviewTheme, closeCommandPalette]);
+
+  const handleCommandPaletteActiveItemChange = useCallback((command: CommandPaletteItem | null, source: "initial" | "keyboard" | "mouse" | "query") => {
+    if (commandPaletteScope !== "theme-select") {
+      clearPreviewTheme();
+      return;
+    }
+
+    if (source !== "keyboard" || !command?.value) {
+      clearPreviewTheme();
+      return;
+    }
+
+    setPreviewThemeId(command.value);
+  }, [clearPreviewTheme, commandPaletteScope, setPreviewThemeId]);
 
   const toggleTerminalVisibility = useCallback((restoreFocus = false) => {
     const now = Date.now();
@@ -339,6 +358,14 @@ export function Dashboard() {
       normalizeTerminalShortcut(terminalShortcut),
     );
   }, [terminalShortcut]);
+
+  useEffect(() => {
+    if (commandPaletteOpen && commandPaletteScope === "theme-select") {
+      return;
+    }
+
+    clearPreviewTheme();
+  }, [clearPreviewTheme, commandPaletteOpen, commandPaletteScope]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -928,6 +955,7 @@ export function Dashboard() {
   const themeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     return themes.map((entry, index) => ({
       id: `select-theme-${entry.id}`,
+      value: entry.id,
       code: String(index + 1),
       title: entry.name,
       subtitle: `${entry.author} - ${entry.variant} - ${entry.fileName}`,
@@ -1468,10 +1496,12 @@ export function Dashboard() {
         commands={paletteCommands}
         shortcut={commandPaletteShortcut}
         initialQuery={commandPaletteInitialQuery}
-        onClose={closeCommandPalette}
+        onClose={handleCommandPaletteClose}
+        onActiveItemChange={handleCommandPaletteActiveItemChange}
         onShortcutChange={setCommandPaletteShortcut}
         onShortcutReset={() => setCommandPaletteShortcut(DEFAULT_COMMAND_PALETTE_SHORTCUT)}
         shortcutSettings={shortcutSettings}
+        initialActiveItemId={commandPaletteScope === "theme-select" ? `select-theme-${theme.id}` : undefined}
         title={commandPaletteScope === "worktree-select"
           ? "Select worktree"
           : commandPaletteScope === "theme-select"
