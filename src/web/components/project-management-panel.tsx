@@ -39,6 +39,7 @@ const ProjectManagementAiLogTab = lazy(async () => {
 });
 
 export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "ai-log";
+export type ProjectManagementDocumentViewMode = "document" | "edit";
 
 interface ProjectManagementPanelProps {
   documents: ProjectManagementDocumentSummary[];
@@ -46,6 +47,7 @@ interface ProjectManagementPanelProps {
   availableStatuses: string[];
   activeSubTab: ProjectManagementSubTab;
   selectedDocumentId: string | null;
+  documentViewMode: ProjectManagementDocumentViewMode;
   document: ProjectManagementDocument | null;
   history: ProjectManagementHistoryEntry[];
   loading: boolean;
@@ -59,6 +61,7 @@ interface ProjectManagementPanelProps {
   runningAiJobs: AiCommandJob[];
   selectedWorktreeBranch: string | null;
   onSubTabChange: (tab: ProjectManagementSubTab) => void;
+  onDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
   onRefresh: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
@@ -108,6 +111,7 @@ export function ProjectManagementPanel({
   availableStatuses,
   activeSubTab,
   selectedDocumentId,
+  documentViewMode,
   document,
   history,
   loading,
@@ -121,6 +125,7 @@ export function ProjectManagementPanel({
   runningAiJobs,
   selectedWorktreeBranch,
   onSubTabChange,
+  onDocumentViewModeChange,
   onRefresh,
   onLoadAiLogs,
   onLoadAiLog,
@@ -134,7 +139,6 @@ export function ProjectManagementPanel({
   onCancelAiCommand,
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
-  const [documentViewMode, setDocumentViewMode] = useState<"document" | "edit">("document");
   const [selectedTag, setSelectedTag] = useState<string>("");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("");
   const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string>("");
@@ -197,7 +201,6 @@ export function ProjectManagementPanel({
       setEditStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
       setEditAssignee("");
       setEditEditorMode("wysiwyg");
-      setDocumentViewMode("document");
       setAiChangeRequest("");
       setSelectedAiCommandId("simple");
       return;
@@ -210,7 +213,6 @@ export function ProjectManagementPanel({
     setEditStatus(document.status);
     setEditAssignee(document.assignee);
     setEditEditorMode("wysiwyg");
-    setDocumentViewMode("document");
     setAiFailureToast(null);
     setAiRequestModalOpen(false);
     setSelectedAiCommandId("simple");
@@ -350,7 +352,7 @@ export function ProjectManagementPanel({
 
   async function handleSelectDocument(documentId: string, options?: { silent?: boolean }) {
     onSubTabChange("document");
-    setDocumentViewMode("document");
+    onDocumentViewModeChange("document");
     return onSelectDocument(documentId, options);
   }
 
@@ -699,8 +701,8 @@ export function ProjectManagementPanel({
             <div className="flex flex-wrap gap-2">
               {document ? (
                 <div className="flex flex-wrap gap-2">
-                  <MatrixTabButton active={documentViewMode === "document"} label="Document" onClick={() => setDocumentViewMode("document")} />
-                  <MatrixTabButton active={documentViewMode === "edit"} label="Edit" onClick={() => setDocumentViewMode("edit")} />
+                  <MatrixTabButton active={documentViewMode === "document"} label="Document" onClick={() => onDocumentViewModeChange("document")} />
+                  <MatrixTabButton active={documentViewMode === "edit"} label="Edit" onClick={() => onDocumentViewModeChange("edit")} />
                 </div>
               ) : null}
               {documentViewMode === "document" ? (
