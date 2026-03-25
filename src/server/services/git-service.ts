@@ -9,6 +9,7 @@ import type {
   GitBranchOption,
   GitCompareCommit,
   GitComparisonResponse,
+  GitMergeStatus,
   GitWorkingTreeSummary,
   WorktreeManagerConfig,
   WorktreeRecord,
@@ -35,6 +36,77 @@ const GIT_COMMIT_ENV = {
 };
 
 const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+function createMergeStatus(overrides: Partial<GitMergeStatus> = {}): GitMergeStatus {
+  return {
+    canMerge: false,
+    hasConflicts: false,
+    reason: null,
+    ...overrides,
+  };
+}
+
+async function getMergeStatus(repoRoot: string, baseBranch: string, compareBranch: string): Promise<GitMergeStatus> {
+  if (!compareBranch) {
+    return createMergeStatus({ reason: "Choose a branch to merge." });
+  }
+
+  if (!baseBranch) {
+    return createMergeStatus({ reason: "Choose a base branch." });
+  }
+
+  if (baseBranch === compareBranch) {
+    return createMergeStatus({ reason: "Select a different base branch to merge into." });
+  }
+
+  const [baseHasCommit, compareHasCommit] = await Promise.all([
+    gitRefHasCommit(repoRoot, baseBranch),
+    gitRefHasCommit(repoRoot, compareBranch),
+  ]);
+
+  if (!compareHasCommit) {
+    return createMergeStatus({ reason: "This branch does not have any commits to merge yet." });
+  }
+
+  if (!baseHasCommit) {
+    return createMergeStatus({ canMerge: true });
+  }
+
+  const worktrees = await listWorktrees(repoRoot);
+  const compareWorktree = worktrees.find((entry) => entry.branch === compareBranch);
+  if (compareWorktree) {
+    const compareSummary = await getWorkingTreeSummary(compareWorktree.worktreePath);
+    if (compareSummary.dirty) {
+      return createMergeStatus({ reason: `Commit or stash local changes on ${compareBranch} before merging.` });
+    }
+  }
+
+  const baseWorktree = worktrees.find((entry) => entry.branch === baseBranch);
+  if (baseWorktree) {
+    const baseSummary = await getWorkingTreeSummary(baseWorktree.worktreePath);
+    if (baseSummary.dirty) {
+      return createMergeStatus({ reason: `Commit or stash local changes on ${baseBranch} before merging.` });
+    }
+  }
+
+  const mergeTreeResult = await runCommand(
+    "git",
+    ["merge-tree", "--write-tree", "--messages", baseBranch, compareBranch],
+    { cwd: repoRoot, allowExitCodes: [1] },
+  );
+  const output = `${mergeTreeResult.stdout}\n${mergeTreeResult.stderr}`;
+  const hasConflicts = /(^|\n)(?:CONFLICT \(|Auto-merging .*\nCONFLICT \()/m.test(output);
+
+  if (hasConflicts) {
+    return createMergeStatus({
+      canMerge: false,
+      hasConflicts: true,
+      reason: `Resolve conflicts between ${compareBranch} and ${baseBranch} before merging.`,
+    });
+  }
+
+  return createMergeStatus({ canMerge: true });
+}
 
 interface ParsedPorcelainEntry {
   worktreePath: string;
@@ -391,12 +463,13 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
   const compareCwd = selectedWorktree?.worktreePath ?? repoRoot;
 
   const commitFormat = "%H%x09%h%x09%an%x09%aI%x09%s";
-  const [branches, workingTreeDiff, workingTreeSummary, baseHasCommit, compareHasCommit] = await Promise.all([
+  const [branches, workingTreeDiff, workingTreeSummary, baseHasCommit, compareHasCommit, mergeStatus] = await Promise.all([
     listBranchOptions(repoRoot, worktrees, defaultBranch),
     getWorkingTreeDiff(compareCwd),
     getWorkingTreeSummary(compareCwd),
     gitRefHasCommit(repoRoot, normalizedBaseBranch),
     gitRefHasCommit(repoRoot, normalizedCompareBranch),
+    getMergeStatus(repoRoot, normalizedBaseBranch, normalizedCompareBranch),
   ]);
 
   if (!baseHasCommit && !compareHasCommit) {
@@ -414,6 +487,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
       workingTreeDiff,
       effectiveDiff: workingTreeDiff.trim(),
       workingTreeSummary,
+      mergeStatus,
     };
   }
 
@@ -440,6 +514,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
       workingTreeDiff,
       effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
       workingTreeSummary,
+      mergeStatus,
     };
   }
 
@@ -466,6 +541,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
       workingTreeDiff,
       effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
       workingTreeSummary,
+      mergeStatus,
     };
   }
 
@@ -501,6 +577,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
     workingTreeDiff,
     effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
     workingTreeSummary,
+    mergeStatus,
   };
 }
 
@@ -517,6 +594,11 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
 
   if (normalizedCompareBranch === normalizedBaseBranch) {
     throw new Error(`Cannot merge branch ${normalizedCompareBranch} into itself.`);
+  }
+
+  const mergeStatus = await getMergeStatus(repoRoot, normalizedBaseBranch, normalizedCompareBranch);
+  if (!mergeStatus.canMerge) {
+    throw new Error(mergeStatus.reason ?? `Branch ${normalizedCompareBranch} cannot be merged into ${normalizedBaseBranch}.`);
   }
 
   const worktrees = await listWorktrees(repoRoot);

@@ -146,6 +146,12 @@ export interface GitWorkingTreeSummary {
   untrackedFiles: number;
 }
 
+export interface GitMergeStatus {
+  canMerge: boolean;
+  hasConflicts: boolean;
+  reason: string | null;
+}
+
 export interface GitComparisonResponse {
   defaultBranch: string;
   baseBranch: string;
@@ -160,6 +166,7 @@ export interface GitComparisonResponse {
   workingTreeDiff: string;
   effectiveDiff: string;
   workingTreeSummary: GitWorkingTreeSummary;
+  mergeStatus: GitMergeStatus;
 }
 
 export interface MergeGitBranchRequest {

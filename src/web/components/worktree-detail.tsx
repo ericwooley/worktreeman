@@ -142,6 +142,33 @@ function buildDiffContents(hunks: string[]) {
   };
 }
 
+function getMergeActionState(worktreeBranch: string | undefined, gitComparison: GitComparisonResponse | null) {
+  if (!worktreeBranch) {
+    return { canMerge: false, reason: "Open a worktree branch to merge changes." };
+  }
+
+  if (!gitComparison) {
+    return { canMerge: false, reason: "Load a git comparison to evaluate merge readiness." };
+  }
+
+  if (gitComparison.compareBranch !== worktreeBranch) {
+    return { canMerge: false, reason: "Select the active worktree branch as the comparison branch." };
+  }
+
+  if (gitComparison.workingTreeSummary.dirty) {
+    return { canMerge: false, reason: "Commit or stash local changes before merging." };
+  }
+
+  if (!gitComparison.mergeStatus.canMerge) {
+    return {
+      canMerge: false,
+      reason: gitComparison.mergeStatus.reason ?? "Merge is not available for the current comparison.",
+    };
+  }
+
+  return { canMerge: true, reason: null };
+}
+
 function normalizeDiffPath(value: string) {
   const trimmed = value.trim().replace(/^"|"$/g, "");
   if (trimmed === "/dev/null") {
@@ -524,15 +551,16 @@ export function WorktreeDetail({
   const isDiffTooLargeToRender = gitDiffMetrics.chars > DIFF_RENDER_MAX_CHARS
     || gitDiffMetrics.lines > DIFF_RENDER_MAX_LINES
     || parsedDiffFileCount > DIFF_RENDER_MAX_FILES;
-  const canMergeToBaseBranch = Boolean(
-    worktree?.branch
-    && gitComparison
-    && gitComparison.compareBranch === worktree.branch
-    && gitComparison.baseBranch !== gitComparison.compareBranch
-    && gitComparison.ahead > 0
-    && gitComparison.behind === 0
-    && !gitComparison.workingTreeSummary.dirty,
+  const mergeActionState = useMemo(
+    () => getMergeActionState(worktree?.branch, gitComparison),
+    [gitComparison, worktree?.branch],
   );
+  const canMergeToBaseBranch = mergeActionState.canMerge;
+  const mergeButtonDisabledReason = gitComparisonLoading
+    ? "Git comparison is updating."
+    : !canMergeToBaseBranch
+      ? mergeActionState.reason
+      : null;
   const canCommitDiffChanges = Boolean(
     worktree?.branch
     && gitComparison
@@ -1092,15 +1120,19 @@ export function WorktreeDetail({
                       type="button"
                       className="matrix-button rounded-none px-3 py-2 text-sm"
                       disabled={!canMergeToBaseBranch || gitComparisonLoading || !worktree?.branch}
+                      title={mergeButtonDisabledReason ?? undefined}
+                      aria-label={mergeButtonDisabledReason
+                        ? `Merge disabled: ${mergeButtonDisabledReason}`
+                        : undefined}
                       onClick={() => {
                         if (!worktree?.branch || !gitComparison) {
-                        return;
-                      }
-                      void onMergeGitBranch(worktree.branch, gitComparison.baseBranch);
-                    }}
-                  >
-                    Merge to {gitComparison?.baseBranch ?? "main"}
-                  </button>
+                          return;
+                        }
+                        void onMergeGitBranch(worktree.branch, gitComparison.baseBranch);
+                      }}
+                    >
+                      Merge to {gitComparison?.baseBranch ?? "main"}
+                    </button>
                 </div>
               </div>
 
@@ -1113,17 +1145,9 @@ export function WorktreeDetail({
                 </div>
               ) : null}
 
-              {gitComparison && !canMergeToBaseBranch ? (
-                <div className="mt-3 text-xs theme-text-muted">
-                  {gitComparison.behind > 0
-                    ? "Bring this branch up to date with the base branch before merging."
-                    : gitComparison.ahead === 0
-                      ? "No branch commits are waiting to merge."
-                      : gitComparison.workingTreeSummary.dirty
-                        ? "Commit or stash local changes before merging to the base branch."
-                        : gitComparison.baseBranch === gitComparison.compareBranch
-                          ? "Select a different base branch to merge into."
-                          : "Merge is not available for the current comparison."}
+              {gitComparison && !canMergeToBaseBranch && mergeActionState.reason ? (
+                <div className="mt-3 text-xs theme-text-danger">
+                  Merge disabled: {mergeActionState.reason}
                 </div>
               ) : null}
 

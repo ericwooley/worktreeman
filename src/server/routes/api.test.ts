@@ -548,6 +548,126 @@ test("git compare merge merges a feature branch into main", { concurrency: false
   }
 });
 
+test("git compare reports mergeable branches even when the feature branch is behind", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-behind-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "feature.txt"), "feature change\n", "utf8");
+    await runCommand("git", ["add", "feature.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "feature change"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    await fs.writeFile(path.join(mainPath, "main.txt"), "main change\n", "utf8");
+    await runCommand("git", ["add", "main.txt"], { cwd: mainPath });
+    await runCommand("git", ["commit", "-m", "main change"], {
+      cwd: mainPath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/git/compare?compareBranch=feature-behind-merge&baseBranch=main`);
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      ahead: number;
+      behind: number;
+      mergeStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null };
+    };
+    assert.equal(payload.ahead, 1);
+    assert.equal(payload.behind, 1);
+    assert.equal(payload.mergeStatus.canMerge, true);
+    assert.equal(payload.mergeStatus.hasConflicts, false);
+    assert.equal(payload.mergeStatus.reason, null);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare reports why merge is disabled when branches conflict", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-conflict-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "shared.txt"), "feature version\n", "utf8");
+    await runCommand("git", ["add", "shared.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "feature shared"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    await fs.writeFile(path.join(mainPath, "shared.txt"), "main version\n", "utf8");
+    await runCommand("git", ["add", "shared.txt"], { cwd: mainPath });
+    await runCommand("git", ["commit", "-m", "main shared"], {
+      cwd: mainPath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const compareResponse = await fetch(`${server.baseUrl}/api/git/compare?compareBranch=feature-conflict-merge&baseBranch=main`);
+
+    assert.equal(compareResponse.status, 200);
+    const comparePayload = await compareResponse.json() as {
+      mergeStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null };
+    };
+    assert.equal(comparePayload.mergeStatus.canMerge, false);
+    assert.equal(comparePayload.mergeStatus.hasConflicts, true);
+    assert.match(comparePayload.mergeStatus.reason ?? "", /resolve conflicts/i);
+
+    const mergeResponse = await fetch(`${server.baseUrl}/api/git/compare/feature-conflict-merge/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(mergeResponse.status, 500);
+    const mergePayload = await mergeResponse.text();
+    assert.match(mergePayload, /resolve conflicts/i);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("git compare merge rejects branches with local changes", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({

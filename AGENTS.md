@@ -11,7 +11,7 @@
 - There are no users yet, don't worry about breaking changes or maintaining backwards compatibility. Focus on building the best possible experience, and we can iterate on the details later.
 - You should always be creating good tests. Asking me about creating tests means your not doing your job
 - I don't care about large chunk sizes
-- There should be no "refresh" buttons. These should either be polls or server side events. Don't add refresh buttons everywhere. 
+- There should be no "refresh" buttons. These should either be polls or server side events. Don't add refresh buttons everywhere.
 
 ## AI Instructions
 
@@ -23,3 +23,4 @@
 - Prompts should make it clear that the server will persist the returned text into the existing project-management document and that document history is the rollback mechanism.
 - Prompts should avoid implying that the model should create side artifacts like files, tickets, checklists in separate outputs, or commentary outside the returned document unless that is specifically requested.
 - If a specific output structure is required, spell it out directly in the prompt, for example required headings, checklist style, dependency callouts, or implementation sections.
+- Load the ux skill if you are doing ui work. And it's important that you keep the buttons and forms and warnings near each other. Don't make the user scroll or look around for error messages.
