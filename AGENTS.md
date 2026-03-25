@@ -24,3 +24,7 @@
 - Prompts should avoid implying that the model should create side artifacts like files, tickets, checklists in separate outputs, or commentary outside the returned document unless that is specifically requested.
 - If a specific output structure is required, spell it out directly in the prompt, for example required headings, checklist style, dependency callouts, or implementation sections.
 - Load the ux skill if you are doing ui work. And it's important that you keep the buttons and forms and warnings near each other. Don't make the user scroll or look around for error messages.
+
+## UI Instructions
+
+- Do not use gradients. They look dated, and the text contrast can be hard to read. Stick to solid colors with good contrast from the themes that are loaded.
