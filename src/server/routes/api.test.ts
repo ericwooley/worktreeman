@@ -1142,6 +1142,109 @@ test("project-management AI rejects unknown target documents and logs the failur
   }
 });
 
+test("project-management document AI creates a derived worktree and streams stdout from that worktree job", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  let capturedCommand = "";
+  let capturedWorktreePath = "";
+  const aiProcesses: InjectedAiProcesses = {
+    ...fakeAiProcesses.aiProcesses,
+    async startProcess(options) {
+      capturedCommand = options.command;
+      capturedWorktreePath = options.worktreePath;
+      return await fakeAiProcesses.aiProcesses.startProcess(options);
+    },
+  };
+
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 6123, stdout: "planning...\n", stderr: "" },
+    { status: "online", pid: 6123, stdout: "planning...\nimplemented\n", stderr: "" },
+    { status: "stopped", pid: 6123, stdout: "planning...\nimplemented\n", stderr: "", exitCode: 0 },
+  ]);
+
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await fetch(`${server.baseUrl}/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const response = await fetch(`${server.baseUrl}/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      job: { branch: string; documentId?: string | null; status: string; commandId: string };
+    };
+    assert.equal(payload.job.documentId, outline.id);
+    assert.equal(payload.job.status, "running");
+    assert.equal(payload.job.commandId, "smart");
+    assert.match(payload.job.branch, /^pm-/);
+
+    const stateResponse = await fetch(`${server.baseUrl}/api/state`);
+    assert.equal(stateResponse.status, 200);
+    const statePayload = await stateResponse.json() as {
+      worktrees: Array<{ branch: string; worktreePath: string }>;
+    };
+    const createdWorktree = statePayload.worktrees.find((entry) => entry.branch === payload.job.branch);
+    assert.ok(createdWorktree);
+    assert.equal(capturedWorktreePath, createdWorktree.worktreePath);
+    assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
+    assert.equal(capturedCommand.includes("Additional operator guidance:"), false);
+
+    const stream = await openSse(`${server.baseUrl}/api/worktrees/${encodeURIComponent(payload.job.branch)}/ai-command/stream`);
+    try {
+      const snapshot = await stream.nextEvent();
+      assert.equal(snapshot.type, "snapshot");
+      assert.equal((snapshot as { job?: { branch?: string } }).job?.branch, payload.job.branch);
+
+      await waitFor(async () => {
+        const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+        if (logsResponse.status !== 200) {
+          return false;
+        }
+        const logsPayload = await logsResponse.json() as {
+          logs: Array<{ branch: string; status: string }>;
+        };
+        return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
+      });
+
+      let sawImplemented = false;
+      for (let index = 0; index < 5; index += 1) {
+        const event = await stream.nextEvent();
+        const job = (event as { job?: { stdout?: string; status?: string } | null }).job;
+        if (job?.stdout?.includes("implemented")) {
+          sawImplemented = true;
+        }
+        if (job?.status === "completed") {
+          break;
+        }
+      }
+      assert.equal(sawImplemented, true);
+    } finally {
+      await stream.close();
+    }
+
+    const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
+    assert.equal(updated.document.title, "Project Outline");
+    assert.equal(updated.document.markdown.includes("implemented"), false);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("AI cancel route deletes the running process and returns the settled failed job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({

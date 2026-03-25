@@ -78,6 +78,7 @@ import {
 } from "../services/project-management-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
+import { sanitizeBranchName } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 
 interface ApiRouterOptions {
@@ -115,6 +116,11 @@ interface ApiRouterOptions {
   }, context: {
     notifyStarted: (job: AiCommandJob) => void;
   }) => Promise<void>;
+}
+
+interface RunProjectManagementDocumentAiRequest {
+  input?: unknown;
+  commandId?: unknown;
 }
 
 const CONFIG_COMMIT_ENV = {
@@ -287,7 +293,7 @@ function resolveRequestedAiCommandId(value: unknown, options?: { documentId?: st
     return value;
   }
 
-  return options?.documentId ? "simple" : "smart";
+  return "smart";
 }
 
 function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiCommandId): string {
@@ -327,6 +333,44 @@ function buildProjectManagementAiPrompt(options: {
     "Current markdown:",
     options.document.markdown,
   ].join("\n");
+}
+
+function createProjectManagementDocumentWorktreeBranch(document: ProjectManagementDocumentResponse["document"]) {
+  const branch = sanitizeBranchName(`pm-${document.id}-${document.title}`).slice(0, 72);
+  return branch || `pm-${sanitizeBranchName(document.id) || "document"}`;
+}
+
+function buildProjectManagementExecutionAiPrompt(options: {
+  branch: string;
+  worktreePath: string;
+  document: ProjectManagementDocumentResponse["document"];
+  relatedDocuments: ProjectManagementListResponse["documents"];
+  requestedChange?: string;
+}) {
+  const dependencySummary = options.relatedDocuments
+    .filter((entry) => options.document.dependencies.includes(entry.id))
+    .map((entry) => `#${entry.number} ${entry.title}`)
+    .join(", ");
+
+  return [
+    `You are implementing the work described by the project-management document \"${options.document.title}\" in worktree ${options.branch}.`,
+    `Worktree path: ${options.worktreePath}`,
+    "Use this document as the main instruction set for the engineering work to perform in the repository.",
+    "Make code changes directly in this worktree. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
+    "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
+    "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",
+    "Return your normal coding-agent response for the configured AI command after doing the work.",
+    options.requestedChange ? `Additional operator guidance: ${options.requestedChange}` : "",
+    "",
+    `Document number: #${options.document.number}`,
+    `Status: ${options.document.status}`,
+    `Assignee: ${options.document.assignee || "Unassigned"}`,
+    `Tags: ${options.document.tags.join(", ") || "none"}`,
+    `Dependencies: ${dependencySummary || "none"}`,
+    "",
+    "Project-management document:",
+    options.document.markdown,
+  ].filter(Boolean).join("\n");
 }
 
 function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLogEntry {
@@ -645,6 +689,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     renderedCommand: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
+    applyDocumentUpdate?: boolean;
   }) => startAiCommandJob({
     branch: details.branch,
     documentId: details.documentId ?? null,
@@ -719,7 +764,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
     },
     writeLog: safeWriteAiRequestLog,
-    onComplete: details.documentId
+    onComplete: details.documentId && details.applyDocumentUpdate !== false
       ? async ({ stdout }) => {
         const nextMarkdown = stdout.trim();
         if (!nextMarkdown) {
@@ -746,9 +791,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     commandId: AiCommandId;
     input: string;
     renderedCommand: string;
-    worktreePath: string;
-    env: NodeJS.ProcessEnv;
-  }) => enqueueProjectManagementAiJob({
+      worktreePath: string;
+      env: NodeJS.ProcessEnv;
+    }) => enqueueProjectManagementAiJob({
     repoRoot: options.repoRoot,
     payload: {
       branch: details.branch,
@@ -756,9 +801,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       worktreePath: details.worktreePath,
       input: details.input,
       renderedCommand: details.renderedCommand,
-      env: Object.fromEntries(Object.entries(details.env).filter(([, value]) => typeof value === "string")) as Record<string, string>,
-      documentId: details.documentId,
-    },
+       env: Object.fromEntries(Object.entries(details.env).filter(([, value]) => typeof value === "string")) as Record<string, string>,
+       documentId: details.documentId,
+     },
     onProcessProjectManagementAiJob: options.onEnqueueProjectManagementAiJob
       ? async (payload, context) => options.onEnqueueProjectManagementAiJob?.(payload, {
         notifyStarted: context.notifyStarted,
@@ -1289,6 +1334,119 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       );
       res.json(payload);
     } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/project-management/documents/:id/ai-command/run", async (req, res, next) => {
+    let worktreePath = "";
+    let branch = "";
+    let input = "";
+    let commandId: AiCommandId = "smart";
+
+    try {
+      const config = await loadCurrentConfig();
+      const documentId = decodeURIComponent(req.params.id).trim();
+      const body = req.body as RunProjectManagementDocumentAiRequest | undefined;
+      const documentPayload = await getProjectManagementDocument(options.repoRoot, documentId);
+      const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
+
+      branch = createProjectManagementDocumentWorktreeBranch(documentPayload.document);
+      commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
+
+      const template = resolveAiCommandTemplate(config.aiCommands, commandId);
+      if (!template) {
+        await writeImmediateAiFailureLog({
+          branch,
+          documentId,
+          commandId,
+          worktreePath: "",
+          renderedCommand: template,
+          input: documentId,
+          error: new Error("AI Command is not configured."),
+        });
+        res.status(400).json({ message: "AI Command is not configured." });
+        return;
+      }
+
+      if (!template.includes("$WTM_AI_INPUT")) {
+        await writeImmediateAiFailureLog({
+          branch,
+          documentId,
+          commandId,
+          worktreePath: "",
+          renderedCommand: template,
+          input: documentId,
+          error: new Error("AI Command must include $WTM_AI_INPUT."),
+        });
+        res.status(400).json({ message: "AI Command must include $WTM_AI_INPUT." });
+        return;
+      }
+
+      const worktreesBefore = await listWorktrees(options.repoRoot);
+      let worktree = worktreesBefore.find((entry) => entry.branch === branch) ?? null;
+      if (!worktree) {
+        worktree = await createWorktree(options.repoRoot, config, { branch });
+        const sourceRoot = await resolveEnvSyncSourceRoot(await listWorktrees(options.repoRoot));
+        if (sourceRoot) {
+          await syncEnvFiles(sourceRoot, worktree.worktreePath);
+        }
+      }
+
+      worktreePath = worktree.worktreePath;
+      input = buildProjectManagementExecutionAiPrompt({
+        branch,
+        worktreePath,
+        document: documentPayload.document,
+        relatedDocuments: documentsPayload.documents,
+      });
+
+      if (getAiCommandJob(branch)?.status === "running") {
+        res.status(409).json({ message: `AI command already running for ${branch}.` });
+        return;
+      }
+
+      const runtime = options.runtimes.get(branch);
+      const env = runtime
+        ? buildRuntimeProcessEnv(runtime)
+        : {
+          ...process.env,
+          ...config.env,
+          WORKTREE_BRANCH: branch,
+          WORKTREE_PATH: worktreePath,
+        };
+
+      const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+      const job = await startAiProcessJob({
+        branch,
+        documentId,
+        commandId,
+        input,
+        renderedCommand,
+        worktreePath,
+        env,
+        applyDocumentUpdate: false,
+      });
+
+      const payload: RunAiCommandResponse = { job };
+      res.json(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith("Unknown project management document ")) {
+        await writeImmediateAiFailureLog({
+          branch: branch || `pm-${sanitizeBranchName(decodeURIComponent(req.params.id)) || "document"}`,
+          documentId: decodeURIComponent(req.params.id),
+          commandId,
+          worktreePath,
+          renderedCommand: "",
+          input,
+          error: new Error(message),
+        });
+        res.status(404).json({ message });
+        return;
+      }
+
+      console.error(`[project-management-ai] failed document=${req.params.id}`, error);
       next(error);
     }
   });

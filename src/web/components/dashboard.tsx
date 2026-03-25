@@ -141,6 +141,7 @@ export function Dashboard() {
     aiCommandSettings,
     aiCommandSettingsLoading,
     aiCommandJob,
+    projectManagementDocumentAiJob,
     aiCommandLogs,
     aiCommandLogDetail,
     aiCommandLogsLoading,
@@ -174,7 +175,9 @@ export function Dashboard() {
     generateGitCommitMessage,
     commitGitChanges,
     runAiCommand,
+    runProjectManagementDocumentAi,
     cancelAiCommand,
+    cancelProjectManagementDocumentAi,
     saveAiCommandSettings,
     saveConfigDocument,
     subscribeToBackgroundLogs,
@@ -1031,6 +1034,7 @@ export function Dashboard() {
             }}
             projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
+            projectManagementDocumentAiJob={projectManagementDocumentAiJob}
             onRunProjectManagementAiCommand={async (payload) => {
               if (!selected?.branch) {
                 return null;
@@ -1038,6 +1042,11 @@ export function Dashboard() {
 
               return runAiCommand(selected.branch, payload);
             }}
+            onRunProjectManagementDocumentAi={async (payload) => runProjectManagementDocumentAi(payload.documentId, {
+              input: payload.input,
+              commandId: payload.commandId,
+            })}
+            onCancelProjectManagementDocumentAiCommand={async (branch) => cancelProjectManagementDocumentAi(branch)}
             onCancelProjectManagementAiCommand={async () => {
               if (!selected?.branch) {
                 return null;

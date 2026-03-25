@@ -63,6 +63,7 @@ interface ProjectManagementPanelProps {
   saving: boolean;
   aiCommands: AiCommandConfig | null;
   aiJob: AiCommandJob | null;
+  documentRunJob: AiCommandJob | null;
   aiLogs: AiCommandLogSummary[];
   aiLogDetail: AiCommandLogEntry | null;
   aiLogsLoading: boolean;
@@ -92,6 +93,8 @@ interface ProjectManagementPanelProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onRunAiCommand: (payload: { input: string; documentId: string; commandId: AiCommandId }) => Promise<AiCommandJob | null>;
+  onRunDocumentAi: (payload: { documentId: string; input?: string; commandId: AiCommandId }) => Promise<AiCommandJob | null>;
+  onCancelDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelAiCommand: () => Promise<AiCommandJob | null>;
 }
 
@@ -122,6 +125,7 @@ export function ProjectManagementPanel({
   saving,
   aiCommands,
   aiJob,
+  documentRunJob,
   aiLogs,
   aiLogDetail,
   aiLogsLoading,
@@ -136,6 +140,8 @@ export function ProjectManagementPanel({
   onUpdateDocument,
   onUpdateDependencies,
   onRunAiCommand,
+  onRunDocumentAi,
+  onCancelDocumentAiCommand,
   onCancelAiCommand,
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
@@ -162,7 +168,11 @@ export function ProjectManagementPanel({
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
   const [aiRequestModalOpen, setAiRequestModalOpen] = useState(false);
   const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("simple");
+  const [documentRunSummary, setDocumentRunSummary] = useState<string | null>(null);
+  const [documentRunFailureToast, setDocumentRunFailureToast] = useState<string | null>(null);
   const aiRunning = aiJob?.status === "running";
+  const documentRunInProgress = documentRunJob?.status === "running";
+  const activeDocumentRunTargetsSelectedDocument = Boolean(document && documentRunJob?.documentId === document.id);
   const aiCommandOptions = useMemo<MatrixDropdownOption[]>(() => ([
     {
       value: "smart",
@@ -200,10 +210,11 @@ export function ProjectManagementPanel({
     setDependencySelection(Array.isArray(document.dependencies) ? document.dependencies : []);
     setEditStatus(document.status);
     setEditAssignee(document.assignee);
-      setDocumentViewMode("document");
-      setAiFailureToast(null);
-      setAiRequestModalOpen(false);
-      setSelectedAiCommandId("simple");
+    setDocumentViewMode("document");
+    setAiFailureToast(null);
+    setAiRequestModalOpen(false);
+    setSelectedAiCommandId("simple");
+    setDocumentRunFailureToast(null);
   }, [document]);
 
   useEffect(() => {
@@ -228,6 +239,22 @@ export function ProjectManagementPanel({
   }, [aiJob]);
 
   useEffect(() => {
+    if (!documentRunJob) {
+      return;
+    }
+
+    if (documentRunJob.status === "completed") {
+      setDocumentRunSummary(`${getAiCommandLabel(documentRunJob.commandId)} finished in ${documentRunJob.branch}.`);
+      return;
+    }
+
+    if (documentRunJob.status === "failed") {
+      setDocumentRunSummary(null);
+      setDocumentRunFailureToast(documentRunJob.error || documentRunJob.stderr || "Worktree AI request failed. Check the AI logs for details.");
+    }
+  }, [documentRunJob]);
+
+  useEffect(() => {
     if (!aiFailureToast) {
       return;
     }
@@ -235,6 +262,15 @@ export function ProjectManagementPanel({
     const timeout = window.setTimeout(() => setAiFailureToast(null), 5000);
     return () => window.clearTimeout(timeout);
   }, [aiFailureToast]);
+
+  useEffect(() => {
+    if (!documentRunFailureToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setDocumentRunFailureToast(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [documentRunFailureToast]);
 
   const availableAssignees = useMemo(
     () => Array.from(new Set(documents.map((entry) => entry.assignee).filter(Boolean))).sort((left, right) => left.localeCompare(right)),
@@ -427,6 +463,38 @@ export function ProjectManagementPanel({
     return true;
   }
 
+  async function handleRunDocumentWork() {
+    if (!document) {
+      setDocumentRunFailureToast("Select a document before starting work.");
+      return false;
+    }
+
+    if (!isAiCommandReady(aiCommands, "smart")) {
+      setDocumentRunFailureToast("Configure Smart AI with $WTM_AI_INPUT in settings first.");
+      return false;
+    }
+
+    if (documentRunInProgress) {
+      setDocumentRunFailureToast("A document worktree AI run is already in progress.");
+      return false;
+    }
+
+    setDocumentRunSummary(null);
+    setDocumentRunFailureToast(null);
+
+    const job = await onRunDocumentAi({
+      documentId: document.id,
+      commandId: "smart",
+    });
+    if (!job) {
+      setDocumentRunFailureToast("Smart AI request failed. Check the AI command output for details.");
+      return false;
+    }
+
+    setDocumentRunSummary(`Smart AI started in ${job.branch}. Live output is streaming in the work panel on the right.`);
+    return true;
+  }
+
   useEffect(() => {
     if (activeSubTab !== "ai-log") {
       return;
@@ -590,6 +658,18 @@ export function ProjectManagementPanel({
               </button>
             </div>
           ) : null}
+          {documentRunFailureToast ? (
+            <div className="pm-inline-toast mb-3 flex items-center justify-between gap-3 border px-3 py-2 text-sm">
+              <span>{documentRunFailureToast}</span>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-2 py-1 text-xs"
+                onClick={() => setDocumentRunFailureToast(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
           <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
             <div>
               <p className="matrix-kicker">Markdown document</p>
@@ -611,6 +691,28 @@ export function ProjectManagementPanel({
                   <MatrixTabButton active={documentViewMode === "edit"} label="Edit" onClick={() => setDocumentViewMode("edit")} />
                 </div>
               ) : null}
+              {documentViewMode === "document" ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${documentRunInProgress ? "pm-ai-button-running" : ""}`}
+                    onClick={() => void handleRunDocumentWork()}
+                    title={documentRunInProgress ? "Worktree AI is running" : "Start worktree AI"}
+                    disabled={!document || documentRunInProgress}
+                  >
+                    {documentRunInProgress ? "Start Worktree AI (running)" : "Start Worktree AI"}
+                  </button>
+                  {documentRunInProgress && activeDocumentRunTargetsSelectedDocument && documentRunJob?.branch ? (
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      onClick={() => void onCancelDocumentAiCommand(documentRunJob.branch)}
+                    >
+                      Cancel worktree AI
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {documentViewMode === "edit" ? (
                 <button
                   type="button"
@@ -621,17 +723,17 @@ export function ProjectManagementPanel({
                   {useMonacoEditor ? "Use WYSIWYG" : "Use Monaco"}
                 </button>
               ) : null}
-              {documentViewMode === "edit" ? (
-                <div className="flex flex-wrap gap-2">
+               {documentViewMode === "edit" ? (
+                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${aiRunning ? "pm-ai-button-running" : ""}`}
                     onClick={() => setAiRequestModalOpen(true)}
                     title={aiRunning ? "\u26a1 is running" : "Open AI request"}
-                    disabled={!document || aiRunning}
-                  >
-                    {aiRunning ? "⚡ Running..." : "⚡ AI"}
-                  </button>
+                     disabled={!document || aiRunning}
+                   >
+                     {aiRunning ? "⚡ Running..." : "⚡ AI"}
+                   </button>
                   {aiRunning ? (
                     <button
                       type="button"
@@ -666,8 +768,10 @@ export function ProjectManagementPanel({
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
               {!isAiCommandReady(aiCommands, "smart") ? <MatrixBadge tone="warning">Configure Smart AI in settings</MatrixBadge> : null}
               {!isAiCommandReady(aiCommands, "simple") ? <MatrixBadge tone="warning">Configure Simple AI in settings</MatrixBadge> : null}
-               {aiRunning ? <MatrixBadge tone="warning">Document editing locked while AI updates the saved document</MatrixBadge> : null}
-               {aiRunSummary ? <MatrixBadge tone="active">{aiRunSummary}</MatrixBadge> : null}
+              {aiRunning ? <MatrixBadge tone="warning">Document editing locked while AI updates the saved document</MatrixBadge> : null}
+              {activeDocumentRunTargetsSelectedDocument && documentRunInProgress ? <MatrixBadge tone="warning">Document worktree AI run in progress</MatrixBadge> : null}
+              {aiRunSummary ? <MatrixBadge tone="active">{aiRunSummary}</MatrixBadge> : null}
+              {documentRunSummary ? <MatrixBadge tone="active">{documentRunSummary}</MatrixBadge> : null}
             </div>
           ) : null}
 
@@ -774,46 +878,72 @@ export function ProjectManagementPanel({
                   dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }}
                 />
               </div>
-              <div className="border theme-border-subtle p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Dependencies</p>
-                    <p className="mt-1 text-sm theme-text-muted">Pick prerequisite documents without opening the graph.</p>
+              <div className="space-y-3">
+                {(activeDocumentRunTargetsSelectedDocument || documentRunSummary) ? (
+                  <div className="border theme-border-subtle p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Worktree AI</p>
+                        <p className="mt-1 text-sm theme-text-muted">
+                          {activeDocumentRunTargetsSelectedDocument && documentRunInProgress
+                            ? `Streaming stdout from ${documentRunJob?.branch ?? "worktree"}.`
+                            : documentRunSummary ?? "Start a worktree AI run for this document."}
+                        </p>
+                      </div>
+                      {activeDocumentRunTargetsSelectedDocument && documentRunInProgress && documentRunJob?.branch ? (
+                        <button
+                          type="button"
+                          className="matrix-button rounded-none px-2 py-1 text-xs"
+                          onClick={() => void onCancelDocumentAiCommand(documentRunJob.branch)}
+                        >
+                          Cancel
+                        </button>
+                      ) : null}
+                    </div>
+                    <pre className="mt-3 max-h-[20rem] overflow-auto bg-black/20 px-3 py-3 font-mono text-xs leading-6 theme-text-muted">{activeDocumentRunTargetsSelectedDocument && documentRunInProgress ? (documentRunJob?.stdout || "Waiting for stdout...") : (documentRunJob?.stdout || "No live output yet.")}</pre>
                   </div>
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-2 py-1 text-xs"
-                    onClick={() => onSubTabChange("dependency-tree")}
-                  >
-                    Open graph
-                  </button>
-                </div>
-                <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
-                  {dependencyOptions.length ? dependencyOptions.map((entry) => {
-                    const checked = dependencySelection.includes(entry.id);
-                    return (
-                      <label
-                        key={entry.id}
-                        className={`flex cursor-pointer items-start gap-3 border px-3 py-2 text-left ${checked ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
-                      >
-                        <input
+                ) : null}
+                <div className="border theme-border-subtle p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Dependencies</p>
+                      <p className="mt-1 text-sm theme-text-muted">Pick prerequisite documents without opening the graph.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-2 py-1 text-xs"
+                      onClick={() => onSubTabChange("dependency-tree")}
+                    >
+                      Open graph
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
+                    {dependencyOptions.length ? dependencyOptions.map((entry) => {
+                      const checked = dependencySelection.includes(entry.id);
+                      return (
+                        <label
+                          key={entry.id}
+                          className={`flex cursor-pointer items-start gap-3 border px-3 py-2 text-left ${checked ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+                        >
+                          <input
                             type="checkbox"
                             className="mt-1"
                             checked={checked}
                             disabled={saving || aiRunning}
                             onChange={() => void handleDependencySelectionToggle(entry.id)}
                           />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-semibold theme-text-strong">{entry.title}</span>
-                          <span className="mt-1 block text-xs theme-text-muted">#{entry.number} - {entry.status}</span>
-                        </span>
-                      </label>
-                    );
-                  }) : (
-                    <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
-                      No other documents are available.
-                    </div>
-                  )}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold theme-text-strong">{entry.title}</span>
+                            <span className="mt-1 block text-xs theme-text-muted">#{entry.number} - {entry.status}</span>
+                          </span>
+                        </label>
+                      );
+                    }) : (
+                      <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                        No other documents are available.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -948,6 +1078,7 @@ export function ProjectManagementPanel({
           </form>
         </MatrixModal>
       ) : null}
+
     </div>
   );
 }

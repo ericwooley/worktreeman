@@ -300,6 +300,7 @@ interface WorktreeDetailProps {
   projectManagementRunningAiJobs: AiCommandJob[];
   projectManagementAiCommands: AiCommandConfig | null;
   projectManagementAiJob: AiCommandJob | null;
+  projectManagementDocumentAiJob: AiCommandJob | null;
   onProjectManagementSubTabChange: (tab: ProjectManagementSubTab) => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
@@ -323,6 +324,8 @@ interface WorktreeDetailProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onRunProjectManagementAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
+  onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
+  onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;
 }
 
@@ -379,6 +382,7 @@ export function WorktreeDetail({
   projectManagementRunningAiJobs,
   projectManagementAiCommands,
   projectManagementAiJob,
+  projectManagementDocumentAiJob,
   onProjectManagementSubTabChange,
   onLoadProjectManagementDocuments,
   onLoadProjectManagementDocument,
@@ -388,6 +392,8 @@ export function WorktreeDetail({
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
   onRunProjectManagementAiCommand,
+  onRunProjectManagementDocumentAi,
+  onCancelProjectManagementDocumentAiCommand,
   onCancelProjectManagementAiCommand,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
@@ -1027,8 +1033,9 @@ export function WorktreeDetail({
               aiLogDetail={projectManagementAiLogDetail}
               aiLogsLoading={projectManagementAiLogsLoading}
               runningAiJobs={projectManagementRunningAiJobs}
-                  aiCommands={projectManagementAiCommands}
-                  aiJob={projectManagementAiJob}
+              aiCommands={projectManagementAiCommands}
+              aiJob={projectManagementAiJob}
+              documentRunJob={projectManagementDocumentAiJob}
               selectedWorktreeBranch={worktree?.branch ?? null}
               onSubTabChange={onProjectManagementSubTabChange}
               onRefresh={onLoadProjectManagementDocuments}
@@ -1039,6 +1046,8 @@ export function WorktreeDetail({
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
               onRunAiCommand={onRunProjectManagementAiCommand}
+              onRunDocumentAi={onRunProjectManagementDocumentAi}
+              onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
               onCancelAiCommand={onCancelProjectManagementAiCommand}
             />
           </Suspense>

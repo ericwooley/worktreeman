@@ -22,6 +22,7 @@ import type {
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
   RunAiCommandRequest,
+  RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
   ShutdownStatus,
   TmuxClientInfo,
@@ -94,6 +95,16 @@ export function saveAiCommandSettings(payload: UpdateAiCommandSettingsRequest): 
 
 export function runAiCommand(branch: string, payload: RunAiCommandRequest): Promise<RunAiCommandResponse> {
   return request<RunAiCommandResponse>(`/api/worktrees/${encodeURIComponent(branch)}/ai-command/run`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function runProjectManagementDocumentAi(
+  documentId: string,
+  payload: RunProjectManagementDocumentAiRequest,
+): Promise<RunAiCommandResponse> {
+  return request<RunAiCommandResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/ai-command/run`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

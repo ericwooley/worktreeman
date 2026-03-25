@@ -117,7 +117,27 @@ export async function createWorktree(
   const targetPath = path.join(baseDir, safeBranch);
 
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
-  await runCommand("git", ["worktree", "add", targetPath, "-b", request.branch], { cwd: repoRoot });
+  const branchRef = `refs/heads/${request.branch}`;
+  const existingTargetPath = await gitRefExists(repoRoot, branchRef)
+    ? await ensureBranchWorktree(repoRoot, request.branch, { createIfMissing: false })
+    : null;
+
+  if (existingTargetPath) {
+    if (path.resolve(existingTargetPath) !== path.resolve(targetPath)) {
+      await fs.rename(existingTargetPath, targetPath);
+    }
+  } else {
+    try {
+      await runCommand("git", ["worktree", "add", targetPath, "-b", request.branch], { cwd: repoRoot });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("invalid reference: HEAD")) {
+        throw error;
+      }
+
+      await runCommand("git", ["worktree", "add", targetPath, "--orphan", "-b", request.branch], { cwd: repoRoot });
+    }
+  }
 
   const worktrees = await listWorktrees(repoRoot);
   const created = worktrees.find((item) => path.resolve(item.worktreePath) === path.resolve(targetPath));
@@ -127,6 +147,15 @@ export async function createWorktree(
   }
 
   return created;
+}
+
+async function gitRefExists(repoRoot: string, ref: string): Promise<boolean> {
+  try {
+    await runCommand("git", ["show-ref", "--verify", "--quiet", ref], { cwd: repoRoot });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function removeWorktree(repoRoot: string, worktreePath: string): Promise<void> {

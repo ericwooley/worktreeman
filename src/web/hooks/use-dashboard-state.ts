@@ -19,6 +19,7 @@ import type {
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
   RunAiCommandRequest,
+  RunProjectManagementDocumentAiRequest,
   ShutdownStatus,
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
@@ -45,6 +46,7 @@ import {
   mergeGitBranch as mergeGitBranchRequest,
   restartBackgroundCommand as restartBackgroundProcess,
   runAiCommand as runAiCommandRequest,
+  runProjectManagementDocumentAi as runProjectManagementDocumentAiRequest,
   saveAiCommandSettings as persistAiCommandSettings,
   saveConfigDocument as persistConfigDocument,
   startBackgroundCommand as startBackgroundProcess,
@@ -103,6 +105,8 @@ export function useDashboardState() {
   const [aiCommandSettingsLoading, setAiCommandSettingsLoading] = useState(false);
   const [aiCommandJob, setAiCommandJob] = useState<AiCommandJob | null>(null);
   const [aiCommandRunningBranch, setAiCommandRunningBranch] = useState<string | null>(null);
+  const [projectManagementDocumentAiJob, setProjectManagementDocumentAiJob] = useState<AiCommandJob | null>(null);
+  const [projectManagementDocumentAiRunningBranch, setProjectManagementDocumentAiRunningBranch] = useState<string | null>(null);
   const [aiCommandLogs, setAiCommandLogs] = useState<AiCommandLogSummary[]>([]);
   const [aiCommandLogDetail, setAiCommandLogDetail] = useState<AiCommandLogEntry | null>(null);
   const [aiCommandLogsLoading, setAiCommandLogsLoading] = useState(false);
@@ -113,8 +117,10 @@ export function useDashboardState() {
   const [projectManagementLoading, setProjectManagementLoading] = useState(false);
   const [projectManagementSaving, setProjectManagementSaving] = useState(false);
   const aiCommandSubscriptionRef = useRef<(() => void) | null>(null);
+  const projectManagementDocumentAiSubscriptionRef = useRef<(() => void) | null>(null);
   const aiCommandLogSubscriptionRef = useRef<(() => void) | null>(null);
   const trackedAiCommandBranchRef = useRef<string | null>(null);
+  const trackedProjectManagementDocumentAiBranchRef = useRef<string | null>(null);
   const trackedAiCommandLogFileRef = useRef<string | null>(null);
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
@@ -297,12 +303,41 @@ export function useDashboardState() {
     });
   }, [upsertRunningAiJob]);
 
+  const trackProjectManagementDocumentAiJob = useCallback((branch: string | null) => {
+    if (trackedProjectManagementDocumentAiBranchRef.current === branch) {
+      return;
+    }
+
+    projectManagementDocumentAiSubscriptionRef.current?.();
+    projectManagementDocumentAiSubscriptionRef.current = null;
+    trackedProjectManagementDocumentAiBranchRef.current = branch;
+    setProjectManagementDocumentAiJob(null);
+    setProjectManagementDocumentAiRunningBranch(null);
+
+    if (!branch) {
+      return;
+    }
+
+    projectManagementDocumentAiSubscriptionRef.current = subscribeToAiCommandJob(branch, (event) => {
+      setProjectManagementDocumentAiJob(event.job);
+      setProjectManagementDocumentAiRunningBranch(event.job?.status === "running" ? branch : null);
+      upsertRunningAiJob(event.job);
+
+      if (event.job?.status === "failed") {
+        setError(event.job.error || event.job.stderr || `AI command failed for ${branch}.`);
+      }
+    });
+  }, [upsertRunningAiJob]);
+
   useEffect(() => {
     return () => {
       aiCommandSubscriptionRef.current?.();
+      projectManagementDocumentAiSubscriptionRef.current?.();
       clearTrackedAiCommandLogSubscription();
       aiCommandSubscriptionRef.current = null;
+      projectManagementDocumentAiSubscriptionRef.current = null;
       trackedAiCommandBranchRef.current = null;
+      trackedProjectManagementDocumentAiBranchRef.current = null;
     };
   }, [clearTrackedAiCommandLogSubscription]);
 
@@ -699,6 +734,38 @@ export function useDashboardState() {
           return null;
         }
       },
+      async runProjectManagementDocumentAi(documentId: string, payload: RunProjectManagementDocumentAiRequest) {
+        try {
+          trackProjectManagementDocumentAiJob(null);
+          const result = await runProjectManagementDocumentAiRequest(documentId, payload);
+          setProjectManagementDocumentAiJob(result.job);
+          setProjectManagementDocumentAiRunningBranch(result.job.status === "running" ? result.job.branch : null);
+          upsertRunningAiJob(result.job);
+          trackProjectManagementDocumentAiJob(result.job.branch);
+          void loadProjectManagementDocumentsState({ silent: true });
+          setError(null);
+          return result.job;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to run project management AI command.");
+          return null;
+        }
+      },
+      async cancelProjectManagementDocumentAi(branch: string) {
+        try {
+          const result = await cancelAiCommandRequest(branch);
+          setProjectManagementDocumentAiJob(result.job);
+          setProjectManagementDocumentAiRunningBranch(result.job.status === "running" ? branch : null);
+          upsertRunningAiJob(result.job);
+          const payload = await fetchAiCommandLogs();
+          setAiCommandLogs(payload.logs);
+          setRunningAiCommandJobs(payload.runningJobs);
+          setError(null);
+          return result.job;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to cancel project management AI command.");
+          return null;
+        }
+      },
       async cancelAiCommand(branch: string) {
         try {
           const result = await cancelAiCommandRequest(branch);
@@ -786,13 +853,15 @@ export function useDashboardState() {
     gitComparisonLoading,
     configDocument,
     configDocumentLoading,
-    aiCommandSettings,
-    aiCommandSettingsLoading,
-    aiCommandJob,
-    aiCommandRunningBranch,
-    aiCommandLogs,
-    aiCommandLogDetail,
-    aiCommandLogsLoading,
+      aiCommandSettings,
+      aiCommandSettingsLoading,
+      aiCommandJob,
+      aiCommandRunningBranch,
+      projectManagementDocumentAiJob,
+      projectManagementDocumentAiRunningBranch,
+      aiCommandLogs,
+      aiCommandLogDetail,
+      aiCommandLogsLoading,
     runningAiCommandJobs,
     projectManagement,
     projectManagementDocument,

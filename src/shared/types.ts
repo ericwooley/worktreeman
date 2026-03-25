@@ -310,6 +310,11 @@ export interface RunAiCommandRequest {
   commandId?: AiCommandId;
 }
 
+export interface RunProjectManagementDocumentAiRequest {
+  input?: string;
+  commandId?: AiCommandId;
+}
+
 export type AiCommandJobStatus = "running" | "completed" | "failed";
 
 export interface AiCommandJob {
