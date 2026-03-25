@@ -15,7 +15,7 @@ import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { useTheme } from "./theme-provider";
 import { WorktreeDetail } from "./worktree-detail";
-import type { ProjectManagementSubTab } from "./project-management-panel";
+import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 
 function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {
   return value === "document"
@@ -25,6 +25,10 @@ function parseProjectManagementSubTab(value: string | null): ProjectManagementSu
     || value === "ai-log"
     ? value
     : "board";
+}
+
+function parseProjectManagementDocumentViewMode(value: string | null): ProjectManagementDocumentViewMode {
+  return value === "edit" ? "edit" : "document";
 }
 
 function readDashboardUrlState() {
@@ -43,6 +47,7 @@ function readDashboardUrlState() {
     isTerminalVisible: params.get("terminal") === "open",
     projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),
     projectManagementSelectedDocumentId: params.get("pmDoc"),
+    projectManagementDocumentViewMode: parseProjectManagementDocumentViewMode(params.get("pmView")),
   } as const;
 }
 
@@ -188,6 +193,9 @@ export function Dashboard() {
     initialUrlState.projectManagementSubTab,
   );
   const [projectManagementSelectedDocumentId, setProjectManagementSelectedDocumentId] = useState<string | null>(initialUrlState.projectManagementSelectedDocumentId);
+  const [projectManagementDocumentViewMode, setProjectManagementDocumentViewMode] = useState<ProjectManagementDocumentViewMode>(
+    initialUrlState.projectManagementDocumentViewMode,
+  );
   const [gitView, setGitView] = useState<"graph" | "diff">(initialUrlState.gitView);
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialUrlState.isTerminalVisible);
   const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
@@ -422,9 +430,15 @@ export function Dashboard() {
       } else {
         params.delete("pmDoc");
       }
+      if (projectManagementSubTab === "document" && projectManagementSelectedDocumentId) {
+        params.set("pmView", projectManagementDocumentViewMode);
+      } else {
+        params.delete("pmView");
+      }
     } else {
       params.delete("pmTab");
       params.delete("pmDoc");
+      params.delete("pmView");
     }
 
     if (isTerminalVisible) {
@@ -448,7 +462,15 @@ export function Dashboard() {
     }
 
     window.history.pushState(null, "", nextUrl);
-  }, [activeTab, gitView, isTerminalVisible, projectManagementSelectedDocumentId, projectManagementSubTab, selectedBranch]);
+  }, [
+    activeTab,
+    gitView,
+    isTerminalVisible,
+    projectManagementDocumentViewMode,
+    projectManagementSelectedDocumentId,
+    projectManagementSubTab,
+    selectedBranch,
+  ]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -459,6 +481,7 @@ export function Dashboard() {
       setIsTerminalVisible(nextUrlState.isTerminalVisible);
       setProjectManagementSubTab(nextUrlState.projectManagementSubTab);
       setProjectManagementSelectedDocumentId(nextUrlState.projectManagementSelectedDocumentId);
+      setProjectManagementDocumentViewMode(nextUrlState.projectManagementDocumentViewMode);
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -573,8 +596,25 @@ export function Dashboard() {
     }
   };
 
+  const navigateToProjectManagementSubTab = useCallback((
+    tab: ProjectManagementSubTab,
+    options?: { documentId?: string | null; viewMode?: ProjectManagementDocumentViewMode },
+  ) => {
+    navigateToTab("project-management");
+    setProjectManagementSubTab(tab);
+    if (options && "documentId" in options) {
+      setProjectManagementSelectedDocumentId(options.documentId ?? null);
+    }
+    if (tab === "document") {
+      setProjectManagementDocumentViewMode(options?.viewMode ?? "document");
+    }
+  }, []);
+
   const handleProjectManagementSubTabChange = useCallback((tab: ProjectManagementSubTab) => {
     setProjectManagementSubTab(tab);
+    if (tab !== "document") {
+      setProjectManagementDocumentViewMode("document");
+    }
   }, []);
 
   const configuredAiCommands = normalizeAiCommands(aiCommandSettings?.aiCommands);
@@ -627,7 +667,7 @@ export function Dashboard() {
       },
       {
         id: "nav-project-management",
-        code: "npm",
+        code: "np",
         title: "Open Project management tab",
         subtitle: "Jump to the project management area.",
         group: "Navigation",
@@ -635,6 +675,96 @@ export function Dashboard() {
         badgeLabel: activeTab === "project-management" ? "Active" : undefined,
         badgeTone: "active",
         action: () => navigateToTab("project-management"),
+      },
+      {
+        id: "nav-project-management-document",
+        code: "npd",
+        title: "Open project document view",
+        subtitle: projectManagementSelectedDocumentId
+          ? "Jump to the selected project document."
+          : "Jump to the project document workspace.",
+        group: "Navigation",
+        keywords: ["project", "management", "document", "view", "markdown"],
+        badgeLabel: activeTab === "project-management"
+          && projectManagementSubTab === "document"
+          && projectManagementDocumentViewMode === "document"
+          ? "Active"
+          : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("document", { viewMode: "document" }),
+      },
+      {
+        id: "nav-project-management-edit",
+        code: "npe",
+        title: "Edit selected project document",
+        subtitle: projectManagementSelectedDocumentId
+          ? `Open the document editor for ${projectManagementDocument?.title ?? "the selected document"}.`
+          : "Select a project document first.",
+        group: "Navigation",
+        keywords: ["project", "management", "document", "edit", "editor"],
+        disabled: !projectManagementSelectedDocumentId,
+        badgeLabel: activeTab === "project-management"
+          && projectManagementSubTab === "document"
+          && projectManagementDocumentViewMode === "edit"
+          ? "Active"
+          : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("document", { viewMode: "edit" }),
+      },
+      {
+        id: "nav-project-management-board",
+        code: "npb",
+        title: "Open project board",
+        subtitle: "Jump to the swimlane board.",
+        group: "Navigation",
+        keywords: ["project", "management", "board", "lane", "status"],
+        badgeLabel: activeTab === "project-management" && projectManagementSubTab === "board" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("board"),
+      },
+      {
+        id: "nav-project-management-tree",
+        code: "npt",
+        title: "Open dependency tree",
+        subtitle: "Jump to the project dependency graph.",
+        group: "Navigation",
+        keywords: ["project", "management", "dependency", "tree", "graph"],
+        badgeLabel: activeTab === "project-management" && projectManagementSubTab === "dependency-tree" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("dependency-tree"),
+      },
+      {
+        id: "nav-project-management-history",
+        code: "nph",
+        title: "Open document history",
+        subtitle: "Jump to the project document timeline.",
+        group: "Navigation",
+        keywords: ["project", "management", "history", "timeline", "document"],
+        badgeLabel: activeTab === "project-management" && projectManagementSubTab === "history" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("history"),
+      },
+      {
+        id: "nav-project-management-ai-log",
+        code: "npa",
+        title: "Open AI logs",
+        subtitle: "Jump to the project AI activity and saved logs.",
+        group: "Navigation",
+        keywords: ["project", "management", "ai", "logs", "jobs"],
+        badgeLabel: activeTab === "project-management" && projectManagementSubTab === "ai-log" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("ai-log"),
+      },
+      {
+        id: "nav-project-management-create",
+        code: "npc",
+        title: "Create project document",
+        subtitle: "Jump to the shared create-document form.",
+        group: "Navigation",
+        keywords: ["project", "management", "create", "new", "document"],
+        badgeLabel: activeTab === "project-management" && projectManagementSubTab === "create" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("create"),
       },
       {
         id: "terminal-toggle",
@@ -755,7 +885,25 @@ export function Dashboard() {
     }
 
     return items.sort(comparePaletteItems);
-  }, [activeTab, busyBranch, commandPaletteShortcut, isTerminalVisible, openAiSettings, openConfigEditor, selected, start, state?.worktrees, stop, syncEnv, theme]);
+  }, [
+    activeTab,
+    busyBranch,
+    commandPaletteShortcut,
+    isTerminalVisible,
+    navigateToProjectManagementSubTab,
+    openAiSettings,
+    openConfigEditor,
+    projectManagementDocument?.title,
+    projectManagementDocumentViewMode,
+    projectManagementSelectedDocumentId,
+    projectManagementSubTab,
+    selected,
+    start,
+    state?.worktrees,
+    stop,
+    syncEnv,
+    theme,
+  ]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     return (state?.worktrees ?? []).map((entry, index) => ({
@@ -1010,6 +1158,7 @@ export function Dashboard() {
             projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
             projectManagementActiveSubTab={projectManagementSubTab}
             projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
+            projectManagementDocumentViewMode={projectManagementDocumentViewMode}
             projectManagementDocument={projectManagementDocument}
             projectManagementHistory={projectManagementHistory}
             projectManagementLoading={projectManagementLoading}
@@ -1019,6 +1168,7 @@ export function Dashboard() {
             projectManagementAiLogsLoading={aiCommandLogsLoading}
             projectManagementRunningAiJobs={runningAiCommandJobs}
             onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
+            onProjectManagementDocumentViewModeChange={setProjectManagementDocumentViewMode}
             onLoadProjectManagementDocuments={loadProjectManagementDocuments}
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
             onLoadProjectManagementAiLogs={loadAiCommandLogs}

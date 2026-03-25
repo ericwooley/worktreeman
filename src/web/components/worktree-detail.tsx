@@ -18,7 +18,7 @@ import type {
   ProjectManagementHistoryEntry,
   WorktreeRecord,
 } from "@shared/types";
-import type { ProjectManagementSubTab } from "./project-management-panel";
+import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import { getTmuxSessionName } from "../lib/tmux";
 import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
@@ -290,6 +290,7 @@ interface WorktreeDetailProps {
   projectManagementAvailableStatuses: string[];
   projectManagementActiveSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
+  projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
   projectManagementDocument: ProjectManagementDocument | null;
   projectManagementHistory: ProjectManagementHistoryEntry[];
   projectManagementLoading: boolean;
@@ -301,6 +302,7 @@ interface WorktreeDetailProps {
   projectManagementAiCommands: AiCommandConfig | null;
   projectManagementAiJob: AiCommandJob | null;
   onProjectManagementSubTabChange: (tab: ProjectManagementSubTab) => void;
+  onProjectManagementDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onLoadProjectManagementAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
@@ -369,6 +371,7 @@ export function WorktreeDetail({
   projectManagementAvailableStatuses,
   projectManagementActiveSubTab,
   projectManagementSelectedDocumentId,
+  projectManagementDocumentViewMode,
   projectManagementDocument,
   projectManagementHistory,
   projectManagementLoading,
@@ -380,6 +383,7 @@ export function WorktreeDetail({
   projectManagementAiCommands,
   projectManagementAiJob,
   onProjectManagementSubTabChange,
+  onProjectManagementDocumentViewModeChange,
   onLoadProjectManagementDocuments,
   onLoadProjectManagementDocument,
   onLoadProjectManagementAiLogs,
@@ -1019,6 +1023,7 @@ export function WorktreeDetail({
               availableStatuses={projectManagementAvailableStatuses}
               activeSubTab={projectManagementActiveSubTab}
               selectedDocumentId={projectManagementSelectedDocumentId}
+              documentViewMode={projectManagementDocumentViewMode}
               document={projectManagementDocument}
               history={projectManagementHistory}
               loading={projectManagementLoading}
@@ -1031,6 +1036,7 @@ export function WorktreeDetail({
                   aiJob={projectManagementAiJob}
               selectedWorktreeBranch={worktree?.branch ?? null}
               onSubTabChange={onProjectManagementSubTabChange}
+              onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
               onRefresh={onLoadProjectManagementDocuments}
               onSelectDocument={onLoadProjectManagementDocument}
               onLoadAiLogs={onLoadProjectManagementAiLogs}
