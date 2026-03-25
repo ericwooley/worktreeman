@@ -139,7 +139,7 @@ export const BASE16_THEMES = Object.entries(rawThemeModules)
   .map(([path, raw]) => parseTheme(path, raw))
   .sort((left, right) => left.name.localeCompare(right.name));
 
-export const DEFAULT_THEME_ID = "matrix";
+export const DEFAULT_THEME_ID = "cyberpunk";
 
 export function getThemeById(themeId: string | null | undefined): Base16Theme | null {
   if (!themeId) {

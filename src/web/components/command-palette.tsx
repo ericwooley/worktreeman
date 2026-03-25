@@ -163,6 +163,7 @@ export function CommandPalette({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeChangeSourceRef = useRef<CommandPaletteActiveItemChangeSource>("initial");
+  const hoverSyncEnabledRef = useRef(true);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [recordingShortcutId, setRecordingShortcutId] = useState<string | null>(null);
@@ -226,6 +227,7 @@ export function CommandPalette({
       setQuery("");
       setActiveIndex(0);
       setRecordingShortcutId(null);
+      hoverSyncEnabledRef.current = true;
       return;
     }
 
@@ -280,6 +282,10 @@ export function CommandPalette({
       return;
     }
 
+    const handleMouseMove = () => {
+      hoverSyncEnabledRef.current = true;
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (recordingShortcutId) {
         if (event.key === "Escape") {
@@ -320,6 +326,7 @@ export function CommandPalette({
       if (event.key === "ArrowDown") {
         event.preventDefault();
         activeChangeSourceRef.current = "keyboard";
+        hoverSyncEnabledRef.current = false;
         setActiveIndex((current) => (current + 1) % filteredCommands.length);
         return;
       }
@@ -327,6 +334,7 @@ export function CommandPalette({
       if (event.key === "ArrowUp") {
         event.preventDefault();
         activeChangeSourceRef.current = "keyboard";
+        hoverSyncEnabledRef.current = false;
         setActiveIndex((current) => (current - 1 + filteredCommands.length) % filteredCommands.length);
         return;
       }
@@ -361,7 +369,11 @@ export function CommandPalette({
     };
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("mousemove", handleMouseMove, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("mousemove", handleMouseMove, true);
+    };
   }, [activeIndex, filteredCommands, isCodeMode, onClose, open, recordingShortcutId, shortcut, shortcutSettings]);
 
   useEffect(() => {
@@ -428,6 +440,9 @@ export function CommandPalette({
                    : "theme-border-faint bg-transparent theme-row-idle"} ${command.disabled ? "opacity-60" : ""}`}
                 disabled={command.disabled}
                 onMouseEnter={() => {
+                  if (!hoverSyncEnabledRef.current) {
+                    return;
+                  }
                   activeChangeSourceRef.current = "mouse";
                   setActiveIndex(index);
                 }}
