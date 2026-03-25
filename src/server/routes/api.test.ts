@@ -637,6 +637,68 @@ test("git compare merge merges a feature branch into main", { concurrency: false
   }
 });
 
+test("git compare merge can merge the selected base branch into a worktree branch", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-merge-target" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(mainPath, "base-only.txt"), "from main\n", "utf8");
+    await runCommand("git", ["add", "base-only.txt"], { cwd: mainPath });
+    await runCommand("git", ["commit", "-m", "add base branch file"], {
+      cwd: mainPath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const response = await server.fetch(`/api/git/compare/main/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "feature-merge-target" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      baseBranch: string;
+      compareBranch: string;
+      mergeIntoCompareStatus: { canMerge: boolean; hasConflicts: boolean };
+    };
+    assert.equal(payload.baseBranch, "feature-merge-target");
+    assert.equal(payload.compareBranch, "main");
+    assert.equal(payload.mergeIntoCompareStatus.canMerge, true);
+    assert.equal(payload.mergeIntoCompareStatus.hasConflicts, false);
+
+    const mergedFile = await fs.readFile(path.join(feature.worktreePath, "base-only.txt"), "utf8");
+    assert.equal(mergedFile, "from main\n");
+    const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: feature.worktreePath });
+    assert.match(stdout.trim(), /Merge branch 'main'|add base branch file/);
+
+    const comparisonResponse = await server.fetch(`/api/git/compare?compareBranch=feature-merge-target&baseBranch=main`);
+    assert.equal(comparisonResponse.status, 200);
+    const comparisonPayload = await comparisonResponse.json() as {
+      mergeIntoCompareStatus: { canMerge: boolean; hasConflicts: boolean };
+      behind: number;
+    };
+    assert.equal(comparisonPayload.behind, 0);
+    assert.equal(comparisonPayload.mergeIntoCompareStatus.canMerge, true);
+    assert.equal(comparisonPayload.mergeIntoCompareStatus.hasConflicts, false);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("git compare reports mergeable branches even when the feature branch is behind", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
@@ -682,12 +744,16 @@ test("git compare reports mergeable branches even when the feature branch is beh
       ahead: number;
       behind: number;
       mergeStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null };
+      mergeIntoCompareStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null };
     };
     assert.equal(payload.ahead, 1);
     assert.equal(payload.behind, 1);
     assert.equal(payload.mergeStatus.canMerge, true);
     assert.equal(payload.mergeStatus.hasConflicts, false);
     assert.equal(payload.mergeStatus.reason, null);
+    assert.equal(payload.mergeIntoCompareStatus.canMerge, true);
+    assert.equal(payload.mergeIntoCompareStatus.hasConflicts, false);
+    assert.equal(payload.mergeIntoCompareStatus.reason, null);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -737,6 +803,7 @@ test("git compare reports why merge is disabled when branches conflict", { concu
     assert.equal(compareResponse.status, 200);
     const comparePayload = await compareResponse.json() as {
       mergeStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null; conflicts: Array<{ path: string; preview: string | null }> };
+      mergeIntoCompareStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null; conflicts: Array<{ path: string; preview: string | null }> };
     };
     assert.equal(comparePayload.mergeStatus.canMerge, false);
     assert.equal(comparePayload.mergeStatus.hasConflicts, true);
@@ -744,6 +811,11 @@ test("git compare reports why merge is disabled when branches conflict", { concu
     assert.equal(comparePayload.mergeStatus.conflicts.length, 1);
     assert.equal(comparePayload.mergeStatus.conflicts[0]?.path, "shared.txt");
     assert.match(comparePayload.mergeStatus.conflicts[0]?.preview ?? "", /<<<<<<< main/);
+    assert.equal(comparePayload.mergeIntoCompareStatus.canMerge, false);
+    assert.equal(comparePayload.mergeIntoCompareStatus.hasConflicts, true);
+    assert.match(comparePayload.mergeIntoCompareStatus.reason ?? "", /resolve conflicts/i);
+    assert.equal(comparePayload.mergeIntoCompareStatus.conflicts.length, 1);
+    assert.equal(comparePayload.mergeIntoCompareStatus.conflicts[0]?.path, "shared.txt");
 
     const mergeResponse = await server.fetch(`/api/git/compare/feature-conflict-merge/merge`, {
       method: "POST",
@@ -817,11 +889,11 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
 
     assert.equal(response.status, 200);
     const payload = await response.json() as {
-      mergeStatus: { hasConflicts: boolean; conflicts: Array<unknown> };
+      mergeIntoCompareStatus: { hasConflicts: boolean; conflicts: Array<unknown> };
       workingTreeSummary: { dirty: boolean };
     };
-    assert.equal(payload.mergeStatus.hasConflicts, false);
-    assert.equal(payload.mergeStatus.conflicts.length, 0);
+    assert.equal(payload.mergeIntoCompareStatus.hasConflicts, false);
+    assert.equal(payload.mergeIntoCompareStatus.conflicts.length, 0);
     assert.equal(payload.workingTreeSummary.dirty, true);
 
     const resolved = await fs.readFile(path.join(feature.worktreePath, "shared.txt"), "utf8");

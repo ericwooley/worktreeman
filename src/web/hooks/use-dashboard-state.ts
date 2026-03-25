@@ -562,6 +562,22 @@ export function useDashboardState() {
           setGitComparisonLoading(false);
         }
       },
+      async mergeBaseBranchIntoWorktree(branch: string, baseBranch: string) {
+        setGitComparisonLoading(true);
+        try {
+          await mergeGitBranchRequest(baseBranch, { baseBranch: branch });
+          const comparison = await fetchGitComparison(branch, baseBranch);
+          setGitComparison((current) => areGitComparisonsEqual(current, comparison) ? current : comparison);
+          await refresh({ silent: true });
+          setError(null);
+          return comparison;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to merge base branch into worktree.");
+          return null;
+        } finally {
+          setGitComparisonLoading(false);
+        }
+      },
       async resolveGitMergeConflicts(branch: string, baseBranch?: string, commandId: AiCommandId = "smart") {
         setGitComparisonLoading(true);
         try {

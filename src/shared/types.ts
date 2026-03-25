@@ -174,6 +174,7 @@ export interface GitComparisonResponse {
   effectiveDiff: string;
   workingTreeSummary: GitWorkingTreeSummary;
   mergeStatus: GitMergeStatus;
+  mergeIntoCompareStatus: GitMergeStatus;
 }
 
 export interface MergeGitBranchRequest {

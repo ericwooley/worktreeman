@@ -144,7 +144,7 @@ function buildDiffContents(hunks: string[]) {
 
 function getMergeActionState(worktreeBranch: string | undefined, gitComparison: GitComparisonResponse | null) {
   if (!worktreeBranch) {
-    return { canMerge: false, reason: "Open a worktree branch to merge changes." };
+    return { canMerge: false, reason: "Open a worktree branch to merge the selected base branch into it." };
   }
 
   if (!gitComparison) {
@@ -155,14 +155,16 @@ function getMergeActionState(worktreeBranch: string | undefined, gitComparison: 
     return { canMerge: false, reason: "Select the active worktree branch as the comparison branch." };
   }
 
+  const mergeIntoWorktreeStatus = gitComparison.mergeIntoCompareStatus ?? gitComparison.mergeStatus;
+
   if (gitComparison.workingTreeSummary.dirty) {
     return { canMerge: false, reason: "Commit or stash local changes before merging." };
   }
 
-  if (!gitComparison.mergeStatus.canMerge) {
+  if (!mergeIntoWorktreeStatus.canMerge) {
     return {
       canMerge: false,
-      reason: gitComparison.mergeStatus.reason ?? "Merge is not available for the current comparison.",
+      reason: mergeIntoWorktreeStatus.reason ?? "Merge is not available for the current comparison.",
     };
   }
 
@@ -315,7 +317,7 @@ interface WorktreeDetailProps {
   onStopBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
-  onMergeGitBranch: (compareBranch: string, baseBranch?: string) => Promise<GitComparisonResponse | null>;
+  onMergeGitBranch: (branch: string, baseBranch: string) => Promise<GitComparisonResponse | null>;
   onResolveGitMergeConflicts: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<GitComparisonResponse | null>;
   onGenerateGitCommitMessage: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<{ message: string } | null>;
   onCommitGitChanges: (branch: string, payload?: CommitChangesPayload) => Promise<CommitGitChangesResponse | null>;
@@ -570,10 +572,11 @@ export function WorktreeDetail({
     () => getMergeActionState(worktree?.branch, gitComparison),
     [gitComparison, worktree?.branch],
   );
-  const canMergeToBaseBranch = mergeActionState.canMerge;
+  const mergeIntoWorktreeStatus = gitComparison?.mergeIntoCompareStatus ?? gitComparison?.mergeStatus ?? null;
+  const canMergeBaseIntoWorktree = mergeActionState.canMerge;
   const mergeButtonDisabledReason = gitComparisonLoading
     ? "Git comparison is updating."
-    : !canMergeToBaseBranch
+    : !canMergeBaseIntoWorktree
       ? mergeActionState.reason
       : null;
   const canCommitDiffChanges = Boolean(
@@ -1121,7 +1124,7 @@ export function WorktreeDetail({
                   </p>
                 </div>
 
-                <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto] xl:min-w-[42rem]">
+                <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto] xl:min-w-[42rem] xl:grid-cols-[minmax(16rem,1fr)_auto_auto_auto_auto]">
                   <MatrixDropdown
                     label="Base branch"
                     value={selectedGitBaseBranch}
@@ -1149,26 +1152,27 @@ export function WorktreeDetail({
                     <button
                       type="button"
                       className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={!canMergeToBaseBranch || gitComparisonLoading || !worktree?.branch}
-                      title={mergeButtonDisabledReason ?? undefined}
+                      disabled={!canMergeBaseIntoWorktree || gitComparisonLoading || !worktree?.branch || !gitComparison?.baseBranch}
+                      title={mergeButtonDisabledReason ?? `Merge ${gitComparison?.baseBranch ?? "base"} into ${worktree?.branch ?? "worktree"}`}
                       aria-label={mergeButtonDisabledReason
                         ? `Merge disabled: ${mergeButtonDisabledReason}`
-                        : undefined}
+                        : `Merge ${gitComparison?.baseBranch ?? "base"} into ${worktree?.branch ?? "worktree"}`
+                      }
                       onClick={() => {
-                        if (!worktree?.branch || !gitComparison) {
+                        if (!worktree?.branch || !gitComparison?.baseBranch) {
                           return;
                         }
                         void onMergeGitBranch(worktree.branch, gitComparison.baseBranch);
                       }}
                     >
-                      Merge to {gitComparison?.baseBranch ?? "main"}
+                      Merge base into worktree
                     </button>
                     <button
                       type="button"
                       className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={!gitComparison?.mergeStatus.hasConflicts || gitComparisonLoading || mergeConflictAiRunning || !worktree?.branch}
-                      title={gitComparison?.mergeStatus.hasConflicts
-                        ? "Ask Smart AI to resolve the current merge conflict markers."
+                      disabled={!mergeIntoWorktreeStatus?.hasConflicts || gitComparisonLoading || mergeConflictAiRunning || !worktree?.branch}
+                      title={mergeIntoWorktreeStatus?.hasConflicts
+                        ? "Ask Smart AI to resolve the current merge conflict markers for this worktree merge."
                         : "No merge conflicts are available to fix."}
                       onClick={() => {
                         void resolveMergeConflicts();
@@ -1188,27 +1192,27 @@ export function WorktreeDetail({
                 </div>
               ) : null}
 
-              {gitComparison && !canMergeToBaseBranch && mergeActionState.reason ? (
+              {gitComparison && !canMergeBaseIntoWorktree && mergeActionState.reason ? (
                 <div className="mt-3 text-xs theme-text-danger">
                   Merge disabled: {mergeActionState.reason}
                 </div>
               ) : null}
 
-              {gitComparison?.mergeStatus.hasConflicts ? (
+              {mergeIntoWorktreeStatus?.hasConflicts ? (
                 <div className="mt-3 space-y-3 border theme-border-danger theme-surface-danger px-4 py-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="matrix-kicker theme-kicker-danger">Merge conflicts</p>
                       <p className="mt-1 text-sm theme-text-danger">
-                        Review the conflict markers below or let Smart AI draft resolved file contents.
+                        Merging `{gitComparison?.baseBranch ?? "the base branch"}` into this worktree will conflict. Review the markers below or let Smart AI draft resolved file contents.
                       </p>
                     </div>
                     <MatrixBadge tone="danger">
-                      {gitComparison.mergeStatus.conflicts.length} conflict{gitComparison.mergeStatus.conflicts.length === 1 ? "" : "s"}
+                      {mergeIntoWorktreeStatus.conflicts.length} conflict{mergeIntoWorktreeStatus.conflicts.length === 1 ? "" : "s"}
                     </MatrixBadge>
                   </div>
                   <div className="space-y-3">
-                    {gitComparison.mergeStatus.conflicts.map((conflict) => (
+                    {mergeIntoWorktreeStatus.conflicts.map((conflict) => (
                       <div key={conflict.path} className="border theme-border-danger bg-black/20">
                         <div className="flex items-center justify-between gap-3 border-b theme-border-danger px-3 py-2">
                           <div className="font-mono text-xs theme-text-danger">{conflict.path}</div>
