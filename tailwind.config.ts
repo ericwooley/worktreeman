@@ -19,8 +19,7 @@ export default {
         panel: "0 20px 60px rgba(15, 23, 32, 0.12)",
       },
       backgroundImage: {
-        aurora:
-          "radial-gradient(circle at top left, rgba(249, 115, 22, 0.18), transparent 34%), radial-gradient(circle at top right, rgba(15, 118, 110, 0.14), transparent 32%), linear-gradient(180deg, #f6f0e8 0%, #e8f4f0 100%)",
+        aurora: "#e8f4f0", // flattened for accessibility
       },
     },
   },
