@@ -105,6 +105,157 @@ function parseTags(value: string): string[] {
     .filter(Boolean);
 }
 
+function formatDocumentTimestamp(value: string): string {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return "Updated recently";
+  }
+
+  const elapsedMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+  if (elapsedMinutes < 1) {
+    return "Updated just now";
+  }
+
+  if (elapsedMinutes < 60) {
+    return `Updated ${elapsedMinutes}m ago`;
+  }
+
+  const elapsedHours = Math.round(elapsedMinutes / 60);
+  if (elapsedHours < 24) {
+    return `Updated ${elapsedHours}h ago`;
+  }
+
+  const elapsedDays = Math.round(elapsedHours / 24);
+  if (elapsedDays < 7) {
+    return `Updated ${elapsedDays}d ago`;
+  }
+
+  return `Updated ${new Date(timestamp).toLocaleDateString()}`;
+}
+
+function getDocumentSearchValue(entry: ProjectManagementDocumentSummary): string {
+  return [
+    String(entry.number),
+    entry.title,
+    entry.status,
+    entry.assignee,
+    entry.archived ? "archived" : "active",
+    ...entry.tags,
+  ].join(" ").toLowerCase();
+}
+
+function getAiJobTone(status: AiCommandJob["status"]) {
+  if (status === "running") {
+    return "warning" as const;
+  }
+
+  if (status === "failed") {
+    return "danger" as const;
+  }
+
+  return "active" as const;
+}
+
+function getAiOutputText(job: AiCommandJob): string {
+  if (job.stdout && job.stderr) {
+    return `${job.stdout}\n\n--- stderr ---\n${job.stderr}`;
+  }
+
+  if (job.stdout) {
+    return job.stdout;
+  }
+
+  if (job.stderr) {
+    return job.stderr;
+  }
+
+  return job.status === "running" ? "Waiting for live output..." : "No output captured.";
+}
+
+interface ProjectManagementAiOutputViewerProps {
+  source: "worktree" | "document";
+  job: AiCommandJob;
+  summary: string | null;
+  expanded?: boolean;
+  onCancel: () => void;
+  onOpenModal?: () => void;
+}
+
+function ProjectManagementAiOutputViewer({
+  source,
+  job,
+  summary,
+  expanded = false,
+  onCancel,
+  onOpenModal,
+}: ProjectManagementAiOutputViewerProps) {
+  const running = job.status === "running";
+  const title = source === "worktree" ? "Worktree AI" : "Document AI";
+  const description = source === "worktree"
+    ? running
+      ? `Streaming live output from ${job.branch} while the worktree run is active.`
+      : summary ?? `Captured output from ${job.branch}.`
+    : running
+      ? `Updating the saved document in ${job.branch}.`
+      : summary ?? `Captured output from ${job.branch}.`;
+
+  return (
+    <div className={`pm-ai-output-shell border theme-border-subtle ${running ? "pm-ai-output-shell-running" : ""} ${expanded ? "p-5" : "p-4"}`}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`pm-ai-live-orb ${running ? "pm-ai-live-orb-running" : ""}`} aria-hidden="true" />
+            <p className="matrix-kicker">{title}</p>
+            <MatrixBadge tone={getAiJobTone(job.status)} compact>{running ? "live" : job.status}</MatrixBadge>
+            <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
+            <MatrixBadge tone="neutral" compact>{job.branch}</MatrixBadge>
+            {job.pid ? <MatrixBadge tone="neutral" compact>{`PID ${job.pid}`}</MatrixBadge> : null}
+          </div>
+          <h3 className={`mt-2 font-semibold theme-text-strong ${expanded ? "text-xl" : "text-lg"}`}>
+            {running ? `${title} is working` : `${title} output`}
+          </h3>
+          <p className="mt-1 text-sm theme-text-muted">{description}</p>
+          {summary ? <p className="mt-2 text-xs theme-text-soft">{summary}</p> : null}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {running ? (
+            <button
+              type="button"
+              className="matrix-button rounded-none px-3 py-2 text-sm"
+              onClick={onCancel}
+            >
+              Cancel AI
+            </button>
+          ) : null}
+          {onOpenModal ? (
+            <button
+              type="button"
+              className="matrix-button rounded-none px-3 py-2 text-sm"
+              onClick={onOpenModal}
+            >
+              Open output modal
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {running ? (
+        <div className="pm-ai-output-activity mt-4" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      ) : null}
+
+      <pre className={`pm-ai-output-pre mt-4 overflow-auto px-4 py-4 font-mono text-xs leading-6 ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
+        {getAiOutputText(job)}
+      </pre>
+    </div>
+  );
+}
+
 export function ProjectManagementPanel({
   documents,
   availableTags,
@@ -143,6 +294,7 @@ export function ProjectManagementPanel({
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("");
   const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string>("");
   const [archiveFilter, setArchiveFilter] = useState<"active" | "archived" | "all">("active");
+  const [documentSearch, setDocumentSearch] = useState("");
   const [showBacklogLane, setShowBacklogLane] = useState(false);
   const [editTitle, setEditTitle] = useState("");
   const [editMarkdown, setEditMarkdown] = useState("");
@@ -161,6 +313,7 @@ export function ProjectManagementPanel({
   const [aiChangeRequest, setAiChangeRequest] = useState("");
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
   const [aiRequestModalOpen, setAiRequestModalOpen] = useState(false);
+  const [aiOutputModalOpen, setAiOutputModalOpen] = useState(false);
   const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("simple");
   const [documentRunSummary, setDocumentRunSummary] = useState<string | null>(null);
   const [documentRunFailureToast, setDocumentRunFailureToast] = useState<string | null>(null);
@@ -286,6 +439,13 @@ export function ProjectManagementPanel({
 
   const filteredDocuments = useMemo(
     () => sortedDocuments.filter((entry) => {
+      if (documentSearch.trim()) {
+        const searchValue = documentSearch.trim().toLowerCase();
+        if (!getDocumentSearchValue(entry).includes(searchValue)) {
+          return false;
+        }
+      }
+
       if (selectedTag && !entry.tags.includes(selectedTag)) {
         return false;
       }
@@ -308,8 +468,50 @@ export function ProjectManagementPanel({
 
       return true;
     }),
-    [archiveFilter, selectedAssigneeFilter, selectedStatusFilter, selectedTag, sortedDocuments],
+    [archiveFilter, documentSearch, selectedAssigneeFilter, selectedStatusFilter, selectedTag, sortedDocuments],
   );
+
+  const archivedDocumentCount = useMemo(
+    () => documents.filter((entry) => entry.archived).length,
+    [documents],
+  );
+
+  const documentGroups = useMemo(
+    () => statuses
+      .map((status) => ({
+        status,
+        documents: filteredDocuments.filter((entry) => entry.status === status),
+      }))
+      .filter((group) => group.documents.length > 0),
+    [filteredDocuments, statuses],
+  );
+
+  const selectedDocumentAiOutput = useMemo(() => {
+    if (!document) {
+      return null;
+    }
+
+    const matchingWorktreeJob = documentRunJob?.documentId === document.id ? documentRunJob : null;
+    const matchingDocumentJob = aiJob?.documentId === document.id ? aiJob : null;
+
+    if (matchingWorktreeJob?.status === "running") {
+      return { source: "worktree" as const, job: matchingWorktreeJob, summary: documentRunSummary };
+    }
+
+    if (matchingDocumentJob?.status === "running") {
+      return { source: "document" as const, job: matchingDocumentJob, summary: aiRunSummary };
+    }
+
+    if (matchingWorktreeJob) {
+      return { source: "worktree" as const, job: matchingWorktreeJob, summary: documentRunSummary };
+    }
+
+    if (matchingDocumentJob) {
+      return { source: "document" as const, job: matchingDocumentJob, summary: aiRunSummary };
+    }
+
+    return null;
+  }, [aiJob, aiRunSummary, document, documentRunJob, documentRunSummary]);
 
   const laneStatuses = useMemo(
     () => statuses.filter((status) => status !== "reference" && (showBacklogLane || status !== "backlog")),
@@ -349,6 +551,14 @@ export function ProjectManagementPanel({
 
     void onSelectDocument(documents[0].id, { silent: true });
   }, [document, documents, onSelectDocument, selectedDocumentId]);
+
+  useEffect(() => {
+    if (selectedDocumentAiOutput) {
+      return;
+    }
+
+    setAiOutputModalOpen(false);
+  }, [selectedDocumentAiOutput]);
 
   async function handleSelectDocument(documentId: string, options?: { silent?: boolean }) {
     onSubTabChange("document");
@@ -509,6 +719,19 @@ export function ProjectManagementPanel({
     return true;
   }
 
+  async function handleCancelSelectedDocumentAiOutput() {
+    if (!selectedDocumentAiOutput) {
+      return;
+    }
+
+    if (selectedDocumentAiOutput.source === "worktree") {
+      await onCancelDocumentAiCommand(selectedDocumentAiOutput.job.branch);
+      return;
+    }
+
+    await onCancelAiCommand();
+  }
+
   useEffect(() => {
     if (activeSubTab !== "ai-log") {
       return;
@@ -533,6 +756,28 @@ export function ProjectManagementPanel({
           Refresh
         </button>
       </div>
+
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <div className="matrix-command rounded-none px-3 py-3">
+          <p className="text-[10px] uppercase tracking-[0.18em] theme-text-soft">Visible now</p>
+          <p className="mt-1 text-lg font-semibold theme-text-strong">{filteredDocuments.length}</p>
+        </div>
+        <div className="matrix-command rounded-none px-3 py-3">
+          <p className="text-[10px] uppercase tracking-[0.18em] theme-text-soft">Total docs</p>
+          <p className="mt-1 text-lg font-semibold theme-text-strong">{documents.length}</p>
+        </div>
+      </div>
+
+      <label className="mt-4 block space-y-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Search documents</span>
+        <input
+          type="search"
+          value={documentSearch}
+          onChange={(event) => setDocumentSearch(event.target.value)}
+          placeholder="Search title, number, tag, assignee"
+          className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+        />
+      </label>
 
       <div className="mt-3 flex flex-wrap gap-2">
         <button
@@ -585,31 +830,55 @@ export function ProjectManagementPanel({
             </button>
           ))}
         </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <MatrixBadge tone="neutral" compact>{`${documents.length - archivedDocumentCount} active`}</MatrixBadge>
+          <MatrixBadge tone="neutral" compact>{`${archivedDocumentCount} archived`}</MatrixBadge>
+          {documentSearch.trim() ? <MatrixBadge tone="active" compact>{`search: ${documentSearch.trim()}`}</MatrixBadge> : null}
+        </div>
       </div>
 
-      <div className="mt-3 space-y-2">
-        {filteredDocuments.length ? filteredDocuments.map((entry) => (
-          <button
-            key={entry.id}
-            type="button"
-            className={`w-full border px-3 py-2 text-left transition-colors ${document?.id === entry.id ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
-            onClick={() => void handleSelectDocument(entry.id)}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold theme-text-strong">{entry.title}</p>
-                <p className="mt-1 text-xs font-semibold theme-text-strong">#{entry.number}</p>
-                <p className="mt-1 text-[11px] theme-text-muted">{entry.status} - {entry.assignee || "Unassigned"}</p>
-              </div>
-              <MatrixBadge tone={entry.archived ? "warning" : "neutral"} compact>
-                {entry.archived ? "archived" : entry.historyCount}
-              </MatrixBadge>
-            </div>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {entry.tags.slice(0, 3).map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
-            </div>
-          </button>
-        )) : (
+      <div className="mt-4 border theme-border-subtle p-2">
+        {documentGroups.length ? (
+          <div className="max-h-[min(70vh,48rem)] space-y-4 overflow-y-auto pr-1">
+            {documentGroups.map((group) => (
+              <section key={group.status} className="space-y-2">
+                <div className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b theme-border-subtle bg-[rgb(var(--rgb-base01)/0.96)] px-1 py-2 backdrop-blur-sm">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">{group.status}</p>
+                  <MatrixBadge tone="neutral" compact>{group.documents.length}</MatrixBadge>
+                </div>
+                <div className="space-y-2">
+                  {group.documents.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={`pm-document-card w-full border px-3 py-3 text-left transition-colors ${document?.id === entry.id ? "pm-document-card-active theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+                      onClick={() => void handleSelectDocument(entry.id)}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
+                            {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
+                          </div>
+                          <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
+                          <p className="mt-2 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
+                          <p className="mt-1 text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</p>
+                        </div>
+                        <MatrixBadge tone={entry.archived ? "warning" : "neutral"} compact>
+                          {entry.archived ? "archived" : `${entry.historyCount} rev`}
+                        </MatrixBadge>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        {entry.tags.slice(0, 2).map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+                        {entry.tags.length > 2 ? <MatrixBadge tone="idle" compact>{`+${entry.tags.length - 2}`}</MatrixBadge> : null}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : (
           <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
             No documents match the current filters.
           </div>
@@ -771,6 +1040,18 @@ export function ProjectManagementPanel({
             </div>
           ) : null}
 
+          {document && selectedDocumentAiOutput ? (
+            <div className="mt-3">
+              <ProjectManagementAiOutputViewer
+                source={selectedDocumentAiOutput.source}
+                job={selectedDocumentAiOutput.job}
+                summary={selectedDocumentAiOutput.summary}
+                onCancel={() => void handleCancelSelectedDocumentAiOutput()}
+                onOpenModal={() => setAiOutputModalOpen(true)}
+              />
+            </div>
+          ) : null}
+
           {document && documentViewMode === "edit" ? (
             <div className="mt-3">
               <ProjectManagementDocumentForm
@@ -843,30 +1124,6 @@ export function ProjectManagementPanel({
                 />
               </div>
               <div className="space-y-3">
-                {(activeDocumentRunTargetsSelectedDocument || documentRunSummary) ? (
-                  <div className="border theme-border-subtle p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Worktree AI</p>
-                        <p className="mt-1 text-sm theme-text-muted">
-                          {activeDocumentRunTargetsSelectedDocument && documentRunInProgress
-                            ? `Streaming stdout from ${documentRunJob?.branch ?? "worktree"}.`
-                            : documentRunSummary ?? "Start a worktree AI run for this document."}
-                        </p>
-                      </div>
-                      {activeDocumentRunTargetsSelectedDocument && documentRunInProgress && documentRunJob?.branch ? (
-                        <button
-                          type="button"
-                          className="matrix-button rounded-none px-2 py-1 text-xs"
-                          onClick={() => void onCancelDocumentAiCommand(documentRunJob.branch)}
-                        >
-                          Cancel
-                        </button>
-                      ) : null}
-                    </div>
-                    <pre className="mt-3 max-h-[20rem] overflow-auto bg-black/20 px-3 py-3 font-mono text-xs leading-6 theme-text-muted">{activeDocumentRunTargetsSelectedDocument && documentRunInProgress ? (documentRunJob?.stdout || "Waiting for stdout...") : (documentRunJob?.stdout || "No live output yet.")}</pre>
-                  </div>
-                ) : null}
                 <div className="border theme-border-subtle p-3">
                   <div className="flex items-center justify-between gap-2">
                     <div>
@@ -1045,6 +1302,25 @@ export function ProjectManagementPanel({
               </label>
             </div>
           </form>
+        </MatrixModal>
+      ) : null}
+
+      {aiOutputModalOpen && document && selectedDocumentAiOutput ? (
+        <MatrixModal
+          kicker="AI output"
+          title={selectedDocumentAiOutput.source === "worktree" ? <>Live worktree output for `{document.title}`</> : <>Live document output for `{document.title}`</>}
+          description="Expanded command output for the selected document. Keep this open while the job streams, or close it and come back later."
+          closeLabel="Close AI output"
+          maxWidthClass="max-w-6xl"
+          onClose={() => setAiOutputModalOpen(false)}
+        >
+          <ProjectManagementAiOutputViewer
+            source={selectedDocumentAiOutput.source}
+            job={selectedDocumentAiOutput.job}
+            summary={selectedDocumentAiOutput.summary}
+            expanded
+            onCancel={() => void handleCancelSelectedDocumentAiOutput()}
+          />
         </MatrixModal>
       ) : null}
 

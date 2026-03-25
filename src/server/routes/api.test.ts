@@ -1557,6 +1557,15 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.ok(createdWorktree);
     assert.equal(capturedWorktreePath, createdWorktree.worktreePath);
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
+    assert.equal(capturedCommand.includes("in worktree"), false);
+    assert.equal(capturedCommand.includes("Worktree path:"), false);
+    assert.equal(capturedCommand.includes("Document number:"), false);
+    assert.equal(capturedCommand.includes("Status:"), false);
+    assert.equal(capturedCommand.includes("Assignee:"), false);
+    assert.equal(capturedCommand.includes("Tags:"), false);
+    assert.equal(capturedCommand.includes("This is not an interactive user session"), true);
+    assert.equal(capturedCommand.includes("Commit your work regularly as you complete meaningful milestones."), true);
+    assert.equal(capturedCommand.includes("including a concise summary of what you changed and how you verified it."), true);
     assert.equal(capturedCommand.includes("Additional operator guidance:"), false);
 
     const stream = await openSse(`${await server.url()}/api/worktrees/${encodeURIComponent(payload.job.branch)}/ai-command/stream`);
