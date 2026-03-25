@@ -59,8 +59,7 @@ html[data-theme-variant="dark"] {
 body {
   margin: 0;
   min-width: 320px;
-  background:
-    background: rgb(var(--rgb-base01) / 0.98);
+  background: rgb(var(--rgb-base01) / 0.98);
   color: var(--base05);
   font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
 }
