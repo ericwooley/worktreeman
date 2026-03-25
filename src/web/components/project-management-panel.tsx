@@ -151,10 +151,10 @@ export function ProjectManagementPanel({
   const [editStatus, setEditStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [editAssignee, setEditAssignee] = useState("");
   const [editEditorMode, setEditEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("wysiwyg");
-  const [newTitle, setNewTitle] = useState("Project Outline");
-  const [newTags, setNewTags] = useState("plan");
-  const [newMarkdown, setNewMarkdown] = useState("# Project Outline\n");
-  const [newStatus, setNewStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
+  const [newTitle, setNewTitle] = useState("");
+  const [newTags, setNewTags] = useState("");
+  const [newMarkdown, setNewMarkdown] = useState("");
+  const [newStatus, setNewStatus] = useState<string>("");
   const [newAssignee, setNewAssignee] = useState("");
   const [createEditorMode, setCreateEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("markdown");
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
@@ -362,8 +362,8 @@ export function ProjectManagementPanel({
       markdown: newMarkdown,
       tags: parseTags(newTags),
       dependencies: [],
-      status: newStatus,
-      assignee: newAssignee,
+      status: newStatus || undefined,
+      assignee: newAssignee || undefined,
     });
     if (!created) {
       return;
@@ -371,8 +371,8 @@ export function ProjectManagementPanel({
 
     setNewTitle("");
     setNewTags("");
-    setNewMarkdown("# New document\n");
-    setNewStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
+    setNewMarkdown("");
+    setNewStatus("");
     setNewAssignee("");
     setCreateEditorMode("markdown");
     await handleSelectDocument(created.id, { silent: true });
