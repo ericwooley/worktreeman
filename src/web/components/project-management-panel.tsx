@@ -12,6 +12,10 @@ import type {
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { marked } from "marked";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
+import {
+  ProjectManagementDocumentForm,
+  type ProjectManagementDocumentFormEditorMode,
+} from "./project-management-document-form";
 import { MatrixBadge, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 
 const ProjectManagementBoardTab = lazy(async () => {
@@ -29,24 +33,9 @@ const ProjectManagementHistoryTab = lazy(async () => {
   return { default: module.ProjectManagementHistoryTab };
 });
 
-const ProjectManagementCreateTab = lazy(async () => {
-  const module = await import("./project-management-create-tab");
-  return { default: module.ProjectManagementCreateTab };
-});
-
 const ProjectManagementAiLogTab = lazy(async () => {
   const module = await import("./project-management-ai-log-tab");
   return { default: module.ProjectManagementAiLogTab };
-});
-
-const ProjectManagementWysiwyg = lazy(async () => {
-  const module = await import("./project-management-wysiwyg");
-  return { default: module.ProjectManagementWysiwyg };
-});
-
-const ProjectManagementMonacoEditor = lazy(async () => {
-  const module = await import("./project-management-monaco-editor");
-  return { default: module.ProjectManagementMonacoEditor };
 });
 
 export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "ai-log";
@@ -151,12 +140,13 @@ export function ProjectManagementPanel({
   const [dependencySelection, setDependencySelection] = useState<string[]>([]);
   const [editStatus, setEditStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [editAssignee, setEditAssignee] = useState("");
-  const [useMonacoEditor, setUseMonacoEditor] = useState(false);
+  const [editEditorMode, setEditEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("wysiwyg");
   const [newTitle, setNewTitle] = useState("Project Outline");
   const [newTags, setNewTags] = useState("plan");
   const [newMarkdown, setNewMarkdown] = useState("# Project Outline\n");
   const [newStatus, setNewStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [newAssignee, setNewAssignee] = useState("");
+  const [createEditorMode, setCreateEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("markdown");
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
   const [aiChangeRequest, setAiChangeRequest] = useState("");
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
@@ -179,6 +169,14 @@ export function ProjectManagementPanel({
       badgeTone: isAiCommandReady(aiCommands, "simple") ? "active" : "idle",
     },
   ]), [aiCommands]);
+  const documentEditorOptions = useMemo(
+    () => [
+      { value: "markdown", label: "Markdown" },
+      { value: "wysiwyg", label: "WYSIWYG" },
+      { value: "monaco", label: "Monaco" },
+    ] satisfies Array<{ value: ProjectManagementDocumentFormEditorMode; label: string }>,
+    [],
+  );
 
   useEffect(() => {
     if (!document) {
@@ -188,6 +186,7 @@ export function ProjectManagementPanel({
       setDependencySelection([]);
       setEditStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
       setEditAssignee("");
+      setEditEditorMode("wysiwyg");
       setDocumentViewMode("document");
       setAiChangeRequest("");
       setSelectedAiCommandId("simple");
@@ -200,10 +199,11 @@ export function ProjectManagementPanel({
     setDependencySelection(Array.isArray(document.dependencies) ? document.dependencies : []);
     setEditStatus(document.status);
     setEditAssignee(document.assignee);
-      setDocumentViewMode("document");
-      setAiFailureToast(null);
-      setAiRequestModalOpen(false);
-      setSelectedAiCommandId("simple");
+    setEditEditorMode("wysiwyg");
+    setDocumentViewMode("document");
+    setAiFailureToast(null);
+    setAiRequestModalOpen(false);
+    setSelectedAiCommandId("simple");
   }, [document]);
 
   useEffect(() => {
@@ -286,11 +286,6 @@ export function ProjectManagementPanel({
     [filteredDocuments, laneStatuses],
   );
 
-  const renderedMarkdown = useMemo(
-    () => marked.parse(editMarkdown || document?.markdown || ""),
-    [document?.markdown, editMarkdown],
-  );
-
   const compactDocumentSummary = document
     ? [
       `#${document.number}`,
@@ -341,7 +336,24 @@ export function ProjectManagementPanel({
     setNewMarkdown("# New document\n");
     setNewStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
     setNewAssignee("");
+    setCreateEditorMode("markdown");
     await handleSelectDocument(created.id, { silent: true });
+  }
+
+  async function handleSaveDocument() {
+    if (!document) {
+      return;
+    }
+
+    await onUpdateDocument(document.id, {
+      title: editTitle,
+      markdown: editMarkdown,
+      tags: parseTags(editTags),
+      dependencies: document.dependencies,
+      status: editStatus,
+      assignee: editAssignee,
+      archived: document.archived,
+    });
   }
 
   async function handleMoveDocument(documentId: string, nextStatus: string) {
@@ -612,16 +624,6 @@ export function ProjectManagementPanel({
                 </div>
               ) : null}
               {documentViewMode === "edit" ? (
-                <button
-                  type="button"
-                  className={`matrix-button rounded-none px-3 py-2 text-sm ${useMonacoEditor ? "theme-pill-emphasis theme-text-strong" : ""}`}
-                  onClick={() => setUseMonacoEditor((current) => !current)}
-                  disabled={aiRunning}
-                >
-                  {useMonacoEditor ? "Use WYSIWYG" : "Use Monaco"}
-                </button>
-              ) : null}
-              {documentViewMode === "edit" ? (
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -647,15 +649,7 @@ export function ProjectManagementPanel({
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
                 disabled={!document || saving || aiRunning || documentViewMode !== "edit"}
-                onClick={() => document ? void onUpdateDocument(document.id, {
-                  title: editTitle,
-                  markdown: editMarkdown,
-                  tags: parseTags(editTags),
-                  dependencies: document.dependencies,
-                  status: editStatus,
-                  assignee: editAssignee,
-                  archived: document.archived,
-                }) : undefined}
+                onClick={() => void handleSaveDocument()}
               >
                 Save document
               </button>
@@ -672,57 +666,34 @@ export function ProjectManagementPanel({
           ) : null}
 
           {document && documentViewMode === "edit" ? (
-            <div className="mt-3 grid gap-3 xl:grid-cols-[18rem_minmax(0,1fr)]">
-              <div className="space-y-2 border theme-border-subtle p-3">
-                <label className="block space-y-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Title</span>
-                  <input
-                    value={editTitle}
-                    onChange={(event) => setEditTitle(event.target.value)}
-                    placeholder="Document title"
-                    disabled={aiRunning}
-                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                  />
-                </label>
-                <label className="block space-y-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Tags</span>
-                  <input
-                    value={editTags}
-                    onChange={(event) => setEditTags(event.target.value)}
-                    placeholder="bug, feature, plan"
-                    disabled={aiRunning}
-                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                  />
-                </label>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <label className="block space-y-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Status</span>
-                    <select
-                      value={editStatus}
-                      onChange={(event) => setEditStatus(event.target.value)}
-                      disabled={aiRunning}
-                      className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                    >
-                      {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
-                    </select>
-                  </label>
-                  <label className="block space-y-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Assignee</span>
-                    <input
-                      value={editAssignee}
-                      onChange={(event) => setEditAssignee(event.target.value)}
-                      placeholder="Assignee"
-                      disabled={aiRunning}
-                      className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                    />
-                  </label>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-3 py-2 text-sm"
-                    disabled={saving || aiRunning}
-                    onClick={() => void onUpdateDocument(document.id, {
+            <div className="mt-3">
+              <ProjectManagementDocumentForm
+                mode="edit"
+                title={editTitle}
+                tags={editTags}
+                markdown={editMarkdown}
+                status={editStatus}
+                assignee={editAssignee}
+                statuses={statuses}
+                saving={saving}
+                disabled={aiRunning}
+                submitDisabled={!document}
+                editorMode={editEditorMode}
+                editorOptions={documentEditorOptions}
+                onEditorModeChange={setEditEditorMode}
+                onTitleChange={setEditTitle}
+                onTagsChange={setEditTags}
+                onMarkdownChange={setEditMarkdown}
+                onStatusChange={setEditStatus}
+                onAssigneeChange={setEditAssignee}
+                onSubmit={handleSaveDocument}
+                sidebarFooter={(
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={saving || aiRunning}
+                      onClick={() => void onUpdateDocument(document.id, {
                         title: editTitle,
                         markdown: editMarkdown,
                         tags: parseTags(editTags),
@@ -730,15 +701,14 @@ export function ProjectManagementPanel({
                         status: editStatus,
                         assignee: editAssignee,
                         archived: !document.archived,
-                     })}
-                  >
-                    {document.archived ? "Restore" : "Archive"}
-                  </button>
-                  {document.archived ? <MatrixBadge tone="warning">Archived</MatrixBadge> : null}
-                </div>
-              </div>
-              <div className="overflow-hidden border theme-border-subtle">
-                {aiRunning ? (
+                      })}
+                    >
+                      {document.archived ? "Restore" : "Archive"}
+                    </button>
+                    {document.archived ? <MatrixBadge tone="warning">Archived</MatrixBadge> : null}
+                  </div>
+                )}
+                editorBlockedState={aiRunning ? (
                   <div className="pm-ai-running-state flex h-[68vh] flex-col items-center justify-center gap-4 px-6 text-center">
                     <div className="pm-ai-spinner" aria-hidden="true" />
                     <div>
@@ -755,16 +725,8 @@ export function ProjectManagementPanel({
                       </button>
                     </div>
                   </div>
-                ) : (
-                  <Suspense fallback={<div className="px-4 py-6 text-sm theme-empty-note">Loading editor...</div>}>
-                    {useMonacoEditor ? (
-                      <ProjectManagementMonacoEditor value={editMarkdown} onChange={setEditMarkdown} height="68vh" readOnly={aiRunning} />
-                    ) : (
-                      <ProjectManagementWysiwyg value={editMarkdown} onChange={setEditMarkdown} height="68vh" readOnly={aiRunning} />
-                    )}
-                  </Suspense>
-                )}
-              </div>
+                ) : undefined}
+              />
             </div>
           ) : document ? (
             <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
@@ -873,20 +835,25 @@ export function ProjectManagementPanel({
           ) : (
             <div className="pt-4">
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading create form...</div>}>
-                <ProjectManagementCreateTab
+                <ProjectManagementDocumentForm
+                  mode="create"
+                  title={newTitle}
+                  tags={newTags}
+                  markdown={newMarkdown}
+                  status={newStatus}
+                  assignee={newAssignee}
                   statuses={statuses}
                   saving={saving}
-                  newTitle={newTitle}
-                  newTags={newTags}
-                  newMarkdown={newMarkdown}
-                  newStatus={newStatus}
-                  newAssignee={newAssignee}
-                  onNewTitleChange={setNewTitle}
-                  onNewTagsChange={setNewTags}
-                  onNewMarkdownChange={setNewMarkdown}
-                  onNewStatusChange={setNewStatus}
-                  onNewAssigneeChange={setNewAssignee}
-                  onCreate={handleCreateDocument}
+                  submitDisabled={!newTitle.trim()}
+                  editorMode={createEditorMode}
+                  editorOptions={documentEditorOptions}
+                  onEditorModeChange={setCreateEditorMode}
+                  onTitleChange={setNewTitle}
+                  onTagsChange={setNewTags}
+                  onMarkdownChange={setNewMarkdown}
+                  onStatusChange={setNewStatus}
+                  onAssigneeChange={setNewAssignee}
+                  onSubmit={handleCreateDocument}
                 />
               </Suspense>
             </div>
