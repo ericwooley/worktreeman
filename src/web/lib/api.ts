@@ -17,6 +17,7 @@ import type {
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
   MergeGitBranchRequest,
+  ResolveGitMergeConflictsRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
@@ -186,6 +187,13 @@ export function getGitComparison(compareBranch: string, baseBranch?: string): Pr
 
 export function mergeGitBranch(compareBranch: string, payload?: MergeGitBranchRequest): Promise<GitComparisonResponse> {
   return request<GitComparisonResponse>(`/api/git/compare/${encodeURIComponent(compareBranch)}/merge`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export function resolveGitMergeConflicts(compareBranch: string, payload?: ResolveGitMergeConflictsRequest): Promise<GitComparisonResponse> {
+  return request<GitComparisonResponse>(`/api/git/compare/${encodeURIComponent(compareBranch)}/resolve-conflicts`, {
     method: "POST",
     body: JSON.stringify(payload ?? {}),
   });

@@ -27,6 +27,7 @@ import type {
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
   MergeGitBranchRequest,
+  ResolveGitMergeConflictsRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
@@ -50,7 +51,16 @@ import {
   stopAllBackgroundCommands,
   stopBackgroundCommand,
 } from "../services/background-command-service.js";
-import { commitGitChanges, createWorktree, generateGitCommitMessage, getGitComparison, listWorktrees, mergeGitBranch, removeWorktree } from "../services/git-service.js";
+import {
+  commitGitChanges,
+  createWorktree,
+  generateGitCommitMessage,
+  getGitComparison,
+  listWorktrees,
+  mergeGitBranch,
+  removeWorktree,
+  resolveMergeConflictsWithAi,
+} from "../services/git-service.js";
 import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig, parseConfigContents, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
@@ -751,10 +761,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         lastStdout = logs.stdout;
         lastStderr = logs.stderr;
 
-        if (!nextProcess || !aiProcesses.isProcessActive(nextProcess.status)) {
-          payload.hooks.onExit?.({ exitCode: nextProcess?.exitCode ?? null });
-          if ((nextProcess?.exitCode ?? 0) !== 0) {
-            throw new Error(`AI process exited with code ${nextProcess?.exitCode ?? "unknown"}.`);
+        if (!nextProcess) {
+          payload.hooks.onExit?.({ exitCode: null });
+          throw new Error("AI process no longer available.");
+        }
+
+        if (!aiProcesses.isProcessActive(nextProcess.status)) {
+          payload.hooks.onExit?.({ exitCode: nextProcess.exitCode ?? null });
+          if ((nextProcess.exitCode ?? 0) !== 0) {
+            throw new Error(`AI process exited with code ${nextProcess.exitCode ?? "unknown"}.`);
           }
 
           return logs;
@@ -1125,6 +1140,48 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const comparison: GitComparisonResponse = await mergeGitBranch(options.repoRoot, compareBranch, baseBranch);
+      res.json(comparison);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/git/compare/:branch/resolve-conflicts", async (req, res, next) => {
+    try {
+      const branch = decodeURIComponent(req.params.branch).trim();
+      const body = req.body as ResolveGitMergeConflictsRequest | undefined;
+
+      if (!branch) {
+        res.status(400).json({ message: "branch is required" });
+        return;
+      }
+
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      const worktree = worktrees.find((entry) => entry.branch === branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${branch}` });
+        return;
+      }
+
+      const runtime = options.runtimes.get(worktree.branch);
+      const env = runtime
+        ? buildRuntimeProcessEnv(runtime)
+        : {
+          ...process.env,
+          ...config.env,
+          WORKTREE_BRANCH: worktree.branch,
+          WORKTREE_PATH: worktree.worktreePath,
+        };
+
+      const comparison: GitComparisonResponse = await resolveMergeConflictsWithAi({
+        repoRoot: options.repoRoot,
+        branch,
+        baseBranch: typeof body?.baseBranch === "string" ? body.baseBranch : undefined,
+        aiCommands: config.aiCommands,
+        commandId: parseAiCommandId(body?.commandId ?? "smart"),
+        env,
+      });
       res.json(comparison);
     } catch (error) {
       next(error);

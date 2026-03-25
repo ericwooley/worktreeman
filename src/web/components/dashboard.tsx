@@ -172,6 +172,7 @@ export function Dashboard() {
     loadAiCommandLogs,
     loadGitComparison,
     mergeGitBranch,
+    resolveGitMergeConflicts,
     generateGitCommitMessage,
     commitGitChanges,
     runAiCommand,
@@ -1004,6 +1005,7 @@ export function Dashboard() {
             onLoadBackgroundLogs={loadBackgroundLogs}
             onLoadGitComparison={loadGitComparison}
             onMergeGitBranch={mergeGitBranch}
+            onResolveGitMergeConflicts={resolveGitMergeConflicts}
             onGenerateGitCommitMessage={generateGitCommitMessage}
             onCommitGitChanges={commitGitChanges}
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}

@@ -44,6 +44,7 @@ import {
   cancelAiCommand as cancelAiCommandRequest,
   commitGitChanges as commitGitChangesRequest,
   mergeGitBranch as mergeGitBranchRequest,
+  resolveGitMergeConflicts as resolveGitMergeConflictsRequest,
   restartBackgroundCommand as restartBackgroundProcess,
   runAiCommand as runAiCommandRequest,
   runProjectManagementDocumentAi as runProjectManagementDocumentAiRequest,
@@ -556,6 +557,21 @@ export function useDashboardState() {
           return comparison;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to merge branch.");
+          return null;
+        } finally {
+          setGitComparisonLoading(false);
+        }
+      },
+      async resolveGitMergeConflicts(branch: string, baseBranch?: string, commandId: AiCommandId = "smart") {
+        setGitComparisonLoading(true);
+        try {
+          const comparison = await resolveGitMergeConflictsRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
+          setGitComparison(comparison);
+          await refresh({ silent: true });
+          setError(null);
+          return comparison;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to resolve merge conflicts.");
           return null;
         } finally {
           setGitComparisonLoading(false);

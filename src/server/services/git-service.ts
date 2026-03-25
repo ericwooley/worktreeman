@@ -9,6 +9,7 @@ import type {
   GitBranchOption,
   GitCompareCommit,
   GitComparisonResponse,
+  GitMergeConflict,
   GitMergeStatus,
   GitWorkingTreeSummary,
   WorktreeManagerConfig,
@@ -42,8 +43,99 @@ function createMergeStatus(overrides: Partial<GitMergeStatus> = {}): GitMergeSta
     canMerge: false,
     hasConflicts: false,
     reason: null,
+    conflicts: [],
     ...overrides,
   };
+}
+
+function parseConflictPaths(output: string): string[] {
+  const paths = output
+    .split(/\r?\n/)
+    .map((line) => {
+      const match = line.match(/^CONFLICT \([^)]*\): Merge conflict in (.+)$/);
+      return match?.[1]?.trim() ?? "";
+    })
+    .filter(Boolean);
+  return Array.from(new Set(paths));
+}
+
+async function buildConflictPreviews(repoRoot: string, treeSha: string, conflictPaths: string[]): Promise<GitMergeConflict[]> {
+  return Promise.all(conflictPaths.map(async (conflictPath) => {
+    try {
+      const { stdout } = await runCommand("git", ["show", `${treeSha}:${conflictPath}`], { cwd: repoRoot });
+      const preview = stdout.trimEnd();
+      const truncated = preview.length > 4000;
+      return {
+        path: conflictPath,
+        preview: truncated ? `${preview.slice(0, 4000).trimEnd()}\n...` : preview,
+        truncated,
+      } satisfies GitMergeConflict;
+    } catch {
+      return {
+        path: conflictPath,
+        preview: null,
+        truncated: false,
+      } satisfies GitMergeConflict;
+    }
+  }));
+}
+
+function formatMergeConflictResolutionPrompt(options: {
+  branch: string;
+  baseBranch: string;
+  conflicts: GitMergeConflict[];
+}) {
+  const renderedConflicts = options.conflicts.map((conflict) => [
+    `Conflict file: ${conflict.path}`,
+    "Return the fully resolved file contents for this file.",
+    "Do not include markdown fences, explanations, or any prose outside the file body.",
+    "Conflict preview:",
+    conflict.preview ?? "(preview unavailable)",
+  ].join("\n")).join("\n\n---\n\n");
+
+  return [
+    `Resolve merge conflicts for branch ${options.branch} while merging into ${options.baseBranch}.`,
+    "You are resolving git merge conflict markers in one or more files.",
+    "Preserve the intended behavior from both sides where possible.",
+    "Return only the final resolved file contents as plain text for the requested file.",
+    "Do not include markdown fences, headers, explanations, or commentary.",
+    renderedConflicts,
+  ].join("\n\n");
+}
+
+async function generateResolvedConflictContents(options: {
+  worktreePath: string;
+  branch: string;
+  baseBranch: string;
+  conflict: GitMergeConflict;
+  aiCommands: AiCommandConfig;
+  commandId: AiCommandId;
+  env: NodeJS.ProcessEnv;
+}): Promise<string> {
+  const template = resolveAiCommandTemplate(options.aiCommands, options.commandId);
+  if (!template) {
+    throw new Error(`${options.commandId === "simple" ? "Simple AI" : "Smart AI"} is not configured.`);
+  }
+
+  if (!template.includes("$WTM_AI_INPUT")) {
+    throw new Error(`${options.commandId === "simple" ? "Simple AI" : "Smart AI"} must include $WTM_AI_INPUT.`);
+  }
+
+  const prompt = formatMergeConflictResolutionPrompt({
+    branch: options.branch,
+    baseBranch: options.baseBranch,
+    conflicts: [options.conflict],
+  });
+  const command = template.split("$WTM_AI_INPUT").join(quoteShellArg(prompt));
+  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", command], {
+    cwd: options.worktreePath,
+    env: options.env,
+  });
+  const normalized = stdout.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd();
+  if (!normalized.trim()) {
+    throw new Error(`AI did not return resolved contents for ${options.conflict.path}.`);
+  }
+  return `${normalized}\n`;
 }
 
 async function getMergeStatus(repoRoot: string, baseBranch: string, compareBranch: string): Promise<GitMergeStatus> {
@@ -57,19 +149,6 @@ async function getMergeStatus(repoRoot: string, baseBranch: string, compareBranc
 
   if (baseBranch === compareBranch) {
     return createMergeStatus({ reason: "Select a different base branch to merge into." });
-  }
-
-  const [baseHasCommit, compareHasCommit] = await Promise.all([
-    gitRefHasCommit(repoRoot, baseBranch),
-    gitRefHasCommit(repoRoot, compareBranch),
-  ]);
-
-  if (!compareHasCommit) {
-    return createMergeStatus({ reason: "This branch does not have any commits to merge yet." });
-  }
-
-  if (!baseHasCommit) {
-    return createMergeStatus({ canMerge: true });
   }
 
   const worktrees = await listWorktrees(repoRoot);
@@ -89,19 +168,38 @@ async function getMergeStatus(repoRoot: string, baseBranch: string, compareBranc
     }
   }
 
+  const [baseHasCommit, compareHasCommit] = await Promise.all([
+    gitRefHasCommit(repoRoot, baseBranch),
+    gitRefHasCommit(repoRoot, compareBranch),
+  ]);
+
+  if (!compareHasCommit) {
+    return createMergeStatus({ reason: "This branch does not have any commits to merge yet." });
+  }
+
+  if (!baseHasCommit) {
+    return createMergeStatus({ canMerge: true });
+  }
+
   const mergeTreeResult = await runCommand(
     "git",
-    ["merge-tree", "--write-tree", "--messages", baseBranch, compareBranch],
+    ["merge-tree", "--write-tree", "--messages", "--allow-unrelated-histories", baseBranch, compareBranch],
     { cwd: repoRoot, allowExitCodes: [1] },
   );
   const output = `${mergeTreeResult.stdout}\n${mergeTreeResult.stderr}`;
   const hasConflicts = /(^|\n)(?:CONFLICT \(|Auto-merging .*\nCONFLICT \()/m.test(output);
 
   if (hasConflicts) {
+    const treeSha = mergeTreeResult.stdout.split(/\r?\n/)[0]?.trim() ?? "";
+    const conflictPaths = parseConflictPaths(output);
+    const conflicts = treeSha && conflictPaths.length > 0
+      ? await buildConflictPreviews(repoRoot, treeSha, conflictPaths)
+      : conflictPaths.map((conflictPath) => ({ path: conflictPath, preview: null, truncated: false }));
     return createMergeStatus({
       canMerge: false,
       hasConflicts: true,
       reason: `Resolve conflicts between ${compareBranch} and ${baseBranch} before merging.`,
+      conflicts,
     });
   }
 
@@ -545,13 +643,44 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
     };
   }
 
-  const { stdout: mergeBaseStdout } = await runCommand("git", ["merge-base", normalizedBaseBranch, normalizedCompareBranch], { cwd: repoRoot });
+  const { stdout: mergeBaseStdout } = await runCommand("git", ["merge-base", normalizedBaseBranch, normalizedCompareBranch], {
+    cwd: repoRoot,
+    allowExitCodes: [1],
+  });
   const mergeBaseHash = mergeBaseStdout.trim();
 
   const { stdout: leftRightStdout } = await runCommand("git", ["rev-list", "--left-right", "--count", `${normalizedBaseBranch}...${normalizedCompareBranch}`], {
     cwd: repoRoot,
   });
   const [behindRaw, aheadRaw] = leftRightStdout.trim().split(/\s+/);
+
+  if (!mergeBaseHash) {
+    const [baseCommitsResult, compareCommitsResult, diffResult] = await Promise.all([
+      runCommand("git", ["log", "--reverse", `--format=${commitFormat}`, normalizedBaseBranch], { cwd: repoRoot }),
+      runCommand("git", ["log", "--reverse", `--format=${commitFormat}`, normalizedCompareBranch], { cwd: repoRoot }),
+      runCommand("git", ["diff", normalizedBaseBranch, normalizedCompareBranch], { cwd: repoRoot }),
+    ]);
+
+    const branchDiff = diffResult.stdout.trim();
+    const localDiff = workingTreeDiff.trim();
+
+    return {
+      defaultBranch,
+      baseBranch: normalizedBaseBranch,
+      compareBranch: normalizedCompareBranch,
+      mergeBase: null,
+      ahead: Number(aheadRaw ?? 0),
+      behind: Number(behindRaw ?? 0),
+      branches,
+      baseCommits: parseCommitLines(baseCommitsResult.stdout),
+      compareCommits: parseCommitLines(compareCommitsResult.stdout),
+      diff: diffResult.stdout,
+      workingTreeDiff,
+      effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
+      workingTreeSummary,
+      mergeStatus,
+    };
+  }
 
   const [baseCommitsResult, compareCommitsResult, diffResult, mergeBaseResult] = await Promise.all([
     runCommand("git", ["log", "--reverse", `--format=${commitFormat}`, `${mergeBaseHash}..${normalizedBaseBranch}`], { cwd: repoRoot }),
@@ -623,6 +752,30 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
       env: GIT_MERGE_ENV,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("refusing to merge unrelated histories")) {
+      try {
+        await runCommand("git", ["merge", "--no-edit", "--allow-unrelated-histories", normalizedCompareBranch], {
+          cwd: baseWorktreePath,
+          env: GIT_MERGE_ENV,
+        });
+        return getGitComparison(repoRoot, normalizedCompareBranch, normalizedBaseBranch);
+      } catch (retryError) {
+        try {
+          await runCommand("git", ["merge", "--abort"], {
+            cwd: baseWorktreePath,
+            env: GIT_MERGE_ENV,
+            allowExitCodes: [1],
+          });
+        } catch {
+          // ignore abort cleanup errors
+        }
+
+        const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+        throw new Error(`Failed to merge ${normalizedCompareBranch} into ${normalizedBaseBranch}: ${retryMessage}`);
+      }
+    }
+
     try {
       await runCommand("git", ["merge", "--abort"], {
         cwd: baseWorktreePath,
@@ -633,7 +786,6 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
       // ignore abort cleanup errors
     }
 
-    const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to merge ${normalizedCompareBranch} into ${normalizedBaseBranch}: ${message}`);
   }
 
@@ -742,4 +894,45 @@ export async function generateGitCommitMessage(options: {
     commandId: options.commandId,
     message,
   };
+}
+
+export async function resolveMergeConflictsWithAi(options: {
+  repoRoot: string;
+  branch: string;
+  baseBranch?: string;
+  aiCommands: AiCommandConfig;
+  commandId: AiCommandId;
+  env: NodeJS.ProcessEnv;
+}): Promise<GitComparisonResponse> {
+  const normalizedBranch = parseGitBranchName(options.branch);
+  if (!normalizedBranch) {
+    throw new Error("A branch is required to resolve merge conflicts.");
+  }
+
+  const baseBranch = parseGitBranchName(options.baseBranch ?? await resolveDefaultBranch(options.repoRoot));
+  const worktrees = await listWorktrees(options.repoRoot);
+  const worktree = worktrees.find((entry) => entry.branch === normalizedBranch);
+  if (!worktree) {
+    throw new Error(`Unknown worktree ${normalizedBranch}.`);
+  }
+
+  const comparison = await getGitComparison(options.repoRoot, normalizedBranch, baseBranch);
+  if (!comparison.mergeStatus.hasConflicts || comparison.mergeStatus.conflicts.length === 0) {
+    throw new Error(`Branch ${normalizedBranch} does not currently expose merge conflicts against ${baseBranch}.`);
+  }
+
+  for (const conflict of comparison.mergeStatus.conflicts) {
+    const resolvedContents = await generateResolvedConflictContents({
+      worktreePath: worktree.worktreePath,
+      branch: normalizedBranch,
+      baseBranch,
+      conflict,
+      aiCommands: options.aiCommands,
+      commandId: options.commandId,
+      env: options.env,
+    });
+    await fs.writeFile(path.join(worktree.worktreePath, conflict.path), resolvedContents, "utf8");
+  }
+
+  return getGitComparison(options.repoRoot, normalizedBranch, baseBranch);
 }

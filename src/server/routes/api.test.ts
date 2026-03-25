@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import express from "express";
+import request from "supertest";
 import { createApiRouter, resolveAiLogsDir } from "./api.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
@@ -308,19 +310,88 @@ async function startApiServer(
     ...(overrides ?? {}),
   }));
 
-  const server = http.createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-  const address = server.address();
+  let server: http.Server | null = null;
+  let liveBaseUrl: string | null = null;
 
-  if (!address || typeof address === "string") {
-    throw new Error("Failed to resolve test server address.");
-  }
+  const ensureLiveBaseUrl = async () => {
+    if (liveBaseUrl) {
+      return liveBaseUrl;
+    }
+
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Failed to resolve test server address.");
+    }
+
+    liveBaseUrl = `http://127.0.0.1:${address.port}`;
+    return liveBaseUrl;
+  };
+
+  const agent = request(app);
+
+  const apiFetch = async (
+    input: string,
+    init: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+    } = {},
+  ) => {
+    const url = new URL(input, "http://127.0.0.1");
+    const target = `${url.pathname}${url.search}`;
+    const method = (init.method ?? "GET").toUpperCase();
+
+    let req: ReturnType<typeof agent.get>;
+    switch (method) {
+      case "GET":
+        req = agent.get(target);
+        break;
+      case "POST":
+        req = agent.post(target);
+        break;
+      case "PUT":
+        req = agent.put(target);
+        break;
+      case "DELETE":
+        req = agent.delete(target);
+        break;
+      default:
+        throw new Error(`Unsupported test request method: ${method}`);
+    }
+
+    for (const [key, value] of Object.entries(init.headers ?? {})) {
+      req = req.set(key, value);
+    }
+
+    if (typeof init.body === "string") {
+      req = req.send(init.body);
+    }
+
+    const response = await req;
+    return {
+      status: response.status,
+      async json() {
+        return response.body;
+      },
+      async text() {
+        return response.text;
+      },
+    };
+  };
 
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: "http://127.0.0.1",
+    fetch: apiFetch,
+    url: ensureLiveBaseUrl,
     close: async () => {
+      if (!server) {
+        return;
+      }
+
       await new Promise<void>((resolve, reject) => {
-        server.close((error) => error ? reject(error) : resolve());
+        server?.close((error) => error ? reject(error) : resolve());
       });
     },
   };
@@ -333,11 +404,12 @@ test.afterEach(async () => {
 
 test("startServer fails fast when the initial tmux session cannot be prepared", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
+  const port = await allocateTestPort();
 
   await assert.rejects(
     () => startServer({
       repo,
-      port: 0,
+      port,
       openBrowser: false,
       prepareInitialTerminalSession: async () => {
         throw new Error("Unable to determine tmux session for main.");
@@ -391,6 +463,23 @@ async function waitForPathToDisappear(targetPath: string, timeoutMs = 5000) {
   }, timeoutMs);
 }
 
+async function allocateTestPort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate a test port.")));
+        return;
+      }
+
+      const { port } = address;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
 test("AI command logs are written under the resolved repo root .logs directory", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
@@ -404,7 +493,7 @@ test("AI command logs are written under the resolved repo root .logs directory",
   });
 
   try {
-    const response = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-log/ai-command/run`, {
+    const response = await server.fetch(`/api/worktrees/feature-ai-log/ai-command/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input: "rewrite the document" }),
@@ -473,7 +562,7 @@ test("AI command settings save writes both schema hints and aiCommands", { concu
   const server = await startApiServer(repo);
 
   try {
-    const response = await fetch(`${server.baseUrl}/api/settings/ai-command`, {
+    const response = await server.fetch(`/api/settings/ai-command`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -527,7 +616,7 @@ test("git compare merge merges a feature branch into main", { concurrency: false
       },
     });
 
-    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-merge/merge`, {
+    const response = await server.fetch(`/api/git/compare/feature-merge/merge`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ baseBranch: "main" }),
@@ -586,7 +675,7 @@ test("git compare reports mergeable branches even when the feature branch is beh
       },
     });
 
-    const response = await fetch(`${server.baseUrl}/api/git/compare?compareBranch=feature-behind-merge&baseBranch=main`);
+    const response = await server.fetch(`/api/git/compare?compareBranch=feature-behind-merge&baseBranch=main`);
 
     assert.equal(response.status, 200);
     const payload = await response.json() as {
@@ -643,17 +732,20 @@ test("git compare reports why merge is disabled when branches conflict", { concu
       },
     });
 
-    const compareResponse = await fetch(`${server.baseUrl}/api/git/compare?compareBranch=feature-conflict-merge&baseBranch=main`);
+    const compareResponse = await server.fetch(`/api/git/compare?compareBranch=feature-conflict-merge&baseBranch=main`);
 
     assert.equal(compareResponse.status, 200);
     const comparePayload = await compareResponse.json() as {
-      mergeStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null };
+      mergeStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null; conflicts: Array<{ path: string; preview: string | null }> };
     };
     assert.equal(comparePayload.mergeStatus.canMerge, false);
     assert.equal(comparePayload.mergeStatus.hasConflicts, true);
     assert.match(comparePayload.mergeStatus.reason ?? "", /resolve conflicts/i);
+    assert.equal(comparePayload.mergeStatus.conflicts.length, 1);
+    assert.equal(comparePayload.mergeStatus.conflicts[0]?.path, "shared.txt");
+    assert.match(comparePayload.mergeStatus.conflicts[0]?.preview ?? "", /<<<<<<< main/);
 
-    const mergeResponse = await fetch(`${server.baseUrl}/api/git/compare/feature-conflict-merge/merge`, {
+    const mergeResponse = await server.fetch(`/api/git/compare/feature-conflict-merge/merge`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ baseBranch: "main" }),
@@ -662,6 +754,78 @@ test("git compare reports why merge is disabled when branches conflict", { concu
     assert.equal(mergeResponse.status, 500);
     const mergePayload = await mergeResponse.text();
     assert.match(mergePayload, /resolve conflicts/i);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare resolve-conflicts uses AI output to rewrite conflict files", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-resolve-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    const currentContents = await readConfigContents({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const nextContents = updateAiCommandInConfigContents(currentContents, {
+      smart: "node -e \"console.log('resolved by ai')\" $WTM_AI_INPUT",
+      simple: "node -e \"console.log('resolved by ai')\" $WTM_AI_INPUT",
+    });
+    await fs.writeFile(repo.configPath, nextContents, "utf8");
+
+    await fs.writeFile(path.join(feature.worktreePath, "shared.txt"), "feature version\n", "utf8");
+    await runCommand("git", ["add", "shared.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "feature shared"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    await fs.writeFile(path.join(mainPath, "shared.txt"), "main version\n", "utf8");
+    await runCommand("git", ["add", "shared.txt"], { cwd: mainPath });
+    await runCommand("git", ["commit", "-m", "main shared"], {
+      cwd: mainPath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const response = await server.fetch(`/api/git/compare/feature-ai-resolve-merge/resolve-conflicts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main", commandId: "smart" }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      mergeStatus: { hasConflicts: boolean; conflicts: Array<unknown> };
+      workingTreeSummary: { dirty: boolean };
+    };
+    assert.equal(payload.mergeStatus.hasConflicts, false);
+    assert.equal(payload.mergeStatus.conflicts.length, 0);
+    assert.equal(payload.workingTreeSummary.dirty, true);
+
+    const resolved = await fs.readFile(path.join(feature.worktreePath, "shared.txt"), "utf8");
+    assert.equal(resolved, "resolved by ai\n");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -681,7 +845,7 @@ test("git compare merge rejects branches with local changes", { concurrency: fal
   try {
     await fs.writeFile(path.join(feature.worktreePath, "dirty.txt"), "dirty\n", "utf8");
 
-    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-dirty-merge/merge`, {
+    const response = await server.fetch(`/api/git/compare/feature-dirty-merge/merge`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ baseBranch: "main" }),
@@ -689,7 +853,7 @@ test("git compare merge rejects branches with local changes", { concurrency: fal
 
     assert.equal(response.status, 500);
     const payload = await response.text();
-    assert.match(payload, /uncommitted changes/i);
+    assert.match(payload, /commit or stash local changes on feature-dirty-merge before merging\./i);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -709,7 +873,7 @@ test("git compare commit creates a commit using the simple AI command by default
   try {
     await fs.writeFile(path.join(feature.worktreePath, "commit.txt"), "commit me\n", "utf8");
 
-    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-commit/commit`, {
+    const response = await server.fetch(`/api/git/compare/feature-ai-commit/commit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ baseBranch: "main" }),
@@ -751,7 +915,7 @@ test("git compare commit-message previews a simple AI message without committing
   try {
     await fs.writeFile(path.join(feature.worktreePath, "preview.txt"), "preview me\n", "utf8");
 
-    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-preview/commit-message`, {
+    const response = await server.fetch(`/api/git/compare/feature-ai-preview/commit-message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ baseBranch: "main" }),
@@ -792,7 +956,7 @@ test("git compare commit accepts an edited message", { concurrency: false }, asy
   try {
     await fs.writeFile(path.join(feature.worktreePath, "edited.txt"), "edited\n", "utf8");
 
-    const response = await fetch(`${server.baseUrl}/api/git/compare/feature-ai-edit/commit`, {
+    const response = await server.fetch(`/api/git/compare/feature-ai-edit/commit`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ baseBranch: "main", message: "edited commit message" }),
@@ -831,7 +995,7 @@ test("config document save commits the edited config file", { concurrency: false
       "",
     ].join("\n");
 
-    const response = await fetch(`${server.baseUrl}/api/config/document`, {
+    const response = await server.fetch(`/api/config/document`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contents: nextContents }),
@@ -855,7 +1019,7 @@ test("AI command settings save commits the config file", { concurrency: false },
   const server = await startApiServer(repo);
 
   try {
-    const response = await fetch(`${server.baseUrl}/api/settings/ai-command`, {
+    const response = await server.fetch(`/api/settings/ai-command`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -902,7 +1066,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
   });
 
   try {
-    const listResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+    const listResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(listResponse.status, 200);
 
     const listPayload = await listResponse.json() as {
@@ -919,7 +1083,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(listPayload.runningJobs[0].fileName, "running-log.json");
     assert.equal(listPayload.runningJobs[0].pid, 7331);
 
-    const detailResponse = await fetch(`${server.baseUrl}/api/ai/logs/${encodeURIComponent(listPayload.logs[0].fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(listPayload.logs[0].fileName)}`);
     assert.equal(detailResponse.status, 200);
 
     const detailPayload = await detailResponse.json() as {
@@ -970,7 +1134,7 @@ test("AI log detail stream emits live updates and completion for running logs", 
   });
 
   try {
-    const sse = await openSse(`${server.baseUrl}/api/ai/logs/${encodeURIComponent("stream-log.json")}/stream`);
+    const sse = await openSse(`${await server.url()}/api/ai/logs/${encodeURIComponent("stream-log.json")}/stream`);
 
     const snapshot = await sse.nextEvent();
     const snapshotLog = snapshot.log as {
@@ -1041,7 +1205,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
   });
 
   try {
-    const detailResponse = await fetch(`${server.baseUrl}/api/ai/logs/${encodeURIComponent("missing-process.json")}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent("missing-process.json")}`);
     assert.equal(detailResponse.status, 200);
 
     const detailPayload = await detailResponse.json() as {
@@ -1058,7 +1222,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
     assert.equal(detailPayload.log.response.stdout, "partial output");
     assert.equal(detailPayload.log.error?.message.includes("no longer available"), true);
 
-    const listResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+    const listResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(listResponse.status, 200);
     const listPayload = await listResponse.json() as {
       runningJobs: Array<unknown>;
@@ -1098,7 +1262,7 @@ test("project-management AI runs update the saved document on the server", { con
   });
 
   try {
-    const documentsResponse = await fetch(`${server.baseUrl}/api/project-management/documents`);
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
     assert.equal(documentsResponse.status, 200);
     const documentsPayload = await documentsResponse.json() as {
       documents: Array<{ id: string; title: string; markdown?: string }>;
@@ -1106,7 +1270,7 @@ test("project-management AI runs update the saved document on the server", { con
     const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
     assert.ok(outline);
 
-    const runResponse = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-log/ai-command/run`, {
+    const runResponse = await server.fetch(`/api/worktrees/feature-ai-log/ai-command/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1126,7 +1290,7 @@ test("project-management AI runs update the saved document on the server", { con
     };
     assert.equal(runPayload.job.branch, "feature-ai-log");
     assert.equal(runPayload.job.documentId, outline.id);
-    assert.equal(runPayload.job.commandId, "simple");
+    assert.equal(runPayload.job.commandId, "smart");
     assert.equal(runPayload.job.status, "running");
 
     assert.equal(capturedCommand.includes("tighten this plan"), true);
@@ -1150,7 +1314,7 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(history.history.length >= 2, true);
     assert.equal(history.history.at(-1)?.action, "update");
 
-    const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+    const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
       logs: Array<{ documentId?: string | null; status: string }>;
@@ -1176,7 +1340,7 @@ test("project-management AI document updates ignore stderr while logs retain it"
   });
 
   try {
-    const documentsResponse = await fetch(`${server.baseUrl}/api/project-management/documents`);
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
     assert.equal(documentsResponse.status, 200);
     const documentsPayload = await documentsResponse.json() as {
       documents: Array<{ id: string; title: string; markdown?: string }>;
@@ -1184,7 +1348,7 @@ test("project-management AI document updates ignore stderr while logs retain it"
     const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
     assert.ok(outline);
 
-    const runResponse = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-log/ai-command/run`, {
+    const runResponse = await server.fetch(`/api/worktrees/feature-ai-log/ai-command/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1203,13 +1367,13 @@ test("project-management AI document updates ignore stderr while logs retain it"
     assert.equal(updated.document.markdown, "# Clean Markdown\n\nOnly stdout belongs here.");
     assert.equal(updated.document.markdown.includes("> build · gpt-4.1"), false);
 
-    const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+    const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
       logs: Array<{ fileName: string }>;
     };
 
-    const detailResponse = await fetch(`${server.baseUrl}/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].fileName)}`);
     assert.equal(detailResponse.status, 200);
     const detailPayload = await detailResponse.json() as {
       log: {
@@ -1233,7 +1397,7 @@ test("project-management AI rejects unknown target documents and logs the failur
   });
 
   try {
-    const response = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-log/ai-command/run`, {
+    const response = await server.fetch(`/api/worktrees/feature-ai-log/ai-command/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1246,7 +1410,7 @@ test("project-management AI rejects unknown target documents and logs the failur
     const payload = await response.json() as { message: string };
     assert.equal(payload.message, "Unknown project management document missing-document.");
 
-    const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+    const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
       logs: Array<{ documentId?: string | null; status: string }>;
@@ -1288,7 +1452,7 @@ test("project-management document AI creates a derived worktree and streams stdo
   });
 
   try {
-    const documentsResponse = await fetch(`${server.baseUrl}/api/project-management/documents`);
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
     assert.equal(documentsResponse.status, 200);
     const documentsPayload = await documentsResponse.json() as {
       documents: Array<{ id: string; title: string }>;
@@ -1296,7 +1460,7 @@ test("project-management document AI creates a derived worktree and streams stdo
     const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
     assert.ok(outline);
 
-    const response = await fetch(`${server.baseUrl}/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+    const response = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1312,7 +1476,7 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(payload.job.commandId, "smart");
     assert.match(payload.job.branch, /^pm-/);
 
-    const stateResponse = await fetch(`${server.baseUrl}/api/state`);
+    const stateResponse = await server.fetch(`/api/state`);
     assert.equal(stateResponse.status, 200);
     const statePayload = await stateResponse.json() as {
       worktrees: Array<{ branch: string; worktreePath: string }>;
@@ -1323,14 +1487,14 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
     assert.equal(capturedCommand.includes("Additional operator guidance:"), false);
 
-    const stream = await openSse(`${server.baseUrl}/api/worktrees/${encodeURIComponent(payload.job.branch)}/ai-command/stream`);
+    const stream = await openSse(`${await server.url()}/api/worktrees/${encodeURIComponent(payload.job.branch)}/ai-command/stream`);
     try {
       const snapshot = await stream.nextEvent();
       assert.equal(snapshot.type, "snapshot");
       assert.equal((snapshot as { job?: { branch?: string } }).job?.branch, payload.job.branch);
 
       await waitFor(async () => {
-        const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+        const logsResponse = await server.fetch(`/api/ai/logs`);
         if (logsResponse.status !== 200) {
           return false;
         }
@@ -1384,14 +1548,14 @@ test("AI cancel route deletes the running process and returns the settled failed
   });
 
   try {
-    const runResponse = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-cancel/ai-command/run`, {
+    const runResponse = await server.fetch(`/api/worktrees/feature-ai-cancel/ai-command/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ input: "cancel me" }),
     });
     assert.equal(runResponse.status, 200);
 
-    const cancelResponse = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-cancel/ai-command/cancel`, {
+    const cancelResponse = await server.fetch(`/api/worktrees/feature-ai-cancel/ai-command/cancel`, {
       method: "POST",
     });
     assert.equal(cancelResponse.status, 200);
@@ -1408,17 +1572,19 @@ test("AI cancel route deletes the running process and returns the settled failed
     assert.equal(fakeAiProcesses.deletedProcesses[0]?.startsWith("wtm:ai:"), true);
 
     await waitFor(async () => {
-      const logsResponse = await fetch(`${server.baseUrl}/api/ai/logs`);
+      const logsResponse = await server.fetch(`/api/ai/logs`);
       if (logsResponse.status !== 200) {
         return false;
       }
 
       const logsPayload = await logsResponse.json() as {
-        runningJobs: Array<unknown>;
-        logs: Array<{ status: string }>;
+        runningJobs: Array<{ branch: string }>;
+        logs: Array<{ branch: string; status: string }>;
       };
 
-      return logsPayload.runningJobs.length === 0 && logsPayload.logs[0]?.status === "failed";
+      const runningForBranch = logsPayload.runningJobs.some((entry) => entry.branch === "feature-ai-cancel");
+      const failedLog = logsPayload.logs.find((entry) => entry.branch === "feature-ai-cancel");
+      return !runningForBranch && failedLog?.status === "failed";
     });
 
   } finally {
@@ -1449,7 +1615,7 @@ test("AI cancel route returns 409 when the running job has no process name", { c
   });
 
   try {
-    const cancelResponse = await fetch(`${server.baseUrl}/api/worktrees/feature-ai-no-process/ai-command/cancel`, {
+    const cancelResponse = await server.fetch(`/api/worktrees/feature-ai-no-process/ai-command/cancel`, {
       method: "POST",
     });
     assert.equal(cancelResponse.status, 409);

@@ -169,6 +169,14 @@ function getMergeActionState(worktreeBranch: string | undefined, gitComparison: 
   return { canMerge: true, reason: null };
 }
 
+function formatConflictPreview(preview: string | null) {
+  if (!preview) {
+    return "Conflict preview unavailable.";
+  }
+
+  return preview;
+}
+
 function normalizeDiffPath(value: string) {
   const trimmed = value.trim().replace(/^"|"$/g, "");
   if (trimmed === "/dev/null") {
@@ -308,6 +316,7 @@ interface WorktreeDetailProps {
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
   onMergeGitBranch: (compareBranch: string, baseBranch?: string) => Promise<GitComparisonResponse | null>;
+  onResolveGitMergeConflicts: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<GitComparisonResponse | null>;
   onGenerateGitCommitMessage: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<{ message: string } | null>;
   onCommitGitChanges: (branch: string, payload?: CommitChangesPayload) => Promise<CommitGitChangesResponse | null>;
   onSubscribeToBackgroundLogs: (branch: string, commandName: string) => () => void;
@@ -390,6 +399,7 @@ export function WorktreeDetail({
   onLoadBackgroundLogs,
   onLoadGitComparison,
   onMergeGitBranch,
+  onResolveGitMergeConflicts,
   onGenerateGitCommitMessage,
   onCommitGitChanges,
   onSubscribeToBackgroundLogs,
@@ -436,6 +446,7 @@ export function WorktreeDetail({
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [commitMessageDraft, setCommitMessageDraft] = useState("");
   const [commitMessageLoading, setCommitMessageLoading] = useState(false);
+  const [mergeConflictAiRunning, setMergeConflictAiRunning] = useState(false);
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
@@ -811,6 +822,19 @@ export function WorktreeDetail({
     }
   };
 
+  const resolveMergeConflicts = async () => {
+    if (!worktree?.branch || !gitComparison) {
+      return;
+    }
+
+    setMergeConflictAiRunning(true);
+    try {
+      await onResolveGitMergeConflicts(worktree.branch, gitComparison.baseBranch, "smart");
+    } finally {
+      setMergeConflictAiRunning(false);
+    }
+  };
+
   return (
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
@@ -1133,8 +1157,21 @@ export function WorktreeDetail({
                     >
                       Merge to {gitComparison?.baseBranch ?? "main"}
                     </button>
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={!gitComparison?.mergeStatus.hasConflicts || gitComparisonLoading || mergeConflictAiRunning || !worktree?.branch}
+                      title={gitComparison?.mergeStatus.hasConflicts
+                        ? "Ask Smart AI to resolve the current merge conflict markers."
+                        : "No merge conflicts are available to fix."}
+                      onClick={() => {
+                        void resolveMergeConflicts();
+                      }}
+                    >
+                      {mergeConflictAiRunning ? "Fixing conflicts..." : "AI fix merge conflicts"}
+                    </button>
+                  </div>
                 </div>
-              </div>
 
               {gitComparison ? (
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
@@ -1148,6 +1185,33 @@ export function WorktreeDetail({
               {gitComparison && !canMergeToBaseBranch && mergeActionState.reason ? (
                 <div className="mt-3 text-xs theme-text-danger">
                   Merge disabled: {mergeActionState.reason}
+                </div>
+              ) : null}
+
+              {gitComparison?.mergeStatus.hasConflicts ? (
+                <div className="mt-3 space-y-3 border theme-border-danger theme-surface-danger px-4 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="matrix-kicker theme-kicker-danger">Merge conflicts</p>
+                      <p className="mt-1 text-sm theme-text-danger">
+                        Review the conflict markers below or let Smart AI draft resolved file contents.
+                      </p>
+                    </div>
+                    <MatrixBadge tone="danger">
+                      {gitComparison.mergeStatus.conflicts.length} conflict{gitComparison.mergeStatus.conflicts.length === 1 ? "" : "s"}
+                    </MatrixBadge>
+                  </div>
+                  <div className="space-y-3">
+                    {gitComparison.mergeStatus.conflicts.map((conflict) => (
+                      <div key={conflict.path} className="border theme-border-danger bg-black/20">
+                        <div className="flex items-center justify-between gap-3 border-b theme-border-danger px-3 py-2">
+                          <div className="font-mono text-xs theme-text-danger">{conflict.path}</div>
+                          {conflict.truncated ? <div className="text-[11px] theme-text-danger">Preview truncated</div> : null}
+                        </div>
+                        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 py-3 font-mono text-xs theme-text-danger">{formatConflictPreview(conflict.preview)}</pre>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 

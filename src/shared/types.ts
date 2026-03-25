@@ -150,6 +150,13 @@ export interface GitMergeStatus {
   canMerge: boolean;
   hasConflicts: boolean;
   reason: string | null;
+  conflicts: GitMergeConflict[];
+}
+
+export interface GitMergeConflict {
+  path: string;
+  preview: string | null;
+  truncated: boolean;
 }
 
 export interface GitComparisonResponse {
@@ -171,6 +178,11 @@ export interface GitComparisonResponse {
 
 export interface MergeGitBranchRequest {
   baseBranch?: string;
+}
+
+export interface ResolveGitMergeConflictsRequest {
+  baseBranch?: string;
+  commandId?: AiCommandId;
 }
 
 export interface CommitGitChangesRequest {
