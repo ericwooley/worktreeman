@@ -69,9 +69,10 @@ body::before {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background-image:
-    background: rgb(var(--rgb-base0B) / 0.04);
-  background-size: 100% 4px, 4px 100%;
+  background-image: rgb(var(--rgb-base0B) / 0.04);
+  background-size:
+    100% 4px,
+    4px 100%;
   opacity: 0.22;
   mix-blend-mode: screen;
   z-index: 0;
@@ -112,7 +113,9 @@ body,
 .matrix-panel-strong {
   border: 1px solid rgb(var(--rgb-base0B) / 0.42);
   background: rgb(var(--rgb-base02) / 0.92);
-  box-shadow: inset 0 0 0 1px rgb(var(--rgb-base0B) / 0.14), 0 0 24px rgb(var(--rgb-base0B) / 0.12);
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--rgb-base0B) / 0.14),
+    0 0 24px rgb(var(--rgb-base0B) / 0.12);
 }
 
 .matrix-kicker {
@@ -133,7 +136,11 @@ body,
   border: 1px solid rgb(var(--rgb-base0B) / 0.2);
   background: rgb(var(--rgb-base00) / 0.24);
   color: var(--base05);
-  transition: border-color 160ms ease, background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .matrix-button:hover:not(:disabled) {
@@ -272,7 +279,9 @@ body,
 .pm-ai-button-running {
   animation: pm-ai-pulse 1.1s ease-in-out infinite;
   border-color: rgb(var(--rgb-base0D) / 0.42);
-  box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.16), 0 0 22px rgb(var(--rgb-base0D) / 0.14);
+  box-shadow:
+    0 0 0 1px rgb(var(--rgb-base0D) / 0.16),
+    0 0 22px rgb(var(--rgb-base0D) / 0.14);
 }
 
 .pm-ai-running-state {
@@ -294,12 +303,16 @@ body,
   0%,
   100% {
     transform: translateY(0);
-    box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.16), 0 0 16px rgb(var(--rgb-base0D) / 0.1);
+    box-shadow:
+      0 0 0 1px rgb(var(--rgb-base0D) / 0.16),
+      0 0 16px rgb(var(--rgb-base0D) / 0.1);
   }
 
   50% {
     transform: translateY(-1px);
-    box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.22), 0 0 28px rgb(var(--rgb-base0D) / 0.18);
+    box-shadow:
+      0 0 0 1px rgb(var(--rgb-base0D) / 0.22),
+      0 0 28px rgb(var(--rgb-base0D) / 0.18);
   }
 }
 
@@ -333,7 +346,9 @@ body,
 .react-flow__node.pm-dependency-node.selected,
 .react-flow__node-default.pm-dependency-node.selected {
   border-color: rgb(var(--rgb-base0D) / 0.55) !important;
-  box-shadow: 0 0 0 1px rgb(var(--rgb-base0D) / 0.22), 0 10px 30px rgb(var(--rgb-base0D) / 0.16) !important;
+  box-shadow:
+    0 0 0 1px rgb(var(--rgb-base0D) / 0.22),
+    0 10px 30px rgb(var(--rgb-base0D) / 0.16) !important;
 }
 
 .react-flow__controls {
@@ -589,7 +604,10 @@ body,
 
 .theme-terminal-mode-toggle {
   border: 1px solid transparent;
-  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
 .theme-terminal-mode-toggle-active {
