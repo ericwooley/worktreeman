@@ -1181,7 +1181,8 @@ export function Dashboard() {
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
             onLoadGitComparison={loadGitComparison}
-            onMergeGitBranch={mergeBaseBranchIntoWorktree}
+            onMergeWorktreeIntoBase={mergeGitBranch}
+            onMergeBaseIntoWorktree={mergeBaseBranchIntoWorktree}
             onResolveGitMergeConflicts={resolveGitMergeConflicts}
             onGenerateGitCommitMessage={generateGitCommitMessage}
             onCommitGitChanges={commitGitChanges}
