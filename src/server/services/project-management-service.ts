@@ -40,6 +40,7 @@ interface ProjectManagementAutomergeDocument {
   id: string;
   number: number;
   title: string;
+  summary: string;
   markdown: string;
   tags: string[];
   dependencies: string[];
@@ -55,6 +56,7 @@ interface StoredProjectManagementBatchEntry {
   action: ProjectManagementDocumentAction;
   actorId: string;
   title: string;
+  summary: string;
   tags: string[];
   dependencies: string[];
   status: string;
@@ -163,6 +165,10 @@ function normalizeStatus(value: string | undefined): string {
 }
 
 function normalizeAssignee(value: string | undefined): string {
+  return value?.trim() ?? "";
+}
+
+function normalizeSummary(value: string | undefined): string {
   return value?.trim() ?? "";
 }
 
@@ -297,6 +303,7 @@ function serializeDocumentMetadata(document: ProjectManagementDocument | null): 
   return [
     `title: ${document?.title ?? ""}`,
     `number: ${document?.number ?? ""}`,
+    `summary: ${document?.summary ?? ""}`,
     `status: ${document?.status ?? DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS}`,
     `assignee: ${document?.assignee ?? ""}`,
     `archived: ${document?.archived ? "true" : "false"}`,
@@ -338,6 +345,7 @@ function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocume
     id: doc.id,
     number: doc.number,
     title: doc.title,
+    summary: doc.summary || "",
     markdown: doc.markdown,
     tags: Array.from(doc.tags ?? []),
     dependencies: Array.from(doc.dependencies ?? []),
@@ -440,6 +448,7 @@ function toListResponse(cache: ReducedProjectManagementState): ProjectManagement
       id: document.id,
       number: document.number,
       title: document.title,
+      summary: document.summary,
       tags: [...document.tags],
       dependencies: [...document.dependencies],
       status: document.status,
@@ -571,6 +580,7 @@ function createSeedBatch(now: string): StoredProjectManagementBatch {
     draft.id = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_ID;
     draft.number = 1;
     draft.title = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE;
+    draft.summary = "";
     draft.markdown = buildSeedMarkdown();
     draft.tags = [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG];
     draft.dependencies = [];
@@ -596,6 +606,7 @@ function createSeedBatch(now: string): StoredProjectManagementBatch {
       action: "create",
       actorId,
       title: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE,
+      summary: "",
       tags: [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG],
       dependencies: [],
       status: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS,
@@ -666,6 +677,7 @@ function applyDocumentChange(
   input: {
     number: number;
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     dependencies?: string[];
@@ -680,6 +692,7 @@ function applyDocumentChange(
   const dependencies = normalizeDependencyIds(input.dependencies, documentId);
   const status = normalizeStatus(input.status);
   const assignee = normalizeAssignee(input.assignee);
+  const summary = input.summary === undefined ? doc?.summary ?? "" : normalizeSummary(input.summary);
   const writableDoc = doc
     ? Automerge.clone(doc, { actor: input.actorId })
     : Automerge.init<ProjectManagementAutomergeDocument>({ actor: input.actorId });
@@ -688,6 +701,10 @@ function applyDocumentChange(
     draft.id = documentId;
     draft.number = draft.number || input.number;
     draft.title = input.title.trim() || DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE;
+    if (typeof draft.summary !== "string") {
+      draft.summary = "";
+    }
+    Automerge.updateText(draft as Automerge.Doc<unknown>, ["summary"], summary);
     if (typeof draft.markdown !== "string") {
       draft.markdown = "";
     }
@@ -724,6 +741,7 @@ async function appendEntries(
   entries: Array<{
     documentId?: string;
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     dependencies?: string[];
@@ -752,6 +770,7 @@ async function appendEntries(
       const { nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
         number: existingDoc?.number ?? getNextDocumentNumber(workingState),
         title: entry.title,
+        summary: entry.summary,
         markdown: entry.markdown,
         tags: entry.tags,
         dependencies,
@@ -767,6 +786,7 @@ async function appendEntries(
         action,
         actorId,
         title: nextDoc.title,
+        summary: nextDoc.summary || "",
         tags: Array.from(nextDoc.tags ?? []),
         dependencies: Array.from(nextDoc.dependencies ?? []),
         status: nextDoc.status,
@@ -890,6 +910,7 @@ export async function createProjectManagementDocument(
 
   const result = await appendEntries(repoRoot, [{
     title,
+    summary: request.summary,
     markdown: request.markdown,
     tags: request.tags,
     dependencies: request.dependencies,
@@ -913,6 +934,7 @@ export async function updateProjectManagementDocument(
   await appendEntries(repoRoot, [{
     documentId,
     title,
+    summary: request.summary,
     markdown: request.markdown,
     tags: request.tags,
     dependencies: request.dependencies,
@@ -952,6 +974,7 @@ export async function updateProjectManagementDependencies(
   await appendEntries(repoRoot, [{
     documentId,
     title: currentDocument.title,
+    summary: currentDocument.summary,
     markdown: currentDocument.markdown,
     tags: currentDocument.tags,
     dependencies: normalizedDependencies,
