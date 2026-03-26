@@ -162,7 +162,9 @@ export interface GitWorkingTreeSummary {
   staged: boolean;
   unstaged: boolean;
   untracked: boolean;
+  conflicted: boolean;
   changedFiles: number;
+  conflictedFiles: number;
   untrackedFiles: number;
 }
 
@@ -193,6 +195,7 @@ export interface GitComparisonResponse {
   workingTreeDiff: string;
   effectiveDiff: string;
   workingTreeSummary: GitWorkingTreeSummary;
+  workingTreeConflicts: GitMergeConflict[];
   mergeStatus: GitMergeStatus;
   mergeIntoCompareStatus: GitMergeStatus;
 }
@@ -262,6 +265,15 @@ export interface ProjectManagementDocumentSummary {
 
 export interface ProjectManagementDocument extends ProjectManagementDocumentSummary {
   markdown: string;
+  comments: ProjectManagementComment[];
+}
+
+export interface ProjectManagementComment {
+  id: string;
+  body: string;
+  createdAt: string;
+  authorName: string;
+  authorEmail: string;
 }
 
 export interface ProjectManagementHistoryEntry {
@@ -269,6 +281,8 @@ export interface ProjectManagementHistoryEntry {
   batchId: string;
   createdAt: string;
   actorId: string;
+  authorName: string;
+  authorEmail: string;
   documentId: string;
   number: number;
   title: string;
@@ -277,7 +291,7 @@ export interface ProjectManagementHistoryEntry {
   assignee: string;
   archived: boolean;
   changeCount: number;
-  action: "create" | "update" | "archive" | "restore";
+  action: "create" | "update" | "archive" | "restore" | "comment";
   diff: string;
 }
 
@@ -346,6 +360,10 @@ export interface AppendProjectManagementBatchRequest {
 
 export interface UpdateProjectManagementDependenciesRequest {
   dependencyIds: string[];
+}
+
+export interface AddProjectManagementCommentRequest {
+  body: string;
 }
 
 export interface RunAiCommandRequest {

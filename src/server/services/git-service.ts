@@ -86,6 +86,27 @@ async function buildConflictPreviews(repoRoot: string, treeSha: string, conflict
   }));
 }
 
+async function buildWorkingTreeConflictPreviews(worktreePath: string, conflictPaths: string[]): Promise<GitMergeConflict[]> {
+  return Promise.all(conflictPaths.map(async (conflictPath) => {
+    try {
+      const preview = await fs.readFile(path.join(worktreePath, conflictPath), "utf8");
+      const normalizedPreview = preview.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd();
+      const truncated = normalizedPreview.length > 4000;
+      return {
+        path: conflictPath,
+        preview: truncated ? `${normalizedPreview.slice(0, 4000).trimEnd()}\n...` : normalizedPreview,
+        truncated,
+      } satisfies GitMergeConflict;
+    } catch {
+      return {
+        path: conflictPath,
+        preview: null,
+        truncated: false,
+      } satisfies GitMergeConflict;
+    }
+  }));
+}
+
 function formatMergeConflictResolutionPrompt(options: {
   branch: string;
   baseBranch: string;
@@ -544,18 +565,26 @@ async function getWorkingTreeSummary(worktreePath: string): Promise<GitWorkingTr
   let staged = false;
   let unstaged = false;
   let untracked = false;
+  let conflicted = false;
   let changedFiles = 0;
+  let conflictedFiles = 0;
   let untrackedFiles = 0;
 
   for (const line of lines) {
     const x = line[0] ?? " ";
     const y = line[1] ?? " ";
     const isUntracked = x === "?" && y === "?";
+    const isConflicted = x === "U" || y === "U" || (x === "A" && y === "A") || (x === "D" && y === "D");
 
     if (isUntracked) {
       untracked = true;
       untrackedFiles += 1;
       continue;
+    }
+
+    if (isConflicted) {
+      conflicted = true;
+      conflictedFiles += 1;
     }
 
     if (x !== " ") {
@@ -574,9 +603,21 @@ async function getWorkingTreeSummary(worktreePath: string): Promise<GitWorkingTr
     staged,
     unstaged,
     untracked,
+    conflicted,
     changedFiles,
+    conflictedFiles,
     untrackedFiles,
   };
+}
+
+async function getWorkingTreeConflicts(worktreePath: string): Promise<GitMergeConflict[]> {
+  const { stdout } = await runCommand("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: worktreePath });
+  const conflictPaths = stdout.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
+  if (conflictPaths.length === 0) {
+    return [];
+  }
+
+  return buildWorkingTreeConflictPreviews(worktreePath, conflictPaths);
 }
 
 async function getWorkingTreeDiff(worktreePath: string): Promise<string> {
@@ -659,10 +700,11 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
   const compareCwd = selectedWorktree?.worktreePath ?? repoRoot;
 
   const commitFormat = "%H%x09%h%x09%an%x09%aI%x09%s";
-  const [branches, workingTreeDiff, workingTreeSummary, baseHasCommit, compareHasCommit, mergeStatus, mergeIntoCompareStatus] = await Promise.all([
+  const [branches, workingTreeDiff, workingTreeSummary, workingTreeConflicts, baseHasCommit, compareHasCommit, mergeStatus, mergeIntoCompareStatus] = await Promise.all([
     listBranchOptions(repoRoot, worktrees, defaultBranch),
     getWorkingTreeDiff(compareCwd),
     getWorkingTreeSummary(compareCwd),
+    getWorkingTreeConflicts(compareCwd),
     gitRefHasCommit(repoRoot, normalizedBaseBranch),
     gitRefHasCommit(repoRoot, normalizedCompareBranch),
     getMergeStatus(repoRoot, normalizedBaseBranch, normalizedCompareBranch, { allowDirtyCompareBranch: true }),
@@ -684,6 +726,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
       workingTreeDiff,
       effectiveDiff: workingTreeDiff.trim(),
       workingTreeSummary,
+      workingTreeConflicts,
       mergeStatus,
       mergeIntoCompareStatus,
     };
@@ -712,6 +755,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
       workingTreeDiff,
       effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
       workingTreeSummary,
+      workingTreeConflicts,
       mergeStatus,
       mergeIntoCompareStatus,
     };
@@ -740,6 +784,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
       workingTreeDiff,
       effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
       workingTreeSummary,
+      workingTreeConflicts,
       mergeStatus,
       mergeIntoCompareStatus,
     };
@@ -780,6 +825,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
       workingTreeDiff,
       effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
       workingTreeSummary,
+      workingTreeConflicts,
       mergeStatus,
       mergeIntoCompareStatus,
     };
@@ -809,6 +855,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
     workingTreeDiff,
     effectiveDiff: [branchDiff, localDiff].filter(Boolean).join("\n\n"),
     workingTreeSummary,
+    workingTreeConflicts,
     mergeStatus,
     mergeIntoCompareStatus,
   };
@@ -1015,11 +1062,15 @@ export async function resolveMergeConflictsWithAi(options: {
   }
 
   const comparison = await getGitComparison(options.repoRoot, normalizedBranch, baseBranch);
-  if (!comparison.mergeIntoCompareStatus.hasConflicts || comparison.mergeIntoCompareStatus.conflicts.length === 0) {
+  const conflictsToResolve = comparison.workingTreeConflicts.length > 0
+    ? comparison.workingTreeConflicts
+    : comparison.mergeIntoCompareStatus.conflicts;
+
+  if (conflictsToResolve.length === 0) {
     throw new Error(`Branch ${normalizedBranch} does not currently expose merge conflicts against ${baseBranch}.`);
   }
 
-  for (const conflict of comparison.mergeIntoCompareStatus.conflicts) {
+  for (const conflict of conflictsToResolve) {
     const resolvedContents = await generateResolvedConflictContents({
       worktreePath: worktree.worktreePath,
       branch: normalizedBranch,
@@ -1031,6 +1082,11 @@ export async function resolveMergeConflictsWithAi(options: {
     });
     await fs.writeFile(path.join(worktree.worktreePath, conflict.path), resolvedContents, "utf8");
   }
+
+  await runCommand("git", ["add", "--", ...conflictsToResolve.map((conflict) => conflict.path)], {
+    cwd: worktree.worktreePath,
+    env: GIT_COMMIT_ENV,
+  });
 
   return getGitComparison(options.repoRoot, normalizedBranch, baseBranch);
 }

@@ -1,4 +1,5 @@
 import type {
+  AddProjectManagementCommentRequest,
   AppendProjectManagementBatchRequest,
   ApiStateResponse,
   AiCommandLogResponse,
@@ -253,6 +254,16 @@ export function updateProjectManagementDependencies(
   payload: UpdateProjectManagementDependenciesRequest,
 ): Promise<ProjectManagementDocumentResponse> {
   return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/dependencies`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function addProjectManagementComment(
+  documentId: string,
+  payload: AddProjectManagementCommentRequest,
+): Promise<ProjectManagementDocumentResponse> {
+  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

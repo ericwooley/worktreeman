@@ -12,8 +12,10 @@ import {
   PROJECT_MANAGEMENT_SCHEMA_VERSION,
 } from "../../shared/constants.js";
 import type {
+  AddProjectManagementCommentRequest,
   AppendProjectManagementBatchRequest,
   CreateProjectManagementDocumentRequest,
+  ProjectManagementComment,
   ProjectManagementBatchResponse,
   ProjectManagementDocument,
   ProjectManagementDocumentResponse,
@@ -26,15 +28,13 @@ import type {
 import { runCommand } from "../utils/process.js";
 
 const PROJECT_MANAGEMENT_MAX_APPEND_RETRIES = 5;
-const PROJECT_MANAGEMENT_COMMIT_ENV = {
-  ...process.env,
-  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
-  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
-  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
-  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
-};
 
-type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restore";
+type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restore" | "comment";
+
+interface ProjectManagementAuthor {
+  name: string;
+  email: string;
+}
 
 interface ProjectManagementAutomergeDocument {
   id: string;
@@ -49,12 +49,15 @@ interface ProjectManagementAutomergeDocument {
   archived: boolean;
   createdAt: string;
   updatedAt: string;
+  comments: ProjectManagementComment[];
 }
 
 interface StoredProjectManagementBatchEntry {
   documentId: string;
   action: ProjectManagementDocumentAction;
   actorId: string;
+  authorName: string;
+  authorEmail: string;
   title: string;
   summary: string;
   tags: string[];
@@ -172,6 +175,10 @@ function normalizeSummary(value: string | undefined): string {
   return value?.trim() ?? "";
 }
 
+function normalizeCommentBody(value: string): string {
+  return value.trim();
+}
+
 function slugifyDocumentId(value: string): string {
   const base = value
     .trim()
@@ -187,6 +194,34 @@ function createDocumentId(title: string): string {
 
 function createActorId(): string {
   return randomUUID().replace(/-/g, "");
+}
+
+async function readGitConfigValue(repoRoot: string, key: string): Promise<string> {
+  const { stdout } = await runCommand("git", ["config", "--get", key], {
+    cwd: repoRoot,
+    allowExitCodes: [1],
+  });
+  return stdout.trim();
+}
+
+async function resolveProjectManagementAuthor(repoRoot: string): Promise<ProjectManagementAuthor> {
+  const configuredName = await readGitConfigValue(repoRoot, "user.name");
+  const configuredEmail = await readGitConfigValue(repoRoot, "user.email");
+
+  return {
+    name: configuredName || process.env.GIT_AUTHOR_NAME || process.env.GIT_COMMITTER_NAME || "worktreeman",
+    email: configuredEmail || process.env.GIT_AUTHOR_EMAIL || process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+  };
+}
+
+function buildProjectManagementCommitEnv(author: ProjectManagementAuthor): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_AUTHOR_NAME: author.name,
+    GIT_AUTHOR_EMAIL: author.email,
+    GIT_COMMITTER_NAME: author.name,
+    GIT_COMMITTER_EMAIL: author.email,
+  };
 }
 
 function encodeChange(change: Uint8Array): string {
@@ -206,6 +241,7 @@ function cloneCacheEntry(cache: ProjectManagementCacheEntry): ProjectManagementC
         ...document,
         tags: [...document.tags],
         dependencies: [...document.dependencies],
+        comments: document.comments.map((comment) => ({ ...comment })),
       }]),
     ),
     documentOrder: [...cache.documentOrder],
@@ -326,7 +362,23 @@ function buildProjectManagementDiff(previous: ProjectManagementDocument | null, 
     sections.push(buildUnifiedDiff(previousMarkdown, next.markdown, "markdown:before", "markdown:after"));
   }
 
+  const previousComments = serializeComments(previous?.comments ?? []);
+  const nextComments = serializeComments(next.comments);
+  if (previousComments !== nextComments) {
+    sections.push(buildUnifiedDiff(previousComments, nextComments, "comments:before", "comments:after"));
+  }
+
   return sections.join("\n\n");
+}
+
+function serializeComments(comments: ProjectManagementComment[]): string {
+  return comments.map((comment, index) => {
+    const bodyLines = comment.body.split(/\r?\n/);
+    return [
+      `comment ${index + 1}: ${comment.createdAt} | ${comment.authorName} <${comment.authorEmail}>`,
+      ...bodyLines.map((line) => `  ${line}`),
+    ].join("\n");
+  }).join("\n");
 }
 
 function ensureProjectManagementDiff(entry: Pick<ProjectManagementHistoryEntry, "diff" | "action">): string {
@@ -354,6 +406,7 @@ function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocume
     archived: Boolean(doc.archived),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+    comments: Array.from(doc.comments ?? []).map((comment) => ({ ...comment })),
     historyCount: 0,
   };
 }
@@ -411,13 +464,15 @@ function reduceBatchIntoCache(
 
     setDocumentTagsInIndex(cache, entry.documentId, previousTags, materialized.tags);
 
-    const historyEntry: ProjectManagementHistoryEntry = {
-      commitSha,
-      batchId: batch.batchId,
-      createdAt: batch.createdAt,
-      actorId: entry.actorId,
-      documentId: entry.documentId,
-      number: materialized.number,
+      const historyEntry: ProjectManagementHistoryEntry = {
+        commitSha,
+        batchId: batch.batchId,
+        createdAt: batch.createdAt,
+        actorId: entry.actorId,
+        authorName: entry.authorName,
+        authorEmail: entry.authorEmail,
+        documentId: entry.documentId,
+        number: materialized.number,
       title: materialized.title,
       tags: [...materialized.tags],
       status: materialized.status,
@@ -477,7 +532,12 @@ function toDocumentResponse(cache: ReducedProjectManagementState, documentId: st
   return {
     branch: cache.branch,
     headSha: cache.headSha,
-    document: { ...document, tags: [...document.tags], dependencies: [...document.dependencies] },
+    document: {
+      ...document,
+      tags: [...document.tags],
+      dependencies: [...document.dependencies],
+      comments: document.comments.map((comment) => ({ ...comment })),
+    },
   };
 }
 
@@ -538,7 +598,13 @@ async function writeTree(repoRoot: string, blobSha: string): Promise<string> {
   return stdout.trim();
 }
 
-async function writeCommit(repoRoot: string, treeSha: string, parentSha: string | null, message: string): Promise<string> {
+async function writeCommit(
+  repoRoot: string,
+  treeSha: string,
+  parentSha: string | null,
+  message: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
   const args = ["commit-tree", treeSha, "-m", message];
   if (parentSha) {
     args.push("-p", parentSha);
@@ -546,7 +612,7 @@ async function writeCommit(repoRoot: string, treeSha: string, parentSha: string 
 
   const { stdout } = await runCommand("git", args, {
     cwd: repoRoot,
-    env: PROJECT_MANAGEMENT_COMMIT_ENV,
+    env,
   });
   return stdout.trim();
 }
@@ -564,16 +630,17 @@ async function appendBatchCommit(
   repoRoot: string,
   parentSha: string | null,
   batch: StoredProjectManagementBatch,
+  env: NodeJS.ProcessEnv,
 ): Promise<string> {
   const blobSha = await writeBlob(repoRoot, JSON.stringify(batch));
   const treeSha = await writeTree(repoRoot, blobSha);
   const message = `pm: ${batch.entries.length === 1 ? batch.entries[0].action : "batch"} ${batch.documentIds.length} document${batch.documentIds.length === 1 ? "" : "s"}`;
-  const commitSha = await writeCommit(repoRoot, treeSha, parentSha, message);
+  const commitSha = await writeCommit(repoRoot, treeSha, parentSha, message, env);
   await updateRef(repoRoot, commitSha, parentSha);
   return commitSha;
 }
 
-function createSeedBatch(now: string): StoredProjectManagementBatch {
+function createSeedBatch(now: string, author: ProjectManagementAuthor): StoredProjectManagementBatch {
   const actorId = createActorId();
   let doc = Automerge.init<ProjectManagementAutomergeDocument>({ actor: actorId });
   doc = Automerge.change(doc, "Create Project Outline", (draft) => {
@@ -589,6 +656,7 @@ function createSeedBatch(now: string): StoredProjectManagementBatch {
     draft.archived = false;
     draft.createdAt = now;
     draft.updatedAt = now;
+    draft.comments = [];
   });
 
   const change = Automerge.getLastLocalChange(doc);
@@ -605,6 +673,8 @@ function createSeedBatch(now: string): StoredProjectManagementBatch {
       documentId: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_ID,
       action: "create",
       actorId,
+      authorName: author.name,
+      authorEmail: author.email,
       title: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE,
       summary: "",
       tags: [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG],
@@ -623,9 +693,10 @@ async function ensureProjectManagementInitialized(repoRoot: string): Promise<str
     return existingHead;
   }
 
-  const batch = createSeedBatch(new Date().toISOString());
+  const author = await resolveProjectManagementAuthor(repoRoot);
+  const batch = createSeedBatch(new Date().toISOString(), author);
   try {
-    const commitSha = await appendBatchCommit(repoRoot, null, batch);
+    const commitSha = await appendBatchCommit(repoRoot, null, batch, buildProjectManagementCommitEnv(author));
     const cache = createEmptyReducedState(commitSha);
     reduceBatchIntoCache(cache, batch, commitSha);
     projectManagementCache.set(repoRoot, cache);
@@ -748,12 +819,15 @@ async function appendEntries(
     status?: string;
     assignee?: string;
     archived?: boolean;
+    commentBody?: string;
   }>,
 ): Promise<ProjectManagementBatchResponse> {
   for (let attempt = 1; attempt <= PROJECT_MANAGEMENT_MAX_APPEND_RETRIES; attempt += 1) {
     const state = await getReducedProjectManagementState(repoRoot);
     const workingState = cloneCacheEntry(state);
     const now = new Date().toISOString();
+    const author = await resolveProjectManagementAuthor(repoRoot);
+    const commitEnv = buildProjectManagementCommitEnv(author);
     const batchEntries: StoredProjectManagementBatchEntry[] = [];
     const documentIds: string[] = [];
 
@@ -767,24 +841,58 @@ async function appendEntries(
       const dependencies = normalizeDependencyIds(entry.dependencies ?? existingDoc?.dependencies ?? [], documentId);
       assertValidDependencies(workingState, documentId, dependencies);
 
-      const { nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
-        number: existingDoc?.number ?? getNextDocumentNumber(workingState),
-        title: entry.title,
-        summary: entry.summary,
-        markdown: entry.markdown,
-        tags: entry.tags,
-        dependencies,
-        status: entry.status,
-        assignee: entry.assignee,
-        archived: entry.archived,
-        now,
-        actorId,
-      });
+      let nextDoc: Automerge.Doc<ProjectManagementAutomergeDocument>;
+      let action: ProjectManagementDocumentAction;
+      let change: Uint8Array;
+
+      if (typeof entry.commentBody === "string") {
+        if (!existingDoc) {
+          throw new Error(`Unknown project management document ${documentId}.`);
+        }
+
+        const body = normalizeCommentBody(entry.commentBody);
+        if (!body) {
+          throw new Error("Comment body is required.");
+        }
+
+        const writableDoc = Automerge.clone(existingDoc, { actor: actorId });
+        nextDoc = Automerge.change(writableDoc, "Add project management comment", (draft) => {
+          draft.updatedAt = now;
+          if (!Array.isArray(draft.comments)) {
+            draft.comments = [];
+          }
+          draft.comments.push({
+            id: randomUUID(),
+            body,
+            createdAt: now,
+            authorName: author.name,
+            authorEmail: author.email,
+          });
+        });
+        change = Automerge.getLastLocalChange(nextDoc)!;
+        action = "comment";
+      } else {
+        ({ nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
+          number: existingDoc?.number ?? getNextDocumentNumber(workingState),
+          title: entry.title,
+          summary: entry.summary,
+          markdown: entry.markdown,
+          tags: entry.tags,
+          dependencies,
+          status: entry.status,
+          assignee: entry.assignee,
+          archived: entry.archived,
+          now,
+          actorId,
+        }));
+      }
 
       batchEntries.push({
         documentId,
         action,
         actorId,
+        authorName: author.name,
+        authorEmail: author.email,
         title: nextDoc.title,
         summary: nextDoc.summary || "",
         tags: Array.from(nextDoc.tags ?? []),
@@ -815,7 +923,7 @@ async function appendEntries(
     };
 
     try {
-      const commitSha = await appendBatchCommit(repoRoot, state.headSha, batch);
+      const commitSha = await appendBatchCommit(repoRoot, state.headSha, batch, commitEnv);
       const nextCache = cloneCacheEntry(state);
       reduceBatchIntoCache(nextCache, batch, commitSha);
       nextCache.headSha = commitSha;
@@ -981,6 +1089,38 @@ export async function updateProjectManagementDependencies(
     status: currentDocument.status,
     assignee: currentDocument.assignee,
     archived: currentDocument.archived,
+  }]);
+
+  return getProjectManagementDocument(repoRoot, documentId);
+}
+
+export async function addProjectManagementComment(
+  repoRoot: string,
+  documentId: string,
+  request: AddProjectManagementCommentRequest,
+): Promise<ProjectManagementDocumentResponse> {
+  const state = await getReducedProjectManagementState(repoRoot);
+  const currentDocument = state.documentsById.get(documentId);
+  if (!currentDocument) {
+    throw new Error(`Unknown project management document ${documentId}.`);
+  }
+
+  const body = normalizeCommentBody(request.body);
+  if (!body) {
+    throw new Error("Comment body is required.");
+  }
+
+  await appendEntries(repoRoot, [{
+    documentId,
+    title: currentDocument.title,
+    summary: currentDocument.summary,
+    markdown: currentDocument.markdown,
+    tags: currentDocument.tags,
+    dependencies: currentDocument.dependencies,
+    status: currentDocument.status,
+    assignee: currentDocument.assignee,
+    archived: currentDocument.archived,
+    commentBody: body,
   }]);
 
   return getProjectManagementDocument(repoRoot, documentId);
