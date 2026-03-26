@@ -32,6 +32,7 @@ import type {
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
+  UpdateProjectManagementStatusRequest,
   WorktreeRuntime,
 } from "@shared/types";
 
@@ -254,6 +255,16 @@ export function updateProjectManagementDependencies(
   payload: UpdateProjectManagementDependenciesRequest,
 ): Promise<ProjectManagementDocumentResponse> {
   return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/dependencies`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateProjectManagementStatus(
+  documentId: string,
+  payload: UpdateProjectManagementStatusRequest,
+): Promise<ProjectManagementDocumentResponse> {
+  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/status`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

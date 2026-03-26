@@ -404,6 +404,7 @@ interface WorktreeDetailProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
+  onUpdateProjectManagementStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
   onAddProjectManagementComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
   onRunProjectManagementAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
   onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<RunAiCommandResponse | null>;
@@ -479,6 +480,7 @@ export function WorktreeDetail({
   onCreateProjectManagementDocument,
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
+  onUpdateProjectManagementStatus,
   onAddProjectManagementComment,
   onRunProjectManagementAiCommand,
   onRunProjectManagementDocumentAi,
@@ -1248,6 +1250,7 @@ export function WorktreeDetail({
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
+              onUpdateStatus={onUpdateProjectManagementStatus}
               onAddComment={onAddProjectManagementComment}
               onRunAiCommand={onRunProjectManagementAiCommand}
               onRunDocumentAi={onRunProjectManagementDocumentAi}

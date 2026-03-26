@@ -1981,6 +1981,77 @@ test("project-management routes preserve summary and add attributed comments", {
   }
 });
 
+test("project-management status route updates only the lane state", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const foundationResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Foundation",
+        markdown: "# Foundation\n",
+        tags: ["plan"],
+      }),
+    });
+    assert.equal(foundationResponse.status, 201);
+    const foundationPayload = await foundationResponse.json() as { document: { id: string } };
+
+    const dependentResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Dependent Feature",
+        summary: "Deliver the feature after foundation work lands.",
+        markdown: "# Dependent Feature\n",
+        tags: ["feature"],
+        dependencies: [foundationPayload.document.id],
+        status: "todo",
+        assignee: "Taylor",
+      }),
+    });
+    assert.equal(dependentResponse.status, 201);
+    const dependentPayload = await dependentResponse.json() as { document: { id: string } };
+
+    const statusResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(dependentPayload.document.id)}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+    assert.equal(statusResponse.status, 200);
+    const statusPayload = await statusResponse.json() as {
+      document: {
+        status: string;
+        summary: string;
+        dependencies: string[];
+        assignee: string;
+      };
+    };
+    assert.equal(statusPayload.document.status, "done");
+    assert.equal(statusPayload.document.summary, "Deliver the feature after foundation work lands.");
+    assert.deepEqual(statusPayload.document.dependencies, [foundationPayload.document.id]);
+    assert.equal(statusPayload.document.assignee, "Taylor");
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, dependentPayload.document.id);
+    assert.equal(updatedDocument.document.status, "done");
+    assert.equal(updatedDocument.document.summary, "Deliver the feature after foundation work lands.");
+    assert.deepEqual(updatedDocument.document.dependencies, [foundationPayload.document.id]);
+
+    const invalidStatusResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(dependentPayload.document.id)}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "   " }),
+    });
+    assert.equal(invalidStatusResponse.status, 400);
+    const invalidStatusPayload = await invalidStatusResponse.json() as { message: string };
+    assert.equal(invalidStatusPayload.message, "Document status is required.");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management document AI creates a derived worktree and streams stdout from that worktree job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();

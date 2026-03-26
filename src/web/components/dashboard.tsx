@@ -161,6 +161,7 @@ export function Dashboard() {
     subscribeToBackgroundLogs,
     updateProjectManagementDependencies,
     updateProjectManagementDocument,
+    updateProjectManagementStatus,
   } = useDashboardState();
   const { theme, themes, setThemeId, setPreviewThemeId, clearPreviewTheme } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
@@ -1243,6 +1244,10 @@ export function Dashboard() {
             onUpdateProjectManagementDependencies={async (documentId, dependencyIds) => {
               setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementDependencies(documentId, { dependencyIds });
+            }}
+            onUpdateProjectManagementStatus={async (documentId, status) => {
+              setProjectManagementSelectedDocumentId(documentId);
+              return updateProjectManagementStatus(documentId, { status });
             }}
             onAddProjectManagementComment={addProjectManagementComment}
             projectManagementAiCommands={configuredAiCommands}

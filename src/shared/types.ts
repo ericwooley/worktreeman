@@ -373,6 +373,10 @@ export interface UpdateProjectManagementDependenciesRequest {
   dependencyIds: string[];
 }
 
+export interface UpdateProjectManagementStatusRequest {
+  status: string;
+}
+
 export interface AddProjectManagementCommentRequest {
   body: string;
 }

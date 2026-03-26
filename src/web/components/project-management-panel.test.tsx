@@ -107,6 +107,7 @@ test("create form renders without seeded defaults", () => {
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
+      onUpdateStatus={async () => null}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
@@ -157,6 +158,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
+      onUpdateStatus={async () => null}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
@@ -212,6 +214,7 @@ test("document view renders summary, comments, and comment attribution", () => {
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
+      onUpdateStatus={async () => null}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}

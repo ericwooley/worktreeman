@@ -27,6 +27,7 @@ import type {
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
+  UpdateProjectManagementStatusRequest,
 } from "@shared/types";
 import {
   addProjectManagementComment as addProjectManagementCommentRequest,
@@ -65,6 +66,7 @@ import {
   syncEnvFiles,
   updateProjectManagementDependencies as updateProjectManagementDependenciesRequest,
   updateProjectManagementDocument as updateProjectManagementDocumentRequest,
+  updateProjectManagementStatus as updateProjectManagementStatusRequest,
   type EnvSyncResponse,
 } from "../lib/api";
 
@@ -872,6 +874,23 @@ export function useDashboardState() {
           return response.document;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management dependencies.");
+          return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async updateProjectManagementStatus(documentId: string, payload: UpdateProjectManagementStatusRequest) {
+        setProjectManagementSaving(true);
+        try {
+          const response = await updateProjectManagementStatusRequest(documentId, payload);
+          await loadProjectManagementDocumentsState({ silent: true });
+          setProjectManagementDocument(response.document);
+          const history = await fetchProjectManagementHistory(documentId);
+          setProjectManagementHistory(history.history);
+          setError(null);
+          return response.document;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to update project management status.");
           return null;
         } finally {
           setProjectManagementSaving(false);

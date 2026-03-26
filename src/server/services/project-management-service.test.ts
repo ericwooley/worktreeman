@@ -16,6 +16,7 @@ import {
   listProjectManagementDocuments,
   updateProjectManagementDocument,
   updateProjectManagementDependencies,
+  updateProjectManagementStatus,
 } from "./project-management-service.js";
 
 async function createTestRepo(): Promise<string> {
@@ -272,6 +273,46 @@ test("dependencies persist on create and can be updated independently", async ()
 
     const history = await getProjectManagementDocumentHistory(repoRoot, dependent.document.id);
     assert.match(history.history.at(-1)?.diff ?? "", /dependencies:/);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("status can be updated independently without changing dependencies or summary", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const foundation = await createProjectManagementDocument(repoRoot, {
+      title: "Foundation",
+      markdown: "# Foundation\n",
+      tags: ["plan"],
+    });
+
+    const dependent = await createProjectManagementDocument(repoRoot, {
+      title: "Dependent Feature",
+      summary: "Deliver the feature after foundation work lands.",
+      markdown: "# Dependent Feature\n",
+      tags: ["feature"],
+      dependencies: [foundation.document.id],
+      status: "todo",
+      assignee: "Taylor",
+    });
+
+    const updated = await updateProjectManagementStatus(repoRoot, dependent.document.id, "in-progress");
+    assert.equal(updated.document.status, "in-progress");
+    assert.equal(updated.document.summary, "Deliver the feature after foundation work lands.");
+    assert.deepEqual(updated.document.dependencies, [foundation.document.id]);
+    assert.equal(updated.document.assignee, "Taylor");
+
+    const list = await listProjectManagementDocuments(repoRoot);
+    const dependentSummary = list.documents.find((entry) => entry.id === dependent.document.id);
+    assert.equal(dependentSummary?.status, "in-progress");
+    assert.equal(dependentSummary?.summary, "Deliver the feature after foundation work lands.");
+    assert.deepEqual(dependentSummary?.dependencies, [foundation.document.id]);
+
+    const history = await getProjectManagementDocumentHistory(repoRoot, dependent.document.id);
+    assert.match(history.history.at(-1)?.diff ?? "", /-status: todo/);
+    assert.match(history.history.at(-1)?.diff ?? "", /\+status: in-progress/);
   } finally {
     await destroyTestRepo(repoRoot);
   }

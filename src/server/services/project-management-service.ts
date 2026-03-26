@@ -1094,6 +1094,32 @@ export async function updateProjectManagementDependencies(
   return getProjectManagementDocument(repoRoot, documentId);
 }
 
+export async function updateProjectManagementStatus(
+  repoRoot: string,
+  documentId: string,
+  status: string,
+): Promise<ProjectManagementDocumentResponse> {
+  const state = await getReducedProjectManagementState(repoRoot);
+  const currentDocument = state.documentsById.get(documentId);
+  if (!currentDocument) {
+    throw new Error(`Unknown project management document ${documentId}.`);
+  }
+
+  await appendEntries(repoRoot, [{
+    documentId,
+    title: currentDocument.title,
+    summary: currentDocument.summary,
+    markdown: currentDocument.markdown,
+    tags: currentDocument.tags,
+    dependencies: currentDocument.dependencies,
+    status,
+    assignee: currentDocument.assignee,
+    archived: currentDocument.archived,
+  }]);
+
+  return getProjectManagementDocument(repoRoot, documentId);
+}
+
 export async function addProjectManagementComment(
   repoRoot: string,
   documentId: string,

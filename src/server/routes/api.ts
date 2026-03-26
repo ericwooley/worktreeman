@@ -37,6 +37,7 @@ import type {
   RunAiCommandRequest,
   RunAiCommandResponse,
   UpdateProjectManagementDependenciesRequest,
+  UpdateProjectManagementStatusRequest,
   TmuxClientInfo,
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDocumentRequest,
@@ -94,6 +95,7 @@ import {
   listProjectManagementDocuments,
   updateProjectManagementDependencies,
   updateProjectManagementDocument,
+  updateProjectManagementStatus,
 } from "../services/project-management-service.js";
 import {
   attachWorktreeDocumentLinks,
@@ -1581,6 +1583,25 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         options.repoRoot,
         decodeURIComponent(req.params.id),
         Array.isArray(body?.dependencyIds) ? body.dependencyIds.map((entry) => String(entry)) : [],
+      );
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/project-management/documents/:id/status", async (req, res, next) => {
+    try {
+      const body = req.body as UpdateProjectManagementStatusRequest;
+      if (!body?.status?.trim()) {
+        res.status(400).json({ message: "Document status is required." });
+        return;
+      }
+
+      const payload: ProjectManagementDocumentResponse = await updateProjectManagementStatus(
+        options.repoRoot,
+        decodeURIComponent(req.params.id),
+        body.status,
       );
       res.json(payload);
     } catch (error) {

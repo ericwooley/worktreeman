@@ -93,6 +93,7 @@ interface ProjectManagementPanelProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
+  onUpdateStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
   onAddComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
   onRunAiCommand: (payload: { input: string; documentId: string; commandId: AiCommandId }) => Promise<AiCommandJob | null>;
   onRunDocumentAi: (payload: { documentId: string; input?: string; commandId: AiCommandId }) => Promise<RunAiCommandResponse | null>;
@@ -264,6 +265,7 @@ export function ProjectManagementPanel({
   onCreateDocument,
   onUpdateDocument,
   onUpdateDependencies,
+  onUpdateStatus,
   onAddComment,
   onRunAiCommand,
   onRunDocumentAi,
@@ -537,24 +539,16 @@ export function ProjectManagementPanel({
   }
 
   async function handleMoveDocument(documentId: string, nextStatus: string) {
-    const targetDocument = document?.id === documentId
-      ? document
-      : await onSelectDocument(documentId, { silent: true });
-
+    const targetDocument = documents.find((entry) => entry.id === documentId) ?? null;
     if (!targetDocument || targetDocument.status === nextStatus) {
       return;
     }
 
-    await onUpdateDocument(documentId, {
-      title: targetDocument.title,
-      summary: targetDocument.summary || undefined,
-      markdown: targetDocument.markdown,
-      tags: targetDocument.tags,
-      dependencies: targetDocument.dependencies,
-      status: nextStatus,
-      assignee: targetDocument.assignee,
-      archived: targetDocument.archived,
-    });
+    await onUpdateStatus(documentId, nextStatus);
+
+    if (document?.id === documentId) {
+      void onSelectDocument(documentId, { silent: true });
+    }
   }
 
   const dependencyOptions = useMemo(
