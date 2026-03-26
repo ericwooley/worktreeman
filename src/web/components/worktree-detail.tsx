@@ -16,6 +16,7 @@ import type {
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
+  RunAiCommandResponse,
   WorktreeRecord,
 } from "@shared/types";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
@@ -388,7 +389,7 @@ interface WorktreeDetailProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onRunProjectManagementAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
-  onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
+  onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<RunAiCommandResponse | null>;
   onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;
 }

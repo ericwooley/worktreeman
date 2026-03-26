@@ -8,6 +8,7 @@ import type {
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
+  RunAiCommandResponse,
 } from "@shared/types";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { marked } from "marked";
@@ -85,7 +86,7 @@ interface ProjectManagementPanelProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onRunAiCommand: (payload: { input: string; documentId: string; commandId: AiCommandId }) => Promise<AiCommandJob | null>;
-  onRunDocumentAi: (payload: { documentId: string; input?: string; commandId: AiCommandId }) => Promise<AiCommandJob | null>;
+  onRunDocumentAi: (payload: { documentId: string; input?: string; commandId: AiCommandId }) => Promise<RunAiCommandResponse | null>;
   onCancelDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelAiCommand: () => Promise<AiCommandJob | null>;
 }
@@ -706,16 +707,16 @@ export function ProjectManagementPanel({
     setDocumentRunSummary(null);
     setDocumentRunFailureToast(null);
 
-    const job = await onRunDocumentAi({
+    const result = await onRunDocumentAi({
       documentId: document.id,
       commandId: "smart",
     });
-    if (!job) {
+    if (!result) {
       setDocumentRunFailureToast("Smart AI request failed. Check the AI command output for details.");
       return false;
     }
 
-    setDocumentRunSummary(`Smart AI started in ${job.branch}. Live output is streaming in the work panel on the right.`);
+    setDocumentRunSummary(`Smart AI started in ${result.job.branch}. This worktree is now selected, its runtime is running, and live output is streaming in the work panel on the right.`);
     return true;
   }
 
