@@ -328,10 +328,85 @@ function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiComm
   return (aiCommands[commandId] ?? "").trim();
 }
 
+function formatPromptList(values: string[]): string {
+  return values.length > 0 ? values.join(", ") : "none";
+}
+
+function formatNamedEntries(entries: Array<[string, string | number]>): string {
+  return entries.length > 0
+    ? entries.map(([key, value]) => `${key}=${value}`).join(", ")
+    : "none";
+}
+
+function buildAiEnvironmentContext(options: {
+  repoRoot: string;
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  runtime?: WorktreeRuntime;
+  backgroundCommands: BackgroundCommandState[];
+}) {
+  const runtimeEnvEntries = options.runtime
+    ? Object.entries(options.runtime.env).sort(([left], [right]) => left.localeCompare(right))
+    : [];
+  const allocatedPorts = options.runtime
+    ? Object.entries(options.runtime.allocatedPorts).sort(([left], [right]) => left.localeCompare(right))
+    : [];
+  const runningServices = options.backgroundCommands
+    .filter((entry) => entry.running)
+    .map((entry) => `${entry.name} (${entry.processName}, ${entry.status})`);
+  const configuredServices = options.backgroundCommands
+    .map((entry) => `${entry.name} (${entry.processName}, ${entry.status})`);
+  const quickLinks = options.runtime?.quickLinks
+    .map((entry) => `${entry.name}: ${entry.url}`)
+    ?? [];
+  const quickLinkNames = options.config.quickLinks.map((entry) => entry.name);
+  const exampleProcessName = options.backgroundCommands[0]?.processName ?? `wtm:${options.branch}:<service>`;
+
+  return [
+    "Environment wrapper:",
+    "Use this worktree snapshot as real local context. Do not invent services, ports, URLs, or process names that are not listed here.",
+    `- Repository root: ${options.repoRoot}`,
+    `- Branch: ${options.branch}`,
+    `- Worktree path: ${options.worktreePath}`,
+    options.runtime
+      ? `- Runtime: active${options.runtime.runtimeStartedAt ? ` since ${options.runtime.runtimeStartedAt}` : ""}; tmux session ${options.runtime.tmuxSession}`
+      : "- Runtime: inactive. No live runtime session is attached to this worktree yet.",
+    options.runtime
+      ? `- Process env: WORKTREE_BRANCH=${options.branch}, WORKTREE_PATH=${options.worktreePath}, TMUX_SESSION_NAME=${options.runtime.tmuxSession}`
+      : `- Process env: WORKTREE_BRANCH=${options.branch}, WORKTREE_PATH=${options.worktreePath}`,
+    options.runtime
+      ? `- Runtime env: ${formatNamedEntries(runtimeEnvEntries)}`
+      : `- Config env: ${formatNamedEntries(Object.entries(options.config.env).sort(([left], [right]) => left.localeCompare(right)))}`,
+    options.runtime
+      ? `- Allocated ports: ${formatNamedEntries(allocatedPorts)}`
+      : `- Dynamic port env vars: ${formatPromptList([...options.config.runtimePorts].sort())}`,
+    options.runtime
+      ? `- Quicklinks: ${formatPromptList(quickLinks)}`
+      : `- Quicklinks: unavailable until the runtime is started. Configured quicklinks: ${formatPromptList(quickLinkNames)}`,
+    `- Running services: ${formatPromptList(runningServices)}`,
+    `- Service inventory: ${formatPromptList(configuredServices)}`,
+    `- PM2 log access: use pm2 status, pm2 logs ${exampleProcessName}, pm2 logs ${exampleProcessName} --lines 200, and pm2 describe ${exampleProcessName}`,
+  ].join("\n");
+}
+
+function buildWorktreeAiPrompt(options: {
+  request: string;
+  environmentContext: string;
+}) {
+  return [
+    options.environmentContext,
+    "",
+    "Operator request:",
+    options.request,
+  ].join("\n");
+}
+
 function buildProjectManagementAiPrompt(options: {
   branch: string;
   worktreePath: string;
   requestedChange: string;
+  environmentContext: string;
   document: ProjectManagementDocumentResponse["document"];
   relatedDocuments: ProjectManagementListResponse["documents"];
 }) {
@@ -344,6 +419,7 @@ function buildProjectManagementAiPrompt(options: {
     `You are rewriting the project-management markdown document \"${options.document.title}\" for worktree ${options.branch}.`,
     `Worktree path: ${options.worktreePath}`,
     `Requested change: ${options.requestedChange}`,
+    options.environmentContext,
     "Your job is to return a full replacement markdown document, not commentary about the document.",
     "The server will persist your response as the next version of this existing project-management document. Document history is the rollback mechanism.",
     "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change. Return the final markdown itself as raw text.",
@@ -371,6 +447,7 @@ function createProjectManagementDocumentWorktreeBranch(document: ProjectManageme
 function buildProjectManagementExecutionAiPrompt(options: {
   branch: string;
   worktreePath: string;
+  environmentContext: string;
   document: ProjectManagementDocumentResponse["document"];
   relatedDocuments: ProjectManagementListResponse["documents"];
   requestedChange?: string;
@@ -383,6 +460,7 @@ function buildProjectManagementExecutionAiPrompt(options: {
   return [
     `You are implementing the work described by the project-management document \"${options.document.title}\".`,
     "Use this document as the main instruction set for the engineering work to perform in the repository.",
+    options.environmentContext,
     "Make code changes directly in the repository. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
     "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
     "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",
@@ -1691,19 +1769,28 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
 
       worktreePath = worktree.worktreePath;
-      input = buildProjectManagementExecutionAiPrompt({
-        branch,
-        worktreePath,
-        document: documentPayload.document,
-        relatedDocuments: documentsPayload.documents,
-      });
-
       if (getAiCommandJob(branch)?.status === "running") {
         res.status(409).json({ message: `AI command already running for ${branch}.` });
         return;
       }
 
       const runtime = await ensureWorktreeRuntime(config, worktree);
+      const backgroundCommands = await listBackgroundCommands(config, branch, worktreePath, runtime);
+      const environmentContext = buildAiEnvironmentContext({
+        repoRoot: options.repoRoot,
+        config,
+        branch,
+        worktreePath,
+        runtime,
+        backgroundCommands,
+      });
+      input = buildProjectManagementExecutionAiPrompt({
+        branch,
+        worktreePath,
+        environmentContext,
+        document: documentPayload.document,
+        relatedDocuments: documentsPayload.documents,
+      });
       const env = buildRuntimeProcessEnv(runtime);
 
       const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
@@ -1906,6 +1993,17 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      const runtime = options.runtimes.get(worktree.branch);
+      const backgroundCommands = await listBackgroundCommands(config, worktree.branch, worktreePath, runtime);
+      const environmentContext = buildAiEnvironmentContext({
+        repoRoot: options.repoRoot,
+        config,
+        branch: worktree.branch,
+        worktreePath,
+        runtime,
+        backgroundCommands,
+      });
+
       if (explicitDocumentId) {
         try {
           const documentPayload = await getProjectManagementDocument(options.repoRoot, explicitDocumentId);
@@ -1914,6 +2012,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
             branch: worktree.branch,
             worktreePath,
             requestedChange: input.trim(),
+            environmentContext,
             document: documentPayload.document,
             relatedDocuments: documentsPayload.documents,
           });
@@ -1942,7 +2041,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         `[ai-command] starting branch=${worktree.branch} path=${worktree.worktreePath} input=${JSON.stringify(formatLogSnippet(input))}`,
       );
 
-      const runtime = options.runtimes.get(worktree.branch);
+      if (!explicitDocumentId) {
+        input = buildWorktreeAiPrompt({
+          request: input,
+          environmentContext,
+        });
+      }
+
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
         : {

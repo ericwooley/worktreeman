@@ -12,7 +12,7 @@ import { createApiRouter, resolveAiLogsDir } from "./api.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
-import { loadConfig, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
+import { loadConfig, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { findRepoContext } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { RuntimeStore } from "../state/runtime-store.js";
@@ -20,6 +20,7 @@ import { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
 import { clearAiCommandJobs, startAiCommandJob } from "../services/ai-command-service.js";
 import { stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
+import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
@@ -769,11 +770,15 @@ test("AI command logs are written under the resolved repo root .logs directory",
       }
 
       const payload = JSON.parse(await fs.readFile(path.join(logsDir, entries[0]), "utf8")) as {
+        request?: string;
         response?: { stdout?: string };
         pid?: number | null;
         completedAt?: string | null;
       };
-      return payload.response?.stdout === "rewrite the document" && payload.pid === 4123 && typeof payload.completedAt === "string";
+      return Boolean(payload.request?.includes("Operator request:\nrewrite the document"))
+        && payload.response?.stdout === "rewrite the document"
+        && payload.pid === 4123
+        && typeof payload.completedAt === "string";
     });
 
     const entries = (await fs.readdir(logsDir)).filter((entry) => entry.endsWith(".json"));
@@ -792,7 +797,8 @@ test("AI command logs are written under the resolved repo root .logs directory",
     assert.equal(logPayload.branch, "feature-ai-log");
     assert.equal(logPayload.pid, 4123);
     assert.equal(typeof logPayload.processName, "string");
-    assert.equal(logPayload.request, "rewrite the document");
+    assert.equal(logPayload.request.includes("Environment wrapper:"), true);
+    assert.equal(logPayload.request.includes("Operator request:\nrewrite the document"), true);
     assert.equal(typeof logPayload.completedAt, "string");
     assert.equal(logPayload.response.stdout, "rewrite the document");
     await assert.rejects(fs.access(path.join(repo.configWorktreePath, ".logs")));
@@ -1720,6 +1726,10 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(capturedPrompt.includes("Output format: return only the complete updated markdown document body as plain text."), true);
     assert.equal(capturedPrompt.includes("You are not creating files, not writing a .md file"), true);
     assert.equal(capturedPrompt.includes("Document history is the rollback mechanism."), true);
+    assert.equal(capturedPrompt.includes("Environment wrapper:"), true);
+    assert.equal(capturedPrompt.includes(`- Repository root: ${repo.repoRoot}`), true);
+    assert.equal(capturedPrompt.includes("- Running services:"), true);
+    assert.equal(capturedPrompt.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
     assert.equal(capturedPrompt.includes("Current markdown:"), true);
 
     await waitFor(async () => {
@@ -2150,8 +2160,15 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(processEnv.WORKTREE_PATH, createdWorktree.worktreePath);
     assert.equal(processEnv.TMUX_SESSION_NAME, createdWorktree.runtime?.tmuxSession);
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
+    assert.equal(capturedCommand.includes("Environment wrapper:"), true);
+    assert.equal(capturedCommand.includes(`- Repository root: ${repo.repoRoot}`), true);
+    assert.equal(capturedCommand.includes(`- Branch: ${payload.job.branch}`), true);
+    assert.equal(capturedCommand.includes(`- Worktree path: ${createdWorktree.worktreePath}`), true);
+    assert.equal(capturedCommand.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
+    assert.equal(capturedCommand.includes("- Running services:"), true);
+    assert.equal(capturedCommand.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
     assert.equal(capturedCommand.includes("in worktree"), false);
-    assert.equal(capturedCommand.includes("Worktree path:"), false);
+    assert.equal(capturedCommand.includes("Worktree path:"), true);
     assert.equal(capturedCommand.includes("Document number:"), false);
     assert.equal(capturedCommand.includes("Status:"), false);
     assert.equal(capturedCommand.includes("Assignee:"), false);
@@ -2307,6 +2324,97 @@ test("AI cancel route returns 409 when the running job has no process name", { c
     const payload = await cancelResponse.json() as { message: string };
     assert.equal(payload.message, "Running AI command for feature-ai-no-process cannot be cancelled yet.");
   } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidance when runtime is active", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const parsedConfig = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const nextContents = serializeConfigContents({
+    ...parsedConfig,
+    runtimePorts: ["PORT"],
+    quickLinks: [
+      { name: "App", url: "http://127.0.0.1:${PORT}" },
+    ],
+    backgroundCommands: {
+      web: { command: "node -e \"setInterval(() => {}, 1000)\"" },
+    },
+  }, { includeSchemaHeader: true });
+  await fs.writeFile(repo.configPath, nextContents, "utf8");
+
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  await createWorktree(repo.repoRoot, config, { branch: "feature-ai-env" });
+
+  let capturedPrompt = "";
+  const aiProcesses: InjectedAiProcesses = {
+    ...createFakeAiProcesses().aiProcesses,
+    async startProcess(options) {
+      const match = options.command.match(/^printf %s '([\s\S]*)'$/);
+      capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
+      return {
+        name: "wtm:ai:test-env",
+        pid: 9991,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async getProcess() {
+      return {
+        name: "wtm:ai:test-env",
+        pid: 9991,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async readProcessLogs() {
+      return { stdout: "done\n", stderr: "" };
+    },
+    isProcessActive(status) {
+      return status === "online";
+    },
+  };
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const runtimeResponse = await server.fetch(`/api/worktrees/feature-ai-env/runtime/start`, {
+      method: "POST",
+    });
+    assert.equal(runtimeResponse.status, 200);
+
+    const response = await server.fetch(`/api/worktrees/feature-ai-env/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "inspect the runtime" }),
+    });
+    assert.equal(response.status, 200);
+
+    assert.equal(capturedPrompt.includes("Environment wrapper:"), true);
+    assert.equal(capturedPrompt.includes(`- Repository root: ${repo.repoRoot}`), true);
+    assert.equal(capturedPrompt.includes("- Branch: feature-ai-env"), true);
+    assert.equal(capturedPrompt.includes(`- Worktree path: ${path.join(repo.repoRoot, "feature-ai-env")}`), true);
+    assert.equal(capturedPrompt.includes("- Runtime: active"), true);
+    assert.equal(capturedPrompt.includes("PORT="), true);
+    assert.equal(capturedPrompt.includes("- Allocated ports: PORT="), true);
+    assert.equal(capturedPrompt.includes("- Quicklinks: App: http://127.0.0.1:"), true);
+    assert.equal(capturedPrompt.includes("web (wtm:feature-ai-env:web, online)"), true);
+    assert.equal(capturedPrompt.includes("pm2 logs wtm:feature-ai-env:web"), true);
+    assert.equal(capturedPrompt.includes("Operator request:"), true);
+    assert.equal(capturedPrompt.includes("inspect the runtime"), true);
+  } finally {
+    await stopAllBackgroundCommands("feature-ai-env", path.join(repo.repoRoot, "feature-ai-env")).catch(() => undefined);
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
