@@ -184,10 +184,6 @@ function getMergeIntoBaseActionState(worktreeBranch: string | undefined, gitComp
     return { canMerge: false, reason: "Select the active worktree branch as the comparison branch." };
   }
 
-  if (gitComparison.workingTreeSummary.dirty) {
-    return { canMerge: false, reason: "Commit or stash local changes before merging." };
-  }
-
   if (!gitComparison.mergeStatus.canMerge) {
     return {
       canMerge: false,

@@ -904,7 +904,7 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
   }
 });
 
-test("git compare merge rejects branches with local changes", { concurrency: false }, async () => {
+test("git compare merge rejects when the base branch has local changes", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
     path: repo.configPath,
@@ -912,10 +912,24 @@ test("git compare merge rejects branches with local changes", { concurrency: fal
     gitFile: repo.configFile,
   });
   const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-dirty-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
   const server = await startApiServer(repo);
 
   try {
-    await fs.writeFile(path.join(feature.worktreePath, "dirty.txt"), "dirty\n", "utf8");
+    await fs.writeFile(path.join(feature.worktreePath, "merge.txt"), "merge me\n", "utf8");
+    await runCommand("git", ["add", "merge.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "add merge source"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    await fs.writeFile(path.join(mainPath, "dirty.txt"), "dirty\n", "utf8");
 
     const response = await server.fetch(`/api/git/compare/feature-dirty-merge/merge`, {
       method: "POST",
@@ -925,7 +939,62 @@ test("git compare merge rejects branches with local changes", { concurrency: fal
 
     assert.equal(response.status, 500);
     const payload = await response.text();
-    assert.match(payload, /commit or stash local changes on feature-dirty-merge before merging\./i);
+    assert.match(payload, /commit or stash local changes on main before merging\./i);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare merge allows worktree-into-base when the compare branch has local changes", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-dirty-compare-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "mergeable.txt"), "committed change\n", "utf8");
+    await runCommand("git", ["add", "mergeable.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "add mergeable change"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    await fs.writeFile(path.join(feature.worktreePath, "dirty.txt"), "uncommitted change\n", "utf8");
+
+    const comparisonResponse = await server.fetch(`/api/git/compare?compareBranch=feature-dirty-compare-merge&baseBranch=main`);
+    assert.equal(comparisonResponse.status, 200);
+    const comparisonPayload = await comparisonResponse.json() as {
+      mergeStatus: { canMerge: boolean; reason: string | null };
+      mergeIntoCompareStatus: { canMerge: boolean; reason: string | null };
+      workingTreeSummary: { dirty: boolean };
+    };
+    assert.equal(comparisonPayload.workingTreeSummary.dirty, true);
+    assert.equal(comparisonPayload.mergeStatus.canMerge, true);
+    assert.equal(comparisonPayload.mergeStatus.reason, null);
+    assert.equal(comparisonPayload.mergeIntoCompareStatus.canMerge, false);
+    assert.match(comparisonPayload.mergeIntoCompareStatus.reason ?? "", /commit or stash local changes on feature-dirty-compare-merge before merging\./i);
+
+    const response = await server.fetch(`/api/git/compare/feature-dirty-compare-merge/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 200);
+    await fs.access(path.join(mainPath, "mergeable.txt"));
+    await assert.rejects(() => fs.access(path.join(mainPath, "dirty.txt")));
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
