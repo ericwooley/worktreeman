@@ -18,6 +18,7 @@ export type ProjectManagementDocumentFormEditorMode = "markdown" | "wysiwyg" | "
 interface ProjectManagementDocumentFormProps {
   mode: "create" | "edit";
   title: string;
+  summary: string;
   tags: string;
   markdown: string;
   status: string;
@@ -33,6 +34,7 @@ interface ProjectManagementDocumentFormProps {
   }>;
   onEditorModeChange: (value: ProjectManagementDocumentFormEditorMode) => void;
   onTitleChange: (value: string) => void;
+  onSummaryChange: (value: string) => void;
   onTagsChange: (value: string) => void;
   onMarkdownChange: (value: string) => void;
   onStatusChange: (value: string) => void;
@@ -45,6 +47,7 @@ interface ProjectManagementDocumentFormProps {
 export function ProjectManagementDocumentForm({
   mode,
   title,
+  summary,
   tags,
   markdown,
   status,
@@ -57,6 +60,7 @@ export function ProjectManagementDocumentForm({
   editorOptions,
   onEditorModeChange,
   onTitleChange,
+  onSummaryChange,
   onTagsChange,
   onMarkdownChange,
   onStatusChange,
@@ -91,6 +95,14 @@ export function ProjectManagementDocumentForm({
             placeholder="Document title"
             disabled={fieldDisabled}
             className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+          />
+          <textarea
+            value={summary}
+            onChange={(event) => onSummaryChange(event.target.value)}
+            placeholder="Short summary for the board and document header"
+            disabled={fieldDisabled}
+            rows={3}
+            className="matrix-input w-full rounded-none px-3 py-2 text-sm outline-none"
           />
           <input
             value={tags}

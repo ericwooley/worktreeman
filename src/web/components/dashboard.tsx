@@ -167,6 +167,7 @@ export function Dashboard() {
     clearLastEnvSync,
     clearBackgroundLogs,
     refresh,
+    addProjectManagementComment,
     create,
     createProjectManagementDocument,
     remove,
@@ -1252,6 +1253,7 @@ export function Dashboard() {
               setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementDependencies(documentId, { dependencyIds });
             }}
+            onAddProjectManagementComment={addProjectManagementComment}
             projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
             projectManagementDocumentAiJob={projectManagementDocumentAiJob}

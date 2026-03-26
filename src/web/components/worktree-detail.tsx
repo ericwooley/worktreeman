@@ -373,6 +373,7 @@ interface WorktreeDetailProps {
   onLoadProjectManagementAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCreateProjectManagementDocument: (payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     status?: string;
@@ -380,6 +381,7 @@ interface WorktreeDetailProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDocument: (documentId: string, payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     dependencies?: string[];
@@ -388,6 +390,7 @@ interface WorktreeDetailProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
+  onAddProjectManagementComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
   onRunProjectManagementAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
   onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<RunAiCommandResponse | null>;
   onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
@@ -460,6 +463,7 @@ export function WorktreeDetail({
   onCreateProjectManagementDocument,
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
+  onAddProjectManagementComment,
   onRunProjectManagementAiCommand,
   onRunProjectManagementDocumentAi,
   onCancelProjectManagementDocumentAiCommand,
@@ -1154,6 +1158,7 @@ export function WorktreeDetail({
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
+              onAddComment={onAddProjectManagementComment}
               onRunAiCommand={onRunProjectManagementAiCommand}
               onRunDocumentAi={onRunProjectManagementDocumentAi}
               onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}

@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import type {
+  AddProjectManagementCommentRequest,
   AppendProjectManagementBatchRequest,
   AiCommandConfig,
   AiCommandId,
@@ -84,6 +85,7 @@ import {
 import { enqueueProjectManagementAiJob } from "../services/ai-command-job-manager-service.js";
 import { disconnectTmuxClient, ensureRuntimeTerminalSession, ensureTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
 import {
+  addProjectManagementComment,
   appendProjectManagementBatch,
   createProjectManagementDocument,
   getProjectManagementDocument,
@@ -1348,6 +1350,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const payload: ProjectManagementDocumentResponse = await createProjectManagementDocument(options.repoRoot, {
         title: body.title,
+        summary: typeof body.summary === "string" ? body.summary : undefined,
         markdown: typeof body.markdown === "string" ? body.markdown : "",
         tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
         dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : [],
@@ -1373,6 +1376,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         decodeURIComponent(req.params.id),
         {
           title: body.title,
+          summary: typeof body.summary === "string" ? body.summary : undefined,
           markdown: typeof body.markdown === "string" ? body.markdown : "",
           tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
           dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : [],
@@ -1399,6 +1403,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         entries: body.entries.map((entry) => ({
           documentId: typeof entry.documentId === "string" ? entry.documentId : undefined,
           title: String(entry.title ?? ""),
+          summary: typeof entry.summary === "string" ? entry.summary : undefined,
           markdown: typeof entry.markdown === "string" ? entry.markdown : "",
           tags: Array.isArray(entry.tags) ? entry.tags.map((tag) => String(tag)) : [],
           dependencies: Array.isArray(entry.dependencies) ? entry.dependencies.map((dependencyId) => String(dependencyId)) : [],
@@ -1422,6 +1427,25 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         Array.isArray(body?.dependencyIds) ? body.dependencyIds.map((entry) => String(entry)) : [],
       );
       res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/project-management/documents/:id/comments", async (req, res, next) => {
+    try {
+      const body = req.body as AddProjectManagementCommentRequest;
+      if (!body?.body?.trim()) {
+        res.status(400).json({ message: "Comment body is required." });
+        return;
+      }
+
+      const payload: ProjectManagementDocumentResponse = await addProjectManagementComment(
+        options.repoRoot,
+        decodeURIComponent(req.params.id),
+        { body: body.body },
+      );
+      res.status(201).json(payload);
     } catch (error) {
       next(error);
     }

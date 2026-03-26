@@ -7,6 +7,7 @@ import { DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE } from "../../shared/constant
 import { runCommand } from "../utils/process.js";
 import { createBareRepoLayout } from "./repository-layout-service.js";
 import {
+  addProjectManagementComment,
   appendProjectManagementBatch,
   clearProjectManagementCache,
   createProjectManagementDocument,
@@ -46,12 +47,13 @@ test("listProjectManagementDocuments bootstraps the branch with Project Outline"
   }
 });
 
-test("create and update project-management documents persist markdown and normalized tags", async () => {
+test("create and update project-management documents persist summary, markdown, and normalized tags", async () => {
   const repoRoot = await createTestRepo();
 
   try {
     const created = await createProjectManagementDocument(repoRoot, {
       title: "Bug Inbox",
+      summary: "Track production issues and follow-up notes.",
       markdown: "# Bug Inbox\n\nTrack issues here.\n",
       tags: ["Bug", " bug ", "Research Notes"],
       status: "todo",
@@ -60,6 +62,7 @@ test("create and update project-management documents persist markdown and normal
 
     assert.equal(created.document.title, "Bug Inbox");
     assert.equal(created.document.number, 2);
+    assert.equal(created.document.summary, "Track production issues and follow-up notes.");
     assert.deepEqual(created.document.tags, ["bug", "research-notes"]);
     assert.equal(created.document.status, "todo");
     assert.equal(created.document.assignee, "Alex");
@@ -67,6 +70,7 @@ test("create and update project-management documents persist markdown and normal
 
     const updated = await updateProjectManagementDocument(repoRoot, created.document.id, {
       title: "Bug Inbox",
+      summary: "Investigate blockers before shipping fixes.",
       markdown: "# Bug Inbox\n\n- Investigate login loop\n",
       tags: ["bug", "blocked"],
       status: "blocked",
@@ -74,6 +78,7 @@ test("create and update project-management documents persist markdown and normal
     });
 
     assert.match(updated.document.markdown, /Investigate login loop/);
+    assert.equal(updated.document.summary, "Investigate blockers before shipping fixes.");
     assert.deepEqual(updated.document.tags, ["bug", "blocked"]);
     assert.equal(updated.document.status, "blocked");
     assert.equal(updated.document.assignee, "Taylor");
@@ -84,6 +89,42 @@ test("create and update project-management documents persist markdown and normal
     assert.match(history.history[1].diff, /-status: todo/);
     assert.match(history.history[1].diff, /\+status: blocked/);
     assert.match(history.history[1].diff, /\+\- Investigate login loop|\+Investigate login loop|Investigate login loop/);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("comments use the repo git user for attribution and history", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    await runCommand("git", ["config", "user.name", "Casey Reviewer"], { cwd: repoRoot });
+    await runCommand("git", ["config", "user.email", "casey@example.com"], { cwd: repoRoot });
+
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Review Queue",
+      summary: "Collect feedback before shipping.",
+      markdown: "# Review Queue\n",
+      tags: ["review"],
+    });
+
+    const commented = await addProjectManagementComment(repoRoot, created.document.id, {
+      body: "  Waiting on final QA verification.  ",
+    });
+
+    assert.equal(commented.document.comments.length, 1);
+    assert.equal(commented.document.comments[0]?.body, "Waiting on final QA verification.");
+    assert.equal(commented.document.comments[0]?.authorName, "Casey Reviewer");
+    assert.equal(commented.document.comments[0]?.authorEmail, "casey@example.com");
+
+    const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
+    assert.equal(history.history.at(-1)?.action, "comment");
+    assert.equal(history.history.at(-1)?.authorName, "Casey Reviewer");
+    assert.equal(history.history.at(-1)?.authorEmail, "casey@example.com");
+    assert.match(history.history.at(-1)?.diff ?? "", /Waiting on final QA verification/);
+
+    const commit = await runCommand("git", ["show", "-s", "--format=%an <%ae>", commented.headSha], { cwd: repoRoot });
+    assert.equal(commit.stdout.trim(), "Casey Reviewer <casey@example.com>");
   } finally {
     await destroyTestRepo(repoRoot);
   }

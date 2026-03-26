@@ -1759,6 +1759,73 @@ test("project-management AI rejects unknown target documents and logs the failur
   }
 });
 
+test("project-management routes preserve summary and add attributed comments", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    await runCommand("git", ["config", "user.name", "Riley Maintainer"], { cwd: repo.repoRoot });
+    await runCommand("git", ["config", "user.email", "riley@example.com"], { cwd: repo.repoRoot });
+
+    const createResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Comments rollout",
+        summary: "Track the document comments launch.",
+        markdown: "# Comments rollout\n",
+        tags: ["feature", "ux"],
+        status: "todo",
+        assignee: "Riley",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createPayload = await createResponse.json() as { document: { id: string; summary: string } };
+    assert.equal(createPayload.document.summary, "Track the document comments launch.");
+
+    const documentId = createPayload.document.id;
+
+    const commentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Need one more pass on author attribution." }),
+    });
+    assert.equal(commentResponse.status, 201);
+    const commentPayload = await commentResponse.json() as {
+      document: {
+        summary: string;
+        comments: Array<{ body: string; authorName: string; authorEmail: string }>;
+      };
+    };
+    assert.equal(commentPayload.document.summary, "Track the document comments launch.");
+    assert.equal(commentPayload.document.comments.length, 1);
+    assert.equal(commentPayload.document.comments[0]?.body, "Need one more pass on author attribution.");
+    assert.equal(commentPayload.document.comments[0]?.authorName, "Riley Maintainer");
+    assert.equal(commentPayload.document.comments[0]?.authorEmail, "riley@example.com");
+
+    const history = await getProjectManagementDocumentHistory(repo.repoRoot, documentId);
+    assert.equal(history.history.at(-1)?.action, "comment");
+    assert.equal(history.history.at(-1)?.authorName, "Riley Maintainer");
+    assert.equal(history.history.at(-1)?.authorEmail, "riley@example.com");
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, documentId);
+    assert.equal(updatedDocument.document.summary, "Track the document comments launch.");
+    assert.equal(updatedDocument.document.comments.length, 1);
+
+    const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "   " }),
+    });
+    assert.equal(invalidCommentResponse.status, 400);
+    const invalidCommentPayload = await invalidCommentResponse.json() as { message: string };
+    assert.equal(invalidCommentPayload.message, "Comment body is required.");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management document AI creates a derived worktree and streams stdout from that worktree job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
@@ -1848,28 +1915,31 @@ test("project-management document AI creates a derived worktree and streams stdo
     try {
       const snapshot = await stream.nextEvent();
       assert.equal(snapshot.type, "snapshot");
-      assert.equal((snapshot as { job?: { branch?: string } }).job?.branch, payload.job.branch);
+      const snapshotJob = (snapshot as { job?: { branch?: string; stdout?: string; status?: string } | null }).job;
+      assert.equal(snapshotJob?.branch, payload.job.branch);
 
-      await waitFor(async () => {
-        const logsResponse = await server.fetch(`/api/ai/logs`);
-        if (logsResponse.status !== 200) {
-          return false;
-        }
-        const logsPayload = await logsResponse.json() as {
-          logs: Array<{ branch: string; status: string }>;
-        };
-        return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
-      });
+      let sawImplemented = snapshotJob?.stdout?.includes("implemented") ?? false;
+      if (snapshotJob?.status !== "completed") {
+        await waitFor(async () => {
+          const logsResponse = await server.fetch(`/api/ai/logs`);
+          if (logsResponse.status !== 200) {
+            return false;
+          }
+          const logsPayload = await logsResponse.json() as {
+            logs: Array<{ branch: string; status: string }>;
+          };
+          return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
+        });
 
-      let sawImplemented = false;
-      for (let index = 0; index < 5; index += 1) {
-        const event = await stream.nextEvent();
-        const job = (event as { job?: { stdout?: string; status?: string } | null }).job;
-        if (job?.stdout?.includes("implemented")) {
-          sawImplemented = true;
-        }
-        if (job?.status === "completed") {
-          break;
+        for (let index = 0; index < 5; index += 1) {
+          const event = await stream.nextEvent();
+          const job = (event as { job?: { stdout?: string; status?: string } | null }).job;
+          if (job?.stdout?.includes("implemented")) {
+            sawImplemented = true;
+          }
+          if (job?.status === "completed") {
+            break;
+          }
         }
       }
       assert.equal(sawImplemented, true);
