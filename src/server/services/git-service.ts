@@ -138,7 +138,12 @@ async function generateResolvedConflictContents(options: {
   return `${normalized}\n`;
 }
 
-async function getMergeStatus(repoRoot: string, baseBranch: string, compareBranch: string): Promise<GitMergeStatus> {
+async function getMergeStatus(
+  repoRoot: string,
+  baseBranch: string,
+  compareBranch: string,
+  options?: { allowDirtyCompareBranch?: boolean },
+): Promise<GitMergeStatus> {
   if (!compareBranch) {
     return createMergeStatus({ reason: "Choose a branch to merge." });
   }
@@ -153,7 +158,7 @@ async function getMergeStatus(repoRoot: string, baseBranch: string, compareBranc
 
   const worktrees = await listWorktrees(repoRoot);
   const compareWorktree = worktrees.find((entry) => entry.branch === compareBranch);
-  if (compareWorktree) {
+  if (compareWorktree && !options?.allowDirtyCompareBranch) {
     const compareSummary = await getWorkingTreeSummary(compareWorktree.worktreePath);
     if (compareSummary.dirty) {
       return createMergeStatus({ reason: `Commit or stash local changes on ${compareBranch} before merging.` });
@@ -567,7 +572,7 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
     getWorkingTreeSummary(compareCwd),
     gitRefHasCommit(repoRoot, normalizedBaseBranch),
     gitRefHasCommit(repoRoot, normalizedCompareBranch),
-    getMergeStatus(repoRoot, normalizedBaseBranch, normalizedCompareBranch),
+    getMergeStatus(repoRoot, normalizedBaseBranch, normalizedCompareBranch, { allowDirtyCompareBranch: true }),
     getMergeStatus(repoRoot, normalizedCompareBranch, normalizedBaseBranch),
   ]);
 
@@ -731,20 +736,14 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
     throw new Error(`Cannot merge branch ${normalizedCompareBranch} into itself.`);
   }
 
-  const mergeStatus = await getMergeStatus(repoRoot, normalizedBaseBranch, normalizedCompareBranch);
+  const mergeStatus = await getMergeStatus(repoRoot, normalizedBaseBranch, normalizedCompareBranch, {
+    allowDirtyCompareBranch: true,
+  });
   if (!mergeStatus.canMerge) {
     throw new Error(mergeStatus.reason ?? `Branch ${normalizedCompareBranch} cannot be merged into ${normalizedBaseBranch}.`);
   }
 
   const worktrees = await listWorktrees(repoRoot);
-  const compareWorktree = worktrees.find((entry) => entry.branch === normalizedCompareBranch);
-  if (compareWorktree) {
-    const compareSummary = await getWorkingTreeSummary(compareWorktree.worktreePath);
-    if (compareSummary.dirty) {
-      throw new Error(`Branch ${normalizedCompareBranch} has uncommitted changes. Commit or stash them before merging.`);
-    }
-  }
-
   const baseWorktreePath = worktrees.find((entry) => entry.branch === normalizedBaseBranch)?.worktreePath
     ?? await ensureBranchWorktree(repoRoot, normalizedBaseBranch);
   const baseSummary = await getWorkingTreeSummary(baseWorktreePath);
