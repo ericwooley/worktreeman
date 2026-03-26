@@ -417,7 +417,9 @@ export function useDashboardState() {
           await refresh();
           setError(null);
         } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to delete worktree.");
+          const message = err instanceof Error ? err.message : "Failed to delete worktree.";
+          setError(message);
+          throw err instanceof Error ? err : new Error(message);
         } finally {
           setBusyBranch(null);
         }
