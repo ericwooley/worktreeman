@@ -99,7 +99,7 @@ export function ProjectManagementDocumentForm({
           <textarea
             value={summary}
             onChange={(event) => onSummaryChange(event.target.value)}
-            placeholder="Short summary for the board and document header"
+            placeholder="Short summary shown in the document list"
             disabled={fieldDisabled}
             rows={3}
             className="matrix-input w-full rounded-none px-3 py-2 text-sm outline-none"

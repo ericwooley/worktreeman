@@ -44,6 +44,7 @@ import type {
   WorktreeRecord,
   WorktreeRuntime,
 } from "../../shared/types.js";
+import { DEFAULT_PROJECT_MANAGEMENT_BRANCH } from "../../shared/constants.js";
 import {
   getBackgroundCommandLogs,
   getBackgroundCommandEntries,
@@ -385,6 +386,72 @@ function buildProjectManagementExecutionAiPrompt(options: {
     "Project-management document:",
     options.document.markdown,
   ].filter(Boolean).join("\n");
+}
+
+function buildProjectManagementSummaryPrompt(options: {
+  branch: string;
+  document: ProjectManagementDocumentResponse["document"];
+  relatedDocuments: ProjectManagementListResponse["documents"];
+}) {
+  const dependencySummary = options.relatedDocuments
+    .filter((entry) => options.document.dependencies.includes(entry.id))
+    .map((entry) => `#${entry.number} ${entry.title}`)
+    .join(", ");
+
+  return [
+    `You are writing the short summary for the project-management document \"${options.document.title}\" on branch ${options.branch}.`,
+    "The server will persist your response into the saved document summary field in the same branch.",
+    "Return only the final short summary as raw text.",
+    "Write 1-2 sentences that make the document easy to scan in the UI.",
+    "Keep it concise, specific, and directly useful to an engineer deciding whether to open the document.",
+    "Do not use bullets, headings, markdown formatting, code fences, labels, or commentary outside the summary.",
+    "Prefer 160 characters or fewer when you can, but clarity matters more than a hard limit.",
+    "",
+    `Title: ${options.document.title}`,
+    `Status: ${options.document.status}`,
+    `Assignee: ${options.document.assignee || "Unassigned"}`,
+    `Tags: ${options.document.tags.join(", ") || "none"}`,
+    `Dependencies: ${dependencySummary || "none"}`,
+    "",
+    "Document markdown:",
+    options.document.markdown,
+  ].join("\n");
+}
+
+async function generateProjectManagementDocumentSummary(options: {
+  repoRoot: string;
+  config: WorktreeManagerConfig;
+  document: ProjectManagementDocumentResponse["document"];
+  relatedDocuments: ProjectManagementListResponse["documents"];
+}) {
+  const template = resolveAiCommandTemplate(options.config.aiCommands, "simple");
+  if (!template || !template.includes("$WTM_AI_INPUT")) {
+    return null;
+  }
+
+  const input = buildProjectManagementSummaryPrompt({
+    branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+    document: options.document,
+    relatedDocuments: options.relatedDocuments,
+  });
+  const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+
+  try {
+    const { stdout } = await runCommand("bash", ["-lc", renderedCommand], {
+      cwd: options.repoRoot,
+      env: {
+        ...process.env,
+        ...options.config.env,
+        WORKTREE_BRANCH: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+        WORKTREE_PATH: options.repoRoot,
+      },
+    });
+    const summary = stdout.trim();
+    return summary || null;
+  } catch (error) {
+    console.error(`[project-management-summary] failed document=${options.document.id}`, error);
+    return null;
+  }
 }
 
 function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLogEntry {
@@ -815,6 +882,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         const currentDocument = await getProjectManagementDocument(options.repoRoot, details.documentId!);
         await updateProjectManagementDocument(options.repoRoot, details.documentId!, {
           title: currentDocument.document.title,
+          summary: currentDocument.document.summary,
           markdown: nextMarkdown,
           tags: currentDocument.document.tags,
           dependencies: currentDocument.document.dependencies,
@@ -1342,13 +1410,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/project-management/documents", async (req, res, next) => {
     try {
+      const config = await loadCurrentConfig();
       const body = req.body as CreateProjectManagementDocumentRequest;
       if (!body?.title?.trim()) {
         res.status(400).json({ message: "Document title is required." });
         return;
       }
 
-      const payload: ProjectManagementDocumentResponse = await createProjectManagementDocument(options.repoRoot, {
+      let payload: ProjectManagementDocumentResponse = await createProjectManagementDocument(options.repoRoot, {
         title: body.title,
         summary: typeof body.summary === "string" ? body.summary : undefined,
         markdown: typeof body.markdown === "string" ? body.markdown : "",
@@ -1357,6 +1426,30 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         status: typeof body.status === "string" ? body.status : undefined,
         assignee: typeof body.assignee === "string" ? body.assignee : undefined,
       });
+
+      if (!payload.document.summary) {
+        const relatedDocuments = (await listProjectManagementDocuments(options.repoRoot)).documents;
+        const generatedSummary = await generateProjectManagementDocumentSummary({
+          repoRoot: options.repoRoot,
+          config,
+          document: payload.document,
+          relatedDocuments,
+        });
+
+        if (generatedSummary) {
+          payload = await updateProjectManagementDocument(options.repoRoot, payload.document.id, {
+            title: payload.document.title,
+            summary: generatedSummary,
+            markdown: payload.document.markdown,
+            tags: payload.document.tags,
+            dependencies: payload.document.dependencies,
+            status: payload.document.status,
+            assignee: payload.document.assignee,
+            archived: payload.document.archived,
+          });
+        }
+      }
+
       res.status(201).json(payload);
     } catch (error) {
       next(error);

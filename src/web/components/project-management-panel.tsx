@@ -127,6 +127,15 @@ function getAiJobTone(status: AiCommandJob["status"]) {
   return "active" as const;
 }
 
+function summarizeDocumentText(value: string, maxLength = 140): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
 function getAiOutputText(job: AiCommandJob): string {
   if (job.stdout && job.stderr) {
     return `${job.stdout}\n\n--- stderr ---\n${job.stderr}`;
@@ -720,6 +729,7 @@ export function ProjectManagementPanel({
                   {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
                 </div>
                 <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
+                {entry.summary ? <p className="mt-2 text-[11px] theme-text-muted">{summarizeDocumentText(entry.summary)}</p> : null}
                 <p className="mt-2 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
                 <p className="mt-1 text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</p>
               </div>
@@ -791,6 +801,7 @@ export function ProjectManagementPanel({
                     </button>
                   </div>
                 ) : null}
+
                 {documentRunFailureToast ? (
                   <div className="pm-inline-toast mb-3 flex items-center justify-between gap-3 border px-3 py-2 text-sm">
                     <span>{documentRunFailureToast}</span>
@@ -803,6 +814,7 @@ export function ProjectManagementPanel({
                     </button>
                   </div>
                 ) : null}
+
                 <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
                   <div>
                     <p className="matrix-kicker">Markdown document</p>
@@ -971,12 +983,12 @@ export function ProjectManagementPanel({
                 ) : document ? (
                   <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
                     <div className="space-y-3">
-                      {document.summary ? (
-                        <div className="border theme-border-subtle p-4">
-                          <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Summary</p>
-                          <p className="mt-2 text-sm theme-text">{document.summary}</p>
-                        </div>
-                      ) : null}
+                      <div className="border theme-border-subtle p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Summary</p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm theme-text-muted">
+                          {document.summary || "No short summary yet."}
+                        </p>
+                      </div>
                       <div className="border theme-border-subtle p-4">
                         <div
                           className="pm-markdown text-sm theme-text"

@@ -47,13 +47,13 @@ test("listProjectManagementDocuments bootstraps the branch with Project Outline"
   }
 });
 
-test("create and update project-management documents persist summary, markdown, and normalized tags", async () => {
+test("create and update project-management documents persist markdown, summary, and normalized tags", async () => {
   const repoRoot = await createTestRepo();
 
   try {
     const created = await createProjectManagementDocument(repoRoot, {
       title: "Bug Inbox",
-      summary: "Track incoming production bugs and research follow-ups.",
+      summary: "Track incoming bugs and research follow-ups.",
       markdown: "# Bug Inbox\n\nTrack issues here.\n",
       tags: ["Bug", " bug ", "Research Notes"],
       status: "todo",
@@ -62,7 +62,7 @@ test("create and update project-management documents persist summary, markdown, 
 
     assert.equal(created.document.title, "Bug Inbox");
     assert.equal(created.document.number, 2);
-    assert.equal(created.document.summary, "Track incoming production bugs and research follow-ups.");
+    assert.equal(created.document.summary, "Track incoming bugs and research follow-ups.");
     assert.deepEqual(created.document.tags, ["bug", "research-notes"]);
     assert.equal(created.document.status, "todo");
     assert.equal(created.document.assignee, "Alex");
@@ -70,11 +70,11 @@ test("create and update project-management documents persist summary, markdown, 
 
     const createdList = await listProjectManagementDocuments(repoRoot);
     const createdSummary = createdList.documents.find((entry) => entry.id === created.document.id);
-    assert.equal(createdSummary?.summary, "Track incoming production bugs and research follow-ups.");
+    assert.equal(createdSummary?.summary, "Track incoming bugs and research follow-ups.");
 
     const updated = await updateProjectManagementDocument(repoRoot, created.document.id, {
       title: "Bug Inbox",
-      summary: "Track incoming bugs, blockers, and owner handoffs before shipping fixes.",
+      summary: "Track incoming bugs, blockers, and owner handoffs.",
       markdown: "# Bug Inbox\n\n- Investigate login loop\n",
       tags: ["bug", "blocked"],
       status: "blocked",
@@ -82,7 +82,7 @@ test("create and update project-management documents persist summary, markdown, 
     });
 
     assert.match(updated.document.markdown, /Investigate login loop/);
-    assert.equal(updated.document.summary, "Track incoming bugs, blockers, and owner handoffs before shipping fixes.");
+    assert.equal(updated.document.summary, "Track incoming bugs, blockers, and owner handoffs.");
     assert.deepEqual(updated.document.tags, ["bug", "blocked"]);
     assert.equal(updated.document.status, "blocked");
     assert.equal(updated.document.assignee, "Taylor");
@@ -92,8 +92,8 @@ test("create and update project-management documents persist summary, markdown, 
     assert.deepEqual(history.history.map((entry) => entry.action), ["create", "update"]);
     assert.match(history.history[1].diff, /-status: todo/);
     assert.match(history.history[1].diff, /\+status: blocked/);
-    assert.match(history.history[1].diff, /-summary: Track incoming production bugs and research follow-ups\./);
-    assert.match(history.history[1].diff, /\+summary: Track incoming bugs, blockers, and owner handoffs before shipping fixes\./);
+    assert.match(history.history[1].diff, /-summary: Track incoming bugs and research follow-ups\./);
+    assert.match(history.history[1].diff, /\+summary: Track incoming bugs, blockers, and owner handoffs\./);
     assert.match(history.history[1].diff, /\+\- Investigate login loop|\+Investigate login loop|Investigate login loop/);
   } finally {
     await destroyTestRepo(repoRoot);

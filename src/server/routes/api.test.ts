@@ -1660,6 +1660,73 @@ test("project-management AI runs update the saved document on the server", { con
   }
 });
 
+test("creating a project-management document auto-generates a short summary with the simple AI command", async () => {
+  const repo = await createApiTestRepo();
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "printf %s $WTM_AI_INPUT",
+    simple:
+      "node -e \"const fs = require('node:fs'); fs.writeFileSync('summary-prompt.txt', process.argv[1]); console.log('Generated UI summary.');\" $WTM_AI_INPUT",
+  });
+  await fs.writeFile(repo.configPath, nextContents, "utf8");
+  const server = await startApiServer(repo);
+
+  try {
+    const response = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Launch Checklist",
+        markdown: "# Launch Checklist\n\n- verify release notes\n",
+        tags: ["release", "ops"],
+        status: "todo",
+        assignee: "Avery",
+      }),
+    });
+    assert.equal(response.status, 201);
+
+    const payload = await response.json() as {
+      document: {
+        id: string;
+        title: string;
+        summary: string;
+        markdown: string;
+        status: string;
+        assignee: string;
+      };
+    };
+
+    assert.equal(payload.document.title, "Launch Checklist");
+    assert.equal(payload.document.summary, "Generated UI summary.");
+    assert.match(payload.document.markdown, /verify release notes/);
+
+    const saved = await getProjectManagementDocument(repo.repoRoot, payload.document.id);
+    assert.equal(saved.document.summary, "Generated UI summary.");
+
+    const prompt = await fs.readFile(path.join(repo.repoRoot, "summary-prompt.txt"), "utf8");
+    assert.equal(prompt.includes('You are writing the short summary for the project-management document "Launch Checklist"'), true);
+    assert.equal(prompt.includes("Return only the final short summary as raw text."), true);
+    assert.equal(prompt.includes("Write 1-2 sentences that make the document easy to scan in the UI."), true);
+    assert.equal(prompt.includes("Title: Launch Checklist"), true);
+    assert.equal(prompt.includes("Status: todo"), true);
+    assert.equal(prompt.includes("Assignee: Avery"), true);
+    assert.equal(prompt.includes("Tags: release, ops"), true);
+    assert.equal(prompt.includes("Document markdown:"), true);
+
+    const history = await getProjectManagementDocumentHistory(repo.repoRoot, payload.document.id);
+    assert.equal(history.history.length, 2);
+    assert.deepEqual(history.history.map((entry) => entry.action), ["create", "update"]);
+    assert.match(history.history.at(-1)?.diff ?? "", /\+summary: Generated UI summary\./);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management AI document updates ignore stderr while logs retain it", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
