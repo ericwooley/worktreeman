@@ -16,6 +16,8 @@ import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { useTheme } from "./theme-provider";
 import { WorktreeDetail } from "./worktree-detail";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
+import { getVisibleWorktrees } from "./dashboard-worktrees";
+import type { DeleteWorktreeRequest, WorktreeRecord } from "@shared/types";
 
 function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {
   return value === "document"
@@ -64,6 +66,12 @@ const EMPTY_AI_COMMANDS: AiCommandConfig = {
   smart: "",
   simple: "",
 };
+
+interface DeleteConfirmationState {
+  worktree: WorktreeRecord;
+  deleteBranch: boolean;
+  confirmWorktreeName: string;
+}
 
 function normalizeAiCommands(aiCommands?: Partial<AiCommandConfig> | null): AiCommandConfig {
   return {
@@ -159,6 +167,7 @@ export function Dashboard() {
     clearLastEnvSync,
     clearBackgroundLogs,
     refresh,
+    addProjectManagementComment,
     create,
     createProjectManagementDocument,
     remove,
@@ -204,7 +213,7 @@ export function Dashboard() {
   );
   const [gitView, setGitView] = useState<"graph" | "diff">(initialUrlState.gitView);
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialUrlState.isTerminalVisible);
-  const [deleteConfirmBranch, setDeleteConfirmBranch] = useState<string | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmationState | null>(null);
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
   const [configEditorOpen, setConfigEditorOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -307,23 +316,25 @@ export function Dashboard() {
     });
   }, []);
 
+  const visibleWorktrees = useMemo(() => getVisibleWorktrees(state?.worktrees), [state?.worktrees]);
+
   const selected = useMemo(
     () => {
-      if (!state?.worktrees.length) {
+      if (!visibleWorktrees.length) {
         return null;
       }
 
-      return state.worktrees.find((entry) => entry.branch === selectedBranch)
-        ?? state.worktrees.find((entry) => entry.runtime)
-        ?? state.worktrees[0]
+      return visibleWorktrees.find((entry) => entry.branch === selectedBranch)
+        ?? visibleWorktrees.find((entry) => entry.runtime)
+        ?? visibleWorktrees[0]
         ?? null;
     },
-    [selectedBranch, state?.worktrees],
+    [selectedBranch, visibleWorktrees],
   );
 
   const worktreeOptions = useMemo<MatrixDropdownOption[]>(
     () => [
-      ...((state?.worktrees ?? []).map((entry): MatrixDropdownOption => ({
+      ...(visibleWorktrees.map((entry): MatrixDropdownOption => ({
         value: entry.branch,
         label: entry.branch,
         description: entry.runtime ? "Runtime active" : "Idle",
@@ -336,7 +347,7 @@ export function Dashboard() {
         description: "Create a new branch worktree",
       },
     ],
-    [state?.worktrees],
+    [visibleWorktrees],
   );
   useEffect(() => {
     if (!selected?.branch || selected.branch === selectedBranch) {
@@ -613,13 +624,32 @@ export function Dashboard() {
     setAiSettingsOpen(false);
   }, [aiCommandDrafts, saveAiCommandSettings]);
 
-  const confirmDelete = async () => {
-    if (!deleteConfirmBranch) {
+  const openDeleteConfirmation = useCallback((worktree: WorktreeRecord | null) => {
+    if (!worktree?.deletion?.canDelete) {
       return;
     }
 
-    await remove(deleteConfirmBranch);
-    setDeleteConfirmBranch(null);
+    setDeleteConfirmation({
+      worktree,
+      deleteBranch: worktree.deletion?.deleteBranchByDefault ?? true,
+      confirmWorktreeName: "",
+    });
+  }, []);
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmation) {
+      return;
+    }
+
+    const payload: DeleteWorktreeRequest = {
+      deleteBranch: deleteConfirmation.deleteBranch,
+      confirmWorktreeName: deleteConfirmation.worktree.deletion?.requiresConfirmation
+        ? deleteConfirmation.confirmWorktreeName
+        : undefined,
+    };
+
+    await remove(deleteConfirmation.worktree.branch, payload);
+    setDeleteConfirmation(null);
   };
 
   const navigateToTab = (tab: "shell" | "background" | "git" | "project-management") => {
@@ -867,6 +897,14 @@ export function Dashboard() {
     ];
 
     if (selected) {
+      const deleteDisabledReason = busyBranch === selected.branch
+        ? "A worktree action is already running."
+        : selected.deletion?.canDelete === false
+          ? selected.deletion.reason
+          : null;
+      const deleteSubtitle = deleteDisabledReason
+        ?? "Open a confirmation modal before deleting the worktree.";
+
       items.push(
         {
           id: `worktree-start-${selected.branch}`,
@@ -906,13 +944,13 @@ export function Dashboard() {
           id: `worktree-delete-${selected.branch}`,
           code: "wdel",
           title: `Delete worktree: ${selected.branch}`,
-          subtitle: "Open a confirmation modal before deleting the worktree.",
+          subtitle: deleteSubtitle,
           group: "Worktree",
           keywords: [selected.branch, "delete", "remove"],
-          badgeLabel: "Danger",
-          badgeTone: "danger",
-          disabled: busyBranch === selected.branch,
-          action: () => setDeleteConfirmBranch(selected.branch),
+          badgeLabel: deleteDisabledReason ? "Locked" : "Danger",
+          badgeTone: deleteDisabledReason ? "warning" : "danger",
+          disabled: Boolean(deleteDisabledReason),
+          action: () => openDeleteConfirmation(selected),
         },
       );
     }
@@ -925,6 +963,7 @@ export function Dashboard() {
     isTerminalVisible,
     navigateToProjectManagementSubTab,
     openAiSettings,
+    openDeleteConfirmation,
     openConfigEditor,
     projectManagementDocument?.title,
     projectManagementDocumentViewMode,
@@ -932,14 +971,13 @@ export function Dashboard() {
     projectManagementSubTab,
     selected,
     start,
-    state?.worktrees,
     stop,
     syncEnv,
     theme,
   ]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
-    return (state?.worktrees ?? []).map((entry, index) => ({
+    return visibleWorktrees.map((entry, index) => ({
       id: `select-worktree-${entry.branch}`,
       code: String(index + 1),
       title: `${index + 1}. ${entry.branch}`,
@@ -951,7 +989,7 @@ export function Dashboard() {
       closeOnSelect: true,
       action: () => setSelectedBranch(entry.branch),
     }));
-  }, [state?.worktrees]);
+  }, [visibleWorktrees]);
 
   const themeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     return themes.map((entry, index) => ({
@@ -1139,8 +1177,8 @@ export function Dashboard() {
             repoRoot={state?.repoRoot ?? null}
             worktree={selected}
             worktreeOptions={worktreeOptions}
-            worktreeCount={state?.worktrees.length ?? 0}
-            runningCount={(state?.worktrees ?? []).filter((entry) => entry.runtime).length}
+            worktreeCount={visibleWorktrees.length}
+            runningCount={visibleWorktrees.filter((entry) => entry.runtime).length}
             selectedStatusLabel={selected?.branch ? "Live" : "None"}
             onSelectWorktree={(value) => {
               if (value === CREATE_WORKTREE_OPTION_VALUE) {
@@ -1171,7 +1209,7 @@ export function Dashboard() {
             onStart={() => selected ? void start(selected.branch) : undefined}
             onStop={() => selected ? void stop(selected.branch) : undefined}
             onSyncEnv={() => selected ? void syncEnv(selected.branch) : undefined}
-            onDelete={() => setDeleteConfirmBranch(selected?.branch ?? null)}
+            onDelete={() => openDeleteConfirmation(selected)}
             backgroundCommands={backgroundCommands}
             backgroundLogs={backgroundLogs}
             gitComparison={gitComparison}
@@ -1215,6 +1253,7 @@ export function Dashboard() {
               setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementDependencies(documentId, { dependencyIds });
             }}
+            onAddProjectManagementComment={addProjectManagementComment}
             projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
             projectManagementDocumentAiJob={projectManagementDocumentAiJob}
@@ -1249,36 +1288,89 @@ export function Dashboard() {
         </section>
       </div>
 
-      {deleteConfirmBranch ? (
+      {deleteConfirmation ? (
         <MatrixModal
           kicker="Confirm delete"
-          title={<>Delete worktree `{deleteConfirmBranch}`?</>}
-          description="This removes the worktree, stops any running background commands for it, and clears its persisted tmux session."
+          title={<>Delete worktree `{deleteConfirmation.worktree.branch}`?</>}
+          description="This removes the worktree, stops any running background commands for it, clears its persisted tmux session, and can also delete the branch."
           tone="danger"
           closeLabel="Cancel"
           maxWidthClass="max-w-xl"
-          onClose={() => setDeleteConfirmBranch(null)}
+          onClose={() => setDeleteConfirmation(null)}
           footer={(
             <>
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm"
-                onClick={() => setDeleteConfirmBranch(null)}
+                onClick={() => setDeleteConfirmation(null)}
               >
                 Keep worktree
               </button>
               <button
                 type="button"
                 className="matrix-button matrix-button-danger rounded-none px-3 py-2 text-sm"
+                disabled={
+                  busyBranch === deleteConfirmation.worktree.branch
+                  || (
+                    deleteConfirmation.worktree.deletion?.requiresConfirmation === true
+                    && deleteConfirmation.confirmWorktreeName !== deleteConfirmation.worktree.branch
+                  )
+                }
                 onClick={() => void confirmDelete()}
               >
-                Delete worktree
+                {deleteConfirmation.deleteBranch ? "Delete worktree and branch" : "Delete worktree only"}
               </button>
             </>
           )}
         >
-          <div className="border theme-inline-panel-danger p-3 font-mono text-sm theme-text-danger">
-            This action cannot be undone from the UI.
+          <div className="space-y-4">
+            <div className="border theme-inline-panel-danger p-3 text-sm theme-text-danger">
+              <p className="font-mono">This action cannot be undone from the UI.</p>
+              {deleteConfirmation.worktree.deletion?.hasLocalChanges || deleteConfirmation.worktree.deletion?.hasUnmergedCommits ? (
+                <p className="mt-2">
+                  {deleteConfirmation.worktree.deletion?.hasLocalChanges && deleteConfirmation.worktree.deletion?.hasUnmergedCommits
+                    ? "This worktree has local changes and unmerged commits."
+                    : deleteConfirmation.worktree.deletion?.hasLocalChanges
+                      ? "This worktree has local changes."
+                      : "This worktree has unmerged commits."}
+                </p>
+              ) : null}
+            </div>
+
+            <label className="flex items-start gap-3 text-sm theme-text">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={deleteConfirmation.deleteBranch}
+                onChange={(event) => setDeleteConfirmation((current) => current ? {
+                  ...current,
+                  deleteBranch: event.target.checked,
+                } : current)}
+              />
+              <span>
+                <span className="block font-medium theme-text-strong">Delete branch after removing the worktree</span>
+                <span className="mt-1 block text-xs theme-text-muted">
+                  Leave this unchecked to keep the branch available in the repository.
+                </span>
+              </span>
+            </label>
+
+            {deleteConfirmation.worktree.deletion?.requiresConfirmation ? (
+              <label className="block">
+                <span className="mb-2 block text-xs uppercase tracking-[0.18em] theme-text-soft">
+                  Type {deleteConfirmation.worktree.branch} to confirm
+                </span>
+                <input
+                  value={deleteConfirmation.confirmWorktreeName}
+                  onChange={(event) => setDeleteConfirmation((current) => current ? {
+                    ...current,
+                    confirmWorktreeName: event.target.value,
+                  } : current)}
+                  className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
+                  autoFocus
+                />
+              </label>
+            ) : null}
           </div>
         </MatrixModal>
       ) : null}

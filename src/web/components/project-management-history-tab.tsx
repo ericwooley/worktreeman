@@ -8,6 +8,22 @@ interface ProjectManagementHistoryTabProps {
 export function ProjectManagementHistoryTab({ history }: ProjectManagementHistoryTabProps) {
   const entries = history.slice().reverse();
 
+  function getActionTone(entry: ProjectManagementHistoryEntry) {
+    if (entry.action === "create") {
+      return "active" as const;
+    }
+
+    if (entry.action === "archive") {
+      return "warning" as const;
+    }
+
+    if (entry.action === "comment") {
+      return "idle" as const;
+    }
+
+    return "neutral" as const;
+  }
+
   function getDiffLines(entry: ProjectManagementHistoryEntry): string[] {
     const diffText = (entry.diff?.trim() || (entry.action === "create"
       ? "@@\n+Initial document state"
@@ -31,11 +47,12 @@ export function ProjectManagementHistoryTab({ history }: ProjectManagementHistor
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold theme-text-strong">{entry.title}</p>
                   <p className="mt-1 text-xs font-semibold theme-text-strong">#{entry.number}</p>
+                  <p className="mt-1 text-xs theme-text-muted">{entry.authorName} &lt;{entry.authorEmail}&gt;</p>
                   <p className="mt-1 font-mono text-xs theme-text-muted">{entry.commitSha.slice(0, 12)} - {entry.actorId.slice(0, 12)}</p>
                   <p className="mt-2 text-xs theme-text-muted">{new Date(entry.createdAt).toLocaleString()} - {entry.changeCount} change{entry.changeCount === 1 ? "" : "s"}</p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <MatrixBadge tone={entry.action === "create" ? "active" : entry.action === "archive" ? "warning" : "neutral"} compact>
+                  <MatrixBadge tone={getActionTone(entry)} compact>
                     {entry.action}
                   </MatrixBadge>
                   <span className="text-[11px] theme-text-muted">{entry.status} - {entry.assignee || "Unassigned"}</span>

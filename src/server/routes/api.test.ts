@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import express from "express";
 import request from "supertest";
+import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "../../shared/constants.js";
 import { createApiRouter, resolveAiLogsDir } from "./api.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
@@ -458,6 +459,172 @@ test("terminal tmux session resolution uses repoRoot when runtime is missing", {
       }),
       getTmuxSessionName(repo.repoRoot, "main"),
     );
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/state includes deletion metadata for protected worktrees", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const response = await server.fetch("/api/state");
+    const payload = await response.json() as {
+      worktrees: Array<{
+        branch: string;
+        deletion?: {
+          canDelete: boolean;
+          reason: string | null;
+          deleteBranchByDefault: boolean;
+          isDefaultBranch: boolean;
+          isDefaultWorktree: boolean;
+          isSettingsWorktree: boolean;
+        };
+      }>;
+    };
+
+    assert.equal(response.status, 200);
+
+    const main = payload.worktrees.find((entry) => entry.branch === "main");
+    const settings = payload.worktrees.find((entry) => entry.branch === DEFAULT_WORKTREEMAN_SETTINGS_BRANCH);
+    const feature = payload.worktrees.find((entry) => entry.branch === "feature-ai-log");
+
+    assert.ok(main?.deletion);
+    assert.equal(main.deletion.canDelete, false);
+    assert.equal(main.deletion.isDefaultBranch, true);
+    assert.equal(main.deletion.isDefaultWorktree, true);
+    assert.match(main.deletion.reason ?? "", /default branch worktree/i);
+
+    assert.ok(settings?.deletion);
+    assert.equal(settings.deletion.canDelete, false);
+    assert.equal(settings.deletion.isSettingsWorktree, true);
+    assert.equal(settings.deletion.deleteBranchByDefault, false);
+
+    assert.ok(feature?.deletion);
+    assert.equal(feature.deletion.canDelete, true);
+    assert.equal(feature.deletion.deleteBranchByDefault, true);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch rejects deleting the default branch worktree", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const response = await server.fetch("/api/worktrees/main", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      message: "The default branch worktree cannot be deleted from the UI.",
+    });
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch rejects deleting the settings worktree", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const response = await server.fetch(`/api/worktrees/${DEFAULT_WORKTREEMAN_SETTINGS_BRANCH}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      message: "The settings worktree is managed by worktreeman and cannot be deleted from the UI.",
+    });
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch requires typing the worktree name when local changes exist", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const stateResponse = await server.fetch("/api/state");
+    const statePayload = await stateResponse.json() as {
+      worktrees: Array<{ branch: string; worktreePath: string }>;
+    };
+    const featureWorktree = statePayload.worktrees.find((entry) => entry.branch === "feature-ai-log");
+
+    assert.ok(featureWorktree);
+    await fs.writeFile(path.join(featureWorktree.worktreePath, "dirty.txt"), "local change\n", "utf8");
+
+    const rejectedResponse = await server.fetch("/api/worktrees/feature-ai-log", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deleteBranch: false }),
+    });
+
+    assert.equal(rejectedResponse.status, 400);
+    assert.deepEqual(await rejectedResponse.json(), {
+      message: "Type feature-ai-log to confirm deleting this worktree.",
+    });
+
+    const confirmedResponse = await server.fetch("/api/worktrees/feature-ai-log", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deleteBranch: false,
+        confirmWorktreeName: "feature-ai-log",
+      }),
+    });
+
+    assert.equal(confirmedResponse.status, 204);
+    await waitForPathToDisappear(featureWorktree.worktreePath);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch deletes the branch by default", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const config = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const worktree = await createWorktree(repo.repoRoot, config, { branch: "feature-delete-default" });
+    const server = await startApiServer(repo);
+
+    const response = await server.fetch("/api/worktrees/feature-delete-default", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 204);
+    await waitForPathToDisappear(worktree.worktreePath);
+
+    const branchList = await runCommand("git", ["branch", "--list", "feature-delete-default"], {
+      cwd: repo.repoRoot,
+    });
+    assert.equal(branchList.stdout.trim(), "");
+
+    await server.close();
   } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
@@ -1526,6 +1693,73 @@ test("project-management AI runs update the saved document on the server", { con
   }
 });
 
+test("creating a project-management document auto-generates a short summary with the simple AI command", async () => {
+  const repo = await createApiTestRepo();
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "printf %s $WTM_AI_INPUT",
+    simple:
+      "node -e \"const fs = require('node:fs'); fs.writeFileSync('summary-prompt.txt', process.argv[1]); console.log('Generated UI summary.');\" $WTM_AI_INPUT",
+  });
+  await fs.writeFile(repo.configPath, nextContents, "utf8");
+  const server = await startApiServer(repo);
+
+  try {
+    const response = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Launch Checklist",
+        markdown: "# Launch Checklist\n\n- verify release notes\n",
+        tags: ["release", "ops"],
+        status: "todo",
+        assignee: "Avery",
+      }),
+    });
+    assert.equal(response.status, 201);
+
+    const payload = await response.json() as {
+      document: {
+        id: string;
+        title: string;
+        summary: string;
+        markdown: string;
+        status: string;
+        assignee: string;
+      };
+    };
+
+    assert.equal(payload.document.title, "Launch Checklist");
+    assert.equal(payload.document.summary, "Generated UI summary.");
+    assert.match(payload.document.markdown, /verify release notes/);
+
+    const saved = await getProjectManagementDocument(repo.repoRoot, payload.document.id);
+    assert.equal(saved.document.summary, "Generated UI summary.");
+
+    const prompt = await fs.readFile(path.join(repo.repoRoot, "summary-prompt.txt"), "utf8");
+    assert.equal(prompt.includes('You are writing the short summary for the project-management document "Launch Checklist"'), true);
+    assert.equal(prompt.includes("Return only the final short summary as raw text."), true);
+    assert.equal(prompt.includes("Write 1-2 sentences that make the document easy to scan in the UI."), true);
+    assert.equal(prompt.includes("Title: Launch Checklist"), true);
+    assert.equal(prompt.includes("Status: todo"), true);
+    assert.equal(prompt.includes("Assignee: Avery"), true);
+    assert.equal(prompt.includes("Tags: release, ops"), true);
+    assert.equal(prompt.includes("Document markdown:"), true);
+
+    const history = await getProjectManagementDocumentHistory(repo.repoRoot, payload.document.id);
+    assert.equal(history.history.length, 2);
+    assert.deepEqual(history.history.map((entry) => entry.action), ["create", "update"]);
+    assert.match(history.history.at(-1)?.diff ?? "", /\+summary: Generated UI summary\./);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management AI document updates ignore stderr while logs retain it", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
@@ -1625,6 +1859,73 @@ test("project-management AI rejects unknown target documents and logs the failur
   }
 });
 
+test("project-management routes preserve summary and add attributed comments", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    await runCommand("git", ["config", "user.name", "Riley Maintainer"], { cwd: repo.repoRoot });
+    await runCommand("git", ["config", "user.email", "riley@example.com"], { cwd: repo.repoRoot });
+
+    const createResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Comments rollout",
+        summary: "Track the document comments launch.",
+        markdown: "# Comments rollout\n",
+        tags: ["feature", "ux"],
+        status: "todo",
+        assignee: "Riley",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createPayload = await createResponse.json() as { document: { id: string; summary: string } };
+    assert.equal(createPayload.document.summary, "Track the document comments launch.");
+
+    const documentId = createPayload.document.id;
+
+    const commentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Need one more pass on author attribution." }),
+    });
+    assert.equal(commentResponse.status, 201);
+    const commentPayload = await commentResponse.json() as {
+      document: {
+        summary: string;
+        comments: Array<{ body: string; authorName: string; authorEmail: string }>;
+      };
+    };
+    assert.equal(commentPayload.document.summary, "Track the document comments launch.");
+    assert.equal(commentPayload.document.comments.length, 1);
+    assert.equal(commentPayload.document.comments[0]?.body, "Need one more pass on author attribution.");
+    assert.equal(commentPayload.document.comments[0]?.authorName, "Riley Maintainer");
+    assert.equal(commentPayload.document.comments[0]?.authorEmail, "riley@example.com");
+
+    const history = await getProjectManagementDocumentHistory(repo.repoRoot, documentId);
+    assert.equal(history.history.at(-1)?.action, "comment");
+    assert.equal(history.history.at(-1)?.authorName, "Riley Maintainer");
+    assert.equal(history.history.at(-1)?.authorEmail, "riley@example.com");
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, documentId);
+    assert.equal(updatedDocument.document.summary, "Track the document comments launch.");
+    assert.equal(updatedDocument.document.comments.length, 1);
+
+    const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "   " }),
+    });
+    assert.equal(invalidCommentResponse.status, 400);
+    const invalidCommentPayload = await invalidCommentResponse.json() as { message: string };
+    assert.equal(invalidCommentPayload.message, "Comment body is required.");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management document AI creates a derived worktree and streams stdout from that worktree job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
@@ -1714,28 +2015,31 @@ test("project-management document AI creates a derived worktree and streams stdo
     try {
       const snapshot = await stream.nextEvent();
       assert.equal(snapshot.type, "snapshot");
-      assert.equal((snapshot as { job?: { branch?: string } }).job?.branch, payload.job.branch);
+      const snapshotJob = (snapshot as { job?: { branch?: string; stdout?: string; status?: string } | null }).job;
+      assert.equal(snapshotJob?.branch, payload.job.branch);
 
-      await waitFor(async () => {
-        const logsResponse = await server.fetch(`/api/ai/logs`);
-        if (logsResponse.status !== 200) {
-          return false;
-        }
-        const logsPayload = await logsResponse.json() as {
-          logs: Array<{ branch: string; status: string }>;
-        };
-        return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
-      });
+      let sawImplemented = snapshotJob?.stdout?.includes("implemented") ?? false;
+      if (snapshotJob?.status !== "completed") {
+        await waitFor(async () => {
+          const logsResponse = await server.fetch(`/api/ai/logs`);
+          if (logsResponse.status !== 200) {
+            return false;
+          }
+          const logsPayload = await logsResponse.json() as {
+            logs: Array<{ branch: string; status: string }>;
+          };
+          return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
+        });
 
-      let sawImplemented = false;
-      for (let index = 0; index < 5; index += 1) {
-        const event = await stream.nextEvent();
-        const job = (event as { job?: { stdout?: string; status?: string } | null }).job;
-        if (job?.stdout?.includes("implemented")) {
-          sawImplemented = true;
-        }
-        if (job?.status === "completed") {
-          break;
+        for (let index = 0; index < 5; index += 1) {
+          const event = await stream.nextEvent();
+          const job = (event as { job?: { stdout?: string; status?: string } | null }).job;
+          if (job?.stdout?.includes("implemented")) {
+            sawImplemented = true;
+          }
+          if (job?.status === "completed") {
+            break;
+          }
         }
       }
       assert.equal(sawImplemented, true);

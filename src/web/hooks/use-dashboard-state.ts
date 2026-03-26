@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AddProjectManagementCommentRequest,
   AiCommandLogEntry,
   AiCommandLogSummary,
   AiCommandLogStreamEvent,
@@ -13,6 +14,7 @@ import type {
   CommitGitChangesResponse,
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
+  DeleteWorktreeRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
   ProjectManagementDocument,
@@ -27,6 +29,7 @@ import type {
   UpdateProjectManagementDocumentRequest,
 } from "@shared/types";
 import {
+  addProjectManagementComment as addProjectManagementCommentRequest,
   createProjectManagementDocument as createProjectManagementDocumentRequest,
   createWorktree,
   deleteWorktree,
@@ -407,10 +410,10 @@ export function useDashboardState() {
           setBusyBranch(null);
         }
       },
-      async remove(branch: string) {
+      async remove(branch: string, payload?: DeleteWorktreeRequest) {
         setBusyBranch(branch);
         try {
-          await deleteWorktree(branch);
+          await deleteWorktree(branch, payload);
           await refresh();
           setError(null);
         } catch (err) {
@@ -864,6 +867,23 @@ export function useDashboardState() {
           return response.document;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management dependencies.");
+          return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async addProjectManagementComment(documentId: string, payload: AddProjectManagementCommentRequest) {
+        setProjectManagementSaving(true);
+        try {
+          const response = await addProjectManagementCommentRequest(documentId, payload);
+          await loadProjectManagementDocumentsState({ silent: true });
+          setProjectManagementDocument(response.document);
+          const history = await fetchProjectManagementHistory(documentId);
+          setProjectManagementHistory(history.history);
+          setError(null);
+          return response.document;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to add project management comment.");
           return null;
         } finally {
           setProjectManagementSaving(false);

@@ -10,7 +10,7 @@ const sampleDocuments: ProjectManagementDocumentSummary[] = [
     id: "doc-1",
     number: 1,
     title: "Dependencies",
-    summary: "Track prerequisite work.",
+    summary: "Track prerequisite document work.",
     tags: ["feature", "ux"],
     dependencies: ["doc-2"],
     status: "todo",
@@ -24,7 +24,7 @@ const sampleDocuments: ProjectManagementDocumentSummary[] = [
     id: "doc-2",
     number: 2,
     title: "Shared document list",
-    summary: "Surface shared planning docs.",
+    summary: "Normalize the shared document browser.",
     tags: ["plan"],
     dependencies: [],
     status: "in-progress",
@@ -38,7 +38,7 @@ const sampleDocuments: ProjectManagementDocumentSummary[] = [
     id: "doc-3",
     number: 3,
     title: "Graph fallback",
-    summary: "Describe the fallback graph state.",
+    summary: "Reference behavior when the graph view is unavailable.",
     tags: ["reference"],
     dependencies: [],
     status: "reference",
@@ -53,7 +53,29 @@ const sampleDocuments: ProjectManagementDocumentSummary[] = [
 const sampleDocument: ProjectManagementDocument = {
   ...sampleDocuments[0],
   markdown: "# Dependencies\n",
+  comments: [],
 };
+
+const sampleHistory = [
+  {
+    commitSha: "abcdef1234567890",
+    batchId: "batch-1",
+    createdAt: "2026-03-25T11:00:00.000Z",
+    actorId: "actor-1",
+    authorName: "Casey Reviewer",
+    authorEmail: "casey@example.com",
+    documentId: "doc-1",
+    number: 1,
+    title: "Dependencies",
+    tags: ["feature", "ux"],
+    status: "todo",
+    assignee: "Eric",
+    archived: false,
+    changeCount: 1,
+    action: "comment" as const,
+    diff: "@@\n+Need a final QA pass",
+  },
+];
 
 test("create form renders without seeded defaults", () => {
   const markup = renderToStaticMarkup(
@@ -85,6 +107,7 @@ test("create form renders without seeded defaults", () => {
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
+      onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
@@ -93,10 +116,12 @@ test("create form renders without seeded defaults", () => {
   );
 
   assert.match(markup, /placeholder="Document title"/);
+  assert.match(markup, /placeholder="Short summary shown in the document list"/);
   assert.match(markup, /placeholder="bug, feature, plan"/);
   assert.match(markup, /Select lane/);
   assert.match(markup, /placeholder="Assignee"/);
   assert.match(markup, /<textarea[^>]*><\/textarea>/);
+  assert.equal(markup.includes("No short summary yet."), false);
   assert.doesNotMatch(markup, /value="Project Outline"/);
   assert.doesNotMatch(markup, /value="plan"/);
   assert.doesNotMatch(markup, /# Project Outline/);
@@ -132,6 +157,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
+      onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
@@ -144,6 +170,63 @@ test("document view shows dependency summary and modal entrypoint", () => {
   assert.match(markup, /Shared document list/);
   assert.match(markup, /1 dependency/);
   assert.match(markup, /Remove/);
+});
+
+test("document view renders summary, comments, and comment attribution", () => {
+  const markup = renderToStaticMarkup(
+    <ProjectManagementPanel
+      documents={[...sampleDocuments]}
+      availableTags={["feature", "ux", "plan", "reference"]}
+      availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      activeSubTab="document"
+      selectedDocumentId="doc-1"
+      documentViewMode="document"
+      document={{
+        ...sampleDocument,
+        summary: "Track prerequisite document work.",
+        comments: [{
+          id: "comment-1",
+          body: "Need a final QA pass",
+          createdAt: "2026-03-25T11:30:00.000Z",
+          authorName: "Casey Reviewer",
+          authorEmail: "casey@example.com",
+        }],
+      }}
+      history={sampleHistory}
+      loading={false}
+      saving={false}
+      aiCommands={null}
+      aiJob={null}
+      documentRunJob={null}
+      aiLogs={[]}
+      aiLogDetail={null}
+      aiLogsLoading={false}
+      runningAiJobs={[]}
+      selectedWorktreeBranch={null}
+      onSubTabChange={() => undefined}
+      onDocumentViewModeChange={() => undefined}
+      onRefresh={async () => null}
+      onLoadAiLogs={async () => null}
+      onLoadAiLog={async () => null}
+      onSelectDocument={async () => null}
+      onCreateDocument={async () => null}
+      onUpdateDocument={async () => null}
+      onUpdateDependencies={async () => null}
+      onAddComment={async () => null}
+      onRunAiCommand={async () => null}
+      onRunDocumentAi={async () => null}
+      onCancelDocumentAiCommand={async () => null}
+      onCancelAiCommand={async () => null}
+    />,
+  );
+
+  assert.match(markup, />Summary</);
+  assert.match(markup, /Track prerequisite document work\./);
+  assert.match(markup, /1 comment/);
+  assert.match(markup, /Casey Reviewer/);
+  assert.match(markup, /casey@example.com/);
+  assert.match(markup, /Need a final QA pass/);
+  assert.match(markup, /Saved with your repo git/);
 });
 
 test("dependency picker modal renders current dependencies and searchable document browser", () => {

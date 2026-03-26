@@ -1,4 +1,5 @@
 import type {
+  AddProjectManagementCommentRequest,
   AppendProjectManagementBatchRequest,
   ApiStateResponse,
   AiCommandLogResponse,
@@ -12,6 +13,7 @@ import type {
   CommitGitChangesRequest,
   CommitGitChangesResponse,
   ConfigDocumentResponse,
+  DeleteWorktreeRequest,
   CreateProjectManagementDocumentRequest,
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
@@ -257,6 +259,16 @@ export function updateProjectManagementDependencies(
   });
 }
 
+export function addProjectManagementComment(
+  documentId: string,
+  payload: AddProjectManagementCommentRequest,
+): Promise<ProjectManagementDocumentResponse> {
+  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function appendProjectManagementBatch(
   payload: AppendProjectManagementBatchRequest,
 ): Promise<ProjectManagementBatchResponse> {
@@ -273,9 +285,10 @@ export function createWorktree(branch: string): Promise<EnvSyncResponse | void> 
   });
 }
 
-export function deleteWorktree(branch: string): Promise<void> {
+export function deleteWorktree(branch: string, payload?: DeleteWorktreeRequest): Promise<void> {
   return request<void>(`/api/worktrees/${encodeURIComponent(branch)}`, {
     method: "DELETE",
+    body: JSON.stringify(payload ?? {}),
   });
 }
 

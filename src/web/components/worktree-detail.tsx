@@ -374,6 +374,7 @@ interface WorktreeDetailProps {
   onLoadProjectManagementAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCreateProjectManagementDocument: (payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     status?: string;
@@ -381,6 +382,7 @@ interface WorktreeDetailProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDocument: (documentId: string, payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     dependencies?: string[];
@@ -389,6 +391,7 @@ interface WorktreeDetailProps {
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
+  onAddProjectManagementComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
   onRunProjectManagementAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
   onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<RunAiCommandResponse | null>;
   onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
@@ -461,12 +464,18 @@ export function WorktreeDetail({
   onCreateProjectManagementDocument,
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
+  onAddProjectManagementComment,
   onRunProjectManagementAiCommand,
   onRunProjectManagementDocumentAi,
   onCancelProjectManagementDocumentAiCommand,
   onCancelProjectManagementAiCommand,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
+  const deleteDisabledReason = isBusy
+    ? "A worktree action is already running."
+    : worktree?.deletion?.canDelete === false
+      ? worktree.deletion.reason
+      : null;
   const [copied, setCopied] = useState(false);
   const [selectedBackgroundCommandName, setSelectedBackgroundCommandName] = useState<string | null>(null);
   const [backgroundFilter, setBackgroundFilter] = useState("");
@@ -937,10 +946,17 @@ export function WorktreeDetail({
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
-                      <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onDelete}>Delete</button>
+                      <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={Boolean(deleteDisabledReason)} onClick={onDelete} title={deleteDisabledReason ?? undefined}>
+                        Delete
+                      </button>
                     </>
                   ) : null}
                 </div>
+                {deleteDisabledReason ? (
+                  <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
+                    {deleteDisabledReason}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -1159,6 +1175,7 @@ export function WorktreeDetail({
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
+              onAddComment={onAddProjectManagementComment}
               onRunAiCommand={onRunProjectManagementAiCommand}
               onRunDocumentAi={onRunProjectManagementDocumentAi}
               onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}

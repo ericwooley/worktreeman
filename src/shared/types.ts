@@ -39,6 +39,18 @@ export interface WorktreeRuntime {
   runtimeStartedAt?: string;
 }
 
+export interface WorktreeDeletionState {
+  canDelete: boolean;
+  reason: string | null;
+  requiresConfirmation: boolean;
+  hasLocalChanges: boolean;
+  hasUnmergedCommits: boolean;
+  deleteBranchByDefault: boolean;
+  isDefaultBranch: boolean;
+  isDefaultWorktree: boolean;
+  isSettingsWorktree: boolean;
+}
+
 export interface BackgroundCommandState {
   name: string;
   command: string;
@@ -91,10 +103,16 @@ export interface WorktreeRecord {
   locked: boolean;
   prunable: boolean;
   runtime?: WorktreeRuntime;
+  deletion?: WorktreeDeletionState;
 }
 
 export interface CreateWorktreeRequest {
   branch: string;
+}
+
+export interface DeleteWorktreeRequest {
+  confirmWorktreeName?: string;
+  deleteBranch?: boolean;
 }
 
 export interface ApiStateResponse {
@@ -247,6 +265,15 @@ export interface ProjectManagementDocumentSummary {
 
 export interface ProjectManagementDocument extends ProjectManagementDocumentSummary {
   markdown: string;
+  comments: ProjectManagementComment[];
+}
+
+export interface ProjectManagementComment {
+  id: string;
+  body: string;
+  createdAt: string;
+  authorName: string;
+  authorEmail: string;
 }
 
 export interface ProjectManagementHistoryEntry {
@@ -254,6 +281,8 @@ export interface ProjectManagementHistoryEntry {
   batchId: string;
   createdAt: string;
   actorId: string;
+  authorName: string;
+  authorEmail: string;
   documentId: string;
   number: number;
   title: string;
@@ -262,7 +291,7 @@ export interface ProjectManagementHistoryEntry {
   assignee: string;
   archived: boolean;
   changeCount: number;
-  action: "create" | "update" | "archive" | "restore";
+  action: "create" | "update" | "archive" | "restore" | "comment";
   diff: string;
 }
 
@@ -331,6 +360,10 @@ export interface AppendProjectManagementBatchRequest {
 
 export interface UpdateProjectManagementDependenciesRequest {
   dependencyIds: string[];
+}
+
+export interface AddProjectManagementCommentRequest {
+  body: string;
 }
 
 export interface RunAiCommandRequest {
