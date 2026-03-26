@@ -280,7 +280,10 @@ export function ProjectManagementPanel({
   const [documentRunFailureToast, setDocumentRunFailureToast] = useState<string | null>(null);
   const aiRunning = aiJob?.status === "running";
   const documentRunInProgress = documentRunJob?.status === "running";
-  const activeDocumentRunTargetsSelectedDocument = Boolean(document && documentRunJob?.documentId === document.id);
+  const documentRunTargetsSelectedDocument = Boolean(document && documentRunJob?.documentId === document.id);
+  const documentRunTargetsSelectedWorktree = Boolean(selectedWorktreeBranch && documentRunJob?.branch === selectedWorktreeBranch);
+  const activeDocumentRunInSelectedWorktree = documentRunInProgress && documentRunTargetsSelectedDocument && documentRunTargetsSelectedWorktree;
+  const activeDocumentRunForSelectedDocument = documentRunInProgress && documentRunTargetsSelectedDocument;
   const documentBrowser = useProjectManagementDocumentBrowserState(documents, statuses);
   const aiCommandOptions = useMemo<MatrixDropdownOption[]>(() => ([
     {
@@ -401,7 +404,9 @@ export function ProjectManagementPanel({
       return null;
     }
 
-    const matchingWorktreeJob = documentRunJob?.documentId === document.id ? documentRunJob : null;
+    const matchingWorktreeJob = documentRunJob?.documentId === document.id && documentRunJob.branch === selectedWorktreeBranch
+      ? documentRunJob
+      : null;
     const matchingDocumentJob = aiJob?.documentId === document.id ? aiJob : null;
 
     if (matchingWorktreeJob?.status === "running") {
@@ -421,7 +426,7 @@ export function ProjectManagementPanel({
     }
 
     return null;
-  }, [aiJob, aiRunSummary, document, documentRunJob, documentRunSummary]);
+  }, [aiJob, aiRunSummary, document, documentRunJob, documentRunSummary, selectedWorktreeBranch]);
 
   const laneStatuses = useMemo(
     () => statuses.filter((status) => status !== "reference" && (showBacklogLane || status !== "backlog")),
@@ -623,8 +628,10 @@ export function ProjectManagementPanel({
       return false;
     }
 
-    if (documentRunInProgress) {
-      setDocumentRunFailureToast("A document worktree AI run is already in progress.");
+    if (activeDocumentRunForSelectedDocument) {
+      setDocumentRunFailureToast(documentRunJob?.branch
+        ? `This document already has a worktree AI run in ${documentRunJob.branch}.`
+        : "This document already has a worktree AI run in progress.");
       return false;
     }
 
@@ -786,14 +793,14 @@ export function ProjectManagementPanel({
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${documentRunInProgress ? "pm-ai-button-running" : ""}`}
+                          className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${activeDocumentRunInSelectedWorktree ? "pm-ai-button-running" : ""}`}
                           onClick={() => void handleRunDocumentWork()}
-                          title={documentRunInProgress ? "Worktree AI is running" : "Start worktree AI"}
-                          disabled={!document || documentRunInProgress}
+                          title={activeDocumentRunInSelectedWorktree ? "Worktree AI is running" : "Start worktree AI"}
+                          disabled={!document || activeDocumentRunForSelectedDocument}
                         >
-                          {documentRunInProgress ? "Start Worktree AI (running)" : "Start Worktree AI"}
+                          {activeDocumentRunInSelectedWorktree ? "Start Worktree AI (running)" : "Start Worktree AI"}
                         </button>
-                        {documentRunInProgress && activeDocumentRunTargetsSelectedDocument && documentRunJob?.branch ? (
+                        {activeDocumentRunInSelectedWorktree && documentRunJob?.branch ? (
                           <button
                             type="button"
                             className="matrix-button rounded-none px-3 py-2 text-sm"
@@ -842,7 +849,7 @@ export function ProjectManagementPanel({
                     {!isAiCommandReady(aiCommands, "smart") ? <MatrixBadge tone="warning">Configure Smart AI in settings</MatrixBadge> : null}
                     {!isAiCommandReady(aiCommands, "simple") ? <MatrixBadge tone="warning">Configure Simple AI in settings</MatrixBadge> : null}
                     {aiRunning ? <MatrixBadge tone="warning">Document editing locked while AI updates the saved document</MatrixBadge> : null}
-                    {activeDocumentRunTargetsSelectedDocument && documentRunInProgress ? <MatrixBadge tone="warning">Document worktree AI run in progress</MatrixBadge> : null}
+                    {activeDocumentRunInSelectedWorktree ? <MatrixBadge tone="warning">Document worktree AI run in progress</MatrixBadge> : null}
                     {aiRunSummary ? <MatrixBadge tone="active">{aiRunSummary}</MatrixBadge> : null}
                     {documentRunSummary ? <MatrixBadge tone="active">{documentRunSummary}</MatrixBadge> : null}
                   </div>
