@@ -14,6 +14,27 @@ export interface ConfigSource {
   gitFile?: string;
 }
 
+function parseOptionalPort(value: unknown, label: string): number | undefined {
+  if (value == null || value === "") {
+    return undefined;
+  }
+
+  const port = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+
+  return port;
+}
+
+function parseFavicon(value: unknown): string {
+  if (value == null) {
+    return "";
+  }
+
+  return String(value).trim();
+}
+
 function ensureRecord(value: unknown, label: string): Record<string, string> {
   if (value == null) {
     return {};
@@ -125,6 +146,8 @@ export function parseConfigContents(raw: string): WorktreeManagerConfig {
     : {};
 
   return {
+    favicon: parseFavicon(parsed.favicon),
+    preferredPort: parseOptionalPort(parsed.preferredPort, "preferredPort"),
     env,
     runtimePorts: Array.isArray(parsed.runtimePorts)
       ? parsed.runtimePorts.map((entry) => String(entry)).filter(Boolean)

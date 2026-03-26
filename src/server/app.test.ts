@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -80,3 +81,76 @@ test("startServer still fails when an explicitly requested port is occupied", as
     await fs.rm(rootDir, { recursive: true, force: true });
   }
 });
+
+test("startServer uses config preferredPort and falls back when it is occupied", async () => {
+  const previousPort = process.env.PORT;
+  const { rootDir, repo } = await createTestRepo();
+  const occupiedServer = await listenOnEphemeralPort();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    process.env.PORT = "";
+    const contents = await fs.readFile(repo.configPath, "utf8");
+    await fs.writeFile(
+      repo.configPath,
+      contents.replace("preferredPort: 4312", `preferredPort: ${occupiedServer.port}`),
+      "utf8",
+    );
+
+    startedServer = await startServer({ repo, openBrowser: false });
+
+    assert.notEqual(startedServer.port, occupiedServer.port);
+    assert.ok(startedServer.port > 0);
+  } finally {
+    process.env.PORT = previousPort;
+
+    await startedServer?.close();
+    await occupiedServer.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer serves favicon from configured repository file", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  const faviconDir = path.join(repo.configWorktreePath, "assets");
+  const faviconPath = path.join(faviconDir, "favicon.png");
+  const faviconBytes = crypto.randomBytes(16);
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    await fs.mkdir(faviconDir, { recursive: true });
+    await fs.writeFile(faviconPath, faviconBytes);
+
+    const contents = await fs.readFile(repo.configPath, "utf8");
+    await fs.writeFile(
+      repo.configPath,
+      contents.replace("favicon: ''", "favicon: assets/favicon.png"),
+      "utf8",
+    );
+
+    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
+    const response = await fetch(`http://127.0.0.1:${startedServer.port}/favicon.ico`);
+    const responseBytes = Buffer.from(await response.arrayBuffer());
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(responseBytes, faviconBytes);
+  } finally {
+    await startedServer?.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+async function listenFreePort(): Promise<number> {
+  const server = http.createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Failed to allocate free port.");
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
+
+  return address.port;
+}

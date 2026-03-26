@@ -18,6 +18,16 @@
         "type": "string"
       }
     },
+    "favicon": {
+      "type": "string",
+      "description": "Repository-relative path to an image file served as the UI favicon.",
+      "default": ""
+    },
+    "preferredPort": {
+      "type": "integer",
+      "description": "Preferred local port for the worktreeman web server. If unavailable, worktreeman falls back to a free port.",
+      "minimum": 1
+    },
     "runtimePorts": {
       "type": "array",
       "description": "Environment variable names that should receive allocated free local ports.",

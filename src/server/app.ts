@@ -1,4 +1,5 @@
 import http from "node:http";
+import fs from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,8 +38,27 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   let terminalService: WebSocketServer | undefined;
   let vite: ViteDevServer | undefined;
   let closed = false;
+  const appRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   app.use(express.json());
+  app.get("/favicon.ico", async (_req, res) => {
+    const faviconPath = await resolveFaviconPath({
+      appRoot,
+      configPath: options.repo.configPath,
+      configFile: options.repo.configFile,
+      configWorktreePath: options.repo.configWorktreePath,
+      isDevelopment,
+      repoRoot: options.repo.repoRoot,
+    });
+
+    if (!faviconPath) {
+      res.status(404).end();
+      return;
+    }
+
+    res.sendFile(faviconPath);
+  });
   app.use("/api", createApiRouter({
     repoRoot: options.repo.repoRoot,
     configPath: options.repo.configPath,
@@ -54,9 +74,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     });
   });
 
-  const isDevelopment = process.env.NODE_ENV === "development";
   if (isDevelopment) {
-    const appRoot = fileURLToPath(new URL("../../", import.meta.url));
     const viteModuleId = "vite";
     const { createServer } = await import(viteModuleId) as typeof import("vite");
     vite = await createServer({
@@ -69,7 +87,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     });
     app.use(vite.middlewares);
   } else {
-    const appRoot = fileURLToPath(new URL("../../", import.meta.url));
     const webDistPath = path.resolve(appRoot, "dist/web");
     app.use(express.static(webDistPath));
     const indexPath = path.join(webDistPath, "index.html");
@@ -83,7 +100,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     res.status(500).json({ message });
   });
 
-  const preferredPort = resolvePreferredPort(options.port);
+  const preferredPort = resolvePreferredPort(options.port, config.preferredPort);
   const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null);
   const prepareInitialTerminalSession = options.prepareInitialTerminalSession ?? ensureTerminalSession;
 
@@ -299,9 +316,13 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   };
 }
 
-function resolvePreferredPort(explicitPort?: number): number {
+function resolvePreferredPort(explicitPort?: number, configPreferredPort?: number): number {
   if (typeof explicitPort === "number" && Number.isInteger(explicitPort) && explicitPort > 0) {
     return explicitPort;
+  }
+
+  if (typeof configPreferredPort === "number" && Number.isInteger(configPreferredPort) && configPreferredPort > 0) {
+    return configPreferredPort;
   }
 
   const envPort = Number(process.env.PORT);
@@ -324,6 +345,43 @@ async function resolveStartupPort(preferredPort: number, allowFallback: boolean)
     port: await allocateLocalPort(),
     fellBackFrom: preferredPort,
   };
+}
+
+async function resolveFaviconPath(options: {
+  appRoot: string;
+  configPath: string;
+  configFile: string;
+  configWorktreePath: string;
+  isDevelopment: boolean;
+  repoRoot: string;
+}): Promise<string | null> {
+  const config = await loadConfig({
+    path: options.configPath,
+    repoRoot: options.repoRoot,
+    gitFile: options.configFile,
+  });
+
+  if (config.favicon) {
+    const candidate = path.resolve(options.configWorktreePath, config.favicon);
+    const relativeToRepo = path.relative(options.repoRoot, candidate);
+    if (!relativeToRepo.startsWith("..") && !path.isAbsolute(relativeToRepo) && await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+
+  const defaultPath = options.isDevelopment
+    ? path.resolve(options.appRoot, "public/logo.png")
+    : path.resolve(options.appRoot, "dist/web/logo.png");
+  return await fileExists(defaultPath) ? defaultPath : null;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function isLocalPortAvailable(port: number): Promise<boolean> {
