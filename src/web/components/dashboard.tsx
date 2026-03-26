@@ -797,8 +797,8 @@ export function Dashboard() {
       {
         id: "nav-project-management-ai-log",
         code: "npa",
-          title: "Open AI log tab",
-          subtitle: "Review live AI runs, saved output, and origin links.",
+        title: "Open AI log tab",
+        subtitle: "Review live AI runs, saved output, and origin links.",
         group: "Navigation",
         keywords: ["project", "management", "ai", "logs", "jobs"],
         badgeLabel: activeTab === "ai-log" ? "Active" : undefined,

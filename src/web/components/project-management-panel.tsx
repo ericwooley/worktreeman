@@ -2,8 +2,6 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import type {
   AiCommandConfig,
   AiCommandId,
-  AiCommandLogEntry,
-  AiCommandLogSummary,
   AiCommandJob,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
