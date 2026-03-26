@@ -75,6 +75,7 @@ interface ProjectManagementPanelProps {
   onSelectDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onCreateDocument: (payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     dependencies?: string[];
@@ -83,6 +84,7 @@ interface ProjectManagementPanelProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDocument: (documentId: string, payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     dependencies?: string[];
@@ -122,6 +124,15 @@ function getAiJobTone(status: AiCommandJob["status"]) {
   }
 
   return "active" as const;
+}
+
+function summarizeDocumentText(value: string, maxLength = 140): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }
 
 function getAiOutputText(job: AiCommandJob): string {
@@ -260,6 +271,7 @@ export function ProjectManagementPanel({
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
   const [showBacklogLane, setShowBacklogLane] = useState(false);
   const [editTitle, setEditTitle] = useState(() => document?.title ?? "");
+  const [editSummary, setEditSummary] = useState(() => document?.summary ?? "");
   const [editMarkdown, setEditMarkdown] = useState(() => document?.markdown ?? "");
   const [editTags, setEditTags] = useState(() => document?.tags.join(", ") ?? "");
   const [dependencySelection, setDependencySelection] = useState<string[]>(() => Array.isArray(document?.dependencies) ? document.dependencies : []);
@@ -267,6 +279,7 @@ export function ProjectManagementPanel({
   const [editAssignee, setEditAssignee] = useState(() => document?.assignee ?? "");
   const [editEditorMode, setEditEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("wysiwyg");
   const [newTitle, setNewTitle] = useState("");
+  const [newSummary, setNewSummary] = useState("");
   const [newTags, setNewTags] = useState("");
   const [newMarkdown, setNewMarkdown] = useState("");
   const [newStatus, setNewStatus] = useState<string>("");
@@ -313,6 +326,7 @@ export function ProjectManagementPanel({
   useEffect(() => {
     if (!document) {
       setEditTitle("");
+      setEditSummary("");
       setEditMarkdown("");
       setEditTags("");
       setDependencySelection([]);
@@ -326,6 +340,7 @@ export function ProjectManagementPanel({
     }
 
     setEditTitle(document.title);
+    setEditSummary(document.summary);
     setEditMarkdown(document.markdown);
     setEditTags(document.tags.join(", "));
     setDependencySelection(Array.isArray(document.dependencies) ? document.dependencies : []);
@@ -479,6 +494,7 @@ export function ProjectManagementPanel({
   async function handleCreateDocument() {
     const created = await onCreateDocument({
       title: newTitle,
+      summary: newSummary,
       markdown: newMarkdown,
       tags: parseTags(newTags),
       dependencies: [],
@@ -490,6 +506,7 @@ export function ProjectManagementPanel({
     }
 
     setNewTitle("");
+    setNewSummary("");
     setNewTags("");
     setNewMarkdown("");
     setNewStatus("");
@@ -505,6 +522,7 @@ export function ProjectManagementPanel({
 
     await onUpdateDocument(document.id, {
       title: editTitle,
+      summary: editSummary,
       markdown: editMarkdown,
       tags: parseTags(editTags),
       dependencies: document.dependencies,
@@ -525,6 +543,7 @@ export function ProjectManagementPanel({
 
     await onUpdateDocument(documentId, {
       title: targetDocument.title,
+      summary: targetDocument.summary,
       markdown: targetDocument.markdown,
       tags: targetDocument.tags,
       dependencies: targetDocument.dependencies,
@@ -695,6 +714,7 @@ export function ProjectManagementPanel({
                   {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
                 </div>
                 <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
+                {entry.summary ? <p className="mt-2 text-[11px] theme-text-muted">{summarizeDocumentText(entry.summary)}</p> : null}
                 <p className="mt-2 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
                 <p className="mt-1 text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</p>
               </div>
@@ -716,7 +736,7 @@ export function ProjectManagementPanel({
         onClick={() => onSubTabChange("create")}
       >
         New document
-        </button>
+      </button>
     </div>
   );
 
@@ -882,6 +902,7 @@ export function ProjectManagementPanel({
               <ProjectManagementDocumentForm
                 mode="edit"
                 title={editTitle}
+                summary={editSummary}
                 tags={editTags}
                 markdown={editMarkdown}
                 status={editStatus}
@@ -894,6 +915,7 @@ export function ProjectManagementPanel({
                 editorOptions={documentEditorOptions}
                 onEditorModeChange={setEditEditorMode}
                 onTitleChange={setEditTitle}
+                onSummaryChange={setEditSummary}
                 onTagsChange={setEditTags}
                 onMarkdownChange={setEditMarkdown}
                 onStatusChange={setEditStatus}
@@ -907,6 +929,7 @@ export function ProjectManagementPanel({
                       disabled={saving || aiRunning}
                       onClick={() => void onUpdateDocument(document.id, {
                         title: editTitle,
+                        summary: editSummary,
                         markdown: editMarkdown,
                         tags: parseTags(editTags),
                         dependencies: document.dependencies,
@@ -943,8 +966,14 @@ export function ProjectManagementPanel({
           ) : document ? (
             <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
               <div className="border theme-border-subtle p-4">
+                <div className="border-b theme-border-subtle pb-4">
+                  <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Short summary</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm theme-text-muted">
+                    {document.summary || "No short summary yet."}
+                  </p>
+                </div>
                 <div
-                  className="pm-markdown text-sm theme-text"
+                  className="pm-markdown mt-4 text-sm theme-text"
                   dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }}
                 />
               </div>
@@ -1063,6 +1092,7 @@ export function ProjectManagementPanel({
                 <ProjectManagementDocumentForm
                   mode="create"
                   title={newTitle}
+                  summary={newSummary}
                   tags={newTags}
                   markdown={newMarkdown}
                   status={newStatus}
@@ -1074,6 +1104,7 @@ export function ProjectManagementPanel({
                   editorOptions={documentEditorOptions}
                   onEditorModeChange={setCreateEditorMode}
                   onTitleChange={setNewTitle}
+                  onSummaryChange={setNewSummary}
                   onTagsChange={setNewTags}
                   onMarkdownChange={setNewMarkdown}
                   onStatusChange={setNewStatus}

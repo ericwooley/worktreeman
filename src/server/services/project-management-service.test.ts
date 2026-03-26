@@ -46,12 +46,13 @@ test("listProjectManagementDocuments bootstraps the branch with Project Outline"
   }
 });
 
-test("create and update project-management documents persist markdown and normalized tags", async () => {
+test("create and update project-management documents persist markdown, summary, and normalized tags", async () => {
   const repoRoot = await createTestRepo();
 
   try {
     const created = await createProjectManagementDocument(repoRoot, {
       title: "Bug Inbox",
+      summary: "Track incoming bugs and research follow-ups.",
       markdown: "# Bug Inbox\n\nTrack issues here.\n",
       tags: ["Bug", " bug ", "Research Notes"],
       status: "todo",
@@ -60,13 +61,19 @@ test("create and update project-management documents persist markdown and normal
 
     assert.equal(created.document.title, "Bug Inbox");
     assert.equal(created.document.number, 2);
+    assert.equal(created.document.summary, "Track incoming bugs and research follow-ups.");
     assert.deepEqual(created.document.tags, ["bug", "research-notes"]);
     assert.equal(created.document.status, "todo");
     assert.equal(created.document.assignee, "Alex");
     assert.equal(created.document.archived, false);
 
+    const createdList = await listProjectManagementDocuments(repoRoot);
+    const createdSummary = createdList.documents.find((entry) => entry.id === created.document.id);
+    assert.equal(createdSummary?.summary, "Track incoming bugs and research follow-ups.");
+
     const updated = await updateProjectManagementDocument(repoRoot, created.document.id, {
       title: "Bug Inbox",
+      summary: "Track incoming bugs, blockers, and owner handoffs.",
       markdown: "# Bug Inbox\n\n- Investigate login loop\n",
       tags: ["bug", "blocked"],
       status: "blocked",
@@ -74,6 +81,7 @@ test("create and update project-management documents persist markdown and normal
     });
 
     assert.match(updated.document.markdown, /Investigate login loop/);
+    assert.equal(updated.document.summary, "Track incoming bugs, blockers, and owner handoffs.");
     assert.deepEqual(updated.document.tags, ["bug", "blocked"]);
     assert.equal(updated.document.status, "blocked");
     assert.equal(updated.document.assignee, "Taylor");
@@ -83,6 +91,8 @@ test("create and update project-management documents persist markdown and normal
     assert.deepEqual(history.history.map((entry) => entry.action), ["create", "update"]);
     assert.match(history.history[1].diff, /-status: todo/);
     assert.match(history.history[1].diff, /\+status: blocked/);
+    assert.match(history.history[1].diff, /-summary: Track incoming bugs and research follow-ups\./);
+    assert.match(history.history[1].diff, /\+summary: Track incoming bugs, blockers, and owner handoffs\./);
     assert.match(history.history[1].diff, /\+\- Investigate login loop|\+Investigate login loop|Investigate login loop/);
   } finally {
     await destroyTestRepo(repoRoot);
@@ -205,19 +215,23 @@ test("dependencies persist on create and can be updated independently", async ()
 
     const dependent = await createProjectManagementDocument(repoRoot, {
       title: "Dependent Feature",
+      summary: "Deliver the feature after foundation work lands.",
       markdown: "# Dependent Feature\n",
       tags: ["feature"],
       dependencies: [foundation.document.id],
     });
 
     assert.deepEqual(dependent.document.dependencies, [foundation.document.id]);
+    assert.equal(dependent.document.summary, "Deliver the feature after foundation work lands.");
 
     const outline = await listProjectManagementDocuments(repoRoot);
     const dependentSummary = outline.documents.find((entry) => entry.id === dependent.document.id);
     assert.deepEqual(dependentSummary?.dependencies, [foundation.document.id]);
+    assert.equal(dependentSummary?.summary, "Deliver the feature after foundation work lands.");
 
     const updated = await updateProjectManagementDependencies(repoRoot, dependent.document.id, []);
     assert.deepEqual(updated.document.dependencies, []);
+    assert.equal(updated.document.summary, "Deliver the feature after foundation work lands.");
 
     const history = await getProjectManagementDocumentHistory(repoRoot, dependent.document.id);
     assert.match(history.history.at(-1)?.diff ?? "", /dependencies:/);
