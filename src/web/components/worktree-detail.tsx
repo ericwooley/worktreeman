@@ -466,6 +466,11 @@ export function WorktreeDetail({
   onCancelProjectManagementAiCommand,
 }: WorktreeDetailProps) {
   const isRunning = Boolean(worktree?.runtime);
+  const deleteDisabledReason = isBusy
+    ? "A worktree action is already running."
+    : worktree?.deletion?.canDelete === false
+      ? worktree.deletion.reason
+      : null;
   const [copied, setCopied] = useState(false);
   const [selectedBackgroundCommandName, setSelectedBackgroundCommandName] = useState<string | null>(null);
   const [backgroundFilter, setBackgroundFilter] = useState("");
@@ -920,10 +925,17 @@ export function WorktreeDetail({
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
-                      <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onDelete}>Delete</button>
+                      <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={Boolean(deleteDisabledReason)} onClick={onDelete} title={deleteDisabledReason ?? undefined}>
+                        Delete
+                      </button>
                     </>
                   ) : null}
                 </div>
+                {deleteDisabledReason ? (
+                  <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
+                    {deleteDisabledReason}
+                  </div>
+                ) : null}
               </div>
             </div>
 

@@ -5,6 +5,7 @@ import type {
   AiCommandConfig,
   CommitGitChangesResponse,
   CreateWorktreeRequest,
+  DeleteWorktreeRequest,
   GenerateGitCommitMessageResponse,
   GitBranchOption,
   GitCompareCommit,
@@ -12,9 +13,14 @@ import type {
   GitMergeConflict,
   GitMergeStatus,
   GitWorkingTreeSummary,
+  WorktreeDeletionState,
   WorktreeManagerConfig,
   WorktreeRecord,
 } from "../../shared/types.js";
+import {
+  DEFAULT_WORKTREEMAN_MAIN_BRANCH,
+  DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
+} from "../../shared/constants.js";
 import { runCommand } from "../utils/process.js";
 import { resolveWorktreeBaseDir } from "./config-service.js";
 import { ensureBranchWorktree } from "./repository-layout-service.js";
@@ -337,6 +343,89 @@ export async function removeWorktree(repoRoot: string, worktreePath: string): Pr
   await runCommand("git", ["worktree", "remove", worktreePath, "--force"], { cwd: repoRoot });
 }
 
+export async function deleteBranch(repoRoot: string, branch: string): Promise<void> {
+  if (!(await gitRefExists(repoRoot, `refs/heads/${branch}`))) {
+    return;
+  }
+
+  await runCommand("git", ["branch", "-D", branch], { cwd: repoRoot });
+}
+
+export async function getWorktreeDeletionState(repoRoot: string, worktree: WorktreeRecord): Promise<WorktreeDeletionState> {
+  const defaultBranch = parseGitBranchName(await resolveDefaultBranch(repoRoot));
+  const rootWorktreePath = path.resolve(repoRoot);
+  const targetWorktreePath = path.resolve(worktree.worktreePath);
+  const defaultBranchWorktreePath = path.resolve(repoRoot, sanitizeBranchName(defaultBranch));
+  const primaryMainWorktreePath = path.resolve(repoRoot, sanitizeBranchName(DEFAULT_WORKTREEMAN_MAIN_BRANCH));
+  const isSettingsWorktree = worktree.branch === DEFAULT_WORKTREEMAN_SETTINGS_BRANCH;
+  const isDefaultBranch = worktree.branch === defaultBranch;
+  const isDefaultWorktree = targetWorktreePath === rootWorktreePath
+    || targetWorktreePath === defaultBranchWorktreePath
+    || targetWorktreePath === primaryMainWorktreePath;
+  const summary = await getWorkingTreeSummary(worktree.worktreePath);
+  const hasLocalChanges = summary.dirty;
+
+  let hasUnmergedCommits = false;
+  try {
+    const comparison = await getGitComparison(repoRoot, worktree.branch, defaultBranch);
+    hasUnmergedCommits = comparison.ahead > 0;
+  } catch {
+    hasUnmergedCommits = false;
+  }
+
+  const requiresConfirmation = hasLocalChanges || hasUnmergedCommits;
+
+  if (isSettingsWorktree) {
+    return {
+      canDelete: false,
+      reason: "The settings worktree is managed by worktreeman and cannot be deleted from the UI.",
+      requiresConfirmation,
+      hasLocalChanges,
+      hasUnmergedCommits,
+      deleteBranchByDefault: false,
+      isDefaultBranch,
+      isDefaultWorktree,
+      isSettingsWorktree,
+    };
+  }
+
+  if (isDefaultBranch || isDefaultWorktree) {
+    return {
+      canDelete: false,
+      reason: "The default branch worktree cannot be deleted from the UI.",
+      requiresConfirmation,
+      hasLocalChanges,
+      hasUnmergedCommits,
+      deleteBranchByDefault: false,
+      isDefaultBranch,
+      isDefaultWorktree,
+      isSettingsWorktree,
+    };
+  }
+
+  return {
+    canDelete: true,
+    reason: null,
+    requiresConfirmation,
+    hasLocalChanges,
+    hasUnmergedCommits,
+    deleteBranchByDefault: true,
+    isDefaultBranch,
+    isDefaultWorktree,
+    isSettingsWorktree,
+  };
+}
+
+export function validateDeleteWorktreeRequest(worktree: WorktreeRecord, deletion: WorktreeDeletionState, request: DeleteWorktreeRequest) {
+  if (!deletion.canDelete) {
+    throw new Error(deletion.reason ?? `Worktree ${worktree.branch} cannot be deleted.`);
+  }
+
+  if (deletion.requiresConfirmation && request.confirmWorktreeName !== worktree.branch) {
+    throw new Error(`Type ${worktree.branch} to confirm deleting this worktree.`);
+  }
+}
+
 function parseGitBranchName(raw: string): string {
   return raw
     .trim()
@@ -409,6 +498,10 @@ async function resolveDefaultBranch(repoRoot: string): Promise<string> {
     } catch {
       // ignore
     }
+  }
+
+  if ((await listWorktrees(repoRoot)).some((entry) => entry.branch === DEFAULT_WORKTREEMAN_MAIN_BRANCH)) {
+    return DEFAULT_WORKTREEMAN_MAIN_BRANCH;
   }
 
   const { stdout } = await runCommand("git", ["branch", "--show-current"], { cwd: repoRoot });

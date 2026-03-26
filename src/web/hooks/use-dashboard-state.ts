@@ -13,6 +13,7 @@ import type {
   CommitGitChangesResponse,
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
+  DeleteWorktreeRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
   ProjectManagementDocument,
@@ -407,10 +408,10 @@ export function useDashboardState() {
           setBusyBranch(null);
         }
       },
-      async remove(branch: string) {
+      async remove(branch: string, payload?: DeleteWorktreeRequest) {
         setBusyBranch(branch);
         try {
-          await deleteWorktree(branch);
+          await deleteWorktree(branch, payload);
           await refresh();
           setError(null);
         } catch (err) {

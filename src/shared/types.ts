@@ -39,6 +39,18 @@ export interface WorktreeRuntime {
   runtimeStartedAt?: string;
 }
 
+export interface WorktreeDeletionState {
+  canDelete: boolean;
+  reason: string | null;
+  requiresConfirmation: boolean;
+  hasLocalChanges: boolean;
+  hasUnmergedCommits: boolean;
+  deleteBranchByDefault: boolean;
+  isDefaultBranch: boolean;
+  isDefaultWorktree: boolean;
+  isSettingsWorktree: boolean;
+}
+
 export interface BackgroundCommandState {
   name: string;
   command: string;
@@ -91,10 +103,16 @@ export interface WorktreeRecord {
   locked: boolean;
   prunable: boolean;
   runtime?: WorktreeRuntime;
+  deletion?: WorktreeDeletionState;
 }
 
 export interface CreateWorktreeRequest {
   branch: string;
+}
+
+export interface DeleteWorktreeRequest {
+  confirmWorktreeName?: string;
+  deleteBranch?: boolean;
 }
 
 export interface ApiStateResponse {

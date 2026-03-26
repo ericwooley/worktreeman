@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import express from "express";
 import request from "supertest";
+import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "../../shared/constants.js";
 import { createApiRouter, resolveAiLogsDir } from "./api.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
@@ -458,6 +459,172 @@ test("terminal tmux session resolution uses repoRoot when runtime is missing", {
       }),
       getTmuxSessionName(repo.repoRoot, "main"),
     );
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/state includes deletion metadata for protected worktrees", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const response = await server.fetch("/api/state");
+    const payload = await response.json() as {
+      worktrees: Array<{
+        branch: string;
+        deletion?: {
+          canDelete: boolean;
+          reason: string | null;
+          deleteBranchByDefault: boolean;
+          isDefaultBranch: boolean;
+          isDefaultWorktree: boolean;
+          isSettingsWorktree: boolean;
+        };
+      }>;
+    };
+
+    assert.equal(response.status, 200);
+
+    const main = payload.worktrees.find((entry) => entry.branch === "main");
+    const settings = payload.worktrees.find((entry) => entry.branch === DEFAULT_WORKTREEMAN_SETTINGS_BRANCH);
+    const feature = payload.worktrees.find((entry) => entry.branch === "feature-ai-log");
+
+    assert.ok(main?.deletion);
+    assert.equal(main.deletion.canDelete, false);
+    assert.equal(main.deletion.isDefaultBranch, true);
+    assert.equal(main.deletion.isDefaultWorktree, true);
+    assert.match(main.deletion.reason ?? "", /default branch worktree/i);
+
+    assert.ok(settings?.deletion);
+    assert.equal(settings.deletion.canDelete, false);
+    assert.equal(settings.deletion.isSettingsWorktree, true);
+    assert.equal(settings.deletion.deleteBranchByDefault, false);
+
+    assert.ok(feature?.deletion);
+    assert.equal(feature.deletion.canDelete, true);
+    assert.equal(feature.deletion.deleteBranchByDefault, true);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch rejects deleting the default branch worktree", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const response = await server.fetch("/api/worktrees/main", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      message: "The default branch worktree cannot be deleted from the UI.",
+    });
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch rejects deleting the settings worktree", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const response = await server.fetch(`/api/worktrees/${DEFAULT_WORKTREEMAN_SETTINGS_BRANCH}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      message: "The settings worktree is managed by worktreeman and cannot be deleted from the UI.",
+    });
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch requires typing the worktree name when local changes exist", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const stateResponse = await server.fetch("/api/state");
+    const statePayload = await stateResponse.json() as {
+      worktrees: Array<{ branch: string; worktreePath: string }>;
+    };
+    const featureWorktree = statePayload.worktrees.find((entry) => entry.branch === "feature-ai-log");
+
+    assert.ok(featureWorktree);
+    await fs.writeFile(path.join(featureWorktree.worktreePath, "dirty.txt"), "local change\n", "utf8");
+
+    const rejectedResponse = await server.fetch("/api/worktrees/feature-ai-log", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deleteBranch: false }),
+    });
+
+    assert.equal(rejectedResponse.status, 400);
+    assert.deepEqual(await rejectedResponse.json(), {
+      message: "Type feature-ai-log to confirm deleting this worktree.",
+    });
+
+    const confirmedResponse = await server.fetch("/api/worktrees/feature-ai-log", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deleteBranch: false,
+        confirmWorktreeName: "feature-ai-log",
+      }),
+    });
+
+    assert.equal(confirmedResponse.status, 204);
+    await waitForPathToDisappear(featureWorktree.worktreePath);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch deletes the branch by default", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const config = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const worktree = await createWorktree(repo.repoRoot, config, { branch: "feature-delete-default" });
+    const server = await startApiServer(repo);
+
+    const response = await server.fetch("/api/worktrees/feature-delete-default", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 204);
+    await waitForPathToDisappear(worktree.worktreePath);
+
+    const branchList = await runCommand("git", ["branch", "--list", "feature-delete-default"], {
+      cwd: repo.repoRoot,
+    });
+    assert.equal(branchList.stdout.trim(), "");
+
+    await server.close();
   } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }

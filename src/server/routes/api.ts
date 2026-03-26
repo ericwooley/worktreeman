@@ -23,6 +23,7 @@ import type {
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
   CreateWorktreeRequest,
+  DeleteWorktreeRequest,
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
@@ -56,12 +57,15 @@ import {
 import {
   commitGitChanges,
   createWorktree,
+  deleteBranch,
   generateGitCommitMessage,
+  getWorktreeDeletionState,
   getGitComparison,
   listWorktrees,
   mergeGitBranch,
   removeWorktree,
   resolveMergeConflictsWithAi,
+  validateDeleteWorktreeRequest,
 } from "../services/git-service.js";
 import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
@@ -859,6 +863,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   const resolveEnvSyncSourceRoot = async (_worktrees: Awaited<ReturnType<typeof listWorktrees>>) => options.configWorktreePath;
 
+  const buildWorktreePayload = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
+    const merged = options.runtimes.mergeInto(worktrees);
+    return await Promise.all(merged.map(async (worktree) => ({
+      ...worktree,
+      deletion: await getWorktreeDeletionState(options.repoRoot, worktree),
+    })));
+  };
+
   router.get("/state", async (_req, res, next) => {
     try {
       const config = await loadCurrentConfig();
@@ -870,7 +882,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         configSourceRef: options.configSourceRef,
         configWorktreePath: options.configWorktreePath,
         config,
-        worktrees: options.runtimes.mergeInto(worktrees),
+        worktrees: await buildWorktreePayload(worktrees),
       };
       res.json(payload);
     } catch (error) {
@@ -1898,6 +1910,20 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      const request: DeleteWorktreeRequest = {
+        confirmWorktreeName: typeof req.body?.confirmWorktreeName === "string" ? req.body.confirmWorktreeName : undefined,
+        deleteBranch: typeof req.body?.deleteBranch === "boolean" ? req.body.deleteBranch : true,
+      };
+      const deletion = await getWorktreeDeletionState(options.repoRoot, worktree);
+      try {
+        validateDeleteWorktreeRequest(worktree, deletion, request);
+      } catch (error) {
+        res.status(400).json({
+          message: error instanceof Error ? error.message : "Invalid delete request.",
+        });
+        return;
+      }
+
       const runtime = options.runtimes.get(worktree.branch);
       if (runtime) {
         await stopAllBackgroundCommands(worktree.branch, runtime.worktreePath);
@@ -1908,6 +1934,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);
+      if (request.deleteBranch) {
+        await deleteBranch(options.repoRoot, worktree.branch);
+      }
       res.status(204).send();
     } catch (error) {
       next(error);

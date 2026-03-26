@@ -12,6 +12,7 @@ import type {
   CommitGitChangesRequest,
   CommitGitChangesResponse,
   ConfigDocumentResponse,
+  DeleteWorktreeRequest,
   CreateProjectManagementDocumentRequest,
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
@@ -273,9 +274,10 @@ export function createWorktree(branch: string): Promise<EnvSyncResponse | void> 
   });
 }
 
-export function deleteWorktree(branch: string): Promise<void> {
+export function deleteWorktree(branch: string, payload?: DeleteWorktreeRequest): Promise<void> {
   return request<void>(`/api/worktrees/${encodeURIComponent(branch)}`, {
     method: "DELETE",
+    body: JSON.stringify(payload ?? {}),
   });
 }
 
