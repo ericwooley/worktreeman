@@ -41,10 +41,12 @@ test("create form renders without seeded defaults", () => {
   );
 
   assert.match(markup, /placeholder="Document title"/);
+  assert.match(markup, /placeholder="Short summary shown in the document list"/);
   assert.match(markup, /placeholder="bug, feature, plan"/);
   assert.match(markup, /Select lane/);
   assert.match(markup, /placeholder="Assignee"/);
   assert.match(markup, /<textarea[^>]*><\/textarea>/);
+  assert.equal(markup.includes("No short summary yet."), false);
   assert.doesNotMatch(markup, /value="Project Outline"/);
   assert.doesNotMatch(markup, /value="plan"/);
   assert.doesNotMatch(markup, /# Project Outline/);

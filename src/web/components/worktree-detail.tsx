@@ -373,6 +373,7 @@ interface WorktreeDetailProps {
   onLoadProjectManagementAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCreateProjectManagementDocument: (payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     status?: string;
@@ -380,6 +381,7 @@ interface WorktreeDetailProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDocument: (documentId: string, payload: {
     title: string;
+    summary?: string;
     markdown: string;
     tags: string[];
     dependencies?: string[];
