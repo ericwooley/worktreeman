@@ -52,9 +52,11 @@ function buildConfigYaml(
   }
 
   const config = {
+    favicon: "",
     env: {
       NODE_ENV: "development",
     },
+    preferredPort: 4312,
     runtimePorts,
     derivedEnv,
     quickLinks: [],

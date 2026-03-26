@@ -402,6 +402,31 @@ test.afterEach(async () => {
   await stopAllAiCommandJobManagers();
 });
 
+test("GET /api/state returns favicon and preferred port config", async () => {
+  const repo = await createApiTestRepo();
+  const configContents = await fs.readFile(repo.configPath, "utf8");
+
+  try {
+    await fs.writeFile(
+      repo.configPath,
+      configContents.replace("favicon: ''", "favicon: assets/favicon.png").replace("preferredPort: 4312", "preferredPort: 4900"),
+      "utf8",
+    );
+
+    const server = await startApiServer(repo);
+    const response = await server.fetch("/api/state");
+    const payload = await response.json() as { config: { favicon: string; preferredPort?: number } };
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.config.favicon, "assets/favicon.png");
+    assert.equal(payload.config.preferredPort, 4900);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("startServer fails fast when the initial tmux session cannot be prepared", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const port = await allocateTestPort();

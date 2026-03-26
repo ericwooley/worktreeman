@@ -30,6 +30,8 @@ test("initRepository creates the shared config in wtm-settings with root-level w
     assert.equal(result.configPath, configPath);
     assert.match(configContents, new RegExp(`^# yaml-language-server: \\$schema=${WORKTREE_CONFIG_SCHEMA_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     assert.match(configContents, new RegExp(`^\\$schema: ${WORKTREE_CONFIG_SCHEMA_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"));
+    assert.match(configContents, /^favicon: ''/m);
+    assert.match(configContents, /^preferredPort: 4312/m);
     assert.match(configContents, /baseDir: \./);
     assert.match(configContents, /runtimePorts:\n  - PORT\n  - WEB_PORT/);
     assert.match(configContents, /derivedEnv:\n  APP_URL: http:\/\/127\.0\.0\.1:\$\{PORT\}/);

@@ -15,6 +15,8 @@ export interface AiCommandConfig {
 }
 
 export interface WorktreeManagerConfig {
+  favicon: string;
+  preferredPort?: number;
   env: Record<string, string>;
   runtimePorts: string[];
   derivedEnv: Record<string, string>;
