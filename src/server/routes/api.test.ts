@@ -25,7 +25,7 @@ import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { getTmuxSessionName } from "../../shared/tmux.js";
-import type { AiCommandJob } from "../../shared/types.js";
+import type { AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
 
 type RouterOptions = Parameters<typeof createApiRouter>[0];
 type InjectedAiProcesses = NonNullable<RouterOptions["aiProcesses"]>;
@@ -33,6 +33,7 @@ type StartAiQueueJob = (payload: {
   branch: string;
   documentId: string;
   commandId: "smart" | "simple";
+  origin?: AiCommandOrigin | null;
   input: string;
   renderedCommand: string;
   worktreePath: string;
@@ -167,6 +168,7 @@ async function writeAiLogFixture(options: {
   fileName: string;
   branch: string;
   commandId?: "smart" | "simple";
+  origin?: AiCommandOrigin | null;
   worktreePath: string;
   command: string;
   request: string;
@@ -189,6 +191,7 @@ async function writeAiLogFixture(options: {
     completedAt: options.completedAt ?? null,
     branch: options.branch,
     commandId: options.commandId ?? "smart",
+    origin: options.origin ?? null,
     worktreePath: options.worktreePath,
     command: options.command,
     pid: options.pid ?? null,
@@ -1184,6 +1187,47 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
 
     const resolved = await fs.readFile(path.join(feature.worktreePath, "shared.txt"), "utf8");
     assert.equal(resolved, "resolved by ai\n");
+
+    const logsResponse = await server.fetch(`/api/ai/logs`);
+    assert.equal(logsResponse.status, 200);
+    const logsPayload = await logsResponse.json() as {
+      logs: Array<{
+        fileName: string;
+        branch: string;
+        status: string;
+        requestPreview: string;
+        origin?: AiCommandOrigin | null;
+      }>;
+      runningJobs: Array<unknown>;
+    };
+    assert.equal(logsPayload.runningJobs.length, 0);
+    const conflictLog = logsPayload.logs.find((entry) => entry.branch === "feature-ai-resolve-merge");
+    assert.ok(conflictLog);
+    assert.equal(conflictLog.status, "completed");
+    assert.equal(conflictLog.requestPreview.includes("Resolve merge conflicts while merging main into branch feature-ai-resolve-merge."), true);
+    assert.equal(conflictLog.origin?.kind, "git-conflict-resolution");
+    assert.equal(conflictLog.origin?.label, "Git conflict resolution");
+    assert.equal(conflictLog.origin?.location.tab, "git");
+    assert.equal(conflictLog.origin?.location.branch, "feature-ai-resolve-merge");
+    assert.equal(conflictLog.origin?.location.gitBaseBranch, "main");
+
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(conflictLog.fileName)}`);
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json() as {
+      log: {
+        branch: string;
+        origin?: AiCommandOrigin | null;
+        request: string;
+        response: { stdout: string; stderr: string };
+      };
+    };
+    assert.equal(detailPayload.log.branch, "feature-ai-resolve-merge");
+    assert.equal(detailPayload.log.request.includes("Resolve merge conflicts while merging main into branch feature-ai-resolve-merge."), true);
+    assert.equal(detailPayload.log.response.stdout, "resolved by ai\n");
+    assert.equal(detailPayload.log.origin?.kind, "git-conflict-resolution");
+    assert.equal(detailPayload.log.origin?.location.tab, "git");
+    assert.equal(detailPayload.log.origin?.location.branch, "feature-ai-resolve-merge");
+    assert.equal(detailPayload.log.origin?.location.gitBaseBranch, "main");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1473,6 +1517,16 @@ test("AI command settings save commits the config file", { concurrency: false },
 test("AI log routes list logs and expose running jobs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
+  const origin: AiCommandOrigin = {
+    kind: "worktree-environment",
+    label: "Worktree environment",
+    description: "Started from feature-ai-log.",
+    location: {
+      tab: "environment",
+      branch: "feature-ai-log",
+      environmentSubTab: "terminal",
+    },
+  };
   fakeAiProcesses.setManualProcess("wtm:ai:running-log", {
     status: "online",
     pid: 7331,
@@ -1483,6 +1537,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     repoRoot: repo.repoRoot,
     fileName: "running-log.json",
     branch: "feature-ai-log",
+    origin,
     worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
     command: "printf %s 'summarize the work'",
     request: "summarize the work",
@@ -1497,8 +1552,21 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(listResponse.status, 200);
 
     const listPayload = await listResponse.json() as {
-      logs: Array<{ fileName: string; branch: string; requestPreview: string; status: string; pid?: number | null }>;
-      runningJobs: Array<{ fileName: string; branch: string; status: string; pid?: number | null }>;
+      logs: Array<{
+        fileName: string;
+        branch: string;
+        requestPreview: string;
+        status: string;
+        pid?: number | null;
+        origin?: AiCommandOrigin | null;
+      }>;
+      runningJobs: Array<{
+        fileName: string;
+        branch: string;
+        status: string;
+        pid?: number | null;
+        origin?: AiCommandOrigin | null;
+      }>;
     };
 
     assert.equal(listPayload.logs.length > 0, true);
@@ -1506,9 +1574,11 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(listPayload.logs[0].requestPreview.includes("summarize the work"), true);
     assert.equal(listPayload.logs[0].status, "running");
     assert.equal(listPayload.logs[0].pid, 7331);
+    assert.deepEqual(listPayload.logs[0].origin, origin);
     assert.equal(listPayload.runningJobs.length, 1);
     assert.equal(listPayload.runningJobs[0].fileName, "running-log.json");
     assert.equal(listPayload.runningJobs[0].pid, 7331);
+    assert.deepEqual(listPayload.runningJobs[0].origin, origin);
 
     const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(listPayload.logs[0].fileName)}`);
     assert.equal(detailResponse.status, 200);
@@ -1519,6 +1589,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
         branch: string;
         status: string;
         pid?: number | null;
+        origin?: AiCommandOrigin | null;
         request: string;
         response: { stdout: string; stderr: string };
       };
@@ -1528,6 +1599,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(detailPayload.log.branch, "feature-ai-log");
     assert.equal(detailPayload.log.status, "running");
     assert.equal(detailPayload.log.pid, 7331);
+    assert.deepEqual(detailPayload.log.origin, origin);
     assert.equal(detailPayload.log.request, "summarize the work");
     assert.equal(detailPayload.log.response.stdout, "live stdout\n");
     assert.equal(detailPayload.log.response.stderr, "live stderr\n");
@@ -1540,6 +1612,16 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
 test("AI log detail stream emits live updates and completion for running logs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
+  const origin: AiCommandOrigin = {
+    kind: "worktree-environment",
+    label: "Worktree environment",
+    description: "Started from feature-ai-log.",
+    location: {
+      tab: "environment",
+      branch: "feature-ai-log",
+      environmentSubTab: "terminal",
+    },
+  };
   fakeAiProcesses.setManualProcess("wtm:ai:stream-log", {
     status: "online",
     pid: 9001,
@@ -1550,6 +1632,7 @@ test("AI log detail stream emits live updates and completion for running logs", 
     repoRoot: repo.repoRoot,
     fileName: "stream-log.json",
     branch: "feature-ai-log",
+    origin,
     worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
     command: "printf %s 'stream me'",
     request: "stream me",
@@ -1567,11 +1650,13 @@ test("AI log detail stream emits live updates and completion for running logs", 
     const snapshotLog = snapshot.log as {
       status: string;
       pid?: number | null;
+      origin?: AiCommandOrigin | null;
       response: { stdout: string };
     };
     assert.equal(snapshot.type, "snapshot");
     assert.equal(snapshotLog.status, "running");
     assert.equal(snapshotLog.pid, 9001);
+    assert.deepEqual(snapshotLog.origin, origin);
     assert.equal(snapshotLog.response.stdout, "first line\n");
 
     fakeAiProcesses.updateManualProcess("wtm:ai:stream-log", {
@@ -1582,10 +1667,12 @@ test("AI log detail stream emits live updates and completion for running logs", 
     const runningUpdate = await sse.nextEvent();
     const runningLog = runningUpdate.log as {
       status: string;
+      origin?: AiCommandOrigin | null;
       response: { stdout: string; stderr: string };
     };
     assert.equal(runningUpdate.type, "update");
     assert.equal(runningLog.status, "running");
+    assert.deepEqual(runningLog.origin, origin);
     assert.equal(runningLog.response.stdout, "first line\nsecond line\n");
     assert.equal(runningLog.response.stderr, "warn\n");
 
@@ -1599,12 +1686,14 @@ test("AI log detail stream emits live updates and completion for running logs", 
       status: string;
       exitCode?: number | null;
       completedAt?: string;
+      origin?: AiCommandOrigin | null;
       response: { stdout: string; stderr: string };
     };
     assert.equal(completedUpdate.type, "update");
     assert.equal(completedLog.status, "completed");
     assert.equal(completedLog.exitCode, 0);
     assert.equal(typeof completedLog.completedAt, "string");
+    assert.deepEqual(completedLog.origin, origin);
     assert.equal(completedLog.response.stderr, "warn\n");
 
     await sse.close();
@@ -1617,10 +1706,21 @@ test("AI log detail stream emits live updates and completion for running logs", 
 test("missing AI processes reconcile stale running logs to a failed terminal state", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
+  const origin: AiCommandOrigin = {
+    kind: "worktree-environment",
+    label: "Worktree environment",
+    description: "Started from feature-ai-log.",
+    location: {
+      tab: "environment",
+      branch: "feature-ai-log",
+      environmentSubTab: "terminal",
+    },
+  };
   await writeAiLogFixture({
     repoRoot: repo.repoRoot,
     fileName: "missing-process.json",
     branch: "feature-ai-log",
+    origin,
     worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
     command: "printf %s 'recover me'",
     request: "recover me",
@@ -1639,6 +1739,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
       log: {
         status: string;
         completedAt?: string;
+        origin?: AiCommandOrigin | null;
         error: { message: string } | null;
         response: { stdout: string };
       };
@@ -1646,6 +1747,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
 
     assert.equal(detailPayload.log.status, "failed");
     assert.equal(typeof detailPayload.log.completedAt, "string");
+    assert.deepEqual(detailPayload.log.origin, origin);
     assert.equal(detailPayload.log.response.stdout, "partial output");
     assert.equal(detailPayload.log.error?.message.includes("no longer available"), true);
 
@@ -1653,12 +1755,13 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
     assert.equal(listResponse.status, 200);
     const listPayload = await listResponse.json() as {
       runningJobs: Array<unknown>;
-      logs: Array<{ fileName: string; status: string }>;
+      logs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
     };
 
     assert.equal(listPayload.runningJobs.length, 0);
     assert.equal(listPayload.logs[0].fileName, "missing-process.json");
     assert.equal(listPayload.logs[0].status, "failed");
+    assert.deepEqual(listPayload.logs[0].origin, origin);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1748,10 +1851,15 @@ test("project-management AI runs update the saved document on the server", { con
     const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
-      logs: Array<{ documentId?: string | null; status: string }>;
+      logs: Array<{ documentId?: string | null; status: string; origin?: AiCommandOrigin | null }>;
     };
     assert.equal(logsPayload.logs[0]?.documentId, outline.id);
     assert.equal(logsPayload.logs[0]?.status, "completed");
+    assert.equal(logsPayload.logs[0]?.origin?.kind, "project-management-document");
+    assert.equal(logsPayload.logs[0]?.origin?.location.tab, "project-management");
+    assert.equal(logsPayload.logs[0]?.origin?.location.projectManagementSubTab, "document");
+    assert.equal(logsPayload.logs[0]?.origin?.location.documentId, outline.id);
+    assert.equal(logsPayload.logs[0]?.origin?.location.projectManagementDocumentViewMode, "edit");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1911,13 +2019,18 @@ test("project-management AI rejects unknown target documents and logs the failur
     const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
-      logs: Array<{ documentId?: string | null; status: string }>;
+      logs: Array<{ documentId?: string | null; status: string; origin?: AiCommandOrigin | null }>;
       runningJobs: Array<unknown>;
     };
 
     assert.equal(logsPayload.runningJobs.length, 0);
     assert.equal(logsPayload.logs[0]?.documentId, "missing-document");
     assert.equal(logsPayload.logs[0]?.status, "failed");
+    assert.equal(logsPayload.logs[0]?.origin?.kind, "project-management-document");
+    assert.equal(logsPayload.logs[0]?.origin?.location.tab, "project-management");
+    assert.equal(logsPayload.logs[0]?.origin?.location.projectManagementSubTab, "document");
+    assert.equal(logsPayload.logs[0]?.origin?.location.documentId, "missing-document");
+    assert.equal(logsPayload.logs[0]?.origin?.location.projectManagementDocumentViewMode, "edit");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -2193,7 +2306,7 @@ test("project-management document AI creates a derived worktree and streams stdo
             return false;
           }
           const logsPayload = await logsResponse.json() as {
-            logs: Array<{ branch: string; status: string }>;
+            logs: Array<{ branch: string; status: string; origin?: AiCommandOrigin | null }>;
           };
           return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
         });
@@ -2224,6 +2337,19 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.match(latestComment.body, new RegExp(payload.job.branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(latestComment.body, /Command: smart/);
     assert.match(latestComment.body, /Stdout: planning... implemented/);
+
+    const aiLogsResponse = await server.fetch(`/api/ai/logs`);
+    assert.equal(aiLogsResponse.status, 200);
+    const aiLogsPayload = await aiLogsResponse.json() as {
+      logs: Array<{ branch: string; status: string; origin?: AiCommandOrigin | null }>;
+    };
+    const completedLog = aiLogsPayload.logs.find((entry) => entry.branch === payload.job.branch && entry.status === "completed");
+    assert.ok(completedLog);
+    assert.equal(completedLog.origin?.kind, "project-management-document-run");
+    assert.equal(completedLog.origin?.location.tab, "project-management");
+    assert.equal(completedLog.origin?.location.projectManagementSubTab, "document");
+    assert.equal(completedLog.origin?.location.documentId, outline.id);
+    assert.equal(completedLog.origin?.location.projectManagementDocumentViewMode, "document");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -2239,6 +2365,16 @@ test("AI cancel route deletes the running process and returns the settled failed
   });
   await createWorktree(repo.repoRoot, config, { branch: "feature-ai-cancel" });
   const fakeAiProcesses = createFakeAiProcesses();
+  const expectedOrigin: AiCommandOrigin = {
+    kind: "worktree-environment",
+    label: "Worktree environment",
+    description: "Started from feature-ai-cancel.",
+    location: {
+      tab: "environment",
+      branch: "feature-ai-cancel",
+      environmentSubTab: "terminal",
+    },
+  };
   fakeAiProcesses.queueStartScript([
     { status: "online", pid: 8181, stdout: "working...\n", stderr: "" },
     { status: "online", pid: 8181, stdout: "working...\n", stderr: "" },
@@ -2262,13 +2398,21 @@ test("AI cancel route deletes the running process and returns the settled failed
     assert.equal(cancelResponse.status, 200);
 
     const cancelPayload = await cancelResponse.json() as {
-      job: { branch: string; status: string; processName?: string | null; error?: string | null; completedAt?: string | null };
+      job: {
+        branch: string;
+        status: string;
+        processName?: string | null;
+        error?: string | null;
+        completedAt?: string | null;
+        origin?: AiCommandOrigin | null;
+      };
     };
     assert.equal(cancelPayload.job.branch, "feature-ai-cancel");
     assert.equal(cancelPayload.job.status, "failed");
     assert.equal(cancelPayload.job.processName?.startsWith("wtm:ai:"), true);
     assert.equal(typeof cancelPayload.job.completedAt, "string");
     assert.match(cancelPayload.job.error ?? "", /Cancellation requested by the user/);
+    assert.deepEqual(cancelPayload.job.origin, expectedOrigin);
     assert.equal(fakeAiProcesses.deletedProcesses.length, 1);
     assert.equal(fakeAiProcesses.deletedProcesses[0]?.startsWith("wtm:ai:"), true);
 
@@ -2280,11 +2424,12 @@ test("AI cancel route deletes the running process and returns the settled failed
 
       const logsPayload = await logsResponse.json() as {
         runningJobs: Array<{ branch: string }>;
-        logs: Array<{ branch: string; status: string }>;
+        logs: Array<{ branch: string; status: string; origin?: AiCommandOrigin | null }>;
       };
 
       const runningForBranch = logsPayload.runningJobs.some((entry) => entry.branch === "feature-ai-cancel");
       const failedLog = logsPayload.logs.find((entry) => entry.branch === "feature-ai-cancel");
+      assert.deepEqual(failedLog?.origin, expectedOrigin);
       return !runningForBranch && failedLog?.status === "failed";
     });
 

@@ -798,13 +798,13 @@ export function Dashboard() {
       {
         id: "nav-project-management-ai-log",
         code: "npa",
-        title: "Open AI logs",
-        subtitle: "Jump to the project AI activity and saved logs.",
+        title: "Open AI log tab",
+        subtitle: "Review live AI runs, saved output, and origin links.",
         group: "Navigation",
         keywords: ["project", "management", "ai", "logs", "jobs"],
-        badgeLabel: activeTab === "project-management" && projectManagementSubTab === "ai-log" ? "Active" : undefined,
+        badgeLabel: activeTab === "ai-log" ? "Active" : undefined,
         badgeTone: "active",
-        action: () => navigateToProjectManagementSubTab("ai-log"),
+        action: () => navigateToTab("ai-log"),
       },
       {
         id: "nav-project-management-create",
@@ -1280,6 +1280,7 @@ export function Dashboard() {
 
               return cancelAiCommand(selected.branch);
             }}
+            onCancelProjectManagementAiLogJob={async (branch) => cancelAiCommand(branch)}
           />
         </section>
       </div>

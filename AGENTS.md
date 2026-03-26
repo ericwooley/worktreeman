@@ -15,6 +15,8 @@
 
 ## AI Instructions
 
+- Every AI-triggered flow must write an AI log entry, including worktree commands, project-management document runs, and git merge-conflict resolution.
+- Every AI log entry must include origin metadata that lets the UI show where the run started and navigate back to that context.
 - When this product asks an LLM to update a project-management document, the LLM is producing replacement markdown as plain text in its response body. It is not creating files, not writing `.md` files, and not returning patches.
 - The response should contain only the final document text unless the calling prompt explicitly asks for something else. Do not wrap the result in code fences.
 - The prompt should explicitly state the expected output format. At minimum, say that the model must return the full updated markdown document as raw text.

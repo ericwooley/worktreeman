@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { AiCommandId, AiCommandJob } from "../../shared/types.js";
+import type { AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
 
 const aiCommandJobEmitter = new EventEmitter();
 const aiCommandJobsByBranch = new Map<string, AiCommandJob>();
@@ -107,6 +107,7 @@ export async function startAiCommandJob(options: {
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;
+  origin?: AiCommandOrigin | null;
   input: string;
   command: string;
   repoRoot: string;
@@ -132,6 +133,7 @@ export async function startAiCommandJob(options: {
     branch: string;
     documentId?: string | null;
     commandId: AiCommandId;
+    origin?: AiCommandOrigin | null;
     worktreePath: string;
     renderedCommand: string;
     input: string;
@@ -164,6 +166,7 @@ export async function startAiCommandJob(options: {
     branch: options.branch,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
+    origin: options.origin ?? null,
     command: options.command,
     input: options.input,
     status: "running",
@@ -183,6 +186,7 @@ export async function startAiCommandJob(options: {
     branch: options.branch,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
+    origin: options.origin ?? null,
     worktreePath: options.worktreePath,
     renderedCommand: options.command,
     input: options.input,
@@ -215,6 +219,7 @@ export async function startAiCommandJob(options: {
       branch: options.branch,
       documentId: options.documentId ?? null,
       commandId: options.commandId,
+      origin: options.origin ?? null,
       worktreePath: options.worktreePath,
       renderedCommand: options.command,
       input: options.input,
@@ -303,6 +308,7 @@ export async function startAiCommandJob(options: {
         branch: options.branch,
         documentId: options.documentId ?? null,
         commandId: options.commandId,
+        origin: options.origin ?? null,
         worktreePath: options.worktreePath,
         renderedCommand: options.command,
         input: options.input,
@@ -333,6 +339,7 @@ export async function startAiCommandJob(options: {
         branch: options.branch,
         documentId: options.documentId ?? null,
         commandId: options.commandId,
+        origin: options.origin ?? null,
         worktreePath: options.worktreePath,
         renderedCommand: options.command,
         input: options.input,

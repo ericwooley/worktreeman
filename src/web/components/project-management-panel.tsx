@@ -2,8 +2,6 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import type {
   AiCommandConfig,
   AiCommandId,
-  AiCommandLogEntry,
-  AiCommandLogSummary,
   AiCommandJob,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
@@ -40,12 +38,7 @@ const ProjectManagementHistoryTab = lazy(async () => {
   return { default: module.ProjectManagementHistoryTab };
 });
 
-const ProjectManagementAiLogTab = lazy(async () => {
-  const module = await import("./project-management-ai-log-tab");
-  return { default: module.ProjectManagementAiLogTab };
-});
-
-export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "ai-log";
+export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create";
 export type ProjectManagementDocumentViewMode = "document" | "edit";
 
 interface ProjectManagementPanelProps {
@@ -62,16 +55,9 @@ interface ProjectManagementPanelProps {
   aiCommands: AiCommandConfig | null;
   aiJob: AiCommandJob | null;
   documentRunJob: AiCommandJob | null;
-  aiLogs: AiCommandLogSummary[];
-  aiLogDetail: AiCommandLogEntry | null;
-  aiLogsLoading: boolean;
-  runningAiJobs: AiCommandJob[];
   selectedWorktreeBranch: string | null;
   onSubTabChange: (tab: ProjectManagementSubTab) => void;
   onDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
-  onRefresh: (options?: { silent?: boolean }) => Promise<unknown>;
-  onLoadAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
-  onLoadAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onSelectDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onCreateDocument: (payload: {
     title: string;
@@ -251,16 +237,9 @@ export function ProjectManagementPanel({
   aiCommands,
   aiJob,
   documentRunJob,
-  aiLogs,
-  aiLogDetail,
-  aiLogsLoading,
-  runningAiJobs,
   selectedWorktreeBranch,
   onSubTabChange,
   onDocumentViewModeChange,
-  onRefresh,
-  onLoadAiLogs,
-  onLoadAiLog,
   onSelectDocument,
   onCreateDocument,
   onUpdateDocument,
@@ -678,14 +657,6 @@ export function ProjectManagementPanel({
     await onCancelAiCommand();
   }
 
-  useEffect(() => {
-    if (activeSubTab !== "ai-log") {
-      return;
-    }
-
-    void onLoadAiLogs({ silent: true });
-  }, [activeSubTab, onLoadAiLogs]);
-
   const documentRail = (
     <div className="theme-inline-panel p-4">
       <div className="flex items-start justify-between gap-3">
@@ -693,14 +664,6 @@ export function ProjectManagementPanel({
           <p className="matrix-kicker">Project management</p>
           <h2 className="mt-1 text-xl font-semibold theme-text-strong">Documents</h2>
         </div>
-        <button
-          type="button"
-          className="matrix-button rounded-none px-3 py-2 text-sm"
-          onClick={() => void onRefresh()}
-          disabled={loading || saving}
-        >
-          Refresh
-        </button>
       </div>
 
       <ProjectManagementDocumentBrowser
@@ -757,16 +720,6 @@ export function ProjectManagementPanel({
             <p className="matrix-kicker">Project management</p>
             <h2 className="mt-2 text-2xl font-semibold theme-text-strong">Workspace</h2>
           </div>
-          {activeSubTab !== "document" ? (
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              onClick={() => void onRefresh()}
-              disabled={loading || saving}
-            >
-              Refresh
-            </button>
-          ) : null}
         </div>
 
         <div className="theme-inline-panel p-4">
@@ -775,7 +728,6 @@ export function ProjectManagementPanel({
             <MatrixTabButton active={activeSubTab === "board"} label="Board" onClick={() => onSubTabChange("board")} />
             <MatrixTabButton active={activeSubTab === "dependency-tree"} label="Dependency tree" onClick={() => onSubTabChange("dependency-tree")} />
             <MatrixTabButton active={activeSubTab === "history"} label="History" onClick={() => onSubTabChange("history")} />
-            <MatrixTabButton active={activeSubTab === "ai-log"} label="AI Log" onClick={() => onSubTabChange("ai-log")} />
             <MatrixTabButton active={activeSubTab === "create"} label="Create" onClick={() => onSubTabChange("create")} />
           </div>
 
@@ -1132,20 +1084,6 @@ export function ProjectManagementPanel({
             <div className="pt-4">
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading history...</div>}>
                 <ProjectManagementHistoryTab history={history} />
-              </Suspense>
-            </div>
-          ) : activeSubTab === "ai-log" ? (
-            <div className="pt-4">
-              <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading AI logs...</div>}>
-                <ProjectManagementAiLogTab
-                  logs={aiLogs}
-                  logDetail={aiLogDetail}
-                  loading={aiLogsLoading}
-                  runningJobs={runningAiJobs}
-                  onRefresh={onLoadAiLogs}
-                  onSelectLog={onLoadAiLog}
-                  onCancelJob={onCancelAiCommand}
-                />
               </Suspense>
             </div>
           ) : (

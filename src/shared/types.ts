@@ -392,6 +392,35 @@ export interface RunProjectManagementDocumentAiRequest {
   commandId?: AiCommandId;
 }
 
+export type AiCommandOriginTab = "environment" | "git" | "project-management";
+
+export type AiCommandOriginEnvironmentSubTab = "terminal" | "background";
+
+export type AiCommandOriginProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create";
+
+export type AiCommandOriginKind =
+  | "worktree-environment"
+  | "project-management-document"
+  | "project-management-document-run"
+  | "git-conflict-resolution";
+
+export interface AiCommandOriginLocation {
+  tab: AiCommandOriginTab;
+  branch?: string | null;
+  gitBaseBranch?: string | null;
+  environmentSubTab?: AiCommandOriginEnvironmentSubTab;
+  projectManagementSubTab?: AiCommandOriginProjectManagementSubTab;
+  documentId?: string | null;
+  projectManagementDocumentViewMode?: "document" | "edit";
+}
+
+export interface AiCommandOrigin {
+  kind: AiCommandOriginKind;
+  label: string;
+  description?: string | null;
+  location: AiCommandOriginLocation;
+}
+
 export type AiCommandJobStatus = "running" | "completed" | "failed";
 
 export interface AiCommandJob {
@@ -412,6 +441,7 @@ export interface AiCommandJob {
   processName?: string | null;
   logPath?: string | null;
   error?: string | null;
+  origin?: AiCommandOrigin | null;
 }
 
 export interface RunAiCommandResponse {
@@ -444,6 +474,7 @@ export interface AiCommandLogSummary {
   requestPreview: string;
   status: AiCommandLogStatus;
   pid?: number | null;
+  origin?: AiCommandOrigin | null;
 }
 
 export interface AiCommandLogEntry {
@@ -466,6 +497,7 @@ export interface AiCommandLogEntry {
   processName?: string | null;
   completedAt?: string;
   error: AiCommandLogError | null;
+  origin?: AiCommandOrigin | null;
 }
 
 export interface AiCommandLogsResponse {

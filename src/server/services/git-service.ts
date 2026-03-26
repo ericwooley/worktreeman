@@ -107,7 +107,7 @@ async function buildWorkingTreeConflictPreviews(worktreePath: string, conflictPa
   }));
 }
 
-function formatMergeConflictResolutionPrompt(options: {
+export function formatMergeConflictResolutionPrompt(options: {
   branch: string;
   baseBranch: string;
   conflicts: GitMergeConflict[];
