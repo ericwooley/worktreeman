@@ -231,6 +231,7 @@ export interface ProjectManagementDocumentSummary {
   id: string;
   number: number;
   title: string;
+  summary: string;
   tags: string[];
   dependencies: string[];
   status: string;
@@ -290,6 +291,7 @@ export interface ProjectManagementBatchResponse {
 
 export interface CreateProjectManagementDocumentRequest {
   title: string;
+  summary?: string;
   markdown: string;
   tags: string[];
   dependencies?: string[];
@@ -299,6 +301,7 @@ export interface CreateProjectManagementDocumentRequest {
 
 export interface UpdateProjectManagementDocumentRequest {
   title: string;
+  summary?: string;
   markdown: string;
   tags: string[];
   dependencies?: string[];
@@ -310,6 +313,7 @@ export interface UpdateProjectManagementDocumentRequest {
 export interface ProjectManagementBatchUpdateEntry {
   documentId?: string;
   title: string;
+  summary?: string;
   markdown: string;
   tags: string[];
   dependencies?: string[];
