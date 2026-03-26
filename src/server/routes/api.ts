@@ -39,6 +39,8 @@ import type {
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDocumentRequest,
   WorktreeManagerConfig,
+  WorktreeRecord,
+  WorktreeRuntime,
 } from "../../shared/types.js";
 import {
   getBackgroundCommandLogs,
@@ -617,6 +619,28 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     repoRoot: options.repoRoot,
     gitFile: options.configFile,
   });
+
+  const ensureWorktreeRuntime = async (
+    config: WorktreeManagerConfig,
+    worktree: WorktreeRecord,
+  ): Promise<WorktreeRuntime> => {
+    const existingRuntime = options.runtimes.get(worktree.branch);
+    if (existingRuntime) {
+      return existingRuntime;
+    }
+
+    const { runtime } = await createRuntime(config, options.repoRoot, worktree.branch, worktree.worktreePath);
+    options.runtimes.set(runtime);
+    await ensureRuntimeTerminalSession(runtime, options.repoRoot);
+    await runStartupCommands(config.startupCommands, worktree.worktreePath, buildRuntimeProcessEnv(runtime));
+    await startConfiguredBackgroundCommands({
+      config,
+      branch: worktree.branch,
+      worktreePath: worktree.worktreePath,
+      runtime,
+    });
+    return runtime;
+  };
 
   const commitConfigEdit = async (message: string) => {
     const relativeConfigPath = options.configFile;
@@ -1459,15 +1483,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = options.runtimes.get(branch);
-      const env = runtime
-        ? buildRuntimeProcessEnv(runtime)
-        : {
-          ...process.env,
-          ...config.env,
-          WORKTREE_BRANCH: branch,
-          WORKTREE_PATH: worktreePath,
-        };
+      const runtime = await ensureWorktreeRuntime(config, worktree);
+      const env = buildRuntimeProcessEnv(runtime);
 
       const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
       const job = await startAiProcessJob({
@@ -1481,7 +1498,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         applyDocumentUpdate: false,
       });
 
-      const payload: RunAiCommandResponse = { job };
+      const payload: RunAiCommandResponse = { job, runtime };
       res.json(payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1540,22 +1557,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const existingRuntime = options.runtimes.get(worktree.branch);
-      if (existingRuntime) {
-        res.json(existingRuntime);
-        return;
-      }
-
-      const { runtime } = await createRuntime(config, options.repoRoot, worktree.branch, worktree.worktreePath);
-      options.runtimes.set(runtime);
-      await ensureRuntimeTerminalSession(runtime, options.repoRoot);
-      await runStartupCommands(config.startupCommands, worktree.worktreePath, buildRuntimeProcessEnv(runtime));
-      await startConfiguredBackgroundCommands({
-        config,
-        branch: worktree.branch,
-        worktreePath: worktree.worktreePath,
-        runtime,
-      });
+      const runtime = await ensureWorktreeRuntime(config, worktree);
       res.json(runtime);
     } catch (error) {
       next(error);
