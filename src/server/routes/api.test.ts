@@ -1503,11 +1503,13 @@ test("project-management document AI creates a derived worktree and streams stdo
   const fakeAiProcesses = createFakeAiProcesses();
   let capturedCommand = "";
   let capturedWorktreePath = "";
+  let capturedEnv: NodeJS.ProcessEnv | null = null;
   const aiProcesses: InjectedAiProcesses = {
     ...fakeAiProcesses.aiProcesses,
     async startProcess(options) {
       capturedCommand = options.command;
       capturedWorktreePath = options.worktreePath;
+      capturedEnv = options.env;
       return await fakeAiProcesses.aiProcesses.startProcess(options);
     },
   };
@@ -1542,20 +1544,33 @@ test("project-management document AI creates a derived worktree and streams stdo
 
     const payload = await response.json() as {
       job: { branch: string; documentId?: string | null; status: string; commandId: string };
+      runtime?: { branch: string; worktreePath: string; tmuxSession: string; runtimeStartedAt?: string };
     };
     assert.equal(payload.job.documentId, outline.id);
     assert.equal(payload.job.status, "running");
     assert.equal(payload.job.commandId, "smart");
     assert.match(payload.job.branch, /^pm-/);
+    assert.equal(payload.runtime?.branch, payload.job.branch);
+    assert.equal(payload.runtime?.worktreePath?.length ? true : false, true);
+    assert.equal(payload.runtime?.tmuxSession?.length ? true : false, true);
+    assert.equal(typeof payload.runtime?.runtimeStartedAt, "string");
 
     const stateResponse = await server.fetch(`/api/state`);
     assert.equal(stateResponse.status, 200);
     const statePayload = await stateResponse.json() as {
-      worktrees: Array<{ branch: string; worktreePath: string }>;
+      worktrees: Array<{ branch: string; worktreePath: string; runtime?: { tmuxSession: string } }>;
     };
     const createdWorktree = statePayload.worktrees.find((entry) => entry.branch === payload.job.branch);
     assert.ok(createdWorktree);
+    if (!capturedEnv) {
+      assert.fail("Expected AI process env to be captured.");
+    }
+    const processEnv: NodeJS.ProcessEnv = capturedEnv;
     assert.equal(capturedWorktreePath, createdWorktree.worktreePath);
+    assert.equal(createdWorktree.runtime?.tmuxSession?.length ? true : false, true);
+    assert.equal(processEnv.WORKTREE_BRANCH, payload.job.branch);
+    assert.equal(processEnv.WORKTREE_PATH, createdWorktree.worktreePath);
+    assert.equal(processEnv.TMUX_SESSION_NAME, createdWorktree.runtime?.tmuxSession);
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
     assert.equal(capturedCommand.includes("in worktree"), false);
     assert.equal(capturedCommand.includes("Worktree path:"), false);

@@ -19,6 +19,7 @@ import type {
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
   RunAiCommandRequest,
+  RunAiCommandResponse,
   RunProjectManagementDocumentAiRequest,
   ShutdownStatus,
   UpdateAiCommandSettingsRequest,
@@ -776,7 +777,7 @@ export function useDashboardState() {
           trackProjectManagementDocumentAiJob(result.job.branch);
           void loadProjectManagementDocumentsState({ silent: true });
           setError(null);
-          return result.job;
+          return result;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to run project management AI command.");
           return null;

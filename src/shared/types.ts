@@ -359,6 +359,7 @@ export interface AiCommandJob {
 
 export interface RunAiCommandResponse {
   job: AiCommandJob;
+  runtime?: WorktreeRuntime;
 }
 
 export interface AiCommandStreamEvent {
