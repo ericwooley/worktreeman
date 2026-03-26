@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 
 npm pack
-npx -y worktreeman-0.1.0.tgz start --cwd ..
+VERSION=$(cat package.json | jq '.version' -r)
+echo "Using version $VERSION"
+npx -y worktreeman-$VERSION.tgz start --cwd ..

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Editor from "@monaco-editor/react";
 import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "@shared/constants";
-import type { AiCommandConfig, AiCommandId } from "@shared/types";
+import type { AiCommandConfig, AiCommandId, WorktreeRecord } from "@shared/types";
 import {
   CommandPalette,
   DEFAULT_COMMAND_PALETTE_SHORTCUT,
@@ -17,8 +17,8 @@ import { useTheme } from "./theme-provider";
 import { WorktreeDetail, type WorktreeEnvironmentSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
+import { confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
-import type { DeleteWorktreeRequest, WorktreeRecord } from "@shared/types";
 
 const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
 const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreeman.commandPaletteShortcut";
@@ -33,12 +33,6 @@ const EMPTY_AI_COMMANDS: AiCommandConfig = {
   smart: "",
   simple: "",
 };
-
-interface DeleteConfirmationState {
-  worktree: WorktreeRecord;
-  deleteBranch: boolean;
-  confirmWorktreeName: string;
-}
 
 function normalizeAiCommands(aiCommands?: Partial<AiCommandConfig> | null): AiCommandConfig {
   return {
@@ -182,6 +176,7 @@ export function Dashboard() {
   const [gitView, setGitView] = useState<"graph" | "diff">(initialUrlState.gitView);
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialUrlState.isTerminalVisible);
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmationState | null>(null);
+  const [deleteConfirmationError, setDeleteConfirmationError] = useState<string | null>(null);
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
   const [configEditorOpen, setConfigEditorOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -604,6 +599,7 @@ export function Dashboard() {
       return;
     }
 
+    setDeleteConfirmationError(null);
     setDeleteConfirmation({
       worktree,
       deleteBranch: worktree.deletion?.deleteBranchByDefault ?? true,
@@ -616,15 +612,14 @@ export function Dashboard() {
       return;
     }
 
-    const payload: DeleteWorktreeRequest = {
-      deleteBranch: deleteConfirmation.deleteBranch,
-      confirmWorktreeName: deleteConfirmation.worktree.deletion?.requiresConfirmation
-        ? deleteConfirmation.confirmWorktreeName
-        : undefined,
-    };
+    setDeleteConfirmationError(null);
+    const result = await confirmWorktreeDeletion(deleteConfirmation, remove);
+    if (result.success) {
+      setDeleteConfirmation(null);
+      return;
+    }
 
-    await remove(deleteConfirmation.worktree.branch, payload);
-    setDeleteConfirmation(null);
+    setDeleteConfirmationError(result.message);
   };
 
   const navigateToTab = (tab: DashboardActiveTab) => {
@@ -1280,13 +1275,19 @@ export function Dashboard() {
           tone="danger"
           closeLabel="Cancel"
           maxWidthClass="max-w-xl"
-          onClose={() => setDeleteConfirmation(null)}
+          onClose={() => {
+            setDeleteConfirmation(null);
+            setDeleteConfirmationError(null);
+          }}
           footer={(
             <>
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm"
-                onClick={() => setDeleteConfirmation(null)}
+                onClick={() => {
+                  setDeleteConfirmation(null);
+                  setDeleteConfirmationError(null);
+                }}
               >
                 Keep worktree
               </button>
@@ -1320,6 +1321,12 @@ export function Dashboard() {
                 </p>
               ) : null}
             </div>
+
+            {deleteConfirmationError ? (
+              <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
+                {deleteConfirmationError}
+              </div>
+            ) : null}
 
             <label className="flex items-start gap-3 text-sm theme-text">
               <input
