@@ -17,6 +17,12 @@ import {
   ProjectManagementDocumentForm,
   type ProjectManagementDocumentFormEditorMode,
 } from "./project-management-document-form";
+import {
+  ProjectManagementDocumentBrowser,
+  formatDocumentTimestamp,
+  useProjectManagementDocumentBrowserState,
+} from "./project-management-document-browser";
+import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { MatrixBadge, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 
 const ProjectManagementBoardTab = lazy(async () => {
@@ -104,45 +110,6 @@ function parseTags(value: string): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
-}
-
-function formatDocumentTimestamp(value: string): string {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return "Updated recently";
-  }
-
-  const elapsedMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60000));
-  if (elapsedMinutes < 1) {
-    return "Updated just now";
-  }
-
-  if (elapsedMinutes < 60) {
-    return `Updated ${elapsedMinutes}m ago`;
-  }
-
-  const elapsedHours = Math.round(elapsedMinutes / 60);
-  if (elapsedHours < 24) {
-    return `Updated ${elapsedHours}h ago`;
-  }
-
-  const elapsedDays = Math.round(elapsedHours / 24);
-  if (elapsedDays < 7) {
-    return `Updated ${elapsedDays}d ago`;
-  }
-
-  return `Updated ${new Date(timestamp).toLocaleDateString()}`;
-}
-
-function getDocumentSearchValue(entry: ProjectManagementDocumentSummary): string {
-  return [
-    String(entry.number),
-    entry.title,
-    entry.status,
-    entry.assignee,
-    entry.archived ? "archived" : "active",
-    ...entry.tags,
-  ].join(" ").toLowerCase();
 }
 
 function getAiJobTone(status: AiCommandJob["status"]) {
@@ -291,18 +258,13 @@ export function ProjectManagementPanel({
   onCancelAiCommand,
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
-  const [selectedTag, setSelectedTag] = useState<string>("");
-  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>("");
-  const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string>("");
-  const [archiveFilter, setArchiveFilter] = useState<"active" | "archived" | "all">("active");
-  const [documentSearch, setDocumentSearch] = useState("");
   const [showBacklogLane, setShowBacklogLane] = useState(false);
-  const [editTitle, setEditTitle] = useState("");
-  const [editMarkdown, setEditMarkdown] = useState("");
-  const [editTags, setEditTags] = useState("");
-  const [dependencySelection, setDependencySelection] = useState<string[]>([]);
-  const [editStatus, setEditStatus] = useState<string>(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
-  const [editAssignee, setEditAssignee] = useState("");
+  const [editTitle, setEditTitle] = useState(() => document?.title ?? "");
+  const [editMarkdown, setEditMarkdown] = useState(() => document?.markdown ?? "");
+  const [editTags, setEditTags] = useState(() => document?.tags.join(", ") ?? "");
+  const [dependencySelection, setDependencySelection] = useState<string[]>(() => Array.isArray(document?.dependencies) ? document.dependencies : []);
+  const [editStatus, setEditStatus] = useState<string>(() => document?.status ?? PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
+  const [editAssignee, setEditAssignee] = useState(() => document?.assignee ?? "");
   const [editEditorMode, setEditEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("wysiwyg");
   const [newTitle, setNewTitle] = useState("");
   const [newTags, setNewTags] = useState("");
@@ -315,12 +277,14 @@ export function ProjectManagementPanel({
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
   const [aiRequestModalOpen, setAiRequestModalOpen] = useState(false);
   const [aiOutputModalOpen, setAiOutputModalOpen] = useState(false);
+  const [dependencyModalOpen, setDependencyModalOpen] = useState(false);
   const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("simple");
   const [documentRunSummary, setDocumentRunSummary] = useState<string | null>(null);
   const [documentRunFailureToast, setDocumentRunFailureToast] = useState<string | null>(null);
   const aiRunning = aiJob?.status === "running";
   const documentRunInProgress = documentRunJob?.status === "running";
   const activeDocumentRunTargetsSelectedDocument = Boolean(document && documentRunJob?.documentId === document.id);
+  const documentBrowser = useProjectManagementDocumentBrowserState(documents, statuses);
   const aiCommandOptions = useMemo<MatrixDropdownOption[]>(() => ([
     {
       value: "smart",
@@ -357,6 +321,7 @@ export function ProjectManagementPanel({
       setEditEditorMode("wysiwyg");
       setAiChangeRequest("");
       setSelectedAiCommandId("simple");
+      setDependencyModalOpen(false);
       return;
     }
 
@@ -369,6 +334,7 @@ export function ProjectManagementPanel({
     setEditEditorMode("wysiwyg");
     setAiFailureToast(null);
     setAiRequestModalOpen(false);
+    setDependencyModalOpen(false);
     setSelectedAiCommandId("simple");
     setDocumentRunFailureToast(null);
   }, [document]);
@@ -428,64 +394,7 @@ export function ProjectManagementPanel({
     return () => window.clearTimeout(timeout);
   }, [documentRunFailureToast]);
 
-  const availableAssignees = useMemo(
-    () => Array.from(new Set(documents.map((entry) => entry.assignee).filter(Boolean))).sort((left, right) => left.localeCompare(right)),
-    [documents],
-  );
-
-  const sortedDocuments = useMemo(
-    () => [...documents].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
-    [documents],
-  );
-
-  const filteredDocuments = useMemo(
-    () => sortedDocuments.filter((entry) => {
-      if (documentSearch.trim()) {
-        const searchValue = documentSearch.trim().toLowerCase();
-        if (!getDocumentSearchValue(entry).includes(searchValue)) {
-          return false;
-        }
-      }
-
-      if (selectedTag && !entry.tags.includes(selectedTag)) {
-        return false;
-      }
-
-      if (selectedStatusFilter && entry.status !== selectedStatusFilter) {
-        return false;
-      }
-
-      if (selectedAssigneeFilter && entry.assignee !== selectedAssigneeFilter) {
-        return false;
-      }
-
-      if (archiveFilter === "active" && entry.archived) {
-        return false;
-      }
-
-      if (archiveFilter === "archived" && !entry.archived) {
-        return false;
-      }
-
-      return true;
-    }),
-    [archiveFilter, documentSearch, selectedAssigneeFilter, selectedStatusFilter, selectedTag, sortedDocuments],
-  );
-
-  const archivedDocumentCount = useMemo(
-    () => documents.filter((entry) => entry.archived).length,
-    [documents],
-  );
-
-  const documentGroups = useMemo(
-    () => statuses
-      .map((status) => ({
-        status,
-        documents: filteredDocuments.filter((entry) => entry.status === status),
-      }))
-      .filter((group) => group.documents.length > 0),
-    [filteredDocuments, statuses],
-  );
+  const filteredDocuments = documentBrowser.filteredDocuments;
 
   const selectedDocumentAiOutput = useMemo(() => {
     if (!document) {
@@ -631,6 +540,14 @@ export function ProjectManagementPanel({
       .sort((left, right) => left.number - right.number),
     [document?.id, documents],
   );
+  const dependencyDocumentMap = useMemo(
+    () => new Map(dependencyOptions.map((entry) => [entry.id, entry])),
+    [dependencyOptions],
+  );
+  const currentDependencyDocuments = useMemo(
+    () => dependencySelection.map((dependencyId) => dependencyDocumentMap.get(dependencyId)).filter((entry): entry is ProjectManagementDocumentSummary => Boolean(entry)),
+    [dependencyDocumentMap, dependencySelection],
+  );
 
   async function handleDependencySelectionToggle(dependencyId: string) {
     if (!document || aiRunning) {
@@ -758,133 +675,40 @@ export function ProjectManagementPanel({
         </button>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-        <div className="matrix-command rounded-none px-3 py-3">
-          <p className="text-[10px] uppercase tracking-[0.18em] theme-text-soft">Visible now</p>
-          <p className="mt-1 text-lg font-semibold theme-text-strong">{filteredDocuments.length}</p>
-        </div>
-        <div className="matrix-command rounded-none px-3 py-3">
-          <p className="text-[10px] uppercase tracking-[0.18em] theme-text-soft">Total docs</p>
-          <p className="mt-1 text-lg font-semibold theme-text-strong">{documents.length}</p>
-        </div>
-      </div>
-
-      <label className="mt-4 block space-y-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Search documents</span>
-        <input
-          type="search"
-          value={documentSearch}
-          onChange={(event) => setDocumentSearch(event.target.value)}
-          placeholder="Search title, number, tag, assignee"
-          className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-        />
-      </label>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          className={`matrix-button rounded-none px-3 py-1.5 text-xs ${selectedTag === "" ? "theme-pill-emphasis theme-text-strong" : ""}`}
-          onClick={() => setSelectedTag("")}
-        >
-          All tags
-        </button>
-        {availableTags.map((tag) => (
+      <ProjectManagementDocumentBrowser
+        documents={documents}
+        availableTags={availableTags}
+        statuses={statuses}
+        state={documentBrowser}
+        emptyMessage="No documents match the current filters."
+        renderDocument={(entry) => (
           <button
-            key={tag}
+            key={entry.id}
             type="button"
-            className={`matrix-button rounded-none px-3 py-1.5 text-xs ${selectedTag === tag ? "theme-pill-emphasis theme-text-strong" : ""}`}
-            onClick={() => setSelectedTag(tag)}
+            className={`pm-document-card w-full border px-3 py-3 text-left transition-colors ${document?.id === entry.id ? "pm-document-card-active theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+            onClick={() => void handleSelectDocument(entry.id)}
           >
-            {tag}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
+                  {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
+                </div>
+                <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
+                <p className="mt-2 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
+                <p className="mt-1 text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</p>
+              </div>
+              <MatrixBadge tone={entry.archived ? "warning" : "neutral"} compact>
+                {entry.archived ? "archived" : `${entry.historyCount} rev`}
+              </MatrixBadge>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-1">
+              {entry.tags.slice(0, 2).map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+              {entry.tags.length > 2 ? <MatrixBadge tone="idle" compact>{`+${entry.tags.length - 2}`}</MatrixBadge> : null}
+            </div>
           </button>
-        ))}
-      </div>
-
-      <div className="mt-3 grid gap-2">
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
-          <select
-            value={selectedStatusFilter}
-            onChange={(event) => setSelectedStatusFilter(event.target.value)}
-            className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-          >
-            <option value="">All statuses</option>
-            {statuses.map((status) => <option key={status} value={status}>{status}</option>)}
-          </select>
-          <select
-            value={selectedAssigneeFilter}
-            onChange={(event) => setSelectedAssigneeFilter(event.target.value)}
-            className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-          >
-            <option value="">All assignees</option>
-            {availableAssignees.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
-          </select>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {(["active", "archived", "all"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={`matrix-button rounded-none px-3 py-1.5 text-xs ${archiveFilter === value ? "theme-pill-emphasis theme-text-strong" : ""}`}
-              onClick={() => setArchiveFilter(value)}
-            >
-              {value}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs">
-          <MatrixBadge tone="neutral" compact>{`${documents.length - archivedDocumentCount} active`}</MatrixBadge>
-          <MatrixBadge tone="neutral" compact>{`${archivedDocumentCount} archived`}</MatrixBadge>
-          {documentSearch.trim() ? <MatrixBadge tone="active" compact>{`search: ${documentSearch.trim()}`}</MatrixBadge> : null}
-        </div>
-      </div>
-
-      <div className="mt-4 border theme-border-subtle p-2">
-        {documentGroups.length ? (
-          <div className="max-h-[min(70vh,48rem)] space-y-4 overflow-y-auto pr-1">
-            {documentGroups.map((group) => (
-              <section key={group.status} className="space-y-2">
-                <div className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b theme-border-subtle bg-[rgb(var(--rgb-base01)/0.96)] px-1 py-2 backdrop-blur-sm">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">{group.status}</p>
-                  <MatrixBadge tone="neutral" compact>{group.documents.length}</MatrixBadge>
-                </div>
-                <div className="space-y-2">
-                  {group.documents.map((entry) => (
-                    <button
-                      key={entry.id}
-                      type="button"
-                      className={`pm-document-card w-full border px-3 py-3 text-left transition-colors ${document?.id === entry.id ? "pm-document-card-active theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
-                      onClick={() => void handleSelectDocument(entry.id)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
-                            {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
-                          </div>
-                          <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
-                          <p className="mt-2 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
-                          <p className="mt-1 text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</p>
-                        </div>
-                        <MatrixBadge tone={entry.archived ? "warning" : "neutral"} compact>
-                          {entry.archived ? "archived" : `${entry.historyCount} rev`}
-                        </MatrixBadge>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-1">
-                        {entry.tags.slice(0, 2).map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
-                        {entry.tags.length > 2 ? <MatrixBadge tone="idle" compact>{`+${entry.tags.length - 2}`}</MatrixBadge> : null}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-        ) : (
-          <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-            No documents match the current filters.
-          </div>
         )}
-      </div>
+      />
 
       <button
         type="button"
@@ -1125,49 +949,60 @@ export function ProjectManagementPanel({
                 />
               </div>
               <div className="space-y-3">
-                <div className="border theme-border-subtle p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Dependencies</p>
-                      <p className="mt-1 text-sm theme-text-muted">Pick prerequisite documents without opening the graph.</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-2 py-1 text-xs"
-                      onClick={() => onSubTabChange("dependency-tree")}
-                    >
-                      Open graph
-                    </button>
-                  </div>
-                  <div className="mt-3 space-y-2 max-h-[28rem] overflow-y-auto pr-1">
-                    {dependencyOptions.length ? dependencyOptions.map((entry) => {
-                      const checked = dependencySelection.includes(entry.id);
-                      return (
-                        <label
-                          key={entry.id}
-                          className={`flex cursor-pointer items-start gap-3 border px-3 py-2 text-left ${checked ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
-                        >
-                          <input
-                            type="checkbox"
-                            className="mt-1"
-                            checked={checked}
-                            disabled={saving || aiRunning}
-                            onChange={() => void handleDependencySelectionToggle(entry.id)}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-semibold theme-text-strong">{entry.title}</span>
-                            <span className="mt-1 block text-xs theme-text-muted">#{entry.number} - {entry.status}</span>
-                          </span>
-                        </label>
-                      );
-                    }) : (
-                      <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
-                        No other documents are available.
+                  <div className="border theme-border-subtle p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Dependencies</p>
+                        <p className="mt-1 text-sm theme-text-muted">Pick prerequisite documents without opening the graph.</p>
                       </div>
-                    )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="matrix-button rounded-none px-2 py-1 text-xs"
+                          onClick={() => setDependencyModalOpen(true)}
+                          disabled={saving || aiRunning}
+                        >
+                          Manage dependencies
+                        </button>
+                        <button
+                          type="button"
+                          className="matrix-button rounded-none px-2 py-1 text-xs"
+                          onClick={() => onSubTabChange("dependency-tree")}
+                        >
+                          Open graph
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {currentDependencyDocuments.length ? currentDependencyDocuments.map((entry) => (
+                        <div key={entry.id} className="border theme-pill-emphasis px-3 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
+                                <MatrixBadge tone="neutral" compact>{entry.status}</MatrixBadge>
+                              </div>
+                              <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
+                              <p className="mt-1 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="matrix-button rounded-none px-2 py-1 text-xs"
+                              onClick={() => void handleDependencySelectionToggle(entry.id)}
+                              disabled={saving || aiRunning}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      )) : (
+                        <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                          No prerequisites yet. Open the picker to add them.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
             </div>
           ) : (
             <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
@@ -1323,6 +1158,25 @@ export function ProjectManagementPanel({
             onCancel={() => void handleCancelSelectedDocumentAiOutput()}
           />
         </MatrixModal>
+      ) : null}
+
+      {dependencyModalOpen && document ? (
+        <ProjectManagementDependencyPickerModal
+          document={document}
+          documents={documents}
+          availableTags={availableTags}
+          statuses={statuses}
+          dependencyIds={dependencySelection}
+          disabled={saving || aiRunning}
+          onClose={() => setDependencyModalOpen(false)}
+          onOpenGraph={() => {
+            setDependencyModalOpen(false);
+            onSubTabChange("dependency-tree");
+          }}
+          onToggleDependency={(dependencyId) => {
+            void handleDependencySelectionToggle(dependencyId);
+          }}
+        />
       ) : null}
 
     </div>
