@@ -8,6 +8,7 @@ import type {
   AppendProjectManagementBatchRequest,
   AiCommandConfig,
   AiCommandId,
+  AiCommandOrigin,
   ApiStateResponse,
   AiCommandJob,
   AiCommandLogEntry,
@@ -60,13 +61,13 @@ import {
   commitGitChanges,
   createWorktree,
   deleteBranch,
+  formatMergeConflictResolutionPrompt,
   generateGitCommitMessage,
   getWorktreeDeletionState,
   getGitComparison,
   listWorktrees,
   mergeGitBranch,
   removeWorktree,
-  resolveMergeConflictsWithAi,
   validateDeleteWorktreeRequest,
 } from "../services/git-service.js";
 import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
@@ -135,6 +136,7 @@ interface ApiRouterOptions {
     branch: string;
     documentId: string;
     commandId: AiCommandId;
+    origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
     worktreePath: string;
@@ -198,6 +200,7 @@ async function writeAiRequestLog(options: {
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;
+  origin?: AiCommandOrigin | null;
   worktreePath: string;
   renderedCommand: string;
   input: string;
@@ -223,6 +226,7 @@ async function writeAiRequestLog(options: {
     branch: options.branch,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
+    origin: options.origin ?? null,
     worktreePath: options.worktreePath,
     command: options.renderedCommand,
     pid: options.pid ?? null,
@@ -257,6 +261,7 @@ async function safeWriteAiRequestLog(options: {
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;
+  origin?: AiCommandOrigin | null;
   worktreePath: string;
   renderedCommand: string;
   input: string;
@@ -395,6 +400,140 @@ function buildProjectManagementExecutionAiPrompt(options: {
   ].filter(Boolean).join("\n");
 }
 
+function createWorktreeEnvironmentOrigin(branch: string): AiCommandOrigin {
+  return {
+    kind: "worktree-environment",
+    label: "Worktree environment",
+    description: `Started from ${branch}.`,
+    location: {
+      tab: "environment",
+      branch,
+      environmentSubTab: "terminal",
+    },
+  };
+}
+
+function createProjectManagementDocumentOrigin(options: {
+  branch: string;
+  document: ProjectManagementDocumentResponse["document"];
+  kind: "project-management-document" | "project-management-document-run";
+  label: string;
+  viewMode: "document" | "edit";
+}): AiCommandOrigin {
+  return {
+    kind: options.kind,
+    label: options.label,
+    description: `#${options.document.number} ${options.document.title}`,
+    location: {
+      tab: "project-management",
+      branch: options.branch,
+      projectManagementSubTab: "document",
+      documentId: options.document.id,
+      projectManagementDocumentViewMode: options.viewMode,
+    },
+  };
+}
+
+function createGitConflictResolutionOrigin(options: {
+  branch: string;
+  baseBranch: string;
+}): AiCommandOrigin {
+  return {
+    kind: "git-conflict-resolution",
+    label: "Git conflict resolution",
+    description: `Resolve conflicts while merging ${options.baseBranch} into ${options.branch}.`,
+    location: {
+      tab: "git",
+      branch: options.branch,
+      gitBaseBranch: options.baseBranch,
+    },
+  };
+}
+
+function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as {
+    kind?: unknown;
+    label?: unknown;
+    description?: unknown;
+    location?: {
+      tab?: unknown;
+      branch?: unknown;
+      gitBaseBranch?: unknown;
+      environmentSubTab?: unknown;
+      projectManagementSubTab?: unknown;
+      documentId?: unknown;
+      projectManagementDocumentViewMode?: unknown;
+    } | null;
+  };
+
+  const kind = candidate.kind;
+  if (
+    kind !== "worktree-environment"
+    && kind !== "project-management-document"
+    && kind !== "project-management-document-run"
+    && kind !== "git-conflict-resolution"
+  ) {
+    return null;
+  }
+
+  if (typeof candidate.label !== "string" || !candidate.label.trim()) {
+    return null;
+  }
+
+  const location = candidate.location;
+  if (!location || typeof location !== "object") {
+    return null;
+  }
+
+  const tab = location.tab;
+  if (tab !== "environment" && tab !== "git" && tab !== "project-management") {
+    return null;
+  }
+
+  return {
+    kind,
+    label: candidate.label,
+    description: typeof candidate.description === "string"
+      ? candidate.description
+      : candidate.description === null
+        ? null
+        : undefined,
+    location: {
+      tab,
+      branch: typeof location.branch === "string" ? location.branch : location.branch === null ? null : undefined,
+      gitBaseBranch: typeof location.gitBaseBranch === "string"
+        ? location.gitBaseBranch
+        : location.gitBaseBranch === null
+          ? null
+          : undefined,
+      environmentSubTab: location.environmentSubTab === "terminal" || location.environmentSubTab === "background"
+        ? location.environmentSubTab
+        : undefined,
+      projectManagementSubTab:
+        location.projectManagementSubTab === "document"
+          || location.projectManagementSubTab === "board"
+          || location.projectManagementSubTab === "dependency-tree"
+          || location.projectManagementSubTab === "history"
+          || location.projectManagementSubTab === "create"
+          ? location.projectManagementSubTab
+          : undefined,
+      documentId: typeof location.documentId === "string"
+        ? location.documentId
+        : location.documentId === null
+          ? null
+          : undefined,
+      projectManagementDocumentViewMode:
+        location.projectManagementDocumentViewMode === "document" || location.projectManagementDocumentViewMode === "edit"
+          ? location.projectManagementDocumentViewMode
+          : undefined,
+    },
+  };
+}
+
 function buildWorktreeAiComment(details: {
   branch: string;
   commandId: AiCommandId;
@@ -500,6 +639,7 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
     branch?: unknown;
     documentId?: unknown;
     commandId?: unknown;
+    origin?: unknown;
     worktreePath?: unknown;
     command?: unknown;
     pid?: unknown;
@@ -520,6 +660,7 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
     branch: typeof parsed.branch === "string" ? parsed.branch : "",
     documentId: typeof parsed.documentId === "string" ? parsed.documentId : null,
     commandId: parseAiCommandId(parsed.commandId),
+    origin: parseAiCommandOrigin(parsed.origin),
     worktreePath: typeof parsed.worktreePath === "string" ? parsed.worktreePath : "",
     command: typeof parsed.command === "string" ? parsed.command : "",
     request,
@@ -544,6 +685,7 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
     branch: entry.branch,
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
+    origin: entry.origin ?? null,
     worktreePath: entry.worktreePath,
     command: entry.command,
     requestPreview: toAiCommandLogPreview(entry.request),
@@ -592,6 +734,7 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
     branch: entry.branch,
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
+    origin: entry.origin ?? null,
     command: entry.command,
     input: entry.request,
     status: entry.status,
@@ -630,6 +773,7 @@ async function reconcileAiCommandLogEntry(options: {
       branch: options.entry.branch,
       documentId: options.entry.documentId ?? null,
       commandId: options.entry.commandId,
+      origin: options.entry.origin ?? null,
       worktreePath: options.entry.worktreePath,
       renderedCommand: options.entry.command,
       input: options.entry.request,
@@ -664,6 +808,7 @@ async function reconcileAiCommandLogEntry(options: {
       branch: options.entry.branch,
       documentId: options.entry.documentId ?? null,
       commandId: options.entry.commandId,
+      origin: options.entry.origin ?? null,
       worktreePath: options.entry.worktreePath,
       renderedCommand: options.entry.command,
       input: options.entry.request,
@@ -696,6 +841,7 @@ async function reconcileAiCommandLogEntry(options: {
     branch: options.entry.branch,
     documentId: options.entry.documentId ?? null,
     commandId: options.entry.commandId,
+    origin: options.entry.origin ?? null,
     worktreePath: options.entry.worktreePath,
     renderedCommand: options.entry.command,
     input: options.entry.request,
@@ -796,6 +942,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     branch: string;
     documentId?: string | null;
     commandId: AiCommandId;
+    origin?: AiCommandOrigin | null;
     worktreePath: string;
     renderedCommand: string;
     input: string;
@@ -809,6 +956,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       branch: details.branch,
       documentId: details.documentId ?? null,
       commandId: details.commandId,
+      origin: details.origin ?? null,
       worktreePath: details.worktreePath,
       renderedCommand: details.renderedCommand,
       input: details.input,
@@ -825,6 +973,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     branch: string;
     documentId?: string | null;
     commandId: AiCommandId;
+    origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
     worktreePath: string;
@@ -836,6 +985,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     branch: details.branch,
     documentId: details.documentId ?? null,
     commandId: details.commandId,
+    origin: details.origin ?? null,
     input: details.input,
     command: details.renderedCommand,
     repoRoot: options.repoRoot,
@@ -955,21 +1105,23 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     branch: string;
     documentId: string;
     commandId: AiCommandId;
+    origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
-      worktreePath: string;
-      env: NodeJS.ProcessEnv;
-    }) => enqueueProjectManagementAiJob({
+    worktreePath: string;
+    env: NodeJS.ProcessEnv;
+  }) => enqueueProjectManagementAiJob({
     repoRoot: options.repoRoot,
     payload: {
       branch: details.branch,
       commandId: details.commandId,
+      origin: details.origin ?? null,
       worktreePath: details.worktreePath,
       input: details.input,
       renderedCommand: details.renderedCommand,
-       env: Object.fromEntries(Object.entries(details.env).filter(([, value]) => typeof value === "string")) as Record<string, string>,
-       documentId: details.documentId,
-     },
+      env: Object.fromEntries(Object.entries(details.env).filter(([, value]) => typeof value === "string")) as Record<string, string>,
+      documentId: details.documentId,
+    },
     onProcessProjectManagementAiJob: options.onEnqueueProjectManagementAiJob
       ? async (payload, context) => options.onEnqueueProjectManagementAiJob?.(payload, {
         notifyStarted: context.notifyStarted,
@@ -979,6 +1131,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         branch: payload.branch,
         documentId: payload.documentId,
         commandId: payload.commandId,
+        origin: payload.origin ?? null,
         input: payload.input,
         renderedCommand: payload.renderedCommand,
         worktreePath: payload.worktreePath,
@@ -1329,6 +1482,20 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      const comparisonBeforeResolution = await getGitComparison(
+        options.repoRoot,
+        branch,
+        typeof body?.baseBranch === "string" ? body.baseBranch : undefined,
+      );
+      const baseBranch = comparisonBeforeResolution.baseBranch;
+      const conflictsToResolve = comparisonBeforeResolution.workingTreeConflicts.length > 0
+        ? comparisonBeforeResolution.workingTreeConflicts
+        : comparisonBeforeResolution.mergeIntoCompareStatus.conflicts;
+
+      if (conflictsToResolve.length === 0) {
+        throw new Error(`Branch ${branch} does not currently expose merge conflicts against ${baseBranch}.`);
+      }
+
       const runtime = options.runtimes.get(worktree.branch);
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
@@ -1339,14 +1506,115 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           WORKTREE_PATH: worktree.worktreePath,
         };
 
-      const comparison: GitComparisonResponse = await resolveMergeConflictsWithAi({
-        repoRoot: options.repoRoot,
-        branch,
-        baseBranch: typeof body?.baseBranch === "string" ? body.baseBranch : undefined,
-        aiCommands: config.aiCommands,
-        commandId: parseAiCommandId(body?.commandId ?? "smart"),
-        env,
+      const commandId = parseAiCommandId(body?.commandId ?? "smart");
+      const template = resolveAiCommandTemplate(config.aiCommands, commandId);
+      const origin = createGitConflictResolutionOrigin({
+        branch: worktree.branch,
+        baseBranch,
       });
+
+      if (!template) {
+        const error = new Error(`${commandId === "simple" ? "Simple AI" : "Smart AI"} is not configured.`);
+        await writeImmediateAiFailureLog({
+          branch: worktree.branch,
+          commandId,
+          origin,
+          worktreePath: worktree.worktreePath,
+          renderedCommand: template,
+          input: "",
+          error,
+        });
+        throw error;
+      }
+
+      if (!template.includes("$WTM_AI_INPUT")) {
+        const error = new Error(`${commandId === "simple" ? "Simple AI" : "Smart AI"} must include $WTM_AI_INPUT.`);
+        await writeImmediateAiFailureLog({
+          branch: worktree.branch,
+          commandId,
+          origin,
+          worktreePath: worktree.worktreePath,
+          renderedCommand: template,
+          input: "",
+          error,
+        });
+        throw error;
+      }
+
+      for (const conflict of conflictsToResolve) {
+        const input = formatMergeConflictResolutionPrompt({
+          branch: worktree.branch,
+          baseBranch,
+          conflicts: [conflict],
+        });
+        const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+        const completedAt = new Date().toISOString();
+        try {
+          const { stdout, stderr } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", renderedCommand], {
+            cwd: worktree.worktreePath,
+            env,
+          });
+          const normalized = stdout.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd();
+          if (!normalized.trim()) {
+            throw new Error(`AI did not return resolved contents for ${conflict.path}.`);
+          }
+
+          await fs.writeFile(path.join(worktree.worktreePath, conflict.path), `${normalized}\n`, "utf8");
+
+          const { jobId, fileName, startedAt } = createAiLogIdentifiers(worktree.branch);
+          await safeWriteAiRequestLog({
+            fileName,
+            jobId,
+            repoRoot: options.repoRoot,
+            branch: worktree.branch,
+            commandId,
+            origin,
+            worktreePath: worktree.worktreePath,
+            renderedCommand,
+            input,
+            stdout,
+            stderr,
+            startedAt,
+            completedAt,
+            pid: null,
+            exitCode: 0,
+            processName: null,
+          });
+        } catch (error) {
+          const { jobId, fileName, startedAt } = createAiLogIdentifiers(worktree.branch);
+          await safeWriteAiRequestLog({
+            fileName,
+            jobId,
+            repoRoot: options.repoRoot,
+            branch: worktree.branch,
+            commandId,
+            origin,
+            worktreePath: worktree.worktreePath,
+            renderedCommand,
+            input,
+            startedAt,
+            completedAt,
+            pid: null,
+            exitCode: null,
+            processName: null,
+            error,
+          });
+          throw error;
+        }
+      }
+
+      await runCommand("git", ["add", "--", ...conflictsToResolve.map((conflict) => conflict.path)], {
+        cwd: worktree.worktreePath,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
+          GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
+          GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
+          GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+        },
+      });
+
+      const comparison: GitComparisonResponse = await getGitComparison(options.repoRoot, branch, baseBranch);
       res.json(comparison);
     } catch (error) {
       next(error);
@@ -1612,6 +1880,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     let branch = "";
     let input = "";
     let commandId: AiCommandId = "smart";
+    let origin: AiCommandOrigin | null = null;
 
     try {
       const config = await loadCurrentConfig();
@@ -1623,6 +1892,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       branch = createProjectManagementDocumentWorktreeBranch(documentPayload.document);
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
+      origin = createProjectManagementDocumentOrigin({
+        branch,
+        document: documentPayload.document,
+        kind: "project-management-document-run",
+        label: "Project management document run",
+        viewMode: "document",
+      });
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
@@ -1630,6 +1906,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch,
           documentId,
           commandId,
+          origin,
           worktreePath: "",
           renderedCommand: template,
           input: documentId,
@@ -1644,6 +1921,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch,
           documentId,
           commandId,
+          origin,
           worktreePath: "",
           renderedCommand: template,
           input: documentId,
@@ -1690,6 +1968,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         branch,
         documentId,
         commandId,
+        origin,
         input,
         renderedCommand,
         worktreePath,
@@ -1707,6 +1986,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: branch || `pm-${sanitizeBranchName(decodeURIComponent(req.params.id)) || "document"}`,
           documentId: decodeURIComponent(req.params.id),
           commandId,
+          origin,
           worktreePath,
           renderedCommand: "",
           input,
@@ -1812,6 +2092,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     let renderedCommand = "";
     let worktreePath = "";
     let commandId: AiCommandId = "smart";
+    let origin: AiCommandOrigin | null = null;
 
     try {
       const config = await loadCurrentConfig();
@@ -1831,6 +2112,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: req.params.branch,
           documentId,
           commandId,
+          origin,
           worktreePath: "",
           renderedCommand: "",
           input,
@@ -1841,6 +2123,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       worktreePath = worktree.worktreePath;
+      origin = createWorktreeEnvironmentOrigin(worktree.branch);
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
@@ -1848,6 +2131,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: worktree.branch,
           documentId,
           commandId,
+          origin,
           worktreePath,
           renderedCommand: template,
           input,
@@ -1862,6 +2146,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: worktree.branch,
           documentId,
           commandId,
+          origin,
           worktreePath,
           renderedCommand: template,
           input,
@@ -1876,6 +2161,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: worktree.branch,
           documentId,
           commandId,
+          origin,
           worktreePath,
           renderedCommand: template,
           input,
@@ -1889,6 +2175,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         try {
           const documentPayload = await getProjectManagementDocument(options.repoRoot, explicitDocumentId);
           const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
+          origin = createProjectManagementDocumentOrigin({
+            branch: worktree.branch,
+            document: documentPayload.document,
+            kind: "project-management-document",
+            label: "Project management document",
+            viewMode: "edit",
+          });
           input = buildProjectManagementAiPrompt({
             branch: worktree.branch,
             worktreePath,
@@ -1898,10 +2191,23 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           });
         } catch (error) {
           const reason = error instanceof Error ? error : new Error(String(error));
+          origin = {
+            kind: "project-management-document",
+            label: "Project management document",
+            description: explicitDocumentId,
+            location: {
+              tab: "project-management",
+              branch: worktree.branch,
+              projectManagementSubTab: "document",
+              documentId: explicitDocumentId,
+              projectManagementDocumentViewMode: "edit",
+            },
+          };
           await writeImmediateAiFailureLog({
             branch: worktree.branch,
             documentId: explicitDocumentId,
             commandId,
+            origin,
             worktreePath,
             renderedCommand: template,
             input,
@@ -1936,6 +2242,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         branch: worktree.branch,
         documentId,
         commandId,
+        origin,
         input,
         renderedCommand,
         worktreePath,
@@ -1949,6 +2256,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: runDetails.branch,
           documentId: explicitDocumentId,
           commandId: runDetails.commandId,
+          origin: runDetails.origin,
           input: runDetails.input,
           renderedCommand: runDetails.renderedCommand,
           worktreePath: runDetails.worktreePath,
@@ -2010,6 +2318,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: persistedLog.branch,
           documentId: persistedLog.documentId ?? null,
           commandId: persistedLog.commandId,
+          origin: persistedLog.origin ?? null,
           worktreePath: persistedLog.worktreePath,
           renderedCommand: persistedLog.command,
           input: persistedLog.request,

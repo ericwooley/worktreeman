@@ -41,3 +41,19 @@ test("readDashboardUrlState reads nested environment and project management stat
     },
   );
 });
+
+test("readDashboardUrlState reads the top-level AI log tab while preserving nested project management context", () => {
+  assert.deepEqual(
+    readDashboardUrlState("?tab=ai-log&pmTab=history&pmDoc=doc-9&pmView=edit"),
+    {
+      selectedBranch: null,
+      activeTab: "ai-log",
+      environmentSubTab: "terminal",
+      gitView: "graph",
+      isTerminalVisible: false,
+      projectManagementSubTab: "history",
+      projectManagementSelectedDocumentId: "doc-9",
+      projectManagementDocumentViewMode: "edit",
+    },
+  );
+});

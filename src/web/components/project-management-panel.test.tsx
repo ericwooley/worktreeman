@@ -93,16 +93,9 @@ test("create form renders without seeded defaults", () => {
       aiCommands={null}
       aiJob={null}
       documentRunJob={null}
-      aiLogs={[]}
-      aiLogDetail={null}
-      aiLogsLoading={false}
-      runningAiJobs={[]}
       selectedWorktreeBranch={null}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
-      onRefresh={async () => null}
-      onLoadAiLogs={async () => null}
-      onLoadAiLog={async () => null}
       onSelectDocument={async () => null}
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
@@ -143,16 +136,9 @@ test("document view shows dependency summary and modal entrypoint", () => {
       aiCommands={null}
       aiJob={null}
       documentRunJob={null}
-      aiLogs={[]}
-      aiLogDetail={null}
-      aiLogsLoading={false}
-      runningAiJobs={[]}
       selectedWorktreeBranch={null}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
-      onRefresh={async () => null}
-      onLoadAiLogs={async () => null}
-      onLoadAiLog={async () => null}
       onSelectDocument={async () => null}
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
@@ -198,16 +184,9 @@ test("document view renders summary, comments, and comment attribution", () => {
       aiCommands={null}
       aiJob={null}
       documentRunJob={null}
-      aiLogs={[]}
-      aiLogDetail={null}
-      aiLogsLoading={false}
-      runningAiJobs={[]}
       selectedWorktreeBranch={null}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
-      onRefresh={async () => null}
-      onLoadAiLogs={async () => null}
-      onLoadAiLog={async () => null}
       onSelectDocument={async () => null}
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}

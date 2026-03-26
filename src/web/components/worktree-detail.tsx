@@ -41,6 +41,11 @@ const ProjectManagementPanel = lazy(async () => {
   return { default: module.ProjectManagementPanel };
 });
 
+const ProjectManagementAiLogTab = lazy(async () => {
+  const module = await import("./project-management-ai-log-tab");
+  return { default: module.ProjectManagementAiLogTab };
+});
+
 function getCssVariable(name: string, fallback: string): string {
   if (typeof window === "undefined") {
     return fallback;
@@ -328,8 +333,8 @@ interface WorktreeDetailProps {
   runningCount: number;
   selectedStatusLabel: string;
   onSelectWorktree: (value: string) => void;
-  activeTab: "environment" | "git" | "project-management";
-  onTabChange: (tab: "environment" | "git" | "project-management") => void;
+  activeTab: "environment" | "git" | "project-management" | "ai-log";
+  onTabChange: (tab: "environment" | "git" | "project-management" | "ai-log") => void;
   environmentSubTab: WorktreeEnvironmentSubTab;
   onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
   gitView: "graph" | "diff";
@@ -409,6 +414,7 @@ interface WorktreeDetailProps {
   onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<RunAiCommandResponse | null>;
   onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;
+  onCancelProjectManagementAiLogJob: (branch: string) => Promise<AiCommandJob | null>;
 }
 
 export function WorktreeDetail({
@@ -484,8 +490,10 @@ export function WorktreeDetail({
   onRunProjectManagementDocumentAi,
   onCancelProjectManagementDocumentAiCommand,
   onCancelProjectManagementAiCommand,
+  onCancelProjectManagementAiLogJob,
 }: WorktreeDetailProps) {
   const isEnvironmentTabActive = activeTab === "environment";
+  const isAiLogTabActive = activeTab === "ai-log";
   const isBackgroundCommandsActive = isEnvironmentTabActive && environmentSubTab === "background";
   const isRunning = Boolean(worktree?.runtime);
   const deleteDisabledReason = isBusy
@@ -792,6 +800,14 @@ export function WorktreeDetail({
   }, [activeTab, onLoadProjectManagementDocuments]);
 
   useEffect(() => {
+    if (activeTab !== "ai-log") {
+      return;
+    }
+
+    void onLoadProjectManagementAiLogs({ silent: true });
+  }, [activeTab, onLoadProjectManagementAiLogs]);
+
+  useEffect(() => {
     if (!isBackgroundCommandsActive || !worktree?.branch) {
       return;
     }
@@ -939,6 +955,34 @@ export function WorktreeDetail({
     await onLoadProjectManagementDocument(linkedDocument.id, { silent: true });
   };
 
+  const openAiLogOrigin = async (origin: AiCommandJob["origin"] | AiCommandLogEntry["origin"] | AiCommandLogSummary["origin"]) => {
+    if (!origin) {
+      return;
+    }
+
+    if (origin.location.branch) {
+      onSelectWorktree(origin.location.branch);
+    }
+
+    if (origin.location.tab === "project-management") {
+      onTabChange("project-management");
+      onProjectManagementSubTabChange(origin.location.projectManagementSubTab ?? "document");
+      onProjectManagementDocumentViewModeChange(origin.location.projectManagementDocumentViewMode ?? "document");
+      if (origin.location.documentId) {
+        await onLoadProjectManagementDocument(origin.location.documentId, { silent: true });
+      }
+      return;
+    }
+
+    if (origin.location.tab === "git") {
+      onTabChange("git");
+      return;
+    }
+
+    onTabChange("environment");
+    onEnvironmentSubTabChange(origin.location.environmentSubTab ?? "terminal");
+  };
+
   return (
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
@@ -946,6 +990,7 @@ export function WorktreeDetail({
           <MatrixTabButton active={isEnvironmentTabActive} label={WORKTREE_ENVIRONMENT_TAB_LABEL} onClick={() => onTabChange("environment")} />
           <MatrixTabButton active={activeTab === "git"} label="Git status" onClick={() => onTabChange("git")} />
           <MatrixTabButton active={activeTab === "project-management"} label="Project management" onClick={() => onTabChange("project-management")} />
+          <MatrixTabButton active={isAiLogTabActive} label="AI log" onClick={() => onTabChange("ai-log")} />
         </div>
 
         {isEnvironmentTabActive ? (
@@ -1231,20 +1276,13 @@ export function WorktreeDetail({
               history={projectManagementHistory}
               loading={projectManagementLoading}
               saving={projectManagementSaving}
-              aiLogs={projectManagementAiLogs}
-              aiLogDetail={projectManagementAiLogDetail}
-              aiLogsLoading={projectManagementAiLogsLoading}
-              runningAiJobs={projectManagementRunningAiJobs}
               aiCommands={projectManagementAiCommands}
               aiJob={projectManagementAiJob}
               documentRunJob={projectManagementDocumentAiJob}
               selectedWorktreeBranch={worktree?.branch ?? null}
               onSubTabChange={onProjectManagementSubTabChange}
               onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
-              onRefresh={onLoadProjectManagementDocuments}
               onSelectDocument={onLoadProjectManagementDocument}
-              onLoadAiLogs={onLoadProjectManagementAiLogs}
-              onLoadAiLog={onLoadProjectManagementAiLog}
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
@@ -1254,6 +1292,26 @@ export function WorktreeDetail({
               onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
               onCancelAiCommand={onCancelProjectManagementAiCommand}
             />
+          </Suspense>
+        ) : isAiLogTabActive ? (
+          <Suspense
+            fallback={(
+              <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                Loading AI activity...
+              </div>
+            )}
+          >
+            <div className="mt-4">
+              <ProjectManagementAiLogTab
+                logs={projectManagementAiLogs}
+                logDetail={projectManagementAiLogDetail}
+                loading={projectManagementAiLogsLoading}
+                runningJobs={projectManagementRunningAiJobs}
+                onSelectLog={onLoadProjectManagementAiLog}
+                onCancelJob={onCancelProjectManagementAiLogJob}
+                onOpenOrigin={(origin) => void openAiLogOrigin(origin)}
+              />
+            </div>
           </Suspense>
         ) : (
           <div className="mt-4 space-y-4">

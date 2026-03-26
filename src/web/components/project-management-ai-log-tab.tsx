@@ -1,4 +1,4 @@
-import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary } from "@shared/types";
+import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOrigin } from "@shared/types";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric } from "./matrix-primitives";
 
 function getAiCommandLabel(commandId: "smart" | "simple") {
@@ -10,9 +10,9 @@ interface ProjectManagementAiLogTabProps {
   logDetail: AiCommandLogEntry | null;
   loading: boolean;
   runningJobs: AiCommandJob[];
-  onRefresh: (options?: { silent?: boolean }) => Promise<unknown>;
   onSelectLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCancelJob: (branch: string) => Promise<AiCommandJob | null>;
+  onOpenOrigin: (origin: AiCommandOrigin) => void | Promise<void>;
 }
 
 function formatSelectedLabel(logDetail: AiCommandLogEntry | null) {
@@ -47,14 +47,22 @@ function getStatusTone(status: string) {
   return "active" as const;
 }
 
+function getOriginTitle(origin: AiCommandOrigin | null | undefined) {
+  return origin?.label ?? "Origin unavailable";
+}
+
+function getOriginDescription(origin: AiCommandOrigin | null | undefined) {
+  return origin?.description ?? "This run does not include a saved start location.";
+}
+
 export function ProjectManagementAiLogTab({
   logs,
   logDetail,
   loading,
   runningJobs,
-  onRefresh,
   onSelectLog,
   onCancelJob,
+  onOpenOrigin,
 }: ProjectManagementAiLogTabProps) {
   function renderAccordionSummary(title: string, description: string) {
     return (
@@ -76,17 +84,10 @@ export function ProjectManagementAiLogTab({
       <div className="flex items-start justify-between gap-3 border theme-border-subtle p-4">
         <div>
           <p className="matrix-kicker">AI activity</p>
-          <h3 className="mt-2 text-lg font-semibold theme-text-strong">Running jobs</h3>
-          <p className="mt-1 text-sm theme-text-muted">Monitor active AI requests and inspect saved request and response logs.</p>
+          <h3 className="mt-2 text-lg font-semibold theme-text-strong">Saved runs and live output</h3>
+          <p className="mt-1 text-sm theme-text-muted">Inspect active work, review completed output, and jump back to where each AI run started.</p>
         </div>
-        <button
-          type="button"
-          className="matrix-button rounded-none px-3 py-2 text-sm"
-          onClick={() => void onRefresh()}
-          disabled={loading}
-        >
-          Refresh logs
-        </button>
+        {loading ? <MatrixBadge tone="warning">Loading</MatrixBadge> : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
@@ -118,16 +119,28 @@ export function ProjectManagementAiLogTab({
                         </div>
                       </div>
                       <p className="mt-2 text-xs theme-text-muted">Started {new Date(job.startedAt).toLocaleString()}</p>
+                      <p className="mt-1 text-xs theme-text-muted">{getOriginTitle(job.origin)}</p>
                       {job.pid ? <p className="mt-1 text-xs theme-text-muted">PID {job.pid}</p> : null}
                       <p className="mt-2 break-all font-mono text-xs theme-text-muted">{job.command}</p>
                     </button>
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-2 py-1 text-xs"
-                      onClick={() => void onCancelJob(job.branch)}
-                    >
-                      Cancel
-                    </button>
+                    <div className="flex flex-col gap-2">
+                      {job.origin ? (
+                        <button
+                          type="button"
+                          className="matrix-button rounded-none px-2 py-1 text-xs"
+                          onClick={() => void onOpenOrigin(job.origin!)}
+                        >
+                          Open origin
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-2 py-1 text-xs"
+                        onClick={() => void onCancelJob(job.branch)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 </div>
               )) : (
@@ -159,6 +172,7 @@ export function ProjectManagementAiLogTab({
                     </div>
                   </div>
                   <p className="mt-1 text-xs theme-text-muted">{new Date(log.timestamp).toLocaleString()}</p>
+                  <p className="mt-1 text-xs theme-text-muted">{getOriginTitle(log.origin)}</p>
                   <p className="mt-2 line-clamp-3 text-xs theme-text-muted">{log.requestPreview}</p>
                 </button>
               )) : (
@@ -190,6 +204,25 @@ export function ProjectManagementAiLogTab({
                 ) : null}
               </div>
               <p className="text-sm theme-text-muted">{getLiveDetailDescription(logDetail)}</p>
+
+              <div className="theme-inline-panel p-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] theme-text-soft">Started from</p>
+                    <p className="mt-2 text-sm font-semibold theme-text-strong">{getOriginTitle(logDetail.origin)}</p>
+                    <p className="mt-1 text-xs theme-text-muted">{getOriginDescription(logDetail.origin)}</p>
+                  </div>
+                  {logDetail.origin ? (
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      onClick={() => void onOpenOrigin(logDetail.origin!)}
+                    >
+                      Open origin
+                    </button>
+                  ) : null}
+                </div>
+              </div>
 
               <div className="grid gap-3 md:grid-cols-2">
                 <MatrixDetailField label="Branch" value={logDetail.branch} mono />
