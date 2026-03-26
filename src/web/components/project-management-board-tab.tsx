@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ProjectManagementDocument, ProjectManagementDocumentSummary } from "@shared/types";
 import { MatrixBadge } from "./matrix-primitives";
 
@@ -27,6 +27,7 @@ export function ProjectManagementBoardTab({
   const [draggedDocumentId, setDraggedDocumentId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<string | null>(null);
   const [movingDocumentId, setMovingDocumentId] = useState<string | null>(null);
+  const draggedDocumentRef = useRef<ProjectManagementDocumentSummary | null>(null);
 
   const draggedDocument = useMemo(
     () => swimlaneDocuments.flatMap((lane) => lane.documents).find((entry) => entry.id === draggedDocumentId) ?? null,
@@ -67,11 +68,12 @@ export function ProjectManagementBoardTab({
             key={lane.status}
             className={`min-w-[16rem] flex-1 border p-3 xl:min-w-0 ${dropTargetStatus === lane.status ? "theme-pill-emphasis" : "theme-border-subtle"}`}
             onDragOver={(event) => {
-              if (!draggedDocument || saving || movingDocumentId) {
+              const activeDraggedDocument = draggedDocumentRef.current ?? draggedDocument;
+              if (!activeDraggedDocument || saving || movingDocumentId) {
                 return;
               }
               event.preventDefault();
-              if (draggedDocument.status !== lane.status) {
+              if (activeDraggedDocument.status !== lane.status) {
                 setDropTargetStatus(lane.status);
               }
             }}
@@ -82,16 +84,22 @@ export function ProjectManagementBoardTab({
             }}
             onDrop={(event) => {
               event.preventDefault();
-              const documentId = event.dataTransfer.getData("text/project-management-document-id") || draggedDocumentId;
+              const activeDraggedDocument = draggedDocumentRef.current ?? draggedDocument;
+              const documentId = event.dataTransfer.getData("text/project-management-document-id")
+                || event.dataTransfer.getData("text/plain")
+                || activeDraggedDocument?.id
+                || draggedDocumentId;
               if (!documentId || saving || movingDocumentId) {
                 setDropTargetStatus(null);
                 return;
               }
 
-              const sourceStatus = draggedDocument?.status;
+              const sourceStatus = event.dataTransfer.getData("text/project-management-document-status")
+                || activeDraggedDocument?.status;
               if (sourceStatus === lane.status) {
                 setDropTargetStatus(null);
                 setDraggedDocumentId(null);
+                draggedDocumentRef.current = null;
                 return;
               }
 
@@ -116,11 +124,15 @@ export function ProjectManagementBoardTab({
                   className={`w-full border px-3 py-3 text-left ${document?.id === entry.id ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
                   onClick={() => void onSelectDocument(entry.id)}
                   onDragStart={(event) => {
+                    draggedDocumentRef.current = entry;
                     setDraggedDocumentId(entry.id);
                     event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", entry.id);
                     event.dataTransfer.setData("text/project-management-document-id", entry.id);
+                    event.dataTransfer.setData("text/project-management-document-status", entry.status);
                   }}
                   onDragEnd={() => {
+                    draggedDocumentRef.current = null;
                     setDraggedDocumentId(null);
                     setDropTargetStatus(null);
                   }}
