@@ -13,7 +13,7 @@ import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
 import { shortcutFromKeyboardEvent } from "./command-palette";
-import "@xterm/xterm/css/xterm.css";
+import { ENVIRONMENT_SESSION_INFO_TITLE, WORKTREE_ENVIRONMENT_KICKER } from "./worktree-environment-content";
 
 const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
 const TERMINAL_SURFACE_MODE_STORAGE_KEY = "worktreeman.terminalSurfaceMode";
@@ -584,9 +584,9 @@ export function WorktreeTerminal({
         <div className="theme-divider border-b px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="matrix-kicker">Primary shell</p>
+              <p className="matrix-kicker">{WORKTREE_ENVIRONMENT_KICKER}</p>
               <h2 className="theme-text-strong text-xl font-semibold sm:text-2xl">
-                Terminal session info
+                {ENVIRONMENT_SESSION_INFO_TITLE}
               </h2>
               <p className="theme-text-muted mt-1 text-sm">
                   {worktree

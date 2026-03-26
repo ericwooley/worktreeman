@@ -14,44 +14,11 @@ import { useDashboardState } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { useTheme } from "./theme-provider";
-import { WorktreeDetail } from "./worktree-detail";
+import { WorktreeDetail, type WorktreeEnvironmentSubTab } from "./worktree-detail";
+import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
 import type { DeleteWorktreeRequest, WorktreeRecord } from "@shared/types";
-
-function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {
-  return value === "document"
-    || value === "history"
-    || value === "create"
-    || value === "dependency-tree"
-    || value === "ai-log"
-    ? value
-    : "board";
-}
-
-function parseProjectManagementDocumentViewMode(value: string | null): ProjectManagementDocumentViewMode {
-  return value === "edit" ? "edit" : "document";
-}
-
-function readDashboardUrlState() {
-  const params = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
-
-  return {
-    selectedBranch: params.get("env"),
-    activeTab: params.get("tab") === "git"
-      ? "git"
-      : params.get("tab") === "background"
-        ? "background"
-        : params.get("tab") === "project-management"
-          ? "project-management"
-          : "shell",
-    gitView: params.get("git") === "diff" ? "diff" : "graph",
-    isTerminalVisible: params.get("terminal") === "open",
-    projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),
-    projectManagementSelectedDocumentId: params.get("pmDoc"),
-    projectManagementDocumentViewMode: parseProjectManagementDocumentViewMode(params.get("pmView")),
-  } as const;
-}
 
 const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
 const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreeman.commandPaletteShortcut";
@@ -202,7 +169,8 @@ export function Dashboard() {
   } = useDashboardState();
   const { theme, themes, setThemeId, setPreviewThemeId, clearPreviewTheme } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
-  const [activeTab, setActiveTab] = useState<"shell" | "background" | "git" | "project-management">(initialUrlState.activeTab);
+  const [activeTab, setActiveTab] = useState<DashboardActiveTab>(initialUrlState.activeTab);
+  const [environmentSubTab, setEnvironmentSubTab] = useState<WorktreeEnvironmentSubTab>(initialUrlState.environmentSubTab);
   const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
     initialUrlState.projectManagementSubTab,
   );
@@ -464,6 +432,11 @@ export function Dashboard() {
     }
 
     params.set("tab", activeTab);
+    if (activeTab === "environment") {
+      params.set("envTab", environmentSubTab);
+    } else {
+      params.delete("envTab");
+    }
     params.set("git", gitView);
 
     if (activeTab === "project-management") {
@@ -507,6 +480,7 @@ export function Dashboard() {
     window.history.pushState(null, "", nextUrl);
   }, [
     activeTab,
+    environmentSubTab,
     gitView,
     isTerminalVisible,
     projectManagementDocumentViewMode,
@@ -520,6 +494,7 @@ export function Dashboard() {
       const nextUrlState = readDashboardUrlState();
       setSelectedBranch(nextUrlState.selectedBranch);
       setActiveTab(nextUrlState.activeTab);
+      setEnvironmentSubTab(nextUrlState.environmentSubTab);
       setGitView(nextUrlState.gitView);
       setIsTerminalVisible(nextUrlState.isTerminalVisible);
       setProjectManagementSubTab(nextUrlState.projectManagementSubTab);
@@ -651,12 +626,17 @@ export function Dashboard() {
     setDeleteConfirmation(null);
   };
 
-  const navigateToTab = (tab: "shell" | "background" | "git" | "project-management") => {
+  const navigateToTab = (tab: DashboardActiveTab) => {
     setActiveTab(tab);
-    if (tab !== "shell") {
+    if (tab !== "environment") {
       setIsTerminalVisible(false);
     }
   };
+
+  const navigateToEnvironmentSubTab = useCallback((tab: WorktreeEnvironmentSubTab) => {
+    navigateToTab("environment");
+    setEnvironmentSubTab(tab);
+  }, []);
 
   const navigateToProjectManagementSubTab = useCallback((
     tab: ProjectManagementSubTab,
@@ -695,26 +675,26 @@ export function Dashboard() {
   const mainCommandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     const items: CommandPaletteItem[] = [
       {
-        id: "nav-shell",
-        code: "ns",
-        title: "Open Shell tab",
-        subtitle: "Jump to the terminal-focused shell view.",
+        id: "nav-environment",
+        code: "ne",
+        title: "Open Worktree Environment tab",
+        subtitle: "Jump to the runtime, terminal, and environment controls.",
         group: "Navigation",
-        keywords: ["terminal", "shell", "tab"],
-        badgeLabel: activeTab === "shell" ? "Active" : undefined,
+        keywords: ["terminal", "shell", "environment", "tab"],
+        badgeLabel: activeTab === "environment" && environmentSubTab === "terminal" ? "Active" : undefined,
         badgeTone: "active",
-        action: () => navigateToTab("shell"),
+        action: () => navigateToEnvironmentSubTab("terminal"),
       },
       {
         id: "nav-background",
         code: "nb",
-        title: "Open Background commands tab",
-        subtitle: "Inspect long-running background commands and their logs.",
+        title: "Open Background commands sub tab",
+        subtitle: "Inspect long-running background commands and their logs inside Worktree Environment.",
         group: "Navigation",
-        keywords: ["pm2", "logs", "background", "processes"],
-        badgeLabel: activeTab === "background" ? "Active" : undefined,
+        keywords: ["pm2", "logs", "background", "processes", "environment"],
+        badgeLabel: activeTab === "environment" && environmentSubTab === "background" ? "Active" : undefined,
         badgeTone: "active",
-        action: () => navigateToTab("background"),
+        action: () => navigateToEnvironmentSubTab("background"),
       },
       {
         id: "nav-git",
@@ -959,7 +939,9 @@ export function Dashboard() {
     activeTab,
     busyBranch,
     commandPaletteShortcut,
+    environmentSubTab,
     isTerminalVisible,
+    navigateToEnvironmentSubTab,
     navigateToProjectManagementSubTab,
     openAiSettings,
     openDeleteConfirmation,
@@ -1045,7 +1027,7 @@ export function Dashboard() {
                 <div className="min-w-0 flex-1">
                   <h1 className="text-2xl font-semibold tracking-tight theme-text-strong sm:text-3xl">worktreeman</h1>
                   <p className="mt-1 text-sm leading-5 theme-text-muted sm:text-base">
-                    Terminal-first control surface for jumping between branch runtimes without losing the shell.
+                    Worktree-first control surface for jumping between branch runtimes without losing the terminal context.
                   </p>
                 </div>
               </div>
@@ -1189,6 +1171,8 @@ export function Dashboard() {
             }}
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            environmentSubTab={environmentSubTab}
+            onEnvironmentSubTabChange={setEnvironmentSubTab}
             gitView={gitView}
             onGitViewChange={setGitView}
             isTerminalVisible={isTerminalVisible}

@@ -2,7 +2,6 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
-import "@git-diff-view/react/styles/diff-view-pure.css";
 import type {
   AiCommandConfig,
   AiCommandId,
@@ -25,6 +24,16 @@ import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
+import {
+  BACKGROUND_COMMAND_CONTROL_DESCRIPTION,
+  BACKGROUND_COMMAND_CONTROL_TITLE,
+  WORKTREE_ENVIRONMENT_BACKGROUND_SUB_TAB_LABEL,
+  WORKTREE_ENVIRONMENT_DESCRIPTION,
+  WORKTREE_ENVIRONMENT_EMPTY_DESCRIPTION,
+  WORKTREE_ENVIRONMENT_KICKER,
+  WORKTREE_ENVIRONMENT_TAB_LABEL,
+  WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL,
+} from "./worktree-environment-content";
 
 const ProjectManagementPanel = lazy(async () => {
   const module = await import("./project-management-panel");
@@ -58,6 +67,8 @@ type ParsedDiffSection = {
     hunks: string[];
   }>;
 };
+
+export type WorktreeEnvironmentSubTab = "terminal" | "background";
 
 function GitDiffAccordionContent({
   file,
@@ -316,8 +327,10 @@ interface WorktreeDetailProps {
   runningCount: number;
   selectedStatusLabel: string;
   onSelectWorktree: (value: string) => void;
-  activeTab: "shell" | "background" | "git" | "project-management";
-  onTabChange: (tab: "shell" | "background" | "git" | "project-management") => void;
+  activeTab: "environment" | "git" | "project-management";
+  onTabChange: (tab: "environment" | "git" | "project-management") => void;
+  environmentSubTab: WorktreeEnvironmentSubTab;
+  onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
   gitView: "graph" | "diff";
   onGitViewChange: (view: "graph" | "diff") => void;
   isTerminalVisible: boolean;
@@ -404,6 +417,8 @@ export function WorktreeDetail({
   onSelectWorktree,
   activeTab,
   onTabChange,
+  environmentSubTab,
+  onEnvironmentSubTabChange,
   gitView,
   onGitViewChange,
   isTerminalVisible,
@@ -465,6 +480,8 @@ export function WorktreeDetail({
   onCancelProjectManagementDocumentAiCommand,
   onCancelProjectManagementAiCommand,
 }: WorktreeDetailProps) {
+  const isEnvironmentTabActive = activeTab === "environment";
+  const isBackgroundCommandsActive = isEnvironmentTabActive && environmentSubTab === "background";
   const isRunning = Boolean(worktree?.runtime);
   const deleteDisabledReason = isBusy
     ? "A worktree action is already running."
@@ -751,15 +768,15 @@ export function WorktreeDetail({
   }, [activeTab, onLoadProjectManagementDocuments]);
 
   useEffect(() => {
-    if (activeTab !== "background" || !worktree?.branch) {
+    if (!isBackgroundCommandsActive || !worktree?.branch) {
       return;
     }
 
     void onLoadBackgroundCommands(worktree.branch);
-  }, [activeTab, onLoadBackgroundCommands, worktree?.branch]);
+  }, [isBackgroundCommandsActive, onLoadBackgroundCommands, worktree?.branch]);
 
   useEffect(() => {
-    if (activeTab !== "background" || !worktree?.branch || !selectedBackgroundCommand?.name) {
+    if (!isBackgroundCommandsActive || !worktree?.branch || !selectedBackgroundCommand?.name) {
       onClearBackgroundLogs();
       return;
     }
@@ -790,7 +807,7 @@ export function WorktreeDetail({
       unsubscribe();
     };
   }, [
-    activeTab,
+    isBackgroundCommandsActive,
     onClearBackgroundLogs,
     onLoadBackgroundLogs,
     onSubscribeToBackgroundLogs,
@@ -887,237 +904,243 @@ export function WorktreeDetail({
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
         <div className="flex items-center gap-2 theme-divider border-b pb-4">
-          <MatrixTabButton active={activeTab === "shell"} label="Shell" onClick={() => onTabChange("shell")} />
-          <MatrixTabButton active={activeTab === "background"} label="Background commands" onClick={() => onTabChange("background")} />
+          <MatrixTabButton active={isEnvironmentTabActive} label={WORKTREE_ENVIRONMENT_TAB_LABEL} onClick={() => onTabChange("environment")} />
           <MatrixTabButton active={activeTab === "git"} label="Git status" onClick={() => onTabChange("git")} />
           <MatrixTabButton active={activeTab === "project-management"} label="Project management" onClick={() => onTabChange("project-management")} />
         </div>
 
-        {activeTab === "shell" ? (
+        {isEnvironmentTabActive ? (
           <>
-            <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0 flex-1">
-                <p className="matrix-kicker">Terminal focus</p>
-                <h2 className="mt-1 text-2xl font-semibold theme-text-strong sm:text-3xl">
-                  {worktree?.branch ?? "Select a worktree"}
-                </h2>
-                <p className="mt-1 text-sm theme-text-muted">
-                  {worktree
-                    ? "The shell is the primary surface. Runtime details stay visible, but the terminal owns the layout."
-                    : "Choose a worktree from the worktree picker to open its terminal session."}
-                </p>
-              </div>
+            <div className="mt-4 flex items-center gap-2 theme-divider border-b pb-4">
+              <MatrixTabButton active={environmentSubTab === "terminal"} label={WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL} onClick={() => onEnvironmentSubTabChange("terminal")} />
+              <MatrixTabButton active={environmentSubTab === "background"} label={WORKTREE_ENVIRONMENT_BACKGROUND_SUB_TAB_LABEL} onClick={() => onEnvironmentSubTabChange("background")} />
+            </div>
 
-              <div className="flex min-w-0 flex-col gap-2 xl:max-w-[52rem] xl:items-end">
-                <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[24rem] xl:grid-cols-[repeat(3,minmax(0,1fr))]">
-                  <MatrixMetric label="Worktrees" value={String(worktreeCount)} />
-                  <MatrixMetric label="Running" value={String(runningCount)} />
-                  <MatrixMetric label="Selected" value={selectedStatusLabel} />
+            {environmentSubTab === "terminal" ? (
+              <>
+                <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="matrix-kicker">{WORKTREE_ENVIRONMENT_KICKER}</p>
+                    <h2 className="mt-1 text-2xl font-semibold theme-text-strong sm:text-3xl">
+                      {worktree?.branch ?? "Select a worktree"}
+                    </h2>
+                    <p className="mt-1 text-sm theme-text-muted">
+                      {worktree ? WORKTREE_ENVIRONMENT_DESCRIPTION : WORKTREE_ENVIRONMENT_EMPTY_DESCRIPTION}
+                    </p>
+                  </div>
+
+                  <div className="flex min-w-0 flex-col gap-2 xl:max-w-[52rem] xl:items-end">
+                    <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[24rem] xl:grid-cols-[repeat(3,minmax(0,1fr))]">
+                      <MatrixMetric label="Worktrees" value={String(worktreeCount)} />
+                      <MatrixMetric label="Running" value={String(runningCount)} />
+                      <MatrixMetric label="Selected" value={selectedStatusLabel} />
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+                      <MatrixBadge tone="neutral">{worktree?.runtime ? "tmux attached" : "idle"}</MatrixBadge>
+                      {worktree?.runtime?.runtimeStartedAt ? (
+                        <MatrixBadge tone="active">live since {new Date(worktree.runtime.runtimeStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</MatrixBadge>
+                      ) : null}
+                      {worktree ? (
+                        <>
+                          <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
+                          <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
+                          <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
+                          <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={Boolean(deleteDisabledReason)} onClick={onDelete} title={deleteDisabledReason ?? undefined}>
+                            Delete
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                    {deleteDisabledReason ? (
+                      <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
+                        {deleteDisabledReason}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                  <MatrixBadge tone="neutral">{worktree?.runtime ? "tmux attached" : "idle"}</MatrixBadge>
-                  {worktree?.runtime?.runtimeStartedAt ? (
-                    <MatrixBadge tone="active">live since {new Date(worktree.runtime.runtimeStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</MatrixBadge>
-                  ) : null}
-                  {worktree ? (
-                    <>
-                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
-                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
-                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
-                      <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={Boolean(deleteDisabledReason)} onClick={onDelete} title={deleteDisabledReason ?? undefined}>
-                        Delete
+                <div className="mt-5 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                  <MatrixDetailField label="Path" value={worktree?.worktreePath ?? "-"} mono />
+                  <MatrixDetailField label="Head" value={worktree?.headSha ?? "-"} mono />
+                  <MatrixDetailField label="Started" value={worktree?.runtime?.runtimeStartedAt ? new Date(worktree.runtime.runtimeStartedAt).toLocaleString() : "-"} />
+                  <MatrixDetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
+                </div>
+
+                <div className="mt-4 theme-inline-panel p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Quick links</p>
+                    <span className="text-xs theme-chip-muted">{quickLinks.length}</span>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {quickLinks.length ? quickLinks.map((entry) => (
+                      <a
+                        key={`${entry.name}:${entry.url}`}
+                        href={entry.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="matrix-command theme-hover-accent rounded-none px-4 py-3 text-sm theme-text transition-colors duration-150 theme-hover-text-accent"
+                      >
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">{entry.name}</p>
+                        <p className="mt-2 break-all font-mono text-xs">{entry.url}</p>
+                      </a>
+                    )) : (
+                      <div className="matrix-command rounded-none px-4 py-3 text-xs theme-empty-note sm:col-span-2 xl:col-span-3">
+                        Quick links appear here after the runtime resolves its ports.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {attachCommand ? (
+                  <div className="mt-3 theme-inline-panel p-3">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Attach command</p>
+                        <p className="mt-2 break-all font-mono text-sm theme-text">{attachCommand}</p>
+                      </div>
+                      <button type="button" className="matrix-button rounded-none px-3 py-2 text-sm" onClick={() => void copyAttachCommand()}>
+                        {copied ? "Copied" : "Copy"}
                       </button>
-                    </>
-                  ) : null}
-                </div>
-                {deleteDisabledReason ? (
-                  <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
-                    {deleteDisabledReason}
+                    </div>
                   </div>
                 ) : null}
-              </div>
-            </div>
+              </>
+            ) : (
+              <div className="mt-4 space-y-4">
+                <div className="theme-inline-panel p-4">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                    <div>
+                      <p className="matrix-kicker">{WORKTREE_ENVIRONMENT_KICKER}</p>
+                      <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">{BACKGROUND_COMMAND_CONTROL_TITLE}</h2>
+                      <p className="mt-2 text-sm theme-text-muted">
+                        {BACKGROUND_COMMAND_CONTROL_DESCRIPTION}
+                      </p>
+                    </div>
 
-            <div className="mt-5 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-              <MatrixDetailField label="Path" value={worktree?.worktreePath ?? "-"} mono />
-              <MatrixDetailField label="Head" value={worktree?.headSha ?? "-"} mono />
-              <MatrixDetailField label="Started" value={worktree?.runtime?.runtimeStartedAt ? new Date(worktree.runtime.runtimeStartedAt).toLocaleString() : "-"} />
-              <MatrixDetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
-            </div>
+                    <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto] xl:min-w-[48rem]">
+                      <MatrixDropdown
+                        label="Command"
+                        value={selectedBackgroundCommand?.name ?? null}
+                        options={backgroundCommandOptions}
+                        placeholder="No commands"
+                        disabled={!backgroundCommands.length}
+                        emptyLabel="No background commands are configured yet."
+                        onChange={setSelectedBackgroundCommandName}
+                      />
 
-            <div className="mt-4 theme-inline-panel p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Quick links</p>
-                <span className="text-xs theme-chip-muted">{quickLinks.length}</span>
-              </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {quickLinks.length ? quickLinks.map((entry) => (
-                  <a
-                    key={`${entry.name}:${entry.url}`}
-                    href={entry.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="matrix-command theme-hover-accent rounded-none px-4 py-3 text-sm theme-text transition-colors duration-150 theme-hover-text-accent"
-                  >
-                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">{entry.name}</p>
-                    <p className="mt-2 break-all font-mono text-xs">{entry.url}</p>
-                  </a>
-                )) : (
-                  <div className="matrix-command rounded-none px-4 py-3 text-xs theme-empty-note sm:col-span-2 xl:col-span-3">
-                    Quick links appear here after the runtime resolves its ports.
-                  </div>
-                )}
-              </div>
-            </div>
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-3 py-2 text-sm"
+                        disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || selectedBackgroundCommand.running || isBusy}
+                        onClick={() => worktree && selectedBackgroundCommand ? void onStartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                      >
+                        Start
+                      </button>
 
-            {attachCommand ? (
-              <div className="mt-3 theme-inline-panel p-3">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="min-w-0">
-                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Attach command</p>
-                    <p className="mt-2 break-all font-mono text-sm theme-text">{attachCommand}</p>
-                  </div>
-                  <button type="button" className="matrix-button rounded-none px-3 py-2 text-sm" onClick={() => void copyAttachCommand()}>
-                    {copied ? "Copied" : "Copy"}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-          </>
-        ) : activeTab === "background" ? (
-          <div className="mt-4 space-y-4">
-            <div className="theme-inline-panel p-4">
-              <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-                <div>
-                  <p className="matrix-kicker">Background commands</p>
-                  <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Process control</h2>
-                  <p className="mt-2 text-sm theme-text-muted">
-                    Long-running dev services live here. Start the environment first, then manage each configured background command under PM2.
-                  </p>
-                </div>
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-3 py-2 text-sm"
+                        disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.running || isBusy}
+                        onClick={() => worktree && selectedBackgroundCommand ? void onStopBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                      >
+                        Stop
+                      </button>
 
-                <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto] xl:min-w-[48rem]">
-                  <MatrixDropdown
-                    label="Command"
-                    value={selectedBackgroundCommand?.name ?? null}
-                    options={backgroundCommandOptions}
-                    placeholder="No commands"
-                    disabled={!backgroundCommands.length}
-                    emptyLabel="No background commands are configured yet."
-                    onChange={setSelectedBackgroundCommandName}
-                  />
-
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-3 py-2 text-sm"
-                    disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || selectedBackgroundCommand.running || isBusy}
-                    onClick={() => worktree && selectedBackgroundCommand ? void onStartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
-                  >
-                    Start
-                  </button>
-
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-3 py-2 text-sm"
-                    disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.running || isBusy}
-                    onClick={() => worktree && selectedBackgroundCommand ? void onStopBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
-                  >
-                    Stop
-                  </button>
-
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-3 py-2 text-sm"
-                    disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || isBusy}
-                    onClick={() => worktree && selectedBackgroundCommand ? void onRestartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
-                  >
-                    Restart
-                  </button>
-                </div>
-              </div>
-
-              {selectedBackgroundCommand ? (
-                <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
-                  <div className="matrix-command rounded-none px-4 py-3">
-                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Command</p>
-                    <p className="mt-2 break-all font-mono text-sm theme-text-strong">{selectedBackgroundCommand.command}</p>
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-3 py-2 text-sm"
+                        disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || isBusy}
+                        onClick={() => worktree && selectedBackgroundCommand ? void onRestartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                      >
+                        Restart
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <MatrixDetailField label="Manager" value="PM2" />
-                    <MatrixDetailField label="Status" value={selectedBackgroundCommand.status} mono />
-                    <MatrixDetailField label="PID" value={selectedBackgroundCommand.pid ? String(selectedBackgroundCommand.pid) : "-"} mono />
-                    <MatrixDetailField
-                      label="Started"
-                      value={selectedBackgroundCommand.startedAt
-                        ? new Date(selectedBackgroundCommand.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-                        : "-"}
-                    />
+                  {selectedBackgroundCommand ? (
+                    <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
+                      <div className="matrix-command rounded-none px-4 py-3">
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Command</p>
+                        <p className="mt-2 break-all font-mono text-sm theme-text-strong">{selectedBackgroundCommand.command}</p>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <MatrixDetailField label="Manager" value="PM2" />
+                        <MatrixDetailField label="Status" value={selectedBackgroundCommand.status} mono />
+                        <MatrixDetailField label="PID" value={selectedBackgroundCommand.pid ? String(selectedBackgroundCommand.pid) : "-"} mono />
+                        <MatrixDetailField
+                          label="Started"
+                          value={selectedBackgroundCommand.startedAt
+                            ? new Date(selectedBackgroundCommand.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                            : "-"}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">
+                      No background commands are configured yet.
+                    </div>
+                  )}
+
+                  {selectedBackgroundCommand?.note ? (
+                    <div className="mt-3 theme-inline-panel-warning px-3 py-2 text-sm theme-text-warning">
+                      {selectedBackgroundCommand.note}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="theme-inline-panel p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Logs</p>
+                      <p className="mt-2 text-sm theme-text-muted">Grep hides lines that do not contain the search text.</p>
+                    </div>
+
+                    <label className="w-full sm:max-w-xs">
+                      <span className="sr-only">Filter logs</span>
+                      <input
+                        value={backgroundFilter}
+                        onChange={(event) => setBackgroundFilter(event.target.value)}
+                        placeholder="grep logs"
+                        className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                      />
+                    </label>
                   </div>
-                </div>
-              ) : (
-                <div className="mt-4 matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">
-                  No background commands are configured yet.
-                </div>
-              )}
 
-              {selectedBackgroundCommand?.note ? (
-                <div className="mt-3 theme-inline-panel-warning px-3 py-2 text-sm theme-text-warning">
-                  {selectedBackgroundCommand.note}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="theme-inline-panel p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Logs</p>
-                  <p className="mt-2 text-sm theme-text-muted">Grep hides lines that do not contain the search text.</p>
-                </div>
-
-                <label className="w-full sm:max-w-xs">
-                  <span className="sr-only">Filter logs</span>
-                  <input
-                    value={backgroundFilter}
-                    onChange={(event) => setBackgroundFilter(event.target.value)}
-                    placeholder="grep logs"
-                    className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-                  />
-                </label>
-              </div>
-
-               <div
-                 ref={backgroundLogViewportRef}
-                 onScroll={handleBackgroundLogScroll}
-                 className="mt-4 max-h-[28rem] overflow-auto theme-scroll-panel font-mono text-xs"
-               >
-                {filteredBackgroundLogLines.length ? filteredBackgroundLogLines.map((line) => (
                   <div
-                    key={line.id}
-                    className={`border-b px-4 py-2 last:border-b-0 ${line.source === "stderr"
-                       ? "theme-log-entry-error"
-                       : "theme-log-entry"}`}
+                    ref={backgroundLogViewportRef}
+                    onScroll={handleBackgroundLogScroll}
+                    className="mt-4 max-h-[28rem] overflow-auto theme-scroll-panel font-mono text-xs"
                   >
-                    {line.timestamp ? (
-                      <span className="mr-3 theme-timestamp">
-                        {new Date(line.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                      </span>
-                    ) : null}
-                    <span>{line.text}</span>
+                    {filteredBackgroundLogLines.length ? filteredBackgroundLogLines.map((line) => (
+                      <div
+                        key={line.id}
+                        className={`border-b px-4 py-2 last:border-b-0 ${line.source === "stderr"
+                          ? "theme-log-entry-error"
+                          : "theme-log-entry"}`}
+                      >
+                        {line.timestamp ? (
+                          <span className="mr-3 theme-timestamp">
+                            {new Date(line.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                          </span>
+                        ) : null}
+                        <span>{line.text}</span>
+                      </div>
+                    )) : (
+                      <div className="px-4 py-4 theme-empty-note">
+                        {selectedBackgroundCommand
+                          ? backgroundFilter.trim()
+                            ? "No log lines match the current grep filter."
+                            : "No log output yet."
+                          : "Choose a background command to inspect logs."}
+                      </div>
+                    )}
                   </div>
-                )) : (
-                  <div className="px-4 py-4 theme-empty-note">
-                    {selectedBackgroundCommand
-                      ? backgroundFilter.trim()
-                        ? "No log lines match the current grep filter."
-                        : "No log output yet."
-                      : "Choose a background command to inspect logs."}
-                  </div>
-                )}
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+          </>
         ) : activeTab === "project-management" ? (
           <Suspense
             fallback={(
@@ -1523,7 +1546,7 @@ export function WorktreeDetail({
           onTerminalShortcutToggle={onTerminalShortcutToggle}
           worktreeOptions={worktreeOptions}
           onSelectWorktree={onSelectWorktree}
-          showSessionInfo={activeTab === "shell"}
+          showSessionInfo={isEnvironmentTabActive}
         />
       </div>
     </section>
