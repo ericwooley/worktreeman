@@ -25,6 +25,7 @@ import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
+import { getAiResolveButtonState } from "./git-status-actions";
 
 const ProjectManagementPanel = lazy(async () => {
   const module = await import("./project-management-panel");
@@ -603,6 +604,18 @@ export function WorktreeDetail({
     [gitComparison, worktree?.branch],
   );
   const mergeIntoWorktreeStatus = gitComparison?.mergeIntoCompareStatus ?? gitComparison?.mergeStatus ?? null;
+  const workingTreeConflictCount = gitComparison?.workingTreeSummary.conflictedFiles ?? gitComparison?.workingTreeConflicts.length ?? 0;
+  const activeGitConflicts = gitComparison?.workingTreeConflicts.length
+    ? gitComparison.workingTreeConflicts
+    : mergeIntoWorktreeStatus?.hasConflicts
+      ? mergeIntoWorktreeStatus.conflicts
+      : [];
+  const aiResolveButtonState = getAiResolveButtonState({
+    hasWorktreeBranch: Boolean(worktree?.branch),
+    gitComparisonLoading,
+    mergeConflictAiRunning,
+    workingTreeConflicts: workingTreeConflictCount,
+  });
   const canMergeBaseIntoWorktree = mergeActionState.canMerge;
   const canMergeWorktreeIntoBase = mergeIntoBaseActionState.canMerge;
   const mergeButtonDisabledReason = gitComparisonLoading
@@ -867,6 +880,10 @@ export function WorktreeDetail({
 
   const resolveMergeConflicts = async () => {
     if (!worktree?.branch || !gitComparison) {
+      return;
+    }
+
+    if ((gitComparison.workingTreeSummary.conflictedFiles ?? gitComparison.workingTreeConflicts.length ?? 0) === 0) {
       return;
     }
 
@@ -1224,15 +1241,13 @@ export function WorktreeDetail({
                     <button
                       type="button"
                       className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={!mergeIntoWorktreeStatus?.hasConflicts || gitComparisonLoading || mergeConflictAiRunning || !worktree?.branch}
-                      title={mergeIntoWorktreeStatus?.hasConflicts
-                        ? "Ask Smart AI to resolve the current merge conflict markers for this worktree merge."
-                        : "No merge conflicts are available to fix."}
+                      disabled={aiResolveButtonState.disabled}
+                      title={aiResolveButtonState.title}
                       onClick={() => {
                         void resolveMergeConflicts();
                       }}
                     >
-                      {mergeConflictAiRunning ? "Fixing conflicts..." : "AI fix merge conflicts"}
+                      {aiResolveButtonState.label}
                     </button>
                   </div>
                 </div>
@@ -1258,21 +1273,23 @@ export function WorktreeDetail({
                 </div>
               ) : null}
 
-              {mergeIntoWorktreeStatus?.hasConflicts ? (
+              {activeGitConflicts.length > 0 ? (
                 <div className="mt-3 space-y-3 border theme-border-danger theme-surface-danger px-4 py-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="matrix-kicker theme-kicker-danger">Merge conflicts</p>
                       <p className="mt-1 text-sm theme-text-danger">
-                        Merging `{gitComparison?.baseBranch ?? "the base branch"}` into this worktree will conflict. Review the markers below or let Smart AI draft resolved file contents.
+                        {gitComparison?.workingTreeSummary.conflicted
+                          ? "This worktree has unresolved git conflict markers. Review the files below or let Smart AI draft resolved file contents."
+                          : `Merging \`${gitComparison?.baseBranch ?? "the base branch"}\` into this worktree will conflict. Review the markers below or let Smart AI draft resolved file contents.`}
                       </p>
                     </div>
                     <MatrixBadge tone="danger">
-                      {mergeIntoWorktreeStatus.conflicts.length} conflict{mergeIntoWorktreeStatus.conflicts.length === 1 ? "" : "s"}
+                      {activeGitConflicts.length} conflict{activeGitConflicts.length === 1 ? "" : "s"}
                     </MatrixBadge>
                   </div>
                   <div className="space-y-3">
-                    {mergeIntoWorktreeStatus.conflicts.map((conflict) => (
+                    {activeGitConflicts.map((conflict) => (
                       <div key={conflict.path} className="border theme-border-danger bg-black/20">
                         <div className="flex items-center justify-between gap-3 border-b theme-border-danger px-3 py-2">
                           <div className="font-mono text-xs theme-text-danger">{conflict.path}</div>
@@ -1288,6 +1305,7 @@ export function WorktreeDetail({
               {gitComparison ? (
                 <div className="mt-3 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
                   <MatrixDetailField label="Changed files" value={String(gitComparison.workingTreeSummary.changedFiles)} mono />
+                  <MatrixDetailField label="Conflicted files" value={String(gitComparison.workingTreeSummary.conflictedFiles ?? 0)} mono />
                   <MatrixDetailField label="Untracked files" value={String(gitComparison.workingTreeSummary.untrackedFiles)} mono />
                   <MatrixDetailField
                     label="Staged"
@@ -1295,8 +1313,8 @@ export function WorktreeDetail({
                     mono
                   />
                   <MatrixDetailField
-                    label="Unstaged"
-                    value={gitComparison.workingTreeSummary.unstaged ? "Yes" : "No"}
+                    label="Status"
+                    value={gitComparison.workingTreeSummary.conflicted ? "Conflicted" : gitComparison.workingTreeSummary.unstaged ? "Unstaged" : "Clean"}
                     mono
                   />
                 </div>

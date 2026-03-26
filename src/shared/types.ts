@@ -144,7 +144,9 @@ export interface GitWorkingTreeSummary {
   staged: boolean;
   unstaged: boolean;
   untracked: boolean;
+  conflicted: boolean;
   changedFiles: number;
+  conflictedFiles: number;
   untrackedFiles: number;
 }
 
@@ -175,6 +177,7 @@ export interface GitComparisonResponse {
   workingTreeDiff: string;
   effectiveDiff: string;
   workingTreeSummary: GitWorkingTreeSummary;
+  workingTreeConflicts: GitMergeConflict[];
   mergeStatus: GitMergeStatus;
   mergeIntoCompareStatus: GitMergeStatus;
 }

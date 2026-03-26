@@ -829,6 +829,8 @@ test("git compare reports why merge is disabled when branches conflict", { concu
     const comparePayload = await compareResponse.json() as {
       mergeStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null; conflicts: Array<{ path: string; preview: string | null }> };
       mergeIntoCompareStatus: { canMerge: boolean; hasConflicts: boolean; reason: string | null; conflicts: Array<{ path: string; preview: string | null }> };
+      workingTreeSummary: { conflicted: boolean; conflictedFiles: number };
+      workingTreeConflicts: Array<{ path: string; preview: string | null }>;
     };
     assert.equal(comparePayload.mergeStatus.canMerge, false);
     assert.equal(comparePayload.mergeStatus.hasConflicts, true);
@@ -841,6 +843,9 @@ test("git compare reports why merge is disabled when branches conflict", { concu
     assert.match(comparePayload.mergeIntoCompareStatus.reason ?? "", /resolve conflicts/i);
     assert.equal(comparePayload.mergeIntoCompareStatus.conflicts.length, 1);
     assert.equal(comparePayload.mergeIntoCompareStatus.conflicts[0]?.path, "shared.txt");
+    assert.equal(comparePayload.workingTreeSummary.conflicted, false);
+    assert.equal(comparePayload.workingTreeSummary.conflictedFiles, 0);
+    assert.equal(comparePayload.workingTreeConflicts.length, 0);
 
     const mergeResponse = await server.fetch(`/api/git/compare/feature-conflict-merge/merge`, {
       method: "POST",
@@ -906,6 +911,30 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
       },
     });
 
+    await runCommand("git", ["merge", "main", "--allow-unrelated-histories"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+      allowExitCodes: [1],
+    });
+
+    const conflictedCompareResponse = await server.fetch(`/api/git/compare?compareBranch=feature-ai-resolve-merge&baseBranch=main`);
+    assert.equal(conflictedCompareResponse.status, 200);
+    const conflictedComparePayload = await conflictedCompareResponse.json() as {
+      workingTreeSummary: { conflicted: boolean; conflictedFiles: number };
+      workingTreeConflicts: Array<{ path: string; preview: string | null }>;
+    };
+    assert.equal(conflictedComparePayload.workingTreeSummary.conflicted, true);
+    assert.equal(conflictedComparePayload.workingTreeSummary.conflictedFiles, 1);
+    assert.equal(conflictedComparePayload.workingTreeConflicts.length, 1);
+    assert.equal(conflictedComparePayload.workingTreeConflicts[0]?.path, "shared.txt");
+    assert.match(conflictedComparePayload.workingTreeConflicts[0]?.preview ?? "", /<<<<<<< HEAD|<<<<<<< /);
+
     const response = await server.fetch(`/api/git/compare/feature-ai-resolve-merge/resolve-conflicts`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -915,11 +944,15 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
     assert.equal(response.status, 200);
     const payload = await response.json() as {
       mergeIntoCompareStatus: { hasConflicts: boolean; conflicts: Array<unknown> };
-      workingTreeSummary: { dirty: boolean };
+      workingTreeSummary: { dirty: boolean; conflicted: boolean; conflictedFiles: number };
+      workingTreeConflicts: Array<unknown>;
     };
     assert.equal(payload.mergeIntoCompareStatus.hasConflicts, false);
     assert.equal(payload.mergeIntoCompareStatus.conflicts.length, 0);
     assert.equal(payload.workingTreeSummary.dirty, true);
+    assert.equal(payload.workingTreeSummary.conflicted, false);
+    assert.equal(payload.workingTreeSummary.conflictedFiles, 0);
+    assert.equal(payload.workingTreeConflicts.length, 0);
 
     const resolved = await fs.readFile(path.join(feature.worktreePath, "shared.txt"), "utf8");
     assert.equal(resolved, "resolved by ai\n");
