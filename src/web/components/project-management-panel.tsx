@@ -591,12 +591,12 @@ export function ProjectManagementPanel({
 
   async function handleRunUiMagic() {
     if (!document) {
-      setAiFailureToast("Select a document before running \u26a1.");
+      setAiFailureToast("Select a document before running ⚡.");
       return false;
     }
 
     if (!selectedWorktreeBranch) {
-      setAiFailureToast("Select a worktree before running \u26a1.");
+      setAiFailureToast("Select a worktree before running ⚡.");
       return false;
     }
 
@@ -606,13 +606,13 @@ export function ProjectManagementPanel({
     }
 
     if (aiRunning) {
-      setAiFailureToast("\u26a1 is already running for this worktree.");
+      setAiFailureToast("⚡ is already running for this worktree.");
       return false;
     }
 
     const requestedChange = aiChangeRequest.trim();
     if (!requestedChange) {
-      setAiFailureToast("Tell \u26a1 what to change before running it.");
+      setAiFailureToast("Tell ⚡ what to change before running it.");
       return false;
     }
 
@@ -741,7 +741,7 @@ export function ProjectManagementPanel({
         onClick={() => onSubTabChange("create")}
       >
         New document
-        </button>
+      </button>
     </div>
   );
 
@@ -779,321 +779,321 @@ export function ProjectManagementPanel({
             <div className="grid gap-4 pt-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
               {documentRail}
               <div>
-          {aiFailureToast ? (
-            <div className="pm-inline-toast mb-3 flex items-center justify-between gap-3 border px-3 py-2 text-sm">
-              <span>{aiFailureToast}</span>
-              <button
-                type="button"
-                className="matrix-button rounded-none px-2 py-1 text-xs"
-                onClick={() => setAiFailureToast(null)}
-              >
-                Dismiss
-              </button>
-            </div>
-          ) : null}
-          {documentRunFailureToast ? (
-            <div className="pm-inline-toast mb-3 flex items-center justify-between gap-3 border px-3 py-2 text-sm">
-              <span>{documentRunFailureToast}</span>
-              <button
-                type="button"
-                className="matrix-button rounded-none px-2 py-1 text-xs"
-                onClick={() => setDocumentRunFailureToast(null)}
-              >
-                Dismiss
-              </button>
-            </div>
-          ) : null}
-          <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
-            <div>
-              <p className="matrix-kicker">Markdown document</p>
-              <h2 className="mt-1 text-2xl font-semibold theme-text-strong">{document?.title ?? "Select a document"}</h2>
-              {document ? (
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {compactDocumentSummary.map((item) => <MatrixBadge key={item} tone="neutral" compact>{item}</MatrixBadge>)}
-                  {document.tags.map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
-                  <MatrixBadge tone="neutral" compact>
-                    {document.dependencies.length} dependenc{document.dependencies.length === 1 ? "y" : "ies"}
-                  </MatrixBadge>
-                </div>
-              ) : null}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {document ? (
-                <div className="flex flex-wrap gap-2">
-                  <MatrixTabButton active={documentViewMode === "document"} label="Document" onClick={() => onDocumentViewModeChange("document")} />
-                  <MatrixTabButton active={documentViewMode === "edit"} label="Edit" onClick={() => onDocumentViewModeChange("edit")} />
-                </div>
-              ) : null}
-              {documentViewMode === "document" ? (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${documentRunInProgress ? "pm-ai-button-running" : ""}`}
-                    onClick={() => void handleRunDocumentWork()}
-                    title={documentRunInProgress ? "Worktree AI is running" : "Start worktree AI"}
-                    disabled={!document || documentRunInProgress}
-                  >
-                    {documentRunInProgress ? "Start Worktree AI (running)" : "Start Worktree AI"}
-                  </button>
-                  {documentRunInProgress && activeDocumentRunTargetsSelectedDocument && documentRunJob?.branch ? (
+                {aiFailureToast ? (
+                  <div className="pm-inline-toast mb-3 flex items-center justify-between gap-3 border px-3 py-2 text-sm">
+                    <span>{aiFailureToast}</span>
                     <button
                       type="button"
-                      className="matrix-button rounded-none px-3 py-2 text-sm"
-                      onClick={() => void onCancelDocumentAiCommand(documentRunJob.branch)}
+                      className="matrix-button rounded-none px-2 py-1 text-xs"
+                      onClick={() => setAiFailureToast(null)}
                     >
-                      Cancel worktree AI
+                      Dismiss
                     </button>
-                  ) : null}
-                </div>
-              ) : null}
-              {documentViewMode === "edit" ? (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${aiRunning ? "pm-ai-button-running" : ""}`}
-                    onClick={() => setAiRequestModalOpen(true)}
-                    title={aiRunning ? "\u26a1 is running" : "Open AI request"}
-                     disabled={!document || aiRunning}
-                   >
-                     {aiRunning ? "⚡ Running..." : "⚡ AI"}
-                   </button>
-                  {aiRunning ? (
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-3 py-2 text-sm"
-                      onClick={() => void onCancelAiCommand()}
-                    >
-                      Cancel AI
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-              <button
-                type="button"
-                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-                disabled={!document || saving || aiRunning || documentViewMode !== "edit"}
-                onClick={() => void handleSaveDocument()}
-              >
-                Save document
-              </button>
-            </div>
-          </div>
-
-          {document ? (
-            <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              {!isAiCommandReady(aiCommands, "smart") ? <MatrixBadge tone="warning">Configure Smart AI in settings</MatrixBadge> : null}
-              {!isAiCommandReady(aiCommands, "simple") ? <MatrixBadge tone="warning">Configure Simple AI in settings</MatrixBadge> : null}
-              {aiRunning ? <MatrixBadge tone="warning">Document editing locked while AI updates the saved document</MatrixBadge> : null}
-              {activeDocumentRunTargetsSelectedDocument && documentRunInProgress ? <MatrixBadge tone="warning">Document worktree AI run in progress</MatrixBadge> : null}
-              {aiRunSummary ? <MatrixBadge tone="active">{aiRunSummary}</MatrixBadge> : null}
-              {documentRunSummary ? <MatrixBadge tone="active">{documentRunSummary}</MatrixBadge> : null}
-            </div>
-          ) : null}
-
-          {document && selectedDocumentAiOutput ? (
-            <div className="mt-3">
-              <ProjectManagementAiOutputViewer
-                source={selectedDocumentAiOutput.source}
-                job={selectedDocumentAiOutput.job}
-                summary={selectedDocumentAiOutput.summary}
-                onCancel={() => void handleCancelSelectedDocumentAiOutput()}
-                onOpenModal={() => setAiOutputModalOpen(true)}
-              />
-            </div>
-          ) : null}
-
-          {document && documentViewMode === "edit" ? (
-            <div className="mt-3">
-                <ProjectManagementDocumentForm
-                  mode="edit"
-                  title={editTitle}
-                  summary={editSummary}
-                  tags={editTags}
-                  markdown={editMarkdown}
-                status={editStatus}
-                assignee={editAssignee}
-                statuses={statuses}
-                saving={saving}
-                disabled={aiRunning}
-                submitDisabled={!document}
-                editorMode={editEditorMode}
-                  editorOptions={documentEditorOptions}
-                  onEditorModeChange={setEditEditorMode}
-                  onTitleChange={setEditTitle}
-                  onSummaryChange={setEditSummary}
-                  onTagsChange={setEditTags}
-                onMarkdownChange={setEditMarkdown}
-                onStatusChange={setEditStatus}
-                onAssigneeChange={setEditAssignee}
-                onSubmit={handleSaveDocument}
-                sidebarFooter={(
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={saving || aiRunning}
-                      onClick={() => void onUpdateDocument(document.id, {
-                        title: editTitle,
-                        summary: editSummary || undefined,
-                        markdown: editMarkdown,
-                        tags: parseTags(editTags),
-                        dependencies: document.dependencies,
-                        status: editStatus,
-                        assignee: editAssignee,
-                        archived: !document.archived,
-                      })}
-                    >
-                      {document.archived ? "Restore" : "Archive"}
-                    </button>
-                    {document.archived ? <MatrixBadge tone="warning">Archived</MatrixBadge> : null}
-                  </div>
-                )}
-                editorBlockedState={aiRunning ? (
-                  <div className="pm-ai-running-state flex h-[68vh] flex-col items-center justify-center gap-4 px-6 text-center">
-                    <div className="pm-ai-spinner" aria-hidden="true" />
-                    <div>
-                      <p className="text-lg font-semibold theme-text-strong">AI Running</p>
-                      <p className="mt-2 text-sm theme-text-muted">
-                        The saved document is being updated on the server. You can leave this view and come back later.
-                      </p>
-                      <button
-                        type="button"
-                        className="matrix-button mt-4 rounded-none px-3 py-2 text-sm"
-                        onClick={() => void onCancelAiCommand()}
-                      >
-                        Cancel AI job
-                      </button>
-                    </div>
-                  </div>
-                ) : undefined}
-              />
-            </div>
-          ) : document ? (
-            <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
-              <div className="space-y-3">
-                {document.summary ? (
-                  <div className="border theme-border-subtle p-4">
-                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Summary</p>
-                    <p className="mt-2 text-sm theme-text">{document.summary}</p>
                   </div>
                 ) : null}
-                <div className="border theme-border-subtle p-4">
-                  <div
-                    className="pm-markdown text-sm theme-text"
-                    dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }}
-                  />
-                </div>
-                <div className="border theme-border-subtle p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Comments</p>
-                      <p className="mt-1 text-sm theme-text-muted">Discuss the document here. Comments are attributed to the repo git user.</p>
-                    </div>
-                    <MatrixBadge tone="neutral" compact>{document.comments.length} comment{document.comments.length === 1 ? "" : "s"}</MatrixBadge>
+                {documentRunFailureToast ? (
+                  <div className="pm-inline-toast mb-3 flex items-center justify-between gap-3 border px-3 py-2 text-sm">
+                    <span>{documentRunFailureToast}</span>
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-2 py-1 text-xs"
+                      onClick={() => setDocumentRunFailureToast(null)}
+                    >
+                      Dismiss
+                    </button>
                   </div>
-                  <div className="mt-3 space-y-3">
-                    {document.comments.length ? document.comments.map((comment) => (
-                      <div key={comment.id} className="border theme-border-subtle px-3 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold theme-text-strong">{comment.authorName}</p>
-                          <p className="text-xs theme-text-muted">{comment.authorEmail}</p>
-                          <p className="text-xs theme-text-soft">{new Date(comment.createdAt).toLocaleString()}</p>
-                        </div>
-                        <p className="mt-2 whitespace-pre-wrap text-sm theme-text">{comment.body}</p>
+                ) : null}
+                <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
+                  <div>
+                    <p className="matrix-kicker">Markdown document</p>
+                    <h2 className="mt-1 text-2xl font-semibold theme-text-strong">{document?.title ?? "Select a document"}</h2>
+                    {document ? (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {compactDocumentSummary.map((item) => <MatrixBadge key={item} tone="neutral" compact>{item}</MatrixBadge>)}
+                        {document.tags.map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+                        <MatrixBadge tone="neutral" compact>
+                          {document.dependencies.length} dependenc{document.dependencies.length === 1 ? "y" : "ies"}
+                        </MatrixBadge>
                       </div>
-                    )) : (
-                      <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
-                        No comments yet. Add context, blockers, or implementation notes here.
-                      </div>
-                    )}
+                    ) : null}
                   </div>
-                  <div className="mt-3 border-t theme-border-subtle pt-3">
-                    <label className="block space-y-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Add comment</span>
-                      <textarea
-                        value={commentDraft}
-                        onChange={(event) => setCommentDraft(event.target.value)}
-                        placeholder="Leave an implementation note, blocker, or follow-up."
-                        rows={4}
-                        disabled={saving || aiRunning}
-                        className="matrix-input min-h-[7rem] w-full rounded-none px-3 py-3 text-sm outline-none"
-                      />
-                    </label>
-                    <div className="mt-2 flex items-center justify-between gap-3">
-                      <p className="text-xs theme-text-muted">Saved with your repo git `user.name` and `user.email`.</p>
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-                        disabled={saving || aiRunning || !commentDraft.trim()}
-                        onClick={() => void handleAddComment()}
-                      >
-                        Add comment
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-3">
-                  <div className="border theme-border-subtle p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Dependencies</p>
-                        <p className="mt-1 text-sm theme-text-muted">Pick prerequisite documents without opening the graph.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {document ? (
+                      <div className="flex flex-wrap gap-2">
+                        <MatrixTabButton active={documentViewMode === "document"} label="Document" onClick={() => onDocumentViewModeChange("document")} />
+                        <MatrixTabButton active={documentViewMode === "edit"} label="Edit" onClick={() => onDocumentViewModeChange("edit")} />
                       </div>
+                    ) : null}
+                    {documentViewMode === "document" ? (
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          className="matrix-button rounded-none px-2 py-1 text-xs"
-                          onClick={() => setDependencyModalOpen(true)}
-                          disabled={saving || aiRunning}
+                          className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${documentRunInProgress ? "pm-ai-button-running" : ""}`}
+                          onClick={() => void handleRunDocumentWork()}
+                          title={documentRunInProgress ? "Worktree AI is running" : "Start worktree AI"}
+                          disabled={!document || documentRunInProgress}
                         >
-                          Manage dependencies
+                          {documentRunInProgress ? "Start Worktree AI (running)" : "Start Worktree AI"}
                         </button>
+                        {documentRunInProgress && activeDocumentRunTargetsSelectedDocument && documentRunJob?.branch ? (
+                          <button
+                            type="button"
+                            className="matrix-button rounded-none px-3 py-2 text-sm"
+                            onClick={() => void onCancelDocumentAiCommand(documentRunJob.branch)}
+                          >
+                            Cancel worktree AI
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {documentViewMode === "edit" ? (
+                      <div className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          className="matrix-button rounded-none px-2 py-1 text-xs"
-                          onClick={() => onSubTabChange("dependency-tree")}
+                          className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${aiRunning ? "pm-ai-button-running" : ""}`}
+                          onClick={() => setAiRequestModalOpen(true)}
+                          title={aiRunning ? "⚡ is running" : "Open AI request"}
+                          disabled={!document || aiRunning}
                         >
-                          Open graph
+                          {aiRunning ? "⚡ Running..." : "⚡ AI"}
                         </button>
+                        {aiRunning ? (
+                          <button
+                            type="button"
+                            className="matrix-button rounded-none px-3 py-2 text-sm"
+                            onClick={() => void onCancelAiCommand()}
+                          >
+                            Cancel AI
+                          </button>
+                        ) : null}
                       </div>
-                    </div>
-                    <div className="mt-3 space-y-2">
-                      {currentDependencyDocuments.length ? currentDependencyDocuments.map((entry) => (
-                        <div key={entry.id} className="border theme-pill-emphasis px-3 py-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
-                                <MatrixBadge tone="neutral" compact>{entry.status}</MatrixBadge>
-                              </div>
-                              <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
-                              <p className="mt-1 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
-                            </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                      disabled={!document || saving || aiRunning || documentViewMode !== "edit"}
+                      onClick={() => void handleSaveDocument()}
+                    >
+                      Save document
+                    </button>
+                  </div>
+                </div>
+
+                {document ? (
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    {!isAiCommandReady(aiCommands, "smart") ? <MatrixBadge tone="warning">Configure Smart AI in settings</MatrixBadge> : null}
+                    {!isAiCommandReady(aiCommands, "simple") ? <MatrixBadge tone="warning">Configure Simple AI in settings</MatrixBadge> : null}
+                    {aiRunning ? <MatrixBadge tone="warning">Document editing locked while AI updates the saved document</MatrixBadge> : null}
+                    {activeDocumentRunTargetsSelectedDocument && documentRunInProgress ? <MatrixBadge tone="warning">Document worktree AI run in progress</MatrixBadge> : null}
+                    {aiRunSummary ? <MatrixBadge tone="active">{aiRunSummary}</MatrixBadge> : null}
+                    {documentRunSummary ? <MatrixBadge tone="active">{documentRunSummary}</MatrixBadge> : null}
+                  </div>
+                ) : null}
+
+                {document && selectedDocumentAiOutput ? (
+                  <div className="mt-3">
+                    <ProjectManagementAiOutputViewer
+                      source={selectedDocumentAiOutput.source}
+                      job={selectedDocumentAiOutput.job}
+                      summary={selectedDocumentAiOutput.summary}
+                      onCancel={() => void handleCancelSelectedDocumentAiOutput()}
+                      onOpenModal={() => setAiOutputModalOpen(true)}
+                    />
+                  </div>
+                ) : null}
+
+                {document && documentViewMode === "edit" ? (
+                  <div className="mt-3">
+                    <ProjectManagementDocumentForm
+                      mode="edit"
+                      title={editTitle}
+                      summary={editSummary}
+                      tags={editTags}
+                      markdown={editMarkdown}
+                      status={editStatus}
+                      assignee={editAssignee}
+                      statuses={statuses}
+                      saving={saving}
+                      disabled={aiRunning}
+                      submitDisabled={!document}
+                      editorMode={editEditorMode}
+                      editorOptions={documentEditorOptions}
+                      onEditorModeChange={setEditEditorMode}
+                      onTitleChange={setEditTitle}
+                      onSummaryChange={setEditSummary}
+                      onTagsChange={setEditTags}
+                      onMarkdownChange={setEditMarkdown}
+                      onStatusChange={setEditStatus}
+                      onAssigneeChange={setEditAssignee}
+                      onSubmit={handleSaveDocument}
+                      sidebarFooter={(
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="matrix-button rounded-none px-3 py-2 text-sm"
+                            disabled={saving || aiRunning}
+                            onClick={() => void onUpdateDocument(document.id, {
+                              title: editTitle,
+                              summary: editSummary || undefined,
+                              markdown: editMarkdown,
+                              tags: parseTags(editTags),
+                              dependencies: document.dependencies,
+                              status: editStatus,
+                              assignee: editAssignee,
+                              archived: !document.archived,
+                            })}
+                          >
+                            {document.archived ? "Restore" : "Archive"}
+                          </button>
+                          {document.archived ? <MatrixBadge tone="warning">Archived</MatrixBadge> : null}
+                        </div>
+                      )}
+                      editorBlockedState={aiRunning ? (
+                        <div className="pm-ai-running-state flex h-[68vh] flex-col items-center justify-center gap-4 px-6 text-center">
+                          <div className="pm-ai-spinner" aria-hidden="true" />
+                          <div>
+                            <p className="text-lg font-semibold theme-text-strong">AI Running</p>
+                            <p className="mt-2 text-sm theme-text-muted">
+                              The saved document is being updated on the server. You can leave this view and come back later.
+                            </p>
                             <button
                               type="button"
-                              className="matrix-button rounded-none px-2 py-1 text-xs"
-                              onClick={() => void handleDependencySelectionToggle(entry.id)}
-                              disabled={saving || aiRunning}
+                              className="matrix-button mt-4 rounded-none px-3 py-2 text-sm"
+                              onClick={() => void onCancelAiCommand()}
                             >
-                              Remove
+                              Cancel AI job
                             </button>
                           </div>
                         </div>
-                      )) : (
-                        <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
-                          No prerequisites yet. Open the picker to add them.
+                      ) : undefined}
+                    />
+                  </div>
+                ) : document ? (
+                  <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
+                    <div className="space-y-3">
+                      {document.summary ? (
+                        <div className="border theme-border-subtle p-4">
+                          <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Summary</p>
+                          <p className="mt-2 text-sm theme-text">{document.summary}</p>
                         </div>
-                      )}
+                      ) : null}
+                      <div className="border theme-border-subtle p-4">
+                        <div
+                          className="pm-markdown text-sm theme-text"
+                          dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }}
+                        />
+                      </div>
+                      <div className="border theme-border-subtle p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Comments</p>
+                            <p className="mt-1 text-sm theme-text-muted">Discuss the document here. Comments are attributed to the repo git user.</p>
+                          </div>
+                          <MatrixBadge tone="neutral" compact>{document.comments.length} comment{document.comments.length === 1 ? "" : "s"}</MatrixBadge>
+                        </div>
+                        <div className="mt-3 space-y-3">
+                          {document.comments.length ? document.comments.map((comment) => (
+                            <div key={comment.id} className="border theme-border-subtle px-3 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold theme-text-strong">{comment.authorName}</p>
+                                <p className="text-xs theme-text-muted">{comment.authorEmail}</p>
+                                <p className="text-xs theme-text-soft">{new Date(comment.createdAt).toLocaleString()}</p>
+                              </div>
+                              <p className="mt-2 whitespace-pre-wrap text-sm theme-text">{comment.body}</p>
+                            </div>
+                          )) : (
+                            <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                              No comments yet. Add context, blockers, or implementation notes here.
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-3 border-t theme-border-subtle pt-3">
+                          <label className="block space-y-2">
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Add comment</span>
+                            <textarea
+                              value={commentDraft}
+                              onChange={(event) => setCommentDraft(event.target.value)}
+                              placeholder="Leave an implementation note, blocker, or follow-up."
+                              rows={4}
+                              disabled={saving || aiRunning}
+                              className="matrix-input min-h-[7rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+                            />
+                          </label>
+                          <div className="mt-2 flex items-center justify-between gap-3">
+                            <p className="text-xs theme-text-muted">Saved with your repo git `user.name` and `user.email`.</p>
+                            <button
+                              type="button"
+                              className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                              disabled={saving || aiRunning || !commentDraft.trim()}
+                              onClick={() => void handleAddComment()}
+                            >
+                              Add comment
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="border theme-border-subtle p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Dependencies</p>
+                            <p className="mt-1 text-sm theme-text-muted">Pick prerequisite documents without opening the graph.</p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="matrix-button rounded-none px-2 py-1 text-xs"
+                              onClick={() => setDependencyModalOpen(true)}
+                              disabled={saving || aiRunning}
+                            >
+                              Manage dependencies
+                            </button>
+                            <button
+                              type="button"
+                              className="matrix-button rounded-none px-2 py-1 text-xs"
+                              onClick={() => onSubTabChange("dependency-tree")}
+                            >
+                              Open graph
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {currentDependencyDocuments.length ? currentDependencyDocuments.map((entry) => (
+                            <div key={entry.id} className="border theme-pill-emphasis px-3 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
+                                    <MatrixBadge tone="neutral" compact>{entry.status}</MatrixBadge>
+                                  </div>
+                                  <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
+                                  <p className="mt-1 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="matrix-button rounded-none px-2 py-1 text-xs"
+                                  onClick={() => void handleDependencySelectionToggle(entry.id)}
+                                  disabled={saving || aiRunning}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
+                          )) : (
+                            <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                              No prerequisites yet. Open the picker to add them.
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-            </div>
-          ) : (
-            <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-              {emptyStateMessage}
-            </div>
-          )}
+                ) : (
+                  <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                    {emptyStateMessage}
+                  </div>
+                )}
               </div>
             </div>
           ) : activeSubTab === "board" ? (
@@ -1188,7 +1188,7 @@ export function ProjectManagementPanel({
               className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
               disabled={aiRunning}
             >
-              {aiRunning ? "\u26a1 Running..." : "Run \u26a1"}
+              {aiRunning ? "⚡ Running..." : "Run ⚡"}
             </button>
           )}
         >
