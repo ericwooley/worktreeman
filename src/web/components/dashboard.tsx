@@ -183,6 +183,7 @@ export function Dashboard() {
   const [configDraft, setConfigDraft] = useState("");
   const [aiCommandDrafts, setAiCommandDrafts] = useState<AiCommandConfig>(EMPTY_AI_COMMANDS);
   const [branch, setBranch] = useState("");
+  const [createWorktreeDocumentId, setCreateWorktreeDocumentId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [commandPaletteScope, setCommandPaletteScope] = useState<CommandPaletteScope>("main");
   const [commandPaletteInitialQuery, setCommandPaletteInitialQuery] = useState("");
@@ -311,6 +312,16 @@ export function Dashboard() {
       },
     ],
     [visibleWorktrees],
+  );
+  const projectDocumentOptions = useMemo<MatrixDropdownOption[]>(
+    () => (projectManagement?.documents ?? []).map((entry) => ({
+      value: entry.id,
+      label: `#${entry.number} ${entry.title}`,
+      description: entry.archived ? "Archived document" : entry.status || "Project document",
+      badgeLabel: entry.archived ? "Archived" : undefined,
+      badgeTone: "idle",
+    })),
+    [projectManagement?.documents],
   );
   useEffect(() => {
     if (!selected?.branch || selected.branch === selectedBranch) {
@@ -521,9 +532,10 @@ export function Dashboard() {
     }
 
     const nextBranch = branch.trim();
-    await create(nextBranch);
+    await create(nextBranch, createWorktreeDocumentId);
     setSelectedBranch(nextBranch);
     setBranch("");
+    setCreateWorktreeDocumentId(null);
     setCreateWorktreeModalOpen(false);
   };
 
@@ -1373,10 +1385,11 @@ export function Dashboard() {
           description="Create a new branch worktree and switch the worktree picker to it."
           closeLabel="Cancel"
           maxWidthClass="max-w-lg"
-          onClose={() => {
-            setCreateWorktreeModalOpen(false);
-            setBranch("");
-          }}
+           onClose={() => {
+             setCreateWorktreeModalOpen(false);
+             setBranch("");
+             setCreateWorktreeDocumentId(null);
+           }}
           footer={(
             <>
               <button
@@ -1385,6 +1398,7 @@ export function Dashboard() {
                 onClick={() => {
                   setCreateWorktreeModalOpen(false);
                   setBranch("");
+                  setCreateWorktreeDocumentId(null);
                 }}
               >
                 Cancel
@@ -1410,6 +1424,28 @@ export function Dashboard() {
                 autoFocus
               />
             </label>
+            <div className="block">
+              <MatrixDropdown
+                label="Linked document"
+                value={createWorktreeDocumentId}
+                options={projectDocumentOptions}
+                placeholder="Optional project document"
+                emptyLabel="Create a project document first to link one here."
+                onChange={setCreateWorktreeDocumentId}
+              />
+              <div className="mt-2 flex items-center justify-between gap-3 text-xs theme-text-muted">
+                <span>Linking a document lets the worktree show its source plan and log AI work back to that document.</span>
+                {createWorktreeDocumentId ? (
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-2 py-1 text-xs"
+                    onClick={() => setCreateWorktreeDocumentId(null)}
+                  >
+                    Clear link
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </form>
         </MatrixModal>
       ) : null}

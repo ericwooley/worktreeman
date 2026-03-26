@@ -22,6 +22,7 @@ import { clearAiCommandJobs, startAiCommandJob } from "../services/ai-command-se
 import { stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
 import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
+import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { getTmuxSessionName } from "../../shared/tmux.js";
 import type { AiCommandJob } from "../../shared/types.js";
 
@@ -623,6 +624,60 @@ test("DELETE /api/worktrees/:branch deletes the branch by default", async () => 
       cwd: repo.repoRoot,
     });
     assert.equal(branchList.stdout.trim(), "");
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/worktrees persists an optional linked project-management document", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string; number: number }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const createResponse = await server.fetch(`/api/worktrees`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        branch: "feature-linked-doc",
+        documentId: outline.id,
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+
+    const stateResponse = await server.fetch(`/api/state`);
+    assert.equal(stateResponse.status, 200);
+    const statePayload = await stateResponse.json() as {
+      worktrees: Array<{
+        branch: string;
+        linkedDocument?: {
+          id: string;
+          number: number;
+          title: string;
+          archived: boolean;
+        } | null;
+      }>;
+    };
+    const linkedWorktree = statePayload.worktrees.find((entry) => entry.branch === "feature-linked-doc");
+    assert.ok(linkedWorktree);
+    assert.equal(linkedWorktree.linkedDocument?.id, outline.id);
+    assert.equal(linkedWorktree.linkedDocument?.number, outline.number);
+    assert.equal(linkedWorktree.linkedDocument?.title, outline.title);
+    assert.equal(linkedWorktree.linkedDocument?.archived, false);
+
+    const storedLink = await getWorktreeDocumentLink(repo.repoRoot, "feature-linked-doc");
+    assert.ok(storedLink);
+    assert.equal(storedLink.documentId, outline.id);
+    assert.match(storedLink.worktreePath, /feature-linked-doc$/);
 
     await server.close();
   } finally {
@@ -1986,10 +2041,34 @@ test("project-management document AI creates a derived worktree and streams stdo
     const stateResponse = await server.fetch(`/api/state`);
     assert.equal(stateResponse.status, 200);
     const statePayload = await stateResponse.json() as {
-      worktrees: Array<{ branch: string; worktreePath: string; runtime?: { tmuxSession: string } }>;
+      worktrees: Array<{
+        branch: string;
+        worktreePath: string;
+        linkedDocument?: {
+          id: string;
+          number: number;
+          title: string;
+          summary: string;
+          status: string;
+          archived: boolean;
+        } | null;
+        runtime?: { tmuxSession: string };
+      }>;
     };
     const createdWorktree = statePayload.worktrees.find((entry) => entry.branch === payload.job.branch);
     assert.ok(createdWorktree);
+    assert.equal(createdWorktree.linkedDocument?.id, outline.id);
+    assert.equal(createdWorktree.linkedDocument?.number, 1);
+    assert.equal(createdWorktree.linkedDocument?.title, "Project Outline");
+    assert.equal(createdWorktree.linkedDocument?.summary, "");
+    assert.equal(createdWorktree.linkedDocument?.status, "backlog");
+    assert.equal(createdWorktree.linkedDocument?.archived, false);
+
+    const storedLink = await getWorktreeDocumentLink(repo.repoRoot, payload.job.branch);
+    assert.ok(storedLink);
+    assert.equal(storedLink.documentId, outline.id);
+    assert.equal(storedLink.worktreePath, createdWorktree.worktreePath);
+
     if (!capturedEnv) {
       assert.fail("Expected AI process env to be captured.");
     }
@@ -2050,6 +2129,13 @@ test("project-management document AI creates a derived worktree and streams stdo
     const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
     assert.equal(updated.document.title, "Project Outline");
     assert.equal(updated.document.markdown.includes("implemented"), false);
+    assert.equal(updated.document.comments.length >= 1, true);
+    const latestComment = updated.document.comments.at(-1);
+    assert.ok(latestComment);
+    assert.match(latestComment.body, /AI worktree run completed/);
+    assert.match(latestComment.body, new RegExp(payload.job.branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(latestComment.body, /Command: smart/);
+    assert.match(latestComment.body, /Stdout: planning... implemented/);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

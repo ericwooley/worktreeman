@@ -102,12 +102,23 @@ export interface WorktreeRecord {
   isDetached: boolean;
   locked: boolean;
   prunable: boolean;
+  linkedDocument?: WorktreeLinkedDocumentSummary | null;
   runtime?: WorktreeRuntime;
   deletion?: WorktreeDeletionState;
 }
 
+export interface WorktreeLinkedDocumentSummary {
+  id: string;
+  number: number;
+  title: string;
+  summary: string;
+  status: string;
+  archived: boolean;
+}
+
 export interface CreateWorktreeRequest {
   branch: string;
+  documentId?: string;
 }
 
 export interface DeleteWorktreeRequest {

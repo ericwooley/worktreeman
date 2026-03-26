@@ -507,6 +507,13 @@ export function WorktreeDetail({
   const [commitMessageLoading, setCommitMessageLoading] = useState(false);
   const [mergeConflictAiRunning, setMergeConflictAiRunning] = useState(false);
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
+  const linkedDocument = worktree?.linkedDocument ?? null;
+  const linkedDocumentDetails = useMemo(
+    () => linkedDocument
+      ? projectManagementDocuments.find((entry) => entry.id === linkedDocument.id) ?? linkedDocument
+      : null,
+    [linkedDocument, projectManagementDocuments],
+  );
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
@@ -921,6 +928,17 @@ export function WorktreeDetail({
     }
   };
 
+  const openLinkedDocument = async () => {
+    if (!linkedDocument?.id) {
+      return;
+    }
+
+    onTabChange("project-management");
+    onProjectManagementSubTabChange("document");
+    onProjectManagementDocumentViewModeChange("document");
+    await onLoadProjectManagementDocument(linkedDocument.id, { silent: true });
+  };
+
   return (
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
@@ -962,6 +980,11 @@ export function WorktreeDetail({
                       {worktree?.runtime?.runtimeStartedAt ? (
                         <MatrixBadge tone="active">live since {new Date(worktree.runtime.runtimeStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</MatrixBadge>
                       ) : null}
+                      {linkedDocument ? (
+                        <MatrixBadge tone={linkedDocument.archived ? "warning" : "active"}>
+                          linked doc #{linkedDocument.number}
+                        </MatrixBadge>
+                      ) : null}
                       {worktree ? (
                         <>
                           <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
@@ -987,6 +1010,33 @@ export function WorktreeDetail({
                   <MatrixDetailField label="Started" value={worktree?.runtime?.runtimeStartedAt ? new Date(worktree.runtime.runtimeStartedAt).toLocaleString() : "-"} />
                   <MatrixDetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
                 </div>
+
+                {linkedDocument && linkedDocumentDetails ? (
+                  <div className="mt-4 theme-inline-panel p-3">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Linked document</p>
+                          <MatrixBadge tone={linkedDocumentDetails.archived ? "warning" : "neutral"} compact>
+                            #{linkedDocumentDetails.number}
+                          </MatrixBadge>
+                          <MatrixBadge tone={linkedDocumentDetails.archived ? "warning" : "active"} compact>
+                            {linkedDocumentDetails.status}
+                          </MatrixBadge>
+                        </div>
+                        <p className="mt-2 text-sm font-semibold theme-text-strong">{linkedDocumentDetails.title}</p>
+                        {linkedDocumentDetails.summary ? (
+                          <p className="mt-2 text-sm theme-text-muted">{linkedDocumentDetails.summary}</p>
+                        ) : (
+                          <p className="mt-2 text-sm theme-text-muted">This worktree is linked to a project document for planning and AI work logs.</p>
+                        )}
+                      </div>
+                      <button type="button" className="matrix-button rounded-none px-3 py-2 text-sm" onClick={() => void openLinkedDocument()}>
+                        Open document
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-4 theme-inline-panel p-3">
                   <div className="flex items-center justify-between gap-2">

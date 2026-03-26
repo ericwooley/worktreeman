@@ -95,6 +95,13 @@ import {
   updateProjectManagementDependencies,
   updateProjectManagementDocument,
 } from "../services/project-management-service.js";
+import {
+  attachWorktreeDocumentLinks,
+  clearWorktreeDocumentLink,
+  getWorktreeDocumentLink,
+  getWorktreeDocumentLinks,
+  setWorktreeDocumentLink,
+} from "../services/worktree-link-service.js";
 import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
 import type { RuntimeStore } from "../state/runtime-store.js";
 import { sanitizeBranchName } from "../utils/paths.js";
@@ -386,6 +393,36 @@ function buildProjectManagementExecutionAiPrompt(options: {
     "Project-management document:",
     options.document.markdown,
   ].filter(Boolean).join("\n");
+}
+
+function buildWorktreeAiComment(details: {
+  branch: string;
+  commandId: AiCommandId;
+  requestSummary?: string | null;
+  stdout: string;
+  stderr: string;
+}) {
+  const lines = [
+    `AI worktree run completed for \`${details.branch}\`.`,
+    "",
+    `- Command: ${details.commandId}`,
+  ];
+
+  if (details.requestSummary?.trim()) {
+    lines.push(`- Request: ${formatLogSnippet(details.requestSummary, 280)}`);
+  }
+
+  const stdoutSnippet = formatLogSnippet(details.stdout, 280);
+  if (stdoutSnippet) {
+    lines.push(`- Stdout: ${stdoutSnippet}`);
+  }
+
+  const stderrSnippet = formatLogSnippet(details.stderr, 280);
+  if (stderrSnippet) {
+    lines.push(`- Stderr: ${stderrSnippet}`);
+  }
+
+  return lines.join("\n");
 }
 
 function buildProjectManagementSummaryPrompt(options: {
@@ -792,7 +829,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     renderedCommand: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
-    applyDocumentUpdate?: boolean;
+    applyDocumentUpdateToDocumentId?: string | null;
+    commentDocumentId?: string | null;
+    commentRequestSummary?: string | null;
   }) => startAiCommandJob({
     branch: details.branch,
     documentId: details.documentId ?? null,
@@ -872,24 +911,42 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
     },
     writeLog: safeWriteAiRequestLog,
-    onComplete: details.documentId && details.applyDocumentUpdate !== false
-      ? async ({ stdout }) => {
-        const nextMarkdown = stdout.trim();
-        if (!nextMarkdown) {
-          throw new Error("AI command finished without returning updated markdown.");
+    onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId
+      ? async ({ stdout, stderr }) => {
+        if (details.applyDocumentUpdateToDocumentId) {
+          const nextMarkdown = stdout.trim();
+          if (!nextMarkdown) {
+            throw new Error("AI command finished without returning updated markdown.");
+          }
+
+          const currentDocument = await getProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId);
+          await updateProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId, {
+            title: currentDocument.document.title,
+            summary: currentDocument.document.summary,
+            markdown: nextMarkdown,
+            tags: currentDocument.document.tags,
+            dependencies: currentDocument.document.dependencies,
+            status: currentDocument.document.status,
+            assignee: currentDocument.document.assignee,
+            archived: currentDocument.document.archived,
+          });
         }
 
-        const currentDocument = await getProjectManagementDocument(options.repoRoot, details.documentId!);
-        await updateProjectManagementDocument(options.repoRoot, details.documentId!, {
-          title: currentDocument.document.title,
-          summary: currentDocument.document.summary,
-          markdown: nextMarkdown,
-          tags: currentDocument.document.tags,
-          dependencies: currentDocument.document.dependencies,
-          status: currentDocument.document.status,
-          assignee: currentDocument.document.assignee,
-          archived: currentDocument.document.archived,
-        });
+        if (details.commentDocumentId) {
+          try {
+            await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
+              body: buildWorktreeAiComment({
+                branch: details.branch,
+                commandId: details.commandId,
+                requestSummary: details.commentRequestSummary,
+                stdout,
+                stderr,
+              }),
+            });
+          } catch (error) {
+            console.error(`[project-management-comment] failed branch=${details.branch} document=${details.commentDocumentId}`, error);
+          }
+        }
       }
       : undefined,
   });
@@ -926,6 +983,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         renderedCommand: payload.renderedCommand,
         worktreePath: payload.worktreePath,
         env: payload.env,
+        applyDocumentUpdateToDocumentId: payload.documentId,
       });
       context.notifyStarted(startedJob);
     },
@@ -935,7 +993,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   const buildWorktreePayload = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
     const merged = options.runtimes.mergeInto(worktrees);
-    return await Promise.all(merged.map(async (worktree) => ({
+    const [documentsPayload, links] = await Promise.all([
+      listProjectManagementDocuments(options.repoRoot),
+      getWorktreeDocumentLinks(options.repoRoot),
+    ]);
+    const linkedWorktrees = attachWorktreeDocumentLinks(merged, links, documentsPayload.documents);
+    return await Promise.all(linkedWorktrees.map(async (worktree) => ({
       ...worktree,
       deletion: await getWorktreeDeletionState(options.repoRoot, worktree),
     })));
@@ -1554,6 +1617,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const config = await loadCurrentConfig();
       const documentId = decodeURIComponent(req.params.id).trim();
       const body = req.body as RunProjectManagementDocumentAiRequest | undefined;
+      const requestedChange = typeof body?.input === "string" ? body.input : null;
       const documentPayload = await getProjectManagementDocument(options.repoRoot, documentId);
       const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
 
@@ -1599,6 +1663,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         }
       }
 
+      await setWorktreeDocumentLink(options.repoRoot, {
+        branch,
+        worktreePath: worktree.worktreePath,
+        documentId,
+      });
+
       worktreePath = worktree.worktreePath;
       input = buildProjectManagementExecutionAiPrompt({
         branch,
@@ -1624,7 +1694,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         renderedCommand,
         worktreePath,
         env,
-        applyDocumentUpdate: false,
+        commentDocumentId: documentId,
+        commentRequestSummary: requestedChange,
       });
 
       const payload: RunAiCommandResponse = { job, runtime };
@@ -1659,7 +1730,26 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      const documentId = typeof body.documentId === "string" && body.documentId.trim()
+        ? body.documentId.trim()
+        : null;
+      if (documentId) {
+        try {
+          await getProjectManagementDocument(options.repoRoot, documentId);
+        } catch {
+          res.status(404).json({ message: `Unknown project management document ${documentId}.` });
+          return;
+        }
+      }
+
       const worktree = await createWorktree(options.repoRoot, config, body);
+      if (documentId) {
+        await setWorktreeDocumentLink(options.repoRoot, {
+          branch: worktree.branch,
+          worktreePath: worktree.worktreePath,
+          documentId,
+        });
+      }
       const worktrees = await listWorktrees(options.repoRoot);
       const sourceRoot = await resolveEnvSyncSourceRoot(worktrees);
 
@@ -1729,8 +1819,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
-      const documentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
-      commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
+      const explicitDocumentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
+      const linkedDocumentId = explicitDocumentId
+        ? null
+        : (await getWorktreeDocumentLink(options.repoRoot, req.params.branch))?.documentId ?? null;
+      const documentId = explicitDocumentId ?? linkedDocumentId;
+      commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
 
       if (!worktree) {
         await writeImmediateAiFailureLog({
@@ -1791,9 +1885,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      if (documentId) {
+      if (explicitDocumentId) {
         try {
-          const documentPayload = await getProjectManagementDocument(options.repoRoot, documentId);
+          const documentPayload = await getProjectManagementDocument(options.repoRoot, explicitDocumentId);
           const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
           input = buildProjectManagementAiPrompt({
             branch: worktree.branch,
@@ -1806,14 +1900,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           const reason = error instanceof Error ? error : new Error(String(error));
           await writeImmediateAiFailureLog({
             branch: worktree.branch,
-            documentId,
+            documentId: explicitDocumentId,
             commandId,
             worktreePath,
             renderedCommand: template,
             input,
             error: reason,
           });
-          res.status(404).json({ message: `Unknown project management document ${documentId}.` });
+          res.status(404).json({ message: `Unknown project management document ${explicitDocumentId}.` });
           return;
         }
       }
@@ -1846,11 +1940,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         renderedCommand,
         worktreePath,
         env,
+        applyDocumentUpdateToDocumentId: explicitDocumentId,
+        commentDocumentId: explicitDocumentId ? null : linkedDocumentId,
+        commentRequestSummary: explicitDocumentId ? null : body.input,
       };
-      const job = documentId
+      const job = explicitDocumentId
         ? await enqueueProjectManagementDocumentAiJob({
           branch: runDetails.branch,
-          documentId,
+          documentId: explicitDocumentId,
           commandId: runDetails.commandId,
           input: runDetails.input,
           renderedCommand: runDetails.renderedCommand,
@@ -2051,6 +2148,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);
+      await clearWorktreeDocumentLink(options.repoRoot, worktree.branch);
       if (request.deleteBranch) {
         await deleteBranch(options.repoRoot, worktree.branch);
       }

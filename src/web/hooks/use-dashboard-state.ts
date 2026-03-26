@@ -395,13 +395,16 @@ export function useDashboardState() {
 
   const actions = useMemo(
     () => ({
-      async create(branch: string) {
+      async create(branch: string, documentId?: string | null) {
         setBusyBranch(branch);
         try {
-          const result = await createWorktree(branch);
+          const result = await createWorktree(branch, documentId);
           await refresh();
           if (result) {
             setLastEnvSync({ branch, copiedFiles: result.copiedFiles });
+          }
+          if (documentId) {
+            void loadProjectManagementDocumentsState({ silent: true });
           }
           setError(null);
         } catch (err) {
