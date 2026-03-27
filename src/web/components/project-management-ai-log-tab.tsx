@@ -1,4 +1,5 @@
 import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOrigin } from "@shared/types";
+import { marked } from "marked";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric } from "./matrix-primitives";
 
 function getAiCommandLabel(commandId: "smart" | "simple") {
@@ -53,6 +54,17 @@ function getOriginTitle(origin: AiCommandOrigin | null | undefined) {
 
 function getOriginDescription(origin: AiCommandOrigin | null | undefined) {
   return origin?.description ?? "This run does not include a saved start location.";
+}
+
+function renderMarkdownOutput(markdown: string, tone: "default" | "danger" = "default") {
+  return (
+    <div className="max-h-[24rem] overflow-auto border theme-border-subtle p-3">
+      <div
+        className={`pm-markdown text-sm ${tone === "danger" ? "theme-text-danger" : "theme-text"}`}
+        dangerouslySetInnerHTML={{ __html: marked.parse(markdown || "(empty)") }}
+      />
+    </div>
+  );
 }
 
 export function ProjectManagementAiLogTab({
@@ -238,12 +250,15 @@ export function ProjectManagementAiLogTab({
                 <pre className="overflow-x-auto whitespace-pre-wrap break-words border theme-border-subtle p-3 text-xs theme-text-muted">{logDetail.request}</pre>
               </MatrixAccordion>
 
-              <MatrixAccordion summary={renderAccordionSummary("Response stdout", "The AI command output captured from stdout.")}>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words border theme-border-subtle p-3 text-xs theme-text-muted">{logDetail.response.stdout || "(empty)"}</pre>
+              <MatrixAccordion
+                summary={renderAccordionSummary("Response stdout", "The AI command output captured from stdout.")}
+                defaultOpen
+              >
+                {renderMarkdownOutput(logDetail.response.stdout)}
               </MatrixAccordion>
 
               <MatrixAccordion summary={renderAccordionSummary("Response stderr", "The AI command output captured from stderr.")}>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words border theme-border-subtle p-3 text-xs theme-text-muted">{logDetail.response.stderr || "(empty)"}</pre>
+                {renderMarkdownOutput(logDetail.response.stderr, "danger")}
               </MatrixAccordion>
 
               {logDetail.error ? (
