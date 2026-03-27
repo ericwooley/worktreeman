@@ -177,6 +177,7 @@ async function writeAiLogFixture(options: {
   pid?: number | null;
   stdout?: string;
   stderr?: string;
+  events?: Array<{ id: string; source: "stdout" | "stderr"; text: string; timestamp: string }>;
   completedAt?: string | null;
   exitCode?: number | null;
   error?: unknown;
@@ -202,6 +203,7 @@ async function writeAiLogFixture(options: {
     response: {
       stdout: options.stdout ?? "",
       stderr: options.stderr ?? "",
+      events: options.events ?? [],
     },
     error: options.error ?? null,
   }, null, 2)}\n`, "utf8");
@@ -1662,7 +1664,11 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
         pid?: number | null;
         origin?: AiCommandOrigin | null;
         request: string;
-        response: { stdout: string; stderr: string };
+        response: {
+          stdout: string;
+          stderr: string;
+          events?: Array<{ source: "stdout" | "stderr"; text: string; timestamp: string }>;
+        };
       };
     };
 
@@ -1674,6 +1680,13 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(detailPayload.log.request, "summarize the work");
     assert.equal(detailPayload.log.response.stdout, "live stdout\n");
     assert.equal(detailPayload.log.response.stderr, "live stderr\n");
+    assert.deepEqual(
+      detailPayload.log.response.events?.map((event) => ({ source: event.source, text: event.text })),
+      [
+        { source: "stdout", text: "live stdout\n" },
+        { source: "stderr", text: "live stderr\n" },
+      ],
+    );
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1722,13 +1735,19 @@ test("AI log detail stream emits live updates and completion for running logs", 
       status: string;
       pid?: number | null;
       origin?: AiCommandOrigin | null;
-      response: { stdout: string };
+      response: {
+        stdout: string;
+        events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+      };
     };
     assert.equal(snapshot.type, "snapshot");
     assert.equal(snapshotLog.status, "running");
     assert.equal(snapshotLog.pid, 9001);
     assert.deepEqual(snapshotLog.origin, origin);
     assert.equal(snapshotLog.response.stdout, "first line\n");
+    assert.deepEqual(snapshotLog.response.events?.map((event) => ({ source: event.source, text: event.text })), [
+      { source: "stdout", text: "first line\n" },
+    ]);
 
     fakeAiProcesses.updateManualProcess("wtm:ai:stream-log", {
       stdout: "first line\nsecond line\n",
@@ -1739,13 +1758,22 @@ test("AI log detail stream emits live updates and completion for running logs", 
     const runningLog = runningUpdate.log as {
       status: string;
       origin?: AiCommandOrigin | null;
-      response: { stdout: string; stderr: string };
+      response: {
+        stdout: string;
+        stderr: string;
+        events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+      };
     };
     assert.equal(runningUpdate.type, "update");
     assert.equal(runningLog.status, "running");
     assert.deepEqual(runningLog.origin, origin);
     assert.equal(runningLog.response.stdout, "first line\nsecond line\n");
     assert.equal(runningLog.response.stderr, "warn\n");
+    assert.deepEqual(runningLog.response.events?.map((event) => ({ source: event.source, text: event.text })), [
+      { source: "stdout", text: "first line\n" },
+      { source: "stdout", text: "second line\n" },
+      { source: "stderr", text: "warn\n" },
+    ]);
 
     fakeAiProcesses.updateManualProcess("wtm:ai:stream-log", {
       status: "stopped",
@@ -1758,7 +1786,11 @@ test("AI log detail stream emits live updates and completion for running logs", 
       exitCode?: number | null;
       completedAt?: string;
       origin?: AiCommandOrigin | null;
-      response: { stdout: string; stderr: string };
+      response: {
+        stdout: string;
+        stderr: string;
+        events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+      };
     };
     assert.equal(completedUpdate.type, "update");
     assert.equal(completedLog.status, "completed");
@@ -1766,6 +1798,11 @@ test("AI log detail stream emits live updates and completion for running logs", 
     assert.equal(typeof completedLog.completedAt, "string");
     assert.deepEqual(completedLog.origin, origin);
     assert.equal(completedLog.response.stderr, "warn\n");
+    assert.deepEqual(completedLog.response.events?.map((event) => ({ source: event.source, text: event.text })), [
+      { source: "stdout", text: "first line\n" },
+      { source: "stdout", text: "second line\n" },
+      { source: "stderr", text: "warn\n" },
+    ]);
 
     await sse.close();
   } finally {
@@ -1812,7 +1849,10 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
         completedAt?: string;
         origin?: AiCommandOrigin | null;
         error: { message: string } | null;
-        response: { stdout: string };
+        response: {
+          stdout: string;
+          events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+        };
       };
     };
 
@@ -1820,6 +1860,9 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
     assert.equal(typeof detailPayload.log.completedAt, "string");
     assert.deepEqual(detailPayload.log.origin, origin);
     assert.equal(detailPayload.log.response.stdout, "partial output");
+    assert.deepEqual(detailPayload.log.response.events?.map((event) => ({ source: event.source, text: event.text })), [
+      { source: "stdout", text: "partial output" },
+    ]);
     assert.equal(detailPayload.log.error?.message.includes("no longer available"), true);
 
     const listResponse = await server.fetch(`/api/ai/logs`);
@@ -2054,12 +2097,20 @@ test("project-management AI document updates ignore stderr while logs retain it"
     assert.equal(detailResponse.status, 200);
     const detailPayload = await detailResponse.json() as {
       log: {
-        response: { stdout: string; stderr: string };
+        response: {
+          stdout: string;
+          stderr: string;
+          events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+        };
       };
     };
 
     assert.equal(detailPayload.log.response.stdout, "# Clean Markdown\n\nOnly stdout belongs here.\n");
     assert.equal(detailPayload.log.response.stderr, "> build · gpt-4.1\n");
+    assert.deepEqual(detailPayload.log.response.events?.map((event) => ({ source: event.source, text: event.text })), [
+      { source: "stdout", text: "# Clean Markdown\n\nOnly stdout belongs here.\n" },
+      { source: "stderr", text: "> build · gpt-4.1\n" },
+    ]);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -2503,6 +2554,28 @@ test("AI cancel route deletes the running process and returns the settled failed
       assert.deepEqual(failedLog?.origin, expectedOrigin);
       return !runningForBranch && failedLog?.status === "failed";
     });
+
+    const logsResponse = await server.fetch(`/api/ai/logs`);
+    assert.equal(logsResponse.status, 200);
+    const logsPayload = await logsResponse.json() as {
+      logs: Array<{ fileName: string; branch: string }>;
+    };
+    const canceledLog = logsPayload.logs.find((entry) => entry.branch === "feature-ai-cancel");
+    assert.ok(canceledLog);
+
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(canceledLog.fileName)}`);
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json() as {
+      log: {
+        response: {
+          events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+        };
+      };
+    };
+    assert.equal(
+      detailPayload.log.response.events?.some((event) => event.source === "stderr" && /Cancellation requested by the user/.test(event.text)),
+      true,
+    );
 
   } finally {
     await server.close();

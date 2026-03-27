@@ -284,6 +284,7 @@ export function useDashboardState() {
           completedAt: log.completedAt,
           stdout: log.response.stdout,
           stderr: log.response.stderr,
+          outputEvents: log.response.events?.map((event) => ({ ...event })) ?? [],
           pid: log.pid ?? null,
           exitCode: log.exitCode ?? null,
           processName: log.processName ?? null,

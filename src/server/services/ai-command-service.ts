@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
+import type { AiCommandId, AiCommandJob, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
 import { createOperationalStateStore } from "./operational-state-service.js";
 
 const aiCommandJobEmitter = new EventEmitter();
@@ -25,7 +25,25 @@ function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null {
     completedAt: job.completedAt,
     logPath: job.logPath,
     error: job.error,
+    outputEvents: job.outputEvents?.map((event) => ({ ...event })) ?? [],
   };
+}
+
+function createOutputEvent(source: AiCommandOutputEvent["source"], text: string): AiCommandOutputEvent {
+  return {
+    id: randomUUID(),
+    source,
+    text,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+function appendOutputEvent(events: AiCommandOutputEvent[] | undefined, source: AiCommandOutputEvent["source"], chunk: string) {
+  if (!chunk) {
+    return events?.map((event) => ({ ...event })) ?? [];
+  }
+
+  return [...(events?.map((event) => ({ ...event })) ?? []), createOutputEvent(source, chunk)];
 }
 
 async function emitAiCommandJobUpdate(repoRoot: string, branch: string) {
@@ -115,6 +133,7 @@ export async function failAiCommandJob(options: {
   jobId: string;
   error: string;
   exitCode?: number | null;
+  outputEvents?: AiCommandOutputEvent[];
 }) {
   const store = await createOperationalStateStore(options.repoRoot);
   const currentJob = await store.getAiCommandJob(options.branch);
@@ -128,6 +147,7 @@ export async function failAiCommandJob(options: {
     completedAt: currentJob.completedAt ?? new Date().toISOString(),
     exitCode: options.exitCode ?? currentJob.exitCode ?? null,
     stderr: `${currentJob.stderr}${options.error}`,
+    outputEvents: options.outputEvents?.map((event) => ({ ...event })) ?? appendOutputEvent(currentJob.outputEvents, "stderr", options.error),
     error: options.error,
   };
   await store.setAiCommandJob(nextJob);
@@ -171,6 +191,7 @@ export async function startAiCommandJob(options: {
     input: string;
     stdout?: string;
     stderr?: string;
+    events?: AiCommandOutputEvent[];
     startedAt?: string;
     completedAt?: string;
     pid?: number | null;
@@ -202,6 +223,7 @@ export async function startAiCommandJob(options: {
     startedAt,
     stdout: "",
     stderr: "",
+    outputEvents: [],
     pid: null,
     exitCode: null,
     processName: null,
@@ -250,6 +272,7 @@ export async function startAiCommandJob(options: {
     input: options.input,
     stdout: job.stdout,
     stderr: job.stderr,
+    events: job.outputEvents,
     startedAt,
     completedAt: undefined,
     pid: job.pid,
@@ -271,6 +294,12 @@ export async function startAiCommandJob(options: {
       ...(overrides ?? {}),
     };
 
+    const storedJob = await store.getAiCommandJob(options.branch);
+    if (storedJob && storedJob.jobId === jobId && storedJob.status !== "running" && nextJob.status === "running") {
+      currentJob = cloneAiCommandJob(storedJob) ?? nextJob;
+      return;
+    }
+
     const logPath = await writeLogSafely({
       fileName,
       jobId,
@@ -284,6 +313,7 @@ export async function startAiCommandJob(options: {
       input: options.input,
       stdout: nextJob.stdout,
       stderr: nextJob.stderr,
+      events: nextJob.outputEvents,
       startedAt,
       completedAt: nextJob.completedAt,
       pid: nextJob.pid,
@@ -316,6 +346,7 @@ export async function startAiCommandJob(options: {
           const nextJob: AiCommandJob = {
             ...(currentJob ?? job),
             stdout: `${(currentJob ?? job).stdout}${chunk}`,
+            outputEvents: appendOutputEvent((currentJob ?? job).outputEvents, "stdout", chunk),
           };
           await persistSnapshot(nextJob);
         },
@@ -323,6 +354,7 @@ export async function startAiCommandJob(options: {
           const nextJob: AiCommandJob = {
             ...(currentJob ?? job),
             stderr: `${(currentJob ?? job).stderr}${chunk}`,
+            outputEvents: appendOutputEvent((currentJob ?? job).outputEvents, "stderr", chunk),
           };
           await persistSnapshot(nextJob);
         },
@@ -348,6 +380,7 @@ export async function startAiCommandJob(options: {
           ...currentJob,
           stdout: result.stdout,
           stderr: result.stderr,
+          outputEvents: currentJob.outputEvents?.map((event) => ({ ...event })) ?? [],
         },
         stdout: result.stdout,
         stderr: result.stderr,
@@ -366,6 +399,7 @@ export async function startAiCommandJob(options: {
         input: options.input,
         stdout: result.stdout,
         stderr: result.stderr,
+        events: currentJob.outputEvents,
         startedAt,
         completedAt,
         pid: currentJob.pid,
@@ -379,11 +413,25 @@ export async function startAiCommandJob(options: {
         completedAt,
         stdout: result.stdout,
         stderr: result.stderr,
+        outputEvents: currentJob.outputEvents?.map((event) => ({ ...event })) ?? [],
         logPath: logPath ?? undefined,
       };
       await persistJobSafely(currentJob);
       resolveStartup();
     } catch (error) {
+      const storedJob = await store.getAiCommandJob(options.branch);
+      const latestJob = storedJob && storedJob.jobId === jobId ? storedJob : null;
+      const errorMessage = latestJob?.status === "failed" && latestJob.error
+        ? latestJob.error
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      const nextOutputEvents = latestJob?.status === "failed"
+        ? latestJob.outputEvents?.map((event) => ({ ...event })) ?? []
+        : appendOutputEvent(currentJob.outputEvents, "stderr", errorMessage);
+      const nextStderr = latestJob?.status === "failed"
+        ? latestJob.stderr
+        : `${currentJob.stderr}${errorMessage}`;
       const completedAt = new Date().toISOString();
       const logPath = await writeLogSafely({
         fileName,
@@ -396,22 +444,24 @@ export async function startAiCommandJob(options: {
         worktreePath: options.worktreePath,
         renderedCommand: options.command,
         input: options.input,
-        stdout: currentJob.stdout,
-        stderr: currentJob.stderr,
+        stdout: latestJob?.stdout ?? currentJob.stdout,
+        stderr: nextStderr,
+        events: nextOutputEvents,
         startedAt,
         completedAt,
-        pid: currentJob.pid,
-        exitCode: currentJob.exitCode,
-        processName: currentJob.processName,
-        error,
+        pid: latestJob?.pid ?? currentJob.pid,
+        exitCode: latestJob?.exitCode ?? currentJob.exitCode,
+        processName: latestJob?.processName ?? currentJob.processName,
+        error: latestJob?.status === "failed" ? new Error(errorMessage) : error,
       });
 
       currentJob = {
-        ...currentJob,
+        ...(latestJob ?? currentJob),
         status: "failed",
         completedAt,
-        stderr: `${currentJob.stderr}${error instanceof Error ? error.message : String(error)}`,
-        error: error instanceof Error ? error.message : String(error),
+        stderr: nextStderr,
+        outputEvents: nextOutputEvents,
+        error: errorMessage,
         logPath: logPath ?? undefined,
       };
       await persistJobSafely(currentJob);
