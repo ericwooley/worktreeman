@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { startServer } from "./app.js";
 import { initRepository } from "./services/init-service.js";
+import { createOperationalStateStore, stopOperationalStateStore } from "./services/operational-state-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "./services/repository-layout-service.js";
 import { findRepoContext } from "./utils/paths.js";
 
@@ -136,6 +137,34 @@ test("startServer serves favicon from configured repository file", async () => {
     assert.deepEqual(responseBytes, faviconBytes);
   } finally {
     await startedServer?.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer clears persisted shutdown status from a previous server run", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    await operationalState.beginShutdown("[shutdown] Closing worktreeman server...");
+    await operationalState.completeShutdown("[shutdown] Shutdown complete.");
+    await stopOperationalStateStore(repo.repoRoot);
+
+    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
+
+    const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
+    const status = await restartedOperationalState.getShutdownStatus();
+
+    assert.deepEqual(status, {
+      active: false,
+      completed: false,
+      failed: false,
+      logs: [],
+    });
+  } finally {
+    await startedServer?.close();
+    await stopOperationalStateStore(repo.repoRoot);
     await fs.rm(rootDir, { recursive: true, force: true });
   }
 });

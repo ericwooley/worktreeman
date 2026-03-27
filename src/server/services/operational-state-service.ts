@@ -208,6 +208,21 @@ function appendShutdownLog(status: ShutdownStatus, level: ShutdownLogEntry["leve
 export class OperationalStateStore {
   constructor(readonly repoRoot: string) {}
 
+  async resetShutdownStatus(): Promise<ShutdownStatus> {
+    const next = cloneShutdownStatus(DEFAULT_SHUTDOWN_STATUS);
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(
+      `
+        update shutdown_state
+        set snapshot_json = $1,
+            updated_at = now()
+        where singleton = true
+      `,
+      [JSON.stringify(next)],
+    );
+    return next;
+  }
+
   async getRuntime(branch: string): Promise<WorktreeRuntime | null> {
     return await querySnapshot(
       this.repoRoot,
