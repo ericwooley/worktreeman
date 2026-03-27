@@ -2472,6 +2472,18 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(completedLog.origin?.location.projectManagementSubTab, "document");
     assert.equal(completedLog.origin?.location.documentId, outline.id);
     assert.equal(completedLog.origin?.location.projectManagementDocumentViewMode, "document");
+
+    await waitFor(async () => {
+      const latestStateResponse = await server.fetch(`/api/state`);
+      if (latestStateResponse.status !== 200) {
+        return false;
+      }
+
+      const latestStatePayload = await latestStateResponse.json() as {
+        worktrees: Array<{ branch: string; runtime?: { tmuxSession: string } }>;
+      };
+      return latestStatePayload.worktrees.find((entry) => entry.branch === payload.job.branch)?.runtime === undefined;
+    });
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -2690,6 +2702,13 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     });
     assert.equal(response.status, 200);
 
+    const payload = await response.json() as {
+      runtime?: { branch: string; tmuxSession: string; runtimeStartedAt?: string };
+    };
+    assert.equal(payload.runtime?.branch, "feature-ai-env");
+    assert.equal(payload.runtime?.tmuxSession?.length ? true : false, true);
+    assert.equal(typeof payload.runtime?.runtimeStartedAt, "string");
+
     assert.equal(capturedPrompt.includes("Environment wrapper:"), true);
     assert.equal(capturedPrompt.includes(`- Repository root: ${repo.repoRoot}`), true);
     assert.equal(capturedPrompt.includes("- Branch: feature-ai-env"), true);
@@ -2702,8 +2721,107 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     assert.equal(capturedPrompt.includes("pm2 logs wtm:feature-ai-env:web"), true);
     assert.equal(capturedPrompt.includes("Operator request:"), true);
     assert.equal(capturedPrompt.includes("inspect the runtime"), true);
+
+    await waitFor(async () => {
+      const stateResponse = await server.fetch(`/api/state`);
+      if (stateResponse.status !== 200) {
+        return false;
+      }
+
+      const statePayload = await stateResponse.json() as {
+        worktrees: Array<{ branch: string; runtime?: { branch: string; tmuxSession: string } }>;
+      };
+      const runtime = statePayload.worktrees.find((entry) => entry.branch === "feature-ai-env")?.runtime;
+      return runtime?.branch === "feature-ai-env" && runtime.tmuxSession === payload.runtime?.tmuxSession;
+    });
   } finally {
     await stopAllBackgroundCommands("feature-ai-env", path.join(repo.repoRoot, "feature-ai-env")).catch(() => undefined);
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("worktree AI auto-starts a runtime and stops it after completion when the runtime was created for the AI run", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  await createWorktree(repo.repoRoot, config, { branch: "feature-ai-auto-stop" });
+
+  let capturedEnv: NodeJS.ProcessEnv | null = null;
+  const aiProcesses: InjectedAiProcesses = {
+    ...createFakeAiProcesses().aiProcesses,
+    async startProcess(options) {
+      capturedEnv = options.env;
+      return {
+        name: "wtm:ai:test-auto-stop",
+        pid: 9992,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async getProcess() {
+      return {
+        name: "wtm:ai:test-auto-stop",
+        pid: 9992,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async readProcessLogs() {
+      return { stdout: "done\n", stderr: "" };
+    },
+    isProcessActive(status) {
+      return status === "online";
+    },
+  };
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const response = await server.fetch(`/api/worktrees/feature-ai-auto-stop/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "finish and shut down" }),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      job: { branch: string };
+      runtime?: { branch: string; worktreePath: string; tmuxSession: string; runtimeStartedAt?: string };
+    };
+    assert.equal(payload.job.branch, "feature-ai-auto-stop");
+    assert.equal(payload.runtime?.branch, "feature-ai-auto-stop");
+    assert.equal(payload.runtime?.worktreePath, path.join(repo.repoRoot, "feature-ai-auto-stop"));
+    assert.equal(payload.runtime?.tmuxSession?.length ? true : false, true);
+    assert.equal(typeof payload.runtime?.runtimeStartedAt, "string");
+
+    if (!capturedEnv) {
+      assert.fail("Expected AI process env to be captured.");
+    }
+
+    const processEnv: NodeJS.ProcessEnv = capturedEnv;
+
+    assert.equal(processEnv.WORKTREE_BRANCH, "feature-ai-auto-stop");
+    assert.equal(processEnv.WORKTREE_PATH, path.join(repo.repoRoot, "feature-ai-auto-stop"));
+    assert.equal(processEnv.TMUX_SESSION_NAME, payload.runtime?.tmuxSession);
+
+    await waitFor(async () => {
+      const stateResponse = await server.fetch(`/api/state`);
+      if (stateResponse.status !== 200) {
+        return false;
+      }
+
+      const statePayload = await stateResponse.json() as {
+        worktrees: Array<{ branch: string; runtime?: { branch: string } }>;
+      };
+      return statePayload.worktrees.find((entry) => entry.branch === "feature-ai-auto-stop")?.runtime === undefined;
+    });
+  } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
