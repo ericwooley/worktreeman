@@ -249,6 +249,9 @@ test("document view shows dependency summary and modal entrypoint", () => {
   assert.match(markup, /feature\/doc-1-runtime/);
   assert.match(markup, /Make active/);
   assert.match(markup, /runtime active/);
+  assert.match(markup, /Archive document/);
+  assert.match(markup, /Save assignee/);
+  assert.match(markup, /Update the lane, assignee, or archive state here without leaving the document view\./);
 });
 
 test("document view renders summary, comments, and comment attribution", () => {
