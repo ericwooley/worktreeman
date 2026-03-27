@@ -136,6 +136,11 @@ export interface ApiStateResponse {
   worktrees: WorktreeRecord[];
 }
 
+export interface ApiStateStreamEvent {
+  type: "snapshot" | "update";
+  state: ApiStateResponse;
+}
+
 export interface ConfigDocumentResponse {
   branch: string;
   filePath: string;

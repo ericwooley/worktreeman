@@ -146,6 +146,18 @@ async function startPm2Process(options: StartOptions): Promise<void> {
   }));
 }
 
+function isRunningPm2Status(status: string | undefined): boolean {
+  return status === "online" || status === "launching";
+}
+
+function normalizePm2Status(status: string | undefined): string {
+  if (status === "launching") {
+    return "online";
+  }
+
+  return status ?? "stopped";
+}
+
 async function readLogLines(filePath: string | undefined, source: "stdout" | "stderr"): Promise<BackgroundCommandLogLine[]> {
   if (!filePath) {
     return [];
@@ -195,25 +207,29 @@ export async function listBackgroundCommands(
   const processes = await listPm2Processes();
   const commandEntries = getBackgroundCommandEntries(config);
 
-  return Object.entries(commandEntries).map(([name, entry]) => {
+  return await Promise.all(Object.entries(commandEntries).map(async ([name, entry]) => {
     const processName = getPm2CommandName(branch, name);
     const processInfo = processes.get(processName);
+    const metadata = processInfo ? null : await readMetadata(processName);
     const hasRuntime = Boolean(runtime);
+    const inferredRunning = processInfo
+      ? isRunningPm2Status(processInfo.status)
+      : Boolean(metadata && metadata.worktreePath === worktreePath);
 
     return {
       name,
       command: entry.command,
       processName,
       manager: "pm2",
-      running: processInfo?.status === "online",
-      status: processInfo?.status ?? "stopped",
+      running: inferredRunning,
+      status: processInfo ? normalizePm2Status(processInfo.status) : inferredRunning ? "online" : "stopped",
       requiresRuntime: true,
       canStart: hasRuntime,
       note: !hasRuntime ? "Start the environment first so this command gets the configured runtime ports and env." : undefined,
       pid: processInfo?.pid,
       startedAt: processInfo?.createdAt,
     };
-  });
+  }));
 }
 
 export async function startBackgroundCommand(options: {

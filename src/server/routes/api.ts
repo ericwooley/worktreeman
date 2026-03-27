@@ -10,6 +10,7 @@ import type {
   AiCommandId,
   AiCommandOrigin,
   ApiStateResponse,
+  ApiStateStreamEvent,
   AiCommandJob,
   AiCommandLogEntry,
   AiCommandLogResponse,
@@ -75,7 +76,7 @@ import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../se
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import { loadConfig, parseConfigContents, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import type { ShutdownStatus } from "../../shared/types.js";
-import { failAiCommandJob, getAiCommandJob, startAiCommandJob, subscribeToAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
+import { failAiCommandJob, getAiCommandJob, startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
 import {
   deleteAiCommandProcess,
   getAiCommandProcess,
@@ -105,8 +106,7 @@ import {
   getWorktreeDocumentLinks,
   setWorktreeDocumentLink,
 } from "../services/worktree-link-service.js";
-import type { ShutdownStatusService } from "../services/shutdown-status-service.js";
-import type { RuntimeStore } from "../state/runtime-store.js";
+import type { OperationalStateStore } from "../services/operational-state-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 
@@ -116,8 +116,7 @@ interface ApiRouterOptions {
   configSourceRef: string;
   configFile: string;
   configWorktreePath: string;
-  runtimes: RuntimeStore;
-  shutdownStatus: ShutdownStatusService;
+  operationalState: OperationalStateStore;
   aiProcessPollIntervalMs?: number;
   aiLogStreamPollIntervalMs?: number;
   aiProcesses?: {
@@ -960,13 +959,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     config: WorktreeManagerConfig,
     worktree: WorktreeRecord,
   ): Promise<WorktreeRuntime> => {
-    const existingRuntime = options.runtimes.get(worktree.branch);
+    const existingRuntime = await options.operationalState.getRuntime(worktree.branch);
     if (existingRuntime) {
       return existingRuntime;
     }
 
     const { runtime } = await createRuntime(config, options.repoRoot, worktree.branch, worktree.worktreePath);
-    options.runtimes.set(runtime);
+    await options.operationalState.setRuntime(runtime);
     await ensureRuntimeTerminalSession(runtime, options.repoRoot);
     await runStartupCommands(config.startupCommands, worktree.worktreePath, buildRuntimeProcessEnv(runtime));
     await startConfiguredBackgroundCommands({
@@ -1084,7 +1083,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         errFile,
       });
 
-      payload.hooks.onSpawn?.({
+      await payload.hooks.onSpawn?.({
         pid: processInfo.pid ?? null,
         processName,
       });
@@ -1099,24 +1098,24 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         if (logs.stdout.startsWith(lastStdout)) {
           const chunk = logs.stdout.slice(lastStdout.length);
           if (chunk) {
-            payload.hooks.onStdout?.(chunk);
+            await payload.hooks.onStdout?.(chunk);
           }
         } else if (logs.stdout !== lastStdout) {
           const chunk = logs.stdout.slice(Math.min(lastStdout.length, logs.stdout.length));
           if (chunk) {
-            payload.hooks.onStdout?.(chunk);
+            await payload.hooks.onStdout?.(chunk);
           }
         }
 
         if (logs.stderr.startsWith(lastStderr)) {
           const chunk = logs.stderr.slice(lastStderr.length);
           if (chunk) {
-            payload.hooks.onStderr?.(chunk);
+            await payload.hooks.onStderr?.(chunk);
           }
         } else if (logs.stderr !== lastStderr) {
           const chunk = logs.stderr.slice(Math.min(lastStderr.length, logs.stderr.length));
           if (chunk) {
-            payload.hooks.onStderr?.(chunk);
+            await payload.hooks.onStderr?.(chunk);
           }
         }
 
@@ -1124,12 +1123,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         lastStderr = logs.stderr;
 
         if (!nextProcess) {
-          payload.hooks.onExit?.({ exitCode: null });
+          await payload.hooks.onExit?.({ exitCode: null });
           throw new Error("AI process no longer available.");
         }
 
         if (!aiProcesses.isProcessActive(nextProcess.status)) {
-          payload.hooks.onExit?.({ exitCode: nextProcess.exitCode ?? null });
+          await payload.hooks.onExit?.({ exitCode: nextProcess.exitCode ?? null });
           if ((nextProcess.exitCode ?? 0) !== 0) {
             throw new Error(`AI process exited with code ${nextProcess.exitCode ?? "unknown"}.`);
           }
@@ -1225,7 +1224,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   const resolveEnvSyncSourceRoot = async (_worktrees: Awaited<ReturnType<typeof listWorktrees>>) => options.configWorktreePath;
 
   const buildWorktreePayload = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
-    const merged = options.runtimes.mergeInto(worktrees);
+    const merged = await options.operationalState.mergeInto(worktrees);
     const [documentsPayload, links] = await Promise.all([
       listProjectManagementDocuments(options.repoRoot),
       getWorktreeDocumentLinks(options.repoRoot),
@@ -1256,22 +1255,119 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     }
   });
 
-  router.get("/shutdown-status", (req, res) => {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.flushHeaders?.();
-
-    const writeStatus = (status: ShutdownStatus) => {
-      res.write(`data: ${JSON.stringify(status)}\n\n`);
+  router.get("/state/stream", async (req, res, next) => {
+    const loadState = async (): Promise<ApiStateResponse> => {
+      const config = await loadCurrentConfig();
+      const worktrees = await listWorktrees(options.repoRoot);
+      return {
+        repoRoot: options.repoRoot,
+        configPath: options.configPath,
+        configFile: options.configFile,
+        configSourceRef: options.configSourceRef,
+        configWorktreePath: options.configWorktreePath,
+        config,
+        worktrees: await buildWorktreePayload(worktrees),
+      };
     };
 
-    const unsubscribe = options.shutdownStatus.subscribe(writeStatus);
+    try {
+      let currentState = await loadState();
+      let lastPayload = JSON.stringify(currentState);
 
-    req.on("close", () => {
-      unsubscribe();
-      res.end();
-    });
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+
+      const writeEvent = (type: ApiStateStreamEvent["type"], state: ApiStateResponse) => {
+        const event: ApiStateStreamEvent = { type, state };
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+
+      writeEvent("snapshot", currentState);
+
+      let polling = false;
+      const interval = setInterval(() => {
+        if (polling) {
+          return;
+        }
+
+        polling = true;
+        void loadState()
+          .then((nextState) => {
+            currentState = nextState;
+            const nextPayload = JSON.stringify(nextState);
+            if (nextPayload !== lastPayload) {
+              lastPayload = nextPayload;
+              writeEvent("update", nextState);
+            }
+          })
+          .finally(() => {
+            polling = false;
+          });
+      }, aiLogStreamPollIntervalMs);
+      const keepAlive = setInterval(() => {
+        res.write(`: keep-alive\n\n`);
+      }, 15000);
+
+      req.on("close", () => {
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        res.end();
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/shutdown-status", async (req, res, next) => {
+    try {
+      let currentStatus = await options.operationalState.getShutdownStatus();
+      let lastPayload = JSON.stringify(currentStatus);
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+
+      const writeStatus = (status: ShutdownStatus) => {
+        res.write(`data: ${JSON.stringify(status)}\n\n`);
+      };
+
+      writeStatus(currentStatus);
+
+      let polling = false;
+      const interval = setInterval(() => {
+        if (polling) {
+          return;
+        }
+
+        polling = true;
+        void options.operationalState.getShutdownStatus()
+          .then((nextStatus) => {
+            currentStatus = nextStatus;
+            const nextPayload = JSON.stringify(nextStatus);
+            if (nextPayload !== lastPayload) {
+              lastPayload = nextPayload;
+              writeStatus(nextStatus);
+            }
+          })
+          .finally(() => {
+            polling = false;
+          });
+      }, aiLogStreamPollIntervalMs);
+      const keepAlive = setInterval(() => {
+        res.write(`: keep-alive\n\n`);
+      }, 15000);
+
+      req.on("close", () => {
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        res.end();
+      });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get("/config/document", async (_req, res, next) => {
@@ -1368,30 +1464,51 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.get("/worktrees/:branch/ai-command/stream", async (req, res, next) => {
     try {
+      const branch = req.params.branch;
+      let currentJob = await getAiCommandJob(options.repoRoot, branch);
+      let lastPayload = JSON.stringify(currentJob);
+
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders?.();
 
-      const writeEvent = (type: "snapshot" | "update", branch: string) => {
+      const writeEvent = (type: "snapshot" | "update", job: AiCommandJob | null) => {
         const event = {
           type,
-          job: getAiCommandJob(branch),
+          job,
         };
         res.write(`data: ${JSON.stringify(event)}\n\n`);
       };
 
-      const branch = req.params.branch;
-      writeEvent("snapshot", branch);
-      const unsubscribe = subscribeToAiCommandJob(branch, () => {
-        writeEvent("update", branch);
-      });
+      writeEvent("snapshot", currentJob);
+
+      let polling = false;
+      const interval = setInterval(() => {
+        if (polling) {
+          return;
+        }
+
+        polling = true;
+        void getAiCommandJob(options.repoRoot, branch)
+          .then((nextJob) => {
+            currentJob = nextJob;
+            const nextPayload = JSON.stringify(nextJob);
+            if (nextPayload !== lastPayload) {
+              lastPayload = nextPayload;
+              writeEvent("update", nextJob);
+            }
+          })
+          .finally(() => {
+            polling = false;
+          });
+      }, aiLogStreamPollIntervalMs);
       const keepAlive = setInterval(() => {
         res.write(`: keep-alive\n\n`);
       }, 15000);
 
       req.on("close", () => {
-        unsubscribe();
+        clearInterval(interval);
         clearInterval(keepAlive);
         res.end();
       });
@@ -1576,7 +1693,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         throw new Error(`Branch ${branch} does not currently expose merge conflicts against ${baseBranch}.`);
       }
 
-      const runtime = options.runtimes.get(worktree.branch);
+      const runtime = await options.operationalState.getRuntime(worktree.branch);
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
         : {
@@ -1719,7 +1836,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = options.runtimes.get(worktree.branch);
+      const runtime = await options.operationalState.getRuntime(worktree.branch);
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
         : {
@@ -1762,7 +1879,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = options.runtimes.get(worktree.branch);
+      const runtime = await options.operationalState.getRuntime(worktree.branch);
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
         : {
@@ -2047,7 +2164,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
 
       worktreePath = worktree.worktreePath;
-      if (getAiCommandJob(branch)?.status === "running") {
+      if ((await getAiCommandJob(options.repoRoot, branch))?.status === "running") {
         res.status(409).json({ message: `AI command already running for ${branch}.` });
         return;
       }
@@ -2279,14 +2396,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = options.runtimes.get(worktree.branch);
-      const backgroundCommands = await listBackgroundCommands(config, worktree.branch, worktreePath, runtime);
+      const runtime = await options.operationalState.getRuntime(worktree.branch);
+      const backgroundCommands = await listBackgroundCommands(config, worktree.branch, worktreePath, runtime ?? undefined);
       const environmentContext = buildAiEnvironmentContext({
         repoRoot: options.repoRoot,
         config,
         branch: worktree.branch,
         worktreePath,
-        runtime,
+        runtime: runtime ?? undefined,
         backgroundCommands,
       });
 
@@ -2338,7 +2455,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         }
       }
 
-      if (getAiCommandJob(worktree.branch)?.status === "running") {
+      if ((await getAiCommandJob(options.repoRoot, worktree.branch))?.status === "running") {
         res.status(409).json({ message: `AI command already running for ${worktree.branch}.` });
         return;
       }
@@ -2400,7 +2517,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/ai-command/cancel", async (req, res, next) => {
     try {
-      const inMemoryJob = getAiCommandJob(req.params.branch);
+      const inMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch);
       const persistedLog = (await Promise.all(
         (await listAiCommandLogEntries(options.repoRoot)).map((entry) => reconcileAiCommandLogEntry({
           entry,
@@ -2429,7 +2546,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const cancellationMessage = "AI process exited with code unknown. Cancellation requested by the user.";
       const failedJob = inMemoryJob?.status === "running"
-        ? failAiCommandJob({
+        ? await failAiCommandJob({
+          repoRoot: options.repoRoot,
           branch: req.params.branch,
           jobId: job.jobId,
           error: cancellationMessage,
@@ -2459,28 +2577,36 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         });
       }
 
+      let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
       const settledJob = await Promise.race([
-        waitForAiCommandJob(req.params.branch, job.jobId),
+        waitForAiCommandJob(options.repoRoot, req.params.branch, job.jobId),
         new Promise<typeof job>((resolve) => {
-          setTimeout(() => {
+          fallbackTimer = setTimeout(() => {
             void (async () => {
-              const nextInMemoryJob = getAiCommandJob(req.params.branch);
-              if (nextInMemoryJob) {
-                resolve(nextInMemoryJob);
-                return;
-              }
+              try {
+                const nextInMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch);
+                if (nextInMemoryJob) {
+                  resolve(nextInMemoryJob);
+                  return;
+                }
 
-              if (persistedLog) {
-                const nextLog = await loadResolvedAiLog(persistedLog.fileName);
-                resolve(toRunningAiCommandJob(nextLog));
-                return;
-              }
+                if (persistedLog) {
+                  const nextLog = await loadResolvedAiLog(persistedLog.fileName);
+                  resolve(toRunningAiCommandJob(nextLog));
+                  return;
+                }
 
-              resolve(job);
+                resolve(job);
+              } catch {
+                resolve(job);
+              }
             })();
           }, Math.max(aiProcessPollIntervalMs * 4, 500));
         }),
       ]);
+      if (fallbackTimer) {
+        clearTimeout(fallbackTimer);
+      }
 
       const payload: RunAiCommandResponse = { job: failedJob ?? settledJob };
       res.json(payload);
@@ -2491,7 +2617,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/runtime/stop", async (req, res, next) => {
     try {
-      const runtime = options.runtimes.get(req.params.branch);
+      const runtime = await options.operationalState.getRuntime(req.params.branch);
       if (!runtime) {
         res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
         return;
@@ -2499,7 +2625,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       await stopAllBackgroundCommands(req.params.branch, runtime.worktreePath);
       await killTmuxSession(runtime);
-      options.runtimes.delete(req.params.branch);
+      await options.operationalState.deleteRuntime(req.params.branch);
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -2508,7 +2634,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.get("/worktrees/:branch/runtime/tmux-clients", async (req, res, next) => {
     try {
-      const runtime = options.runtimes.get(req.params.branch);
+      const runtime = await options.operationalState.getRuntime(req.params.branch);
       const worktrees = await listWorktrees(options.repoRoot);
       const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
       if (!worktree) {
@@ -2516,12 +2642,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const tmuxSession = await ensureTerminalSession({
-        repoRoot: options.repoRoot,
-        branch: worktree.branch,
-        worktreePath: worktree.worktreePath,
-        runtime,
-      });
+        const tmuxSession = await ensureTerminalSession({
+          repoRoot: options.repoRoot,
+          branch: worktree.branch,
+          worktreePath: worktree.worktreePath,
+          runtime: runtime ?? undefined,
+        });
 
       const clients: TmuxClientInfo[] = await listTmuxClients({
         tmuxSession,
@@ -2573,11 +2699,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = options.runtimes.get(worktree.branch);
+      const runtime = await options.operationalState.getRuntime(worktree.branch);
       if (runtime) {
         await stopAllBackgroundCommands(worktree.branch, runtime.worktreePath);
         await killTmuxSession(runtime);
-        options.runtimes.delete(worktree.branch);
+        await options.operationalState.deleteRuntime(worktree.branch);
       } else {
         await killTmuxSessionByName(getTmuxSessionName(options.repoRoot, worktree.branch), worktree.worktreePath);
       }
@@ -2608,7 +2734,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         config,
         worktree.branch,
         worktree.worktreePath,
-        options.runtimes.get(worktree.branch),
+        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {
@@ -2638,7 +2764,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         config,
         branch: worktree.branch,
         worktreePath: worktree.worktreePath,
-        runtime: options.runtimes.get(worktree.branch),
+        runtime: (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
         commandName: decodedName,
       });
 
@@ -2646,7 +2772,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         config,
         worktree.branch,
         worktree.worktreePath,
-        options.runtimes.get(worktree.branch),
+        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {
@@ -2677,7 +2803,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         await loadCurrentConfig(),
         worktree.branch,
         worktree.worktreePath,
-        options.runtimes.get(worktree.branch),
+        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {
@@ -2707,7 +2833,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         config,
         branch: worktree.branch,
         worktreePath: worktree.worktreePath,
-        runtime: options.runtimes.get(worktree.branch),
+        runtime: (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
         commandName: decodedName,
       });
 
@@ -2715,7 +2841,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         config,
         worktree.branch,
         worktree.worktreePath,
-        options.runtimes.get(worktree.branch),
+        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {

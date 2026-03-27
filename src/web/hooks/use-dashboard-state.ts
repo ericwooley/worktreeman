@@ -5,6 +5,7 @@ import type {
   AiCommandLogSummary,
   AiCommandLogStreamEvent,
   ApiStateResponse,
+  ApiStateStreamEvent,
   AiCommandJob,
   AiCommandId,
   AiCommandSettingsResponse,
@@ -46,6 +47,7 @@ import {
   getAiCommandLogs as fetchAiCommandLogs,
   getGitComparison as fetchGitComparison,
   getState,
+  subscribeToState,
   cancelAiCommand as cancelAiCommandRequest,
   commitGitChanges as commitGitChangesRequest,
   mergeGitBranch as mergeGitBranchRequest,
@@ -97,6 +99,7 @@ export type CommitChangesPayload = {
 
 export function useDashboardState() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
+  const [stateStreamConnected, setStateStreamConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
@@ -152,31 +155,47 @@ export function useDashboardState() {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => subscribeToState(
+    (event: ApiStateStreamEvent) => {
+      setState(event.state);
+      setLoading(false);
+      setStateStreamConnected(true);
+      setError(null);
+    },
+    setStateStreamConnected,
+  ), []);
+
   useEffect(() => subscribeToShutdownStatus(setShutdownStatus), []);
 
   useEffect(() => {
-    if (busyBranch) {
-      return;
-    }
-
     const refreshIfVisible = () => {
       if (document.visibilityState !== "visible") {
         return;
       }
 
-      void refresh({ silent: true });
+      if (!stateStreamConnected) {
+        void refresh({ silent: true });
+      }
     };
 
-    const interval = window.setInterval(refreshIfVisible, DASHBOARD_REFRESH_INTERVAL_MS);
     window.addEventListener("focus", refreshIfVisible);
     document.addEventListener("visibilitychange", refreshIfVisible);
+
+    if (busyBranch || stateStreamConnected) {
+      return () => {
+        window.removeEventListener("focus", refreshIfVisible);
+        document.removeEventListener("visibilitychange", refreshIfVisible);
+      };
+    }
+
+    const interval = window.setInterval(refreshIfVisible, DASHBOARD_REFRESH_INTERVAL_MS);
 
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", refreshIfVisible);
       document.removeEventListener("visibilitychange", refreshIfVisible);
     };
-  }, [busyBranch, refresh]);
+  }, [busyBranch, refresh, stateStreamConnected]);
 
   const appendBackgroundLogs = useCallback((event: BackgroundCommandLogStreamEvent) => {
     setBackgroundLogs((current) => {
@@ -403,7 +422,6 @@ export function useDashboardState() {
         setBusyBranch(branch);
         try {
           const result = await createWorktree(branch, documentId);
-          await refresh();
           if (result) {
             setLastEnvSync({ branch, copiedFiles: result.copiedFiles });
           }
@@ -421,7 +439,6 @@ export function useDashboardState() {
         setBusyBranch(branch);
         try {
           await deleteWorktree(branch, payload);
-          await refresh();
           setError(null);
         } catch (err) {
           const message = err instanceof Error ? err.message : "Failed to delete worktree.";
@@ -435,7 +452,6 @@ export function useDashboardState() {
         setBusyBranch(branch);
         try {
           await startRuntime(branch);
-          await refresh();
           setError(null);
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to start runtime.");
@@ -447,7 +463,6 @@ export function useDashboardState() {
         setBusyBranch(branch);
         try {
           await stopRuntime(branch);
-          await refresh();
           setError(null);
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to stop runtime.");
@@ -459,7 +474,6 @@ export function useDashboardState() {
         setBusyBranch(branch);
         try {
           const result: EnvSyncResponse = await syncEnvFiles(branch);
-          await refresh();
           setLastEnvSync({ branch, copiedFiles: result.copiedFiles });
           setError(null);
         } catch (err) {
@@ -565,7 +579,6 @@ export function useDashboardState() {
         try {
           const comparison = await mergeGitBranchRequest(compareBranch, baseBranch ? { baseBranch } : undefined);
           setGitComparison(comparison);
-          await refresh({ silent: true });
           setError(null);
           return comparison;
         } catch (err) {
@@ -581,7 +594,6 @@ export function useDashboardState() {
           await mergeGitBranchRequest(baseBranch, { baseBranch: branch });
           const comparison = await fetchGitComparison(branch, baseBranch);
           setGitComparison((current) => areGitComparisonsEqual(current, comparison) ? current : comparison);
-          await refresh({ silent: true });
           setError(null);
           return comparison;
         } catch (err) {
@@ -596,7 +608,6 @@ export function useDashboardState() {
         try {
           const comparison = await resolveGitMergeConflictsRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
           setGitComparison(comparison);
-          await refresh({ silent: true });
           setError(null);
           return comparison;
         } catch (err) {
@@ -627,7 +638,6 @@ export function useDashboardState() {
         try {
           const result = await commitGitChangesRequest(branch, payload ?? {});
           setGitComparison(result.comparison);
-          await refresh({ silent: true });
           setError(null);
           return result;
         } catch (err) {
@@ -661,7 +671,6 @@ export function useDashboardState() {
         try {
           const document = await persistConfigDocument(contents);
           setConfigDocument(document);
-          await refresh({ silent: true });
           setError(null);
           return document;
         } catch (err) {
@@ -695,7 +704,6 @@ export function useDashboardState() {
         try {
           const settings = await persistAiCommandSettings(payload);
           setAiCommandSettings(settings);
-          await refresh({ silent: true });
           setError(null);
           return settings;
         } catch (err) {

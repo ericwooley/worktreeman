@@ -5,6 +5,8 @@
 - When code needs repository-relative paths later in the request lifecycle, carry the resolved context forward explicitly instead of re-deriving it from the current process working directory.
 - Keep command palette actions organized by feature area and prefix their short codes consistently (for example: navigation uses `n*`, terminal uses `t*`, worktree uses `w*`). Related commands should stay grouped together in the UI.
 - Keep this file up to date as features evolve so operational conventions and UI interaction rules remain documented alongside the code.
+- Treat operational server state as durable repo-backed data. Runtime state, AI job state, shutdown status, and similar server lifecycle data must survive a server restart for the same repo.
+- Prefer server-sent events backed by durable snapshots for shared dashboard state. Polling is a resilience fallback, not the primary live-update path.
 
 ## Keep in mind
 
