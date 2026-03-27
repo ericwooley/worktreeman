@@ -1,9 +1,13 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
+import { createOperationalStateStore } from "./operational-state-service.js";
 
 const aiCommandJobEmitter = new EventEmitter();
-const aiCommandJobsByBranch = new Map<string, AiCommandJob>();
+
+function getAiCommandEventKey(repoRoot: string, branch: string) {
+  return `${repoRoot}:${branch}`;
+}
 
 function buildAiCommandLogFileName(branch: string, date = new Date()): string {
   const safeBranch = branch.replace(/[^a-zA-Z0-9._-]+/g, "-");
@@ -24,68 +28,96 @@ function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null {
   };
 }
 
-function emitAiCommandJobUpdate(branch: string) {
-  aiCommandJobEmitter.emit(branch, cloneAiCommandJob(aiCommandJobsByBranch.get(branch) ?? null));
+async function emitAiCommandJobUpdate(repoRoot: string, branch: string) {
+  const store = await createOperationalStateStore(repoRoot);
+  const job = await store.getAiCommandJob(branch);
+  aiCommandJobEmitter.emit(getAiCommandEventKey(repoRoot, branch), cloneAiCommandJob(job));
 }
 
-export function getAiCommandJob(branch: string): AiCommandJob | null {
-  return cloneAiCommandJob(aiCommandJobsByBranch.get(branch) ?? null);
+export async function getAiCommandJob(repoRoot: string, branch: string): Promise<AiCommandJob | null> {
+  const store = await createOperationalStateStore(repoRoot);
+  return cloneAiCommandJob(await store.getAiCommandJob(branch));
 }
 
-export function listAiCommandJobs(): AiCommandJob[] {
-  return Array.from(aiCommandJobsByBranch.values())
+export async function listAiCommandJobs(repoRoot: string): Promise<AiCommandJob[]> {
+  const store = await createOperationalStateStore(repoRoot);
+  return (await store.listAiCommandJobs())
     .map((job) => cloneAiCommandJob(job))
     .filter((job): job is AiCommandJob => job !== null)
     .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
 }
 
-export function clearAiCommandJobs(branch?: string) {
+export async function clearAiCommandJobs(repoRoot: string, branch?: string) {
+  const store = await createOperationalStateStore(repoRoot);
   if (branch) {
-    aiCommandJobsByBranch.delete(branch);
-    emitAiCommandJobUpdate(branch);
+    await store.clearAiCommandJobs(branch);
+    await emitAiCommandJobUpdate(repoRoot, branch);
     return;
   }
 
-  const branches = Array.from(aiCommandJobsByBranch.keys());
-  aiCommandJobsByBranch.clear();
+  const branches = (await store.listAiCommandJobs()).map((job) => job.branch);
+  await store.clearAiCommandJobs();
   for (const currentBranch of branches) {
-    emitAiCommandJobUpdate(currentBranch);
+    await emitAiCommandJobUpdate(repoRoot, currentBranch);
   }
 }
 
-export function subscribeToAiCommandJob(branch: string, listener: (job: AiCommandJob | null) => void): () => void {
+export function subscribeToAiCommandJob(repoRoot: string, branch: string, listener: (job: AiCommandJob | null) => void): () => void {
   const wrappedListener = (job: AiCommandJob | null) => listener(cloneAiCommandJob(job));
-  aiCommandJobEmitter.on(branch, wrappedListener);
+  aiCommandJobEmitter.on(getAiCommandEventKey(repoRoot, branch), wrappedListener);
   return () => {
-    aiCommandJobEmitter.off(branch, wrappedListener);
+    aiCommandJobEmitter.off(getAiCommandEventKey(repoRoot, branch), wrappedListener);
   };
 }
 
-export function waitForAiCommandJob(branch: string, jobId: string): Promise<AiCommandJob> {
-  const currentJob = getAiCommandJob(branch);
+export async function waitForAiCommandJob(repoRoot: string, branch: string, jobId: string): Promise<AiCommandJob> {
+  const currentJob = await getAiCommandJob(repoRoot, branch);
   if (currentJob?.jobId === jobId && currentJob.status !== "running") {
-    return Promise.resolve(currentJob);
+    return currentJob;
   }
 
-  return new Promise<AiCommandJob>((resolve) => {
-    const unsubscribe = subscribeToAiCommandJob(branch, (job) => {
+  return await new Promise<AiCommandJob>((resolve) => {
+    let settled = false;
+    const finish = (job: AiCommandJob) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearInterval(interval);
+      unsubscribe();
+      resolve(job);
+    };
+
+    const unsubscribe = subscribeToAiCommandJob(repoRoot, branch, (job) => {
       if (!job || job.jobId !== jobId || job.status === "running") {
         return;
       }
 
-      unsubscribe();
-      resolve(job);
+      finish(job);
     });
+
+    const interval = setInterval(() => {
+      void getAiCommandJob(repoRoot, branch).then((job) => {
+        if (!job || job.jobId !== jobId || job.status === "running") {
+          return;
+        }
+
+        finish(job);
+      });
+    }, 250);
   });
 }
 
-export function failAiCommandJob(options: {
+export async function failAiCommandJob(options: {
+  repoRoot: string;
   branch: string;
   jobId: string;
   error: string;
   exitCode?: number | null;
 }) {
-  const currentJob = aiCommandJobsByBranch.get(options.branch);
+  const store = await createOperationalStateStore(options.repoRoot);
+  const currentJob = await store.getAiCommandJob(options.branch);
   if (!currentJob || currentJob.jobId !== options.jobId) {
     return null;
   }
@@ -98,8 +130,8 @@ export function failAiCommandJob(options: {
     stderr: `${currentJob.stderr}${options.error}`,
     error: options.error,
   };
-  aiCommandJobsByBranch.set(options.branch, nextJob);
-  emitAiCommandJobUpdate(options.branch);
+  await store.setAiCommandJob(nextJob);
+  await emitAiCommandJobUpdate(options.repoRoot, options.branch);
   return cloneAiCommandJob(nextJob);
 }
 
@@ -120,10 +152,10 @@ export async function startAiCommandJob(options: {
     command: string;
     worktreePath: string;
     hooks: {
-      onSpawn?: (details: { pid?: number | null; processName?: string | null }) => void;
-      onStdout?: (chunk: string) => void;
-      onStderr?: (chunk: string) => void;
-      onExit?: (details: { exitCode?: number | null }) => void;
+      onSpawn?: (details: { pid?: number | null; processName?: string | null }) => void | Promise<void>;
+      onStdout?: (chunk: string) => void | Promise<void>;
+      onStderr?: (chunk: string) => void | Promise<void>;
+      onExit?: (details: { exitCode?: number | null }) => void | Promise<void>;
     };
   }) => Promise<{ stdout: string; stderr: string }>;
   writeLog: (payload: {
@@ -152,10 +184,7 @@ export async function startAiCommandJob(options: {
     stderr: string;
   }) => Promise<void>;
 }): Promise<AiCommandJob> {
-  const existingJob = aiCommandJobsByBranch.get(options.branch);
-  if (existingJob?.status === "running") {
-    throw new Error(`AI command already running for ${options.branch}.`);
-  }
+  const store = await createOperationalStateStore(options.repoRoot);
 
   const jobId = randomUUID();
   const startedAt = new Date().toISOString();
@@ -178,7 +207,36 @@ export async function startAiCommandJob(options: {
     processName: null,
   };
 
-  aiCommandJobsByBranch.set(options.branch, job);
+  const claimed = await store.claimRunningAiCommandJob(job);
+  if (!claimed) {
+    throw new Error(`AI command already running for ${options.branch}.`);
+  }
+
+  let currentJob = job;
+  let settleStartup: (() => void) | null = null;
+  const startupObserved = new Promise<void>((resolve) => {
+    settleStartup = resolve;
+  });
+  const resolveStartup = () => {
+    const pending = settleStartup;
+    settleStartup = null;
+    pending?.();
+  };
+  const writeLogSafely = async (payload: Parameters<typeof options.writeLog>[0]) => {
+    try {
+      return await options.writeLog(payload);
+    } catch {
+      return null;
+    }
+  };
+  const persistJobSafely = async (nextJob: AiCommandJob) => {
+    try {
+      await store.setAiCommandJob(nextJob);
+      await emitAiCommandJobUpdate(options.repoRoot, options.branch);
+    } catch {
+      // Ignore persistence failures after startup so background cleanup does not crash the process.
+    }
+  };
   const initialLogPath = await options.writeLog({
     fileName,
     jobId,
@@ -199,20 +257,21 @@ export async function startAiCommandJob(options: {
     processName: job.processName,
   });
   if (initialLogPath) {
-    aiCommandJobsByBranch.set(options.branch, {
-      ...job,
+    currentJob = {
+      ...currentJob,
       logPath: initialLogPath,
-    });
+    };
+    await store.setAiCommandJob(currentJob);
   }
-  emitAiCommandJobUpdate(options.branch);
+  await emitAiCommandJobUpdate(options.repoRoot, options.branch);
 
   const persistSnapshot = async (overrides?: Partial<AiCommandJob>, error?: unknown) => {
-    const currentJob = {
-      ...(aiCommandJobsByBranch.get(options.branch) ?? job),
+    const nextJob = {
+      ...currentJob,
       ...(overrides ?? {}),
     };
 
-    const logPath = await options.writeLog({
+    const logPath = await writeLogSafely({
       fileName,
       jobId,
       repoRoot: options.repoRoot,
@@ -223,63 +282,56 @@ export async function startAiCommandJob(options: {
       worktreePath: options.worktreePath,
       renderedCommand: options.command,
       input: options.input,
-      stdout: currentJob.stdout,
-      stderr: currentJob.stderr,
+      stdout: nextJob.stdout,
+      stderr: nextJob.stderr,
       startedAt,
-      completedAt: currentJob.completedAt,
-      pid: currentJob.pid,
-      exitCode: currentJob.exitCode,
-      processName: currentJob.processName,
+      completedAt: nextJob.completedAt,
+      pid: nextJob.pid,
+      exitCode: nextJob.exitCode,
+      processName: nextJob.processName,
       error,
     });
 
     if (logPath) {
-      aiCommandJobsByBranch.set(options.branch, {
-        ...currentJob,
-        logPath,
-      });
+      nextJob.logPath = logPath;
     }
+
+    currentJob = nextJob;
+    await persistJobSafely(nextJob);
   };
 
   void (async () => {
     try {
       const hooks = {
-        onSpawn: ({ pid, processName }: { pid?: number | null; processName?: string | null }) => {
-          const nextJob = {
-            ...(aiCommandJobsByBranch.get(options.branch) ?? job),
+        onSpawn: async ({ pid, processName }: { pid?: number | null; processName?: string | null }) => {
+          const nextJob: AiCommandJob = {
+            ...(currentJob ?? job),
             pid: pid ?? null,
             processName: processName ?? null,
           };
-          aiCommandJobsByBranch.set(options.branch, nextJob);
-          emitAiCommandJobUpdate(options.branch);
-          void persistSnapshot(nextJob);
+          await persistSnapshot(nextJob);
+          resolveStartup();
         },
-        onStdout: (chunk: string) => {
-          const nextJob = {
-            ...(aiCommandJobsByBranch.get(options.branch) ?? job),
-            stdout: `${(aiCommandJobsByBranch.get(options.branch) ?? job).stdout}${chunk}`,
+        onStdout: async (chunk: string) => {
+          const nextJob: AiCommandJob = {
+            ...(currentJob ?? job),
+            stdout: `${(currentJob ?? job).stdout}${chunk}`,
           };
-          aiCommandJobsByBranch.set(options.branch, nextJob);
-          emitAiCommandJobUpdate(options.branch);
-          void persistSnapshot(nextJob);
+          await persistSnapshot(nextJob);
         },
-        onStderr: (chunk: string) => {
-          const nextJob = {
-            ...(aiCommandJobsByBranch.get(options.branch) ?? job),
-            stderr: `${(aiCommandJobsByBranch.get(options.branch) ?? job).stderr}${chunk}`,
+        onStderr: async (chunk: string) => {
+          const nextJob: AiCommandJob = {
+            ...(currentJob ?? job),
+            stderr: `${(currentJob ?? job).stderr}${chunk}`,
           };
-          aiCommandJobsByBranch.set(options.branch, nextJob);
-          emitAiCommandJobUpdate(options.branch);
-          void persistSnapshot(nextJob);
+          await persistSnapshot(nextJob);
         },
-        onExit: ({ exitCode }: { exitCode?: number | null }) => {
-          const nextJob = {
-            ...(aiCommandJobsByBranch.get(options.branch) ?? job),
+        onExit: async ({ exitCode }: { exitCode?: number | null }) => {
+          const nextJob: AiCommandJob = {
+            ...(currentJob ?? job),
             exitCode: exitCode ?? null,
           };
-          aiCommandJobsByBranch.set(options.branch, nextJob);
-          emitAiCommandJobUpdate(options.branch);
-          void persistSnapshot(nextJob);
+          await persistSnapshot(nextJob);
         },
       };
       const result = await options.execute({
@@ -293,7 +345,7 @@ export async function startAiCommandJob(options: {
       });
       await options.onComplete?.({
         job: {
-          ...(aiCommandJobsByBranch.get(options.branch) ?? job),
+          ...currentJob,
           stdout: result.stdout,
           stderr: result.stderr,
         },
@@ -301,7 +353,7 @@ export async function startAiCommandJob(options: {
         stderr: result.stderr,
       });
       const completedAt = new Date().toISOString();
-      const logPath = await options.writeLog({
+      const logPath = await writeLogSafely({
         fileName,
         jobId,
         repoRoot: options.repoRoot,
@@ -316,23 +368,24 @@ export async function startAiCommandJob(options: {
         stderr: result.stderr,
         startedAt,
         completedAt,
-        pid: (aiCommandJobsByBranch.get(options.branch) ?? job).pid,
-        exitCode: (aiCommandJobsByBranch.get(options.branch) ?? job).exitCode,
-        processName: (aiCommandJobsByBranch.get(options.branch) ?? job).processName,
+        pid: currentJob.pid,
+        exitCode: currentJob.exitCode,
+        processName: currentJob.processName,
       });
 
-      aiCommandJobsByBranch.set(options.branch, {
-        ...(aiCommandJobsByBranch.get(options.branch) ?? job),
+      currentJob = {
+        ...currentJob,
         status: "completed",
         completedAt,
         stdout: result.stdout,
         stderr: result.stderr,
         logPath: logPath ?? undefined,
-      });
-      emitAiCommandJobUpdate(options.branch);
+      };
+      await persistJobSafely(currentJob);
+      resolveStartup();
     } catch (error) {
       const completedAt = new Date().toISOString();
-      const logPath = await options.writeLog({
+      const logPath = await writeLogSafely({
         fileName,
         jobId,
         repoRoot: options.repoRoot,
@@ -343,27 +396,35 @@ export async function startAiCommandJob(options: {
         worktreePath: options.worktreePath,
         renderedCommand: options.command,
         input: options.input,
-        stdout: (aiCommandJobsByBranch.get(options.branch) ?? job).stdout,
-        stderr: (aiCommandJobsByBranch.get(options.branch) ?? job).stderr,
+        stdout: currentJob.stdout,
+        stderr: currentJob.stderr,
         startedAt,
         completedAt,
-        pid: (aiCommandJobsByBranch.get(options.branch) ?? job).pid,
-        exitCode: (aiCommandJobsByBranch.get(options.branch) ?? job).exitCode,
-        processName: (aiCommandJobsByBranch.get(options.branch) ?? job).processName,
+        pid: currentJob.pid,
+        exitCode: currentJob.exitCode,
+        processName: currentJob.processName,
         error,
       });
 
-      aiCommandJobsByBranch.set(options.branch, {
-        ...(aiCommandJobsByBranch.get(options.branch) ?? job),
+      currentJob = {
+        ...currentJob,
         status: "failed",
         completedAt,
-        stderr: `${(aiCommandJobsByBranch.get(options.branch) ?? job).stderr}${error instanceof Error ? error.message : String(error)}`,
+        stderr: `${currentJob.stderr}${error instanceof Error ? error.message : String(error)}`,
         error: error instanceof Error ? error.message : String(error),
         logPath: logPath ?? undefined,
-      });
-      emitAiCommandJobUpdate(options.branch);
+      };
+      await persistJobSafely(currentJob);
+      resolveStartup();
     }
   })();
 
-  return cloneAiCommandJob(job)!;
+  await Promise.race([
+    startupObserved,
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, 50);
+    }),
+  ]);
+
+  return cloneAiCommandJob(currentJob)!;
 }

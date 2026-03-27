@@ -2,6 +2,7 @@ import type {
   AddProjectManagementCommentRequest,
   AppendProjectManagementBatchRequest,
   ApiStateResponse,
+  ApiStateStreamEvent,
   AiCommandLogResponse,
   AiCommandLogStreamEvent,
   AiCommandLogsResponse,
@@ -85,6 +86,36 @@ export function getState(): Promise<ApiStateResponse> {
   return request<ApiStateResponse>("/api/state");
 }
 
+export function subscribeToState(
+  onEvent: (event: ApiStateStreamEvent) => void,
+  onConnectionChange?: (connected: boolean) => void,
+): () => void {
+  let closed = false;
+  const source = new EventSource("/api/state/stream");
+
+  source.onopen = () => {
+    onConnectionChange?.(true);
+  };
+
+  source.onmessage = (event) => {
+    onConnectionChange?.(true);
+    onEvent(JSON.parse(event.data) as ApiStateStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+
+    onConnectionChange?.(false);
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
+}
+
 export function getConfigDocument(): Promise<ConfigDocumentResponse> {
   return request<ConfigDocumentResponse>("/api/config/document");
 }
@@ -145,9 +176,6 @@ export function subscribeToAiCommandJob(
     if (closed) {
       return;
     }
-
-    source.close();
-    onEvent({ type: "update", job: null });
   };
 
   return () => {
@@ -179,8 +207,6 @@ export function subscribeToAiCommandLog(
     if (closed) {
       return;
     }
-
-    source.close();
   };
 
   return () => {
@@ -348,13 +374,21 @@ export function disconnectTmuxClient(branch: string, clientId: string): Promise<
 }
 
 export function subscribeToShutdownStatus(onStatus: (status: ShutdownStatus) => void): () => void {
+  let closed = false;
   const source = new EventSource("/api/shutdown-status");
 
   source.onmessage = (event) => {
     onStatus(JSON.parse(event.data) as ShutdownStatus);
   };
 
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+  };
+
   return () => {
+    closed = true;
     source.close();
   };
 }
@@ -408,8 +442,6 @@ export function subscribeToBackgroundCommandLogs(
     if (closed) {
       return;
     }
-
-    source.close();
   };
 
   return () => {

@@ -127,7 +127,6 @@ export function Dashboard() {
     projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,
-    refresh,
     addProjectManagementComment,
     create,
     createProjectManagementDocument,
@@ -1263,13 +1262,12 @@ export function Dashboard() {
             onRunProjectManagementDocumentAi={async (payload) => runProjectManagementDocumentAi(payload.documentId, {
               input: payload.input,
               commandId: payload.commandId,
-            }).then(async (result) => {
+            }).then((result) => {
               if (!result) {
                 return null;
               }
 
               setSelectedBranch(result.job.branch);
-              await refresh({ silent: true });
               return result;
             })}
             onCancelProjectManagementDocumentAiCommand={async (branch) => cancelProjectManagementDocumentAi(branch)}

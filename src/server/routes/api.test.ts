@@ -15,10 +15,9 @@ import { createWorktree } from "../services/git-service.js";
 import { loadConfig, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { findRepoContext } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
-import { RuntimeStore } from "../state/runtime-store.js";
-import { ShutdownStatusService } from "../services/shutdown-status-service.js";
+import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
-import { clearAiCommandJobs, startAiCommandJob } from "../services/ai-command-service.js";
+import { startAiCommandJob } from "../services/ai-command-service.js";
 import { stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { startServer } from "../app.js";
@@ -47,6 +46,8 @@ interface FakeAiProcessSnapshot {
   pid?: number;
   exitCode?: number | null;
 }
+
+const testContextRepoRoots: string[] = [];
 
 function createFakeAiProcesses() {
   const queuedScripts: FakeAiProcessSnapshot[][] = [];
@@ -304,14 +305,15 @@ async function startApiServer(
 ) {
   const app = express();
   app.use(express.json());
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+  testContextRepoRoots.push(repo.repoRoot);
   app.use("/api", createApiRouter({
     repoRoot: repo.repoRoot,
     configPath: repo.configPath,
     configSourceRef: repo.configSourceRef,
     configFile: repo.configFile,
     configWorktreePath: repo.configWorktreePath,
-    runtimes: new RuntimeStore(),
-    shutdownStatus: new ShutdownStatusService(),
+    operationalState,
     onEnqueueProjectManagementAiJob: overrides?.onEnqueueProjectManagementAiJob,
     ...(overrides ?? {}),
   }));
@@ -404,8 +406,10 @@ async function startApiServer(
 }
 
 test.afterEach(async () => {
-  clearAiCommandJobs();
+  const repos = Array.from(new Set(testContextRepoRoots.splice(0, testContextRepoRoots.length)));
+  await Promise.all(repos.map((repoRoot) => stopOperationalStateStore(repoRoot)));
   await stopAllAiCommandJobManagers();
+  await stopAllOperationalStateStores();
 });
 
 test("GET /api/state returns favicon and preferred port config", async () => {
@@ -428,6 +432,72 @@ test("GET /api/state returns favicon and preferred port config", async () => {
     assert.equal(payload.config.preferredPort, 4900);
 
     await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/state/stream emits runtime updates after the runtime starts", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo, { aiLogStreamPollIntervalMs: 50 });
+    const stream = await openSse(`${await server.url()}/api/state/stream`);
+
+    try {
+      const snapshot = await stream.nextEvent() as unknown as { type: string; state: { worktrees: Array<{ branch: string; runtime?: { branch: string } }> } };
+      assert.equal(snapshot.type, "snapshot");
+      assert.equal(snapshot.state.worktrees.find((entry: { branch: string }) => entry.branch === "feature-ai-log")?.runtime, undefined);
+
+      const startResponse = await server.fetch(`/api/worktrees/${encodeURIComponent("feature-ai-log")}/runtime/start`, {
+        method: "POST",
+      });
+      assert.equal(startResponse.status, 200);
+
+      const update = await stream.nextEvent() as unknown as { type: string; state: { worktrees: Array<{ branch: string; runtime?: { branch: string } }> } };
+      assert.equal(update.type, "update");
+      const runtime = update.state.worktrees.find((entry: { branch: string }) => entry.branch === "feature-ai-log")?.runtime;
+      assert.ok(runtime);
+      assert.equal(runtime.branch, "feature-ai-log");
+    } finally {
+      await stream.close();
+      await server.close();
+    }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/state/stream replays persisted runtime state after a server restart", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const firstServer = await startApiServer(repo, { aiLogStreamPollIntervalMs: 50 });
+    const startResponse = await firstServer.fetch(`/api/worktrees/${encodeURIComponent("feature-ai-log")}/runtime/start`, {
+      method: "POST",
+    });
+    assert.equal(startResponse.status, 200);
+    await firstServer.close();
+
+    await stopOperationalStateStore(repo.repoRoot);
+
+    const secondServer = await startApiServer(repo, { aiLogStreamPollIntervalMs: 50 });
+    const stream = await openSse(`${await secondServer.url()}/api/state/stream`);
+
+    try {
+      const snapshot = await stream.nextEvent() as unknown as {
+        type: string;
+        state: { worktrees: Array<{ branch: string; runtime?: { branch: string; tmuxSession: string } }> };
+      };
+      assert.equal(snapshot.type, "snapshot");
+      const runtime = snapshot.state.worktrees.find((entry) => entry.branch === "feature-ai-log")?.runtime;
+      assert.ok(runtime);
+      assert.equal(runtime.branch, "feature-ai-log");
+      assert.match(runtime.tmuxSession, /feature-ai-log/);
+    } finally {
+      await stream.close();
+      await secondServer.close();
+    }
   } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
@@ -843,6 +913,7 @@ test("AI command settings save writes both schema hints and aiCommands", { concu
     assert.match(savedContents, /aiCommands:\n  smart: opencode run \$WTM_AI_INPUT --mode smart\n  simple: opencode run \$WTM_AI_INPUT --mode simple/);
   } finally {
     await server.close();
+    await new Promise((resolve) => setTimeout(resolve, 100));
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
 });

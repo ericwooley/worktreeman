@@ -11,9 +11,8 @@ import { stopAllAiCommandJobManagers } from "./services/ai-command-job-manager-s
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
-import { ShutdownStatusService } from "./services/shutdown-status-service.js";
+import { createOperationalStateStore } from "./services/operational-state-service.js";
 import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
-import { RuntimeStore } from "./state/runtime-store.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
 import type { ViteDevServer } from "vite";
@@ -31,8 +30,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     repoRoot: options.repo.repoRoot,
     gitFile: options.repo.configFile,
   });
-  const runtimes = new RuntimeStore();
-  const shutdownStatus = new ShutdownStatusService();
+  const operationalState = await createOperationalStateStore(options.repo.repoRoot);
   const app = express();
   const server = http.createServer(app);
   let terminalService: WebSocketServer | undefined;
@@ -65,8 +63,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     configSourceRef: options.repo.configSourceRef,
     configFile: options.repo.configFile,
     configWorktreePath: options.repo.configWorktreePath,
-    runtimes,
-    shutdownStatus,
+    operationalState,
   }));
   app.use("/api", (_req, res) => {
     res.status(404).json({
@@ -129,14 +126,14 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     closed = true;
     const logInfo = (message: string) => {
       process.stdout.write(`${message}\n`);
-      shutdownStatus.info(message);
+      void operationalState.appendShutdownInfo(message);
     };
     const logError = (message: string) => {
       process.stderr.write(`${message}\n`);
-      shutdownStatus.error(message);
+      void operationalState.appendShutdownError(message);
     };
 
-    shutdownStatus.begin("[shutdown] Closing worktreeman server...");
+    await operationalState.beginShutdown("[shutdown] Closing worktreeman server...");
     process.stdout.write("[shutdown] Closing worktreeman server...\n");
 
     await loadShutdownConfig().catch((error) => {
@@ -145,7 +142,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       );
     });
 
-    const activeRuntimes = runtimes.entries();
+    const activeRuntimes = await operationalState.listRuntimes();
     if (activeRuntimes.length > 0) {
       logInfo(`[shutdown] Stopping ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"}...`);
     }
@@ -171,7 +168,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
         );
       }
 
-      runtimes.delete(runtime.branch);
+      await operationalState.deleteRuntime(runtime.branch);
     }
 
     if (terminalService) {
@@ -216,7 +213,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     logInfo("[shutdown] Stopping AI job managers...");
     await stopAllAiCommandJobManagers();
 
-    shutdownStatus.complete("[shutdown] Shutdown complete.");
+    await operationalState.completeShutdown("[shutdown] Shutdown complete.");
     process.stdout.write("[shutdown] Shutdown complete.\n");
   };
 
@@ -272,7 +269,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
           repoRoot: options.repo.repoRoot,
           branch: worktree.branch,
           worktreePath: worktree.worktreePath,
-          runtime: runtimes.get(branch),
+          runtime: (await operationalState.getRuntime(branch)) ?? undefined,
         };
       },
     });
