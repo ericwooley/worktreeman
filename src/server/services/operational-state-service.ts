@@ -44,6 +44,7 @@ function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null {
     completedAt: job.completedAt,
     logPath: job.logPath,
     error: job.error,
+    outputEvents: job.outputEvents?.map((event) => ({ ...event })) ?? [],
     origin: job.origin
       ? {
           ...job.origin,

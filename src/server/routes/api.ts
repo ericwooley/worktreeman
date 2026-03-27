@@ -8,6 +8,7 @@ import type {
   AppendProjectManagementBatchRequest,
   AiCommandConfig,
   AiCommandId,
+  AiCommandOutputEvent,
   AiCommandOrigin,
   ApiStateResponse,
   ApiStateStreamEvent,
@@ -207,6 +208,7 @@ async function writeAiRequestLog(options: {
   input: string;
   stdout?: string;
   stderr?: string;
+  events?: AiCommandOutputEvent[];
   startedAt?: string;
   completedAt?: string;
   pid?: number | null;
@@ -237,6 +239,7 @@ async function writeAiRequestLog(options: {
     response: {
       stdout: options.stdout ?? "",
       stderr: options.stderr ?? "",
+      events: normalizeAiCommandOutputEvents(options.events),
     },
     error: options.error instanceof Error
       ? {
@@ -268,6 +271,7 @@ async function safeWriteAiRequestLog(options: {
   input: string;
   stdout?: string;
   stderr?: string;
+  events?: AiCommandOutputEvent[];
   startedAt?: string;
   completedAt?: string;
   pid?: number | null;
@@ -310,6 +314,72 @@ function toAiCommandLogError(error: unknown) {
   }
 
   return { message: String(error) };
+}
+
+function createAiCommandOutputEvent(source: "stdout" | "stderr", text: string, timestamp = new Date().toISOString()): AiCommandOutputEvent {
+  return {
+    id: randomUUID(),
+    source,
+    text,
+    timestamp,
+  };
+}
+
+function normalizeAiCommandOutputEvents(value: unknown): AiCommandOutputEvent[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const candidate = entry as { id?: unknown; source?: unknown; text?: unknown; timestamp?: unknown };
+    if ((candidate.source !== "stdout" && candidate.source !== "stderr") || typeof candidate.text !== "string") {
+      return [];
+    }
+
+    return [{
+      id: typeof candidate.id === "string" && candidate.id ? candidate.id : randomUUID(),
+      source: candidate.source,
+      text: candidate.text,
+      timestamp: typeof candidate.timestamp === "string" && candidate.timestamp ? candidate.timestamp : new Date().toISOString(),
+    }];
+  });
+}
+
+function appendAiCommandOutputEvents(events: AiCommandOutputEvent[] | undefined, source: "stdout" | "stderr", chunk: string): AiCommandOutputEvent[] {
+  if (!chunk) {
+    return events ? [...events] : [];
+  }
+
+  return [...(events ?? []), createAiCommandOutputEvent(source, chunk)];
+}
+
+function ensureAiCommandOutputEvents(options: {
+  events: unknown;
+  stdout: string;
+  stderr: string;
+  timestamp: string;
+  completedAt?: string;
+}): AiCommandOutputEvent[] {
+  const normalized = normalizeAiCommandOutputEvents(options.events);
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const fallback: AiCommandOutputEvent[] = [];
+  const baseTimestamp = options.timestamp || new Date().toISOString();
+  if (options.stdout) {
+    fallback.push(createAiCommandOutputEvent("stdout", options.stdout, baseTimestamp));
+  }
+
+  if (options.stderr) {
+    fallback.push(createAiCommandOutputEvent("stderr", options.stderr, options.completedAt ?? baseTimestamp));
+  }
+
+  return fallback;
 }
 
 function toAiCommandLogPreview(request: string): string {
@@ -725,17 +795,21 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
     exitCode?: unknown;
     processName?: unknown;
     request?: unknown;
-    response?: { stdout?: unknown; stderr?: unknown } | null;
+    response?: { stdout?: unknown; stderr?: unknown; events?: unknown } | null;
     error?: unknown;
   };
 
   const request = typeof parsed.request === "string" ? parsed.request : "";
   const error = toAiCommandLogError(parsed.error);
+  const timestamp = typeof parsed.timestamp === "string" ? parsed.timestamp : "";
+  const completedAt = typeof parsed.completedAt === "string" ? parsed.completedAt : undefined;
+  const stdout = typeof parsed.response?.stdout === "string" ? parsed.response.stdout : "";
+  const stderr = typeof parsed.response?.stderr === "string" ? parsed.response.stderr : "";
 
   return {
     jobId: typeof parsed.jobId === "string" ? parsed.jobId : fileName,
     fileName,
-    timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
+    timestamp,
     branch: typeof parsed.branch === "string" ? parsed.branch : "",
     documentId: typeof parsed.documentId === "string" ? parsed.documentId : null,
     commandId: parseAiCommandId(parsed.commandId),
@@ -744,14 +818,21 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
     command: typeof parsed.command === "string" ? parsed.command : "",
     request,
     response: {
-      stdout: typeof parsed.response?.stdout === "string" ? parsed.response.stdout : "",
-      stderr: typeof parsed.response?.stderr === "string" ? parsed.response.stderr : "",
+      stdout,
+      stderr,
+      events: ensureAiCommandOutputEvents({
+        events: parsed.response?.events,
+        stdout,
+        stderr,
+        timestamp,
+        completedAt,
+      }),
     },
     status: getAiCommandLogStatus(error, parsed.completedAt),
     pid: typeof parsed.pid === "number" ? parsed.pid : null,
     exitCode: typeof parsed.exitCode === "number" ? parsed.exitCode : parsed.exitCode === null ? null : undefined,
     processName: typeof parsed.processName === "string" ? parsed.processName : null,
-    completedAt: typeof parsed.completedAt === "string" ? parsed.completedAt : undefined,
+    completedAt,
     error,
   };
 }
@@ -821,6 +902,7 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
     completedAt: entry.completedAt,
     stdout: entry.response.stdout,
     stderr: entry.response.stderr,
+    outputEvents: entry.response.events?.map((event) => ({ ...event })) ?? [],
     pid: entry.pid,
     exitCode: entry.exitCode,
     processName: entry.processName,
@@ -858,6 +940,7 @@ async function reconcileAiCommandLogEntry(options: {
       input: options.entry.request,
       stdout: options.entry.response.stdout,
       stderr: options.entry.response.stderr,
+      events: options.entry.response.events,
       startedAt: options.entry.timestamp,
       completedAt,
       pid: options.entry.pid,
@@ -872,6 +955,23 @@ async function reconcileAiCommandLogEntry(options: {
   if (processInfo && options.aiProcesses.isProcessActive(processInfo.status)) {
     const logs = await options.aiProcesses.readProcessLogs(processInfo);
     const nextPid = processInfo.pid ?? options.entry.pid ?? null;
+    const nextEvents = appendAiCommandOutputEvents(
+      appendAiCommandOutputEvents(
+        options.entry.response.events,
+        "stdout",
+        logs.stdout.startsWith(options.entry.response.stdout)
+          ? logs.stdout.slice(options.entry.response.stdout.length)
+          : logs.stdout !== options.entry.response.stdout
+            ? logs.stdout.slice(Math.min(options.entry.response.stdout.length, logs.stdout.length))
+            : "",
+      ),
+      "stderr",
+      logs.stderr.startsWith(options.entry.response.stderr)
+        ? logs.stderr.slice(options.entry.response.stderr.length)
+        : logs.stderr !== options.entry.response.stderr
+          ? logs.stderr.slice(Math.min(options.entry.response.stderr.length, logs.stderr.length))
+          : "",
+    );
     const hasChanged = logs.stdout !== options.entry.response.stdout
       || logs.stderr !== options.entry.response.stderr
       || nextPid !== (options.entry.pid ?? null);
@@ -893,6 +993,7 @@ async function reconcileAiCommandLogEntry(options: {
       input: options.entry.request,
       stdout: logs.stdout,
       stderr: logs.stderr,
+      events: nextEvents,
       startedAt: options.entry.timestamp,
       completedAt: undefined,
       pid: nextPid,
@@ -926,6 +1027,23 @@ async function reconcileAiCommandLogEntry(options: {
     input: options.entry.request,
     stdout: logs.stdout || options.entry.response.stdout,
     stderr: logs.stderr || options.entry.response.stderr,
+    events: appendAiCommandOutputEvents(
+      appendAiCommandOutputEvents(
+        options.entry.response.events,
+        "stdout",
+        (logs.stdout || options.entry.response.stdout).startsWith(options.entry.response.stdout)
+          ? (logs.stdout || options.entry.response.stdout).slice(options.entry.response.stdout.length)
+          : (logs.stdout || options.entry.response.stdout) !== options.entry.response.stdout
+            ? (logs.stdout || options.entry.response.stdout).slice(Math.min(options.entry.response.stdout.length, (logs.stdout || options.entry.response.stdout).length))
+            : "",
+      ),
+      "stderr",
+      (logs.stderr || options.entry.response.stderr).startsWith(options.entry.response.stderr)
+        ? (logs.stderr || options.entry.response.stderr).slice(options.entry.response.stderr.length)
+        : (logs.stderr || options.entry.response.stderr) !== options.entry.response.stderr
+          ? (logs.stderr || options.entry.response.stderr).slice(Math.min(options.entry.response.stderr.length, (logs.stderr || options.entry.response.stderr).length))
+          : "",
+    ),
     startedAt: options.entry.timestamp,
     completedAt,
     pid: processInfo?.pid ?? options.entry.pid ?? null,
@@ -2551,10 +2669,33 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: req.params.branch,
           jobId: job.jobId,
           error: cancellationMessage,
+          outputEvents: appendAiCommandOutputEvents(job.outputEvents, "stderr", cancellationMessage),
         })
         : null;
 
-      if (!failedJob && persistedLog) {
+      if (failedJob) {
+        await safeWriteAiRequestLog({
+          fileName: failedJob.fileName,
+          jobId: failedJob.jobId,
+          repoRoot: options.repoRoot,
+          branch: failedJob.branch,
+          documentId: failedJob.documentId ?? null,
+          commandId: failedJob.commandId,
+          origin: failedJob.origin ?? null,
+          worktreePath: persistedLog?.worktreePath ?? job.branch,
+          renderedCommand: failedJob.command,
+          input: failedJob.input,
+          stdout: failedJob.stdout,
+          stderr: failedJob.stderr,
+          events: failedJob.outputEvents,
+          startedAt: failedJob.startedAt,
+          completedAt: failedJob.completedAt,
+          pid: failedJob.pid ?? null,
+          exitCode: failedJob.exitCode ?? null,
+          processName: failedJob.processName,
+          error: failedJob.error ? new Error(failedJob.error) : null,
+        });
+      } else if (persistedLog) {
         await safeWriteAiRequestLog({
           fileName: persistedLog.fileName,
           jobId: persistedLog.jobId,
@@ -2568,6 +2709,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           input: persistedLog.request,
           stdout: persistedLog.response.stdout,
           stderr: `${persistedLog.response.stderr}${cancellationMessage}`,
+          events: appendAiCommandOutputEvents(persistedLog.response.events, "stderr", cancellationMessage),
           startedAt: persistedLog.timestamp,
           completedAt: new Date().toISOString(),
           pid: persistedLog.pid ?? null,
@@ -2608,7 +2750,43 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         clearTimeout(fallbackTimer);
       }
 
-      const payload: RunAiCommandResponse = { job: failedJob ?? settledJob };
+      const finalJob = failedJob ?? settledJob;
+      try {
+        const resolvedLog = await readAiCommandLogEntry(options.repoRoot, finalJob.fileName);
+        const hasCancellationEvent = resolvedLog.response.events?.some(
+          (event) => event.source === "stderr" && /Cancellation requested by the user/.test(event.text),
+        ) ?? false;
+        const nextStderr = /Cancellation requested by the user/.test(resolvedLog.response.stderr)
+          ? resolvedLog.response.stderr
+          : `${resolvedLog.response.stderr}${cancellationMessage}`;
+        await safeWriteAiRequestLog({
+          fileName: resolvedLog.fileName,
+          jobId: resolvedLog.jobId,
+          repoRoot: options.repoRoot,
+          branch: resolvedLog.branch,
+          documentId: resolvedLog.documentId ?? null,
+          commandId: resolvedLog.commandId,
+          origin: resolvedLog.origin ?? null,
+          worktreePath: resolvedLog.worktreePath,
+          renderedCommand: resolvedLog.command,
+          input: resolvedLog.request,
+          stdout: resolvedLog.response.stdout,
+          stderr: nextStderr,
+          events: hasCancellationEvent
+            ? resolvedLog.response.events
+            : appendAiCommandOutputEvents(resolvedLog.response.events, "stderr", cancellationMessage),
+          startedAt: resolvedLog.timestamp,
+          completedAt: resolvedLog.completedAt ?? finalJob.completedAt ?? new Date().toISOString(),
+          pid: finalJob.pid ?? resolvedLog.pid ?? null,
+          exitCode: finalJob.exitCode ?? resolvedLog.exitCode ?? null,
+          processName: finalJob.processName ?? resolvedLog.processName ?? null,
+          error: new Error(cancellationMessage),
+        });
+      } catch {
+        // Best-effort persistence only; the cancellation response should still succeed.
+      }
+
+      const payload: RunAiCommandResponse = { job: finalJob };
       res.json(payload);
     } catch (error) {
       next(error);

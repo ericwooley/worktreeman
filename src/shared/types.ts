@@ -72,6 +72,13 @@ export interface BackgroundCommandLogLine {
   timestamp?: string;
 }
 
+export interface AiCommandOutputEvent {
+  id: string;
+  source: "stdout" | "stderr";
+  text: string;
+  timestamp: string;
+}
+
 export interface BackgroundCommandLogsResponse {
   commandName: string;
   lines: BackgroundCommandLogLine[];
@@ -441,6 +448,7 @@ export interface AiCommandJob {
   completedAt?: string;
   stdout: string;
   stderr: string;
+  outputEvents?: AiCommandOutputEvent[];
   pid?: number | null;
   exitCode?: number | null;
   processName?: string | null;
@@ -495,6 +503,7 @@ export interface AiCommandLogEntry {
   response: {
     stdout: string;
     stderr: string;
+    events?: AiCommandOutputEvent[];
   };
   status: AiCommandLogStatus;
   pid?: number | null;
