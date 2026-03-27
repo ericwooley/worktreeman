@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ProjectManagementDocument, ProjectManagementDocumentSummary } from "@shared/types";
+import type { ProjectManagementDocument, ProjectManagementDocumentSummary, WorktreeRecord } from "@shared/types";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementPanel } from "./project-management-panel";
 
@@ -56,6 +56,49 @@ const sampleDocument: ProjectManagementDocument = {
   comments: [],
 };
 
+const sampleWorktrees: WorktreeRecord[] = [
+  {
+    branch: "feature/doc-1-primary",
+    worktreePath: "/repo/.worktrees/feature-doc-1-primary",
+    isBare: false,
+    isDetached: false,
+    locked: false,
+    prunable: false,
+    linkedDocument: {
+      id: "doc-1",
+      number: 1,
+      title: "Dependencies",
+      summary: "Track prerequisite document work.",
+      status: "todo",
+      archived: false,
+    },
+  },
+  {
+    branch: "feature/doc-1-runtime",
+    worktreePath: "/repo/.worktrees/feature-doc-1-runtime",
+    isBare: false,
+    isDetached: false,
+    locked: false,
+    prunable: false,
+    linkedDocument: {
+      id: "doc-1",
+      number: 1,
+      title: "Dependencies",
+      summary: "Track prerequisite document work.",
+      status: "todo",
+      archived: false,
+    },
+    runtime: {
+      branch: "feature/doc-1-runtime",
+      worktreePath: "/repo/.worktrees/feature-doc-1-runtime",
+      env: {},
+      quickLinks: [],
+      allocatedPorts: {},
+      tmuxSession: "wtm-feature-doc-1-runtime",
+    },
+  },
+];
+
 const sampleHistory = [
   {
     commitSha: "abcdef1234567890",
@@ -81,6 +124,7 @@ test("create form renders without seeded defaults", () => {
   const markup = renderToStaticMarkup(
     <ProjectManagementPanel
       documents={[]}
+      worktrees={[]}
       availableTags={[]}
       availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
       activeSubTab="create"
@@ -94,6 +138,7 @@ test("create form renders without seeded defaults", () => {
       aiJob={null}
       documentRunJob={null}
       selectedWorktreeBranch={null}
+      onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
       onSelectDocument={async () => null}
@@ -125,6 +170,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
   const markup = renderToStaticMarkup(
     <ProjectManagementPanel
       documents={[...sampleDocuments]}
+      worktrees={sampleWorktrees}
       availableTags={["feature", "ux", "plan", "reference"]}
       availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
       activeSubTab="document"
@@ -138,6 +184,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       aiJob={null}
       documentRunJob={null}
       selectedWorktreeBranch={null}
+      onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
       onSelectDocument={async () => null}
@@ -158,12 +205,18 @@ test("document view shows dependency summary and modal entrypoint", () => {
   assert.match(markup, /Shared document list/);
   assert.match(markup, /1 dependency/);
   assert.match(markup, /Remove/);
+  assert.match(markup, /Linked worktrees/);
+  assert.match(markup, /feature\/doc-1-primary/);
+  assert.match(markup, /feature\/doc-1-runtime/);
+  assert.match(markup, /Make active/);
+  assert.match(markup, /runtime active/);
 });
 
 test("document view renders summary, comments, and comment attribution", () => {
   const markup = renderToStaticMarkup(
     <ProjectManagementPanel
       documents={[...sampleDocuments]}
+      worktrees={sampleWorktrees}
       availableTags={["feature", "ux", "plan", "reference"]}
       availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
       activeSubTab="document"
@@ -186,7 +239,8 @@ test("document view renders summary, comments, and comment attribution", () => {
       aiCommands={null}
       aiJob={null}
       documentRunJob={null}
-      selectedWorktreeBranch={null}
+      selectedWorktreeBranch="feature/doc-1-primary"
+      onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
       onSelectDocument={async () => null}
@@ -203,6 +257,8 @@ test("document view renders summary, comments, and comment attribution", () => {
   );
 
   assert.match(markup, />Summary</);
+  assert.match(markup, /Active worktree/);
+  assert.match(markup, /active worktree/);
   assert.match(markup, /Track prerequisite document work\./);
   assert.match(markup, /1 comment/);
   assert.match(markup, /Casey Reviewer/);

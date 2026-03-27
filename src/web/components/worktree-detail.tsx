@@ -368,6 +368,7 @@ interface WorktreeDetailProps {
   onSubscribeToBackgroundLogs: (branch: string, commandName: string) => () => void;
   onClearBackgroundLogs: () => void;
   projectManagementDocuments: ProjectManagementDocumentSummary[];
+  projectManagementWorktrees: WorktreeRecord[];
   projectManagementAvailableTags: string[];
   projectManagementAvailableStatuses: string[];
   projectManagementActiveSubTab: ProjectManagementSubTab;
@@ -461,6 +462,7 @@ export function WorktreeDetail({
   onSubscribeToBackgroundLogs,
   onClearBackgroundLogs,
   projectManagementDocuments,
+  projectManagementWorktrees,
   projectManagementAvailableTags,
   projectManagementAvailableStatuses,
   projectManagementActiveSubTab,
@@ -1269,6 +1271,7 @@ export function WorktreeDetail({
           >
             <ProjectManagementPanel
               documents={projectManagementDocuments}
+              worktrees={projectManagementWorktrees}
               availableTags={projectManagementAvailableTags}
               availableStatuses={projectManagementAvailableStatuses}
               activeSubTab={projectManagementActiveSubTab}
@@ -1282,6 +1285,7 @@ export function WorktreeDetail({
               aiJob={projectManagementAiJob}
               documentRunJob={projectManagementDocumentAiJob}
               selectedWorktreeBranch={worktree?.branch ?? null}
+              onSelectWorktree={onSelectWorktree}
               onSubTabChange={onProjectManagementSubTabChange}
               onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
               onSelectDocument={onLoadProjectManagementDocument}
