@@ -1095,6 +1095,49 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     return runtime;
   };
 
+  const stopWorktreeRuntime = async (branch: string): Promise<void> => {
+    const runtime = await options.operationalState.getRuntime(branch);
+    if (!runtime) {
+      return;
+    }
+
+    let stopError: unknown = null;
+
+    try {
+      await stopAllBackgroundCommands(branch, runtime.worktreePath);
+    } catch (error) {
+      stopError = error;
+    }
+
+    try {
+      await killTmuxSession(runtime);
+    } catch (error) {
+      stopError ??= error;
+    }
+
+    await options.operationalState.deleteRuntime(branch);
+
+    if (stopError) {
+      throw stopError;
+    }
+  };
+
+  const scheduleRuntimeStopAfterAiJob = (details: { branch: string; jobId: string; shouldStopRuntime: boolean }) => {
+    if (!details.shouldStopRuntime) {
+      return;
+    }
+
+    void waitForAiCommandJob(options.repoRoot, details.branch, details.jobId)
+      .catch(() => null)
+      .then(async () => {
+        try {
+          await stopWorktreeRuntime(details.branch);
+        } catch (error) {
+          console.error(`[ai-command] failed to stop runtime for ${details.branch} after AI completion`, error);
+        }
+      });
+  };
+
   const commitConfigEdit = async (message: string) => {
     const relativeConfigPath = options.configFile;
     const worktreePath = options.configWorktreePath;
@@ -2215,6 +2258,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     let input = "";
     let commandId: AiCommandId = "smart";
     let origin: AiCommandOrigin | null = null;
+    let stopAutoStartedRuntimeOnError = false;
 
     try {
       const config = await loadCurrentConfig();
@@ -2287,7 +2331,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await ensureWorktreeRuntime(config, worktree);
+      const existingRuntime = await options.operationalState.getRuntime(branch);
+      const runtime = existingRuntime ?? await ensureWorktreeRuntime(config, worktree);
+      stopAutoStartedRuntimeOnError = !existingRuntime;
       const backgroundCommands = await listBackgroundCommands(config, branch, worktreePath, runtime);
       const environmentContext = buildAiEnvironmentContext({
         repoRoot: options.repoRoot,
@@ -2319,10 +2365,22 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         commentDocumentId: documentId,
         commentRequestSummary: requestedChange,
       });
+      scheduleRuntimeStopAfterAiJob({
+        branch,
+        jobId: job.jobId,
+        shouldStopRuntime: stopAutoStartedRuntimeOnError,
+      });
+      stopAutoStartedRuntimeOnError = false;
 
       const payload: RunAiCommandResponse = { job, runtime };
       res.json(payload);
     } catch (error) {
+      if (stopAutoStartedRuntimeOnError && branch) {
+        await stopWorktreeRuntime(branch).catch((cleanupError) => {
+          console.error(`[ai-command] failed to stop runtime for ${branch} after project-management AI error`, cleanupError);
+        });
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       if (message.startsWith("Unknown project management document ")) {
         await writeImmediateAiFailureLog({
@@ -2436,6 +2494,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     let worktreePath = "";
     let commandId: AiCommandId = "smart";
     let origin: AiCommandOrigin | null = null;
+    let branch = req.params.branch;
+    let stopAutoStartedRuntimeOnError = false;
+    let explicitDocumentPayload: ProjectManagementDocumentResponse | null = null;
+    let documentsPayload: ProjectManagementListResponse | null = null;
 
     try {
       const config = await loadCurrentConfig();
@@ -2466,6 +2528,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       worktreePath = worktree.worktreePath;
+      branch = worktree.branch;
       origin = createWorktreeEnvironmentOrigin(worktree.branch);
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
@@ -2514,35 +2577,16 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await options.operationalState.getRuntime(worktree.branch);
-      const backgroundCommands = await listBackgroundCommands(config, worktree.branch, worktreePath, runtime ?? undefined);
-      const environmentContext = buildAiEnvironmentContext({
-        repoRoot: options.repoRoot,
-        config,
-        branch: worktree.branch,
-        worktreePath,
-        runtime: runtime ?? undefined,
-        backgroundCommands,
-      });
-
       if (explicitDocumentId) {
         try {
-          const documentPayload = await getProjectManagementDocument(options.repoRoot, explicitDocumentId);
-          const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
+          explicitDocumentPayload = await getProjectManagementDocument(options.repoRoot, explicitDocumentId);
+          documentsPayload = await listProjectManagementDocuments(options.repoRoot);
           origin = createProjectManagementDocumentOrigin({
             branch: worktree.branch,
-            document: documentPayload.document,
+            document: explicitDocumentPayload.document,
             kind: "project-management-document",
             label: "Project management document",
             viewMode: "edit",
-          });
-          input = buildProjectManagementAiPrompt({
-            branch: worktree.branch,
-            worktreePath,
-            requestedChange: input.trim(),
-            environmentContext,
-            document: documentPayload.document,
-            relatedDocuments: documentsPayload.documents,
           });
         } catch (error) {
           const reason = error instanceof Error ? error : new Error(String(error));
@@ -2578,6 +2622,30 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      const existingRuntime = await options.operationalState.getRuntime(worktree.branch);
+      const runtime = existingRuntime ?? await ensureWorktreeRuntime(config, worktree);
+      stopAutoStartedRuntimeOnError = !existingRuntime;
+      const backgroundCommands = await listBackgroundCommands(config, worktree.branch, worktreePath, runtime);
+      const environmentContext = buildAiEnvironmentContext({
+        repoRoot: options.repoRoot,
+        config,
+        branch: worktree.branch,
+        worktreePath,
+        runtime,
+        backgroundCommands,
+      });
+
+      if (explicitDocumentId && explicitDocumentPayload && documentsPayload) {
+        input = buildProjectManagementAiPrompt({
+          branch: worktree.branch,
+          worktreePath,
+          requestedChange: input.trim(),
+          environmentContext,
+          document: explicitDocumentPayload.document,
+          relatedDocuments: documentsPayload.documents,
+        });
+      }
+
       console.info(
         `[ai-command] starting branch=${worktree.branch} path=${worktree.worktreePath} input=${JSON.stringify(formatLogSnippet(input))}`,
       );
@@ -2589,14 +2657,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         });
       }
 
-      const env = runtime
-        ? buildRuntimeProcessEnv(runtime)
-        : {
-          ...process.env,
-          ...config.env,
-          WORKTREE_BRANCH: worktree.branch,
-          WORKTREE_PATH: worktree.worktreePath,
-        };
+      const env = buildRuntimeProcessEnv(runtime);
 
       renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
       const runDetails = {
@@ -2624,10 +2685,22 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           env: runDetails.env,
         })
         : await startAiProcessJob(runDetails);
+      scheduleRuntimeStopAfterAiJob({
+        branch: worktree.branch,
+        jobId: job.jobId,
+        shouldStopRuntime: stopAutoStartedRuntimeOnError,
+      });
+      stopAutoStartedRuntimeOnError = false;
 
-      const payload: RunAiCommandResponse = { job };
+      const payload: RunAiCommandResponse = { job, runtime };
       res.json(payload);
     } catch (error) {
+      if (stopAutoStartedRuntimeOnError && branch) {
+        await stopWorktreeRuntime(branch).catch((cleanupError) => {
+          console.error(`[ai-command] failed to stop runtime for ${branch} after AI error`, cleanupError);
+        });
+      }
+
       console.error(`[ai-command] failed branch=${req.params.branch}`, error);
       next(error);
     }
