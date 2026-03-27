@@ -17,6 +17,7 @@ import { useTheme } from "./theme-provider";
 import { WorktreeDetail, type WorktreeEnvironmentSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
+import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
 import {
@@ -170,6 +171,7 @@ export function Dashboard() {
   const { theme, themes, setThemeId, setPreviewThemeId, clearPreviewTheme } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
   const [activeTab, setActiveTab] = useState<DashboardActiveTab>(initialUrlState.activeTab);
+  const [aiActivitySubTab, setAiActivitySubTab] = useState<AiActivitySubTab>(initialUrlState.aiActivitySubTab);
   const [environmentSubTab, setEnvironmentSubTab] = useState<WorktreeEnvironmentSubTab>(initialUrlState.environmentSubTab);
   const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
     initialUrlState.projectManagementSubTab,
@@ -471,6 +473,12 @@ export function Dashboard() {
       params.delete("pmView");
     }
 
+    if (activeTab === "ai-log") {
+      params.set("aiTab", aiActivitySubTab);
+    } else {
+      params.delete("aiTab");
+    }
+
     if (isTerminalVisible) {
       params.set("terminal", "open");
     } else {
@@ -494,6 +502,7 @@ export function Dashboard() {
     window.history.pushState(null, "", nextUrl);
   }, [
     activeTab,
+    aiActivitySubTab,
     environmentSubTab,
     gitView,
     isTerminalVisible,
@@ -508,6 +517,7 @@ export function Dashboard() {
       const nextUrlState = readDashboardUrlState();
       setSelectedBranch(nextUrlState.selectedBranch);
       setActiveTab(nextUrlState.activeTab);
+      setAiActivitySubTab(nextUrlState.aiActivitySubTab);
       setEnvironmentSubTab(nextUrlState.environmentSubTab);
       setGitView(nextUrlState.gitView);
       setIsTerminalVisible(nextUrlState.isTerminalVisible);
@@ -845,10 +855,10 @@ export function Dashboard() {
       {
         id: "nav-project-management-ai-log",
         code: "npa",
-        title: "Open AI log tab",
-        subtitle: "Review live AI runs, saved output, and origin links.",
+        title: "Open AI tab",
+        subtitle: "Review active AI worktrees, saved output, and origin links.",
         group: "Navigation",
-        keywords: ["project", "management", "ai", "logs", "jobs"],
+        keywords: ["project", "management", "ai", "logs", "jobs", "worktrees"],
         badgeLabel: activeTab === "ai-log" ? "Active" : undefined,
         badgeTone: "active",
         action: () => navigateToTab("ai-log"),
@@ -1281,7 +1291,9 @@ export function Dashboard() {
             projectManagementAiLogDetail={aiCommandLogDetail}
             projectManagementAiLogsLoading={aiCommandLogsLoading}
             projectManagementRunningAiJobs={runningAiCommandJobs}
+            projectManagementAiActiveSubTab={aiActivitySubTab}
             onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
+            onProjectManagementAiSubTabChange={setAiActivitySubTab}
             onProjectManagementDocumentViewModeChange={setProjectManagementDocumentViewMode}
             onLoadProjectManagementDocuments={loadProjectManagementDocuments}
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}

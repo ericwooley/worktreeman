@@ -6,6 +6,7 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
   assert.deepEqual(readDashboardUrlState("?tab=shell&env=feature-one"), {
     selectedBranch: "feature-one",
     activeTab: "environment",
+    aiActivitySubTab: "log",
     environmentSubTab: "terminal",
     gitView: "graph",
     isTerminalVisible: false,
@@ -17,6 +18,7 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
   assert.deepEqual(readDashboardUrlState("?tab=background&terminal=open"), {
     selectedBranch: null,
     activeTab: "environment",
+    aiActivitySubTab: "log",
     environmentSubTab: "background",
     gitView: "graph",
     isTerminalVisible: true,
@@ -32,6 +34,7 @@ test("readDashboardUrlState reads nested environment and project management stat
     {
       selectedBranch: null,
       activeTab: "environment",
+      aiActivitySubTab: "log",
       environmentSubTab: "background",
       gitView: "diff",
       isTerminalVisible: false,
@@ -42,12 +45,13 @@ test("readDashboardUrlState reads nested environment and project management stat
   );
 });
 
-test("readDashboardUrlState reads the top-level AI log tab while preserving nested project management context", () => {
+test("readDashboardUrlState reads the top-level AI tab and active-worktrees sub tab while preserving nested project management context", () => {
   assert.deepEqual(
-    readDashboardUrlState("?tab=ai-log&pmTab=history&pmDoc=doc-9&pmView=edit"),
+    readDashboardUrlState("?tab=ai-log&aiTab=active-worktrees&pmTab=history&pmDoc=doc-9&pmView=edit"),
     {
       selectedBranch: null,
       activeTab: "ai-log",
+      aiActivitySubTab: "active-worktrees",
       environmentSubTab: "terminal",
       gitView: "graph",
       isTerminalVisible: false,
@@ -56,4 +60,8 @@ test("readDashboardUrlState reads the top-level AI log tab while preserving nest
       projectManagementDocumentViewMode: "edit",
     },
   );
+});
+
+test("readDashboardUrlState defaults AI sub tab to log", () => {
+  assert.equal(readDashboardUrlState("?tab=ai-log").aiActivitySubTab, "log");
 });

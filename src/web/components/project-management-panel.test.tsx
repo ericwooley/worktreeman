@@ -156,9 +156,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     ...overrides,
   };
 
-  return renderToStaticMarkup(
-    <ProjectManagementPanel {...props} />,
-  );
+  return renderToStaticMarkup(<ProjectManagementPanel {...props} />);
 }
 
 test("create form renders without seeded defaults", () => {

@@ -1,4 +1,5 @@
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
+import type { AiActivitySubTab } from "./project-management-ai-tab";
 import type { WorktreeEnvironmentSubTab } from "./worktree-detail";
 
 export type DashboardActiveTab = "environment" | "git" | "project-management" | "ai-log";
@@ -6,6 +7,7 @@ export type DashboardActiveTab = "environment" | "git" | "project-management" | 
 export interface DashboardUrlState {
   selectedBranch: string | null;
   activeTab: DashboardActiveTab;
+  aiActivitySubTab: AiActivitySubTab;
   environmentSubTab: WorktreeEnvironmentSubTab;
   gitView: "diff" | "graph";
   isTerminalVisible: boolean;
@@ -31,6 +33,10 @@ export function parseWorktreeEnvironmentSubTab(value: string | null): WorktreeEn
   return value === "background" ? "background" : "terminal";
 }
 
+export function parseAiActivitySubTab(value: string | null): AiActivitySubTab {
+  return value === "active-worktrees" ? "active-worktrees" : "log";
+}
+
 export function readDashboardUrlState(search: string = typeof window === "undefined" ? "" : window.location.search): DashboardUrlState {
   const params = new URLSearchParams(search);
   const tab = params.get("tab");
@@ -45,6 +51,7 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
   return {
     selectedBranch: params.get("env"),
     activeTab,
+    aiActivitySubTab: parseAiActivitySubTab(params.get("aiTab")),
     environmentSubTab: tab === "background"
       ? "background"
       : tab === "shell"
