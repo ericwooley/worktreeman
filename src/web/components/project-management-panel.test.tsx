@@ -124,6 +124,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
   return renderToStaticMarkup(
     <ProjectManagementPanel
       documents={[...sampleDocuments]}
+      worktrees={sampleWorktrees}
       availableTags={["feature", "ux", "plan", "reference"]}
       availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
       activeSubTab="document"
@@ -140,6 +141,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
       aiJob={null}
       documentRunJob={null}
       selectedWorktreeBranch={null}
+      onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
       onSelectDocument={async () => null}

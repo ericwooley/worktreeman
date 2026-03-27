@@ -151,7 +151,7 @@ interface ProjectManagementAiOutputViewerProps {
   onOpenModal?: () => void;
 }
 
-function ProjectManagementAiOutputViewer({
+export function ProjectManagementAiOutputViewer({
   source,
   job,
   summary,
