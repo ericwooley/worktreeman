@@ -40,6 +40,16 @@ export interface EnvSyncResponse {
   copiedFiles: string[];
 }
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -51,7 +61,7 @@ async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(payload?.message ?? `Request failed with status ${response.status}`);
+    throw new ApiError(payload?.message ?? `Request failed with status ${response.status}`, response.status);
   }
 
   if (response.status === 204) {

@@ -69,6 +69,10 @@ import {
   updateProjectManagementStatus as updateProjectManagementStatusRequest,
   type EnvSyncResponse,
 } from "../lib/api";
+import {
+  buildProjectManagementStatusFallbackPayload,
+  shouldFallbackProjectManagementStatusUpdate,
+} from "../lib/project-management-status-update";
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
 
@@ -884,7 +888,23 @@ export function useDashboardState() {
       async updateProjectManagementStatus(documentId: string, payload: UpdateProjectManagementStatusRequest) {
         setProjectManagementSaving(true);
         try {
-          const response = await updateProjectManagementStatusRequest(documentId, payload);
+          let response;
+          try {
+            response = await updateProjectManagementStatusRequest(documentId, payload);
+          } catch (err) {
+            if (shouldFallbackProjectManagementStatusUpdate(err)) {
+              const currentDocument = projectManagementDocument?.id === documentId
+                ? projectManagementDocument
+                : (await fetchProjectManagementDocument(documentId)).document;
+
+              response = await updateProjectManagementDocumentRequest(
+                documentId,
+                buildProjectManagementStatusFallbackPayload(currentDocument, payload.status),
+              );
+            } else {
+              throw err;
+            }
+          }
           await loadProjectManagementDocumentsState({ silent: true });
           setProjectManagementDocument(response.document);
           const history = await fetchProjectManagementHistory(documentId);
