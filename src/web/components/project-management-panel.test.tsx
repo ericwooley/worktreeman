@@ -77,6 +77,43 @@ const sampleHistory = [
   },
 ];
 
+function renderProjectManagementPanel(overrides: Partial<Parameters<typeof ProjectManagementPanel>[0]> = {}) {
+  return renderToStaticMarkup(
+    <ProjectManagementPanel
+      documents={[...sampleDocuments]}
+      availableTags={["feature", "ux", "plan", "reference"]}
+      availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      activeSubTab="document"
+      selectedDocumentId="doc-1"
+      documentViewMode="document"
+      document={sampleDocument}
+      history={sampleHistory}
+      loading={false}
+      saving={false}
+      aiCommands={{
+        smart: "runner --prompt $WTM_AI_INPUT",
+        simple: "runner --fast $WTM_AI_INPUT",
+      }}
+      aiJob={null}
+      documentRunJob={null}
+      selectedWorktreeBranch={null}
+      onSubTabChange={() => undefined}
+      onDocumentViewModeChange={() => undefined}
+      onSelectDocument={async () => null}
+      onCreateDocument={async () => null}
+      onUpdateDocument={async () => null}
+      onUpdateDependencies={async () => null}
+      onUpdateStatus={async () => null}
+      onAddComment={async () => null}
+      onRunAiCommand={async () => null}
+      onRunDocumentAi={async () => null}
+      onCancelDocumentAiCommand={async () => null}
+      onCancelAiCommand={async () => null}
+      {...overrides}
+    />,
+  );
+}
+
 test("create form renders without seeded defaults", () => {
   const markup = renderToStaticMarkup(
     <ProjectManagementPanel
@@ -234,4 +271,52 @@ test("dependency picker modal renders current dependencies and searchable docume
   assert.match(markup, /Graph fallback/);
   assert.match(markup, /selected/);
   assert.match(markup, /type="checkbox"/);
+});
+
+test("document worktree run in another branch does not lock this worktree UI", () => {
+  const markup = renderProjectManagementPanel({
+    documentRunJob: {
+      jobId: "job-1",
+      fileName: "job-1.log",
+      branch: "pm-doc-1-dependencies",
+      documentId: "doc-1",
+      commandId: "smart",
+      command: "runner --prompt $WTM_AI_INPUT",
+      input: "Implement the document",
+      status: "running",
+      startedAt: "2026-03-26T10:00:00.000Z",
+      stdout: "",
+      stderr: "",
+    },
+    selectedWorktreeBranch: "feature/current-worktree",
+  });
+
+  assert.match(markup, />Start Worktree AI</);
+  assert.doesNotMatch(markup, /Start Worktree AI \(running\)/);
+  assert.doesNotMatch(markup, /Document worktree AI run in progress/);
+  assert.doesNotMatch(markup, /Streaming live output from pm-doc-1-dependencies while the worktree run is active\./);
+});
+
+test("document worktree run in the selected branch shows running state and controls", () => {
+  const markup = renderProjectManagementPanel({
+    documentRunJob: {
+      jobId: "job-2",
+      fileName: "job-2.log",
+      branch: "pm-doc-1-dependencies",
+      documentId: "doc-1",
+      commandId: "smart",
+      command: "runner --prompt $WTM_AI_INPUT",
+      input: "Implement the document",
+      status: "running",
+      startedAt: "2026-03-26T10:05:00.000Z",
+      stdout: "",
+      stderr: "",
+    },
+    selectedWorktreeBranch: "pm-doc-1-dependencies",
+  });
+
+  assert.match(markup, /Start Worktree AI \(running\)/);
+  assert.match(markup, /Document worktree AI run in progress/);
+  assert.match(markup, /Cancel worktree AI/);
+  assert.match(markup, /Streaming live output from pm-doc-1-dependencies while the worktree run is active\./);
 });
