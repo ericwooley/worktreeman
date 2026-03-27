@@ -31,6 +31,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     gitFile: options.repo.configFile,
   });
   const operationalState = await createOperationalStateStore(options.repo.repoRoot);
+  await operationalState.resetShutdownStatus();
   const app = express();
   const server = http.createServer(app);
   let terminalService: WebSocketServer | undefined;
