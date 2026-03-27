@@ -7,6 +7,7 @@ import type {
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
   RunAiCommandResponse,
+  WorktreeRecord,
 } from "@shared/types";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { marked } from "marked";
@@ -43,6 +44,7 @@ export type ProjectManagementDocumentViewMode = "document" | "edit";
 
 interface ProjectManagementPanelProps {
   documents: ProjectManagementDocumentSummary[];
+  worktrees: WorktreeRecord[];
   availableTags: string[];
   availableStatuses: string[];
   activeSubTab: ProjectManagementSubTab;
@@ -56,6 +58,7 @@ interface ProjectManagementPanelProps {
   aiJob: AiCommandJob | null;
   documentRunJob: AiCommandJob | null;
   selectedWorktreeBranch: string | null;
+  onSelectWorktree: (branch: string) => void;
   onSubTabChange: (tab: ProjectManagementSubTab) => void;
   onDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
   onSelectDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
@@ -225,6 +228,7 @@ function ProjectManagementAiOutputViewer({
 
 export function ProjectManagementPanel({
   documents,
+  worktrees,
   availableTags,
   availableStatuses,
   activeSubTab,
@@ -238,6 +242,7 @@ export function ProjectManagementPanel({
   aiJob,
   documentRunJob,
   selectedWorktreeBranch,
+  onSelectWorktree,
   onSubTabChange,
   onDocumentViewModeChange,
   onSelectDocument,
@@ -548,6 +553,12 @@ export function ProjectManagementPanel({
   const currentDependencyDocuments = useMemo(
     () => dependencySelection.map((dependencyId) => dependencyDocumentMap.get(dependencyId)).filter((entry): entry is ProjectManagementDocumentSummary => Boolean(entry)),
     [dependencyDocumentMap, dependencySelection],
+  );
+  const linkedWorktrees = useMemo(
+    () => document
+      ? worktrees.filter((entry) => entry.linkedDocument?.id === document.id)
+      : [],
+    [document, worktrees],
   );
 
   async function handleDependencySelectionToggle(dependencyId: string) {
@@ -936,6 +947,49 @@ export function ProjectManagementPanel({
                 ) : document ? (
                   <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
                     <div className="space-y-3">
+                      <div className="border theme-border-subtle p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Linked worktrees</p>
+                            <p className="mt-1 text-sm theme-text-muted">Open the linked branch context for this document without leaving the document view.</p>
+                          </div>
+                          <MatrixBadge tone="neutral" compact>{linkedWorktrees.length} worktree{linkedWorktrees.length === 1 ? "" : "s"}</MatrixBadge>
+                        </div>
+                        <div className="mt-3 space-y-2">
+                          {linkedWorktrees.length ? linkedWorktrees.map((entry) => {
+                            const isActiveWorktree = selectedWorktreeBranch === entry.branch;
+
+                            return (
+                              <div key={entry.branch} className="border theme-border-subtle px-3 py-3">
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="font-mono text-sm theme-text-strong">{entry.branch}</p>
+                                      <MatrixBadge tone={entry.runtime ? "active" : "neutral"} compact>
+                                        {entry.runtime ? "runtime active" : "idle"}
+                                      </MatrixBadge>
+                                      {isActiveWorktree ? <MatrixBadge tone="warning" compact>active worktree</MatrixBadge> : null}
+                                    </div>
+                                    <p className="mt-2 break-all text-[11px] theme-text-muted">{entry.worktreePath}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="matrix-button rounded-none px-3 py-2 text-sm"
+                                    disabled={isActiveWorktree}
+                                    onClick={() => onSelectWorktree(entry.branch)}
+                                  >
+                                    {isActiveWorktree ? "Active worktree" : "Make active"}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }) : (
+                            <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                              No linked worktrees yet.
+                            </div>
+                          )}
+                        </div>
+                      </div>
                       <div className="border theme-border-subtle p-4">
                         <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Summary</p>
                         <p className="mt-2 whitespace-pre-wrap text-sm theme-text-muted">

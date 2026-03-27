@@ -1219,6 +1219,7 @@ export function Dashboard() {
             onSubscribeToBackgroundLogs={subscribeToBackgroundLogs}
             onClearBackgroundLogs={clearBackgroundLogs}
             projectManagementDocuments={projectManagement?.documents ?? []}
+            projectManagementWorktrees={visibleWorktrees}
             projectManagementAvailableTags={projectManagement?.availableTags ?? []}
             projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
             projectManagementActiveSubTab={projectManagementSubTab}
