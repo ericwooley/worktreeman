@@ -20,6 +20,11 @@ import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from 
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
+import {
+  buildAiJobNotification,
+  requestBrowserNotificationPermission,
+  shouldNotifyAiJobCompletion,
+} from "../lib/browser-notifications";
 
 const CREATE_WORKTREE_OPTION_VALUE = "__create_worktree__";
 const COMMAND_PALETTE_SHORTCUT_STORAGE_KEY = "worktreeman.commandPaletteShortcut";
@@ -193,6 +198,8 @@ export function Dashboard() {
   const lastTerminalFocusedElementRef = useRef<HTMLElement | null>(null);
   const lastTerminalShortcutAtRef = useRef(0);
   const hasCommittedDashboardHistoryRef = useRef(false);
+  const previousAiCommandJobRef = useRef(aiCommandJob);
+  const previousProjectManagementDocumentAiJobRef = useRef(projectManagementDocumentAiJob);
   const [commandPaletteShortcut, setCommandPaletteShortcut] = useState(() => {
     if (typeof window === "undefined") {
       return DEFAULT_COMMAND_PALETTE_SHORTCUT;
@@ -534,6 +541,47 @@ export function Dashboard() {
   useEffect(() => {
     void loadAiCommandSettings({ silent: true });
   }, [loadAiCommandSettings]);
+
+  const maybeNotifyAiJobCompletion = useCallback((previousJob: typeof aiCommandJob, nextJob: typeof aiCommandJob) => {
+    if (typeof window === "undefined" || typeof document === "undefined" || typeof window.Notification === "undefined" || !nextJob) {
+      return;
+    }
+
+    if (!shouldNotifyAiJobCompletion({
+      previousJob,
+      nextJob,
+      permission: window.Notification.permission,
+      attentionState: {
+        visibilityState: document.visibilityState,
+        hasFocus: document.hasFocus(),
+      },
+    })) {
+      return;
+    }
+
+    try {
+      const payload = buildAiJobNotification(nextJob);
+      const notification = new window.Notification(payload.title, {
+        body: payload.body,
+        tag: payload.tag,
+      });
+      notification.onclick = () => {
+        window.focus();
+      };
+    } catch {
+      // Ignore notification failures from unsupported browser states.
+    }
+  }, []);
+
+  useEffect(() => {
+    maybeNotifyAiJobCompletion(previousAiCommandJobRef.current, aiCommandJob);
+    previousAiCommandJobRef.current = aiCommandJob;
+  }, [aiCommandJob, maybeNotifyAiJobCompletion]);
+
+  useEffect(() => {
+    maybeNotifyAiJobCompletion(previousProjectManagementDocumentAiJobRef.current, projectManagementDocumentAiJob);
+    previousProjectManagementDocumentAiJobRef.current = projectManagementDocumentAiJob;
+  }, [maybeNotifyAiJobCompletion, projectManagementDocumentAiJob]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1266,23 +1314,29 @@ export function Dashboard() {
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
             projectManagementDocumentAiJob={projectManagementDocumentAiJob}
             onRunProjectManagementAiCommand={async (payload) => {
+              await requestBrowserNotificationPermission(typeof window === "undefined" ? null : window.Notification);
+
               if (!selected?.branch) {
                 return null;
               }
 
               return runAiCommand(selected.branch, payload);
             }}
-            onRunProjectManagementDocumentAi={async (payload) => runProjectManagementDocumentAi(payload.documentId, {
-              input: payload.input,
-              commandId: payload.commandId,
-            }).then((result) => {
-              if (!result) {
-                return null;
-              }
+            onRunProjectManagementDocumentAi={async (payload) => {
+              await requestBrowserNotificationPermission(typeof window === "undefined" ? null : window.Notification);
 
-              setSelectedBranch(result.job.branch);
-              return result;
-            })}
+              return runProjectManagementDocumentAi(payload.documentId, {
+                input: payload.input,
+                commandId: payload.commandId,
+              }).then((result) => {
+                if (!result) {
+                  return null;
+                }
+
+                setSelectedBranch(result.job.branch);
+                return result;
+              });
+            }}
             onCancelProjectManagementDocumentAiCommand={async (branch) => cancelProjectManagementDocumentAi(branch)}
             onCancelProjectManagementAiCommand={async () => {
               if (!selected?.branch) {
