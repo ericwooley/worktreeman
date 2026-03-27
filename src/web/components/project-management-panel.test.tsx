@@ -121,39 +121,43 @@ const sampleHistory = [
 ];
 
 function renderProjectManagementPanel(overrides: Partial<Parameters<typeof ProjectManagementPanel>[0]> = {}) {
+  const props: Parameters<typeof ProjectManagementPanel>[0] = {
+    documents: [...sampleDocuments],
+    worktrees: sampleWorktrees,
+    availableTags: ["feature", "ux", "plan", "reference"],
+    availableStatuses: ["backlog", "todo", "in-progress", "blocked", "done", "reference"],
+    activeSubTab: "document",
+    selectedDocumentId: "doc-1",
+    documentViewMode: "document",
+    document: sampleDocument,
+    history: sampleHistory,
+    loading: false,
+    saving: false,
+    aiCommands: {
+      smart: "runner --prompt $WTM_AI_INPUT",
+      simple: "runner --fast $WTM_AI_INPUT",
+    },
+    aiJob: null,
+    documentRunJob: null,
+    selectedWorktreeBranch: null,
+    onSelectWorktree: () => undefined,
+    onSubTabChange: () => undefined,
+    onDocumentViewModeChange: () => undefined,
+    onSelectDocument: async () => null,
+    onCreateDocument: async () => null,
+    onUpdateDocument: async () => null,
+    onUpdateDependencies: async () => null,
+    onUpdateStatus: async () => null,
+    onAddComment: async () => null,
+    onRunAiCommand: async () => null,
+    onRunDocumentAi: async () => null,
+    onCancelDocumentAiCommand: async () => null,
+    onCancelAiCommand: async () => null,
+    ...overrides,
+  };
+
   return renderToStaticMarkup(
-    <ProjectManagementPanel
-      documents={[...sampleDocuments]}
-      availableTags={["feature", "ux", "plan", "reference"]}
-      availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
-      activeSubTab="document"
-      selectedDocumentId="doc-1"
-      documentViewMode="document"
-      document={sampleDocument}
-      history={sampleHistory}
-      loading={false}
-      saving={false}
-      aiCommands={{
-        smart: "runner --prompt $WTM_AI_INPUT",
-        simple: "runner --fast $WTM_AI_INPUT",
-      }}
-      aiJob={null}
-      documentRunJob={null}
-      selectedWorktreeBranch={null}
-      onSubTabChange={() => undefined}
-      onDocumentViewModeChange={() => undefined}
-      onSelectDocument={async () => null}
-      onCreateDocument={async () => null}
-      onUpdateDocument={async () => null}
-      onUpdateDependencies={async () => null}
-      onUpdateStatus={async () => null}
-      onAddComment={async () => null}
-      onRunAiCommand={async () => null}
-      onRunDocumentAi={async () => null}
-      onCancelDocumentAiCommand={async () => null}
-      onCancelAiCommand={async () => null}
-      {...overrides}
-    />,
+    <ProjectManagementPanel {...props} />,
   );
 }
 
