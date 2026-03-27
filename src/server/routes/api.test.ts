@@ -707,6 +707,83 @@ test("DELETE /api/worktrees/:branch deletes the branch by default", async () => 
   }
 });
 
+test("DELETE /api/worktrees/:branch removes leftover files when git worktree remove leaves the directory behind", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const config = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const worktree = await createWorktree(repo.repoRoot, config, { branch: "feature-delete-leftovers" });
+    await fs.mkdir(path.join(worktree.worktreePath, ".nested-cache"), { recursive: true });
+    await fs.writeFile(path.join(worktree.worktreePath, ".nested-cache", "keepalive.sock"), "busy\n", "utf8");
+
+    const server = await startApiServer(repo);
+
+    const response = await server.fetch("/api/worktrees/feature-delete-leftovers", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmWorktreeName: "feature-delete-leftovers",
+      }),
+    });
+
+    assert.equal(response.status, 204);
+    await waitForPathToDisappear(worktree.worktreePath);
+
+    const branchList = await runCommand("git", ["branch", "--list", "feature-delete-leftovers"], {
+      cwd: repo.repoRoot,
+    });
+    assert.equal(branchList.stdout.trim(), "");
+
+    const worktreeList = await runCommand("git", ["worktree", "list", "--porcelain"], {
+      cwd: repo.repoRoot,
+    });
+    assert.doesNotMatch(worktreeList.stdout, /feature-delete-leftovers/);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/git/compare ignores broken worktree directories left in git metadata", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const config = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const brokenWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-broken-compare" });
+    await fs.rm(brokenWorktree.worktreePath, { recursive: true, force: true });
+
+    const server = await startApiServer(repo);
+    const response = await server.fetch("/api/git/compare?compareBranch=feature-ai-log&baseBranch=main");
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      compareBranch: string;
+      workingTreeSummary: { dirty: boolean; conflicted: boolean; changedFiles: number };
+      workingTreeDiff: string;
+      branches: Array<{ name: string }>;
+    };
+
+    assert.equal(payload.compareBranch, "feature-ai-log");
+    assert.equal(payload.workingTreeSummary.dirty, false);
+    assert.equal(payload.workingTreeSummary.conflicted, false);
+    assert.equal(payload.workingTreeSummary.changedFiles, 0);
+    assert.equal(payload.workingTreeDiff, "");
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("POST /api/worktrees persists an optional linked project-management document", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
 
