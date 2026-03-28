@@ -1066,6 +1066,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   };
   const aiProcessPollIntervalMs = options.aiProcessPollIntervalMs ?? 250;
   const aiLogStreamPollIntervalMs = options.aiLogStreamPollIntervalMs ?? 500;
+  const aiJobReadOptions = {
+    aiProcesses: {
+      getProcess: aiProcesses.getProcess,
+      readProcessLogs: aiProcesses.readProcessLogs,
+      isProcessActive: aiProcesses.isProcessActive,
+    },
+  };
 
   const loadCurrentConfig = () => loadConfig({
     path: options.configPath,
@@ -1626,7 +1633,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.get("/worktrees/:branch/ai-command/stream", async (req, res, next) => {
     try {
       const branch = req.params.branch;
-      let currentJob = await getAiCommandJob(options.repoRoot, branch);
+      let currentJob = await getAiCommandJob(options.repoRoot, branch, aiJobReadOptions);
       let lastPayload = JSON.stringify(currentJob);
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -1651,7 +1658,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         }
 
         polling = true;
-        void getAiCommandJob(options.repoRoot, branch)
+        void getAiCommandJob(options.repoRoot, branch, aiJobReadOptions)
           .then((nextJob) => {
             currentJob = nextJob;
             const nextPayload = JSON.stringify(nextJob);
@@ -2326,7 +2333,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
 
       worktreePath = worktree.worktreePath;
-      if ((await getAiCommandJob(options.repoRoot, branch))?.status === "running") {
+      if ((await getAiCommandJob(options.repoRoot, branch, aiJobReadOptions))?.status === "running") {
         res.status(409).json({ message: `AI command already running for ${branch}.` });
         return;
       }
@@ -2617,7 +2624,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         }
       }
 
-      if ((await getAiCommandJob(options.repoRoot, worktree.branch))?.status === "running") {
+      if ((await getAiCommandJob(options.repoRoot, worktree.branch, aiJobReadOptions))?.status === "running") {
         res.status(409).json({ message: `AI command already running for ${worktree.branch}.` });
         return;
       }
@@ -2708,7 +2715,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/ai-command/cancel", async (req, res, next) => {
     try {
-      const inMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch);
+      const inMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch, aiJobReadOptions);
       const persistedLog = (await Promise.all(
         (await listAiCommandLogEntries(options.repoRoot)).map((entry) => reconcileAiCommandLogEntry({
           entry,
@@ -2799,7 +2806,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           fallbackTimer = setTimeout(() => {
             void (async () => {
               try {
-                const nextInMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch);
+                const nextInMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch, aiJobReadOptions);
                 if (nextInMemoryJob) {
                   resolve(nextInMemoryJob);
                   return;

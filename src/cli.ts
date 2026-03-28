@@ -85,28 +85,61 @@ const startCommand = command({
     );
 
     let shuttingDown = false;
-    const shutdown = async () => {
+    const cleanupListeners = () => {
+      process.off("SIGINT", handleSigint);
+      process.off("SIGTERM", handleSigterm);
+      process.off("SIGHUP", handleSighup);
+      process.off("uncaughtException", handleUncaughtException);
+      process.off("unhandledRejection", handleUnhandledRejection);
+    };
+
+    const shutdown = async (reason: string, exitCode: number) => {
       if (shuttingDown) {
         process.stdout.write("[shutdown] Shutdown already in progress...\n");
         return;
       }
 
       shuttingDown = true;
-      process.stdout.write("[shutdown] Received shutdown signal.\n");
+      process.stdout.write(`${reason}\n`);
 
       try {
         await server.close();
-        process.exit(0);
+        cleanupListeners();
+        process.exit(exitCode);
       } catch (error) {
         process.stderr.write(
           `[shutdown] Shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`,
         );
+        cleanupListeners();
         process.exit(1);
       }
     };
 
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
+    const handleSigint = () => {
+      void shutdown("[shutdown] Received SIGINT.", 0);
+    };
+    const handleSigterm = () => {
+      void shutdown("[shutdown] Received SIGTERM.", 0);
+    };
+    const handleSighup = () => {
+      void shutdown("[shutdown] Received SIGHUP.", 0);
+    };
+    const handleUncaughtException = (error: Error) => {
+      process.stderr.write(`[shutdown] Uncaught exception: ${error.message}\n`);
+      void shutdown("[shutdown] Closing server after uncaught exception.", 1);
+    };
+    const handleUnhandledRejection = (reason: unknown) => {
+      process.stderr.write(
+        `[shutdown] Unhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}\n`,
+      );
+      void shutdown("[shutdown] Closing server after unhandled rejection.", 1);
+    };
+
+    process.on("SIGINT", handleSigint);
+    process.on("SIGTERM", handleSigterm);
+    process.on("SIGHUP", handleSighup);
+    process.on("uncaughtException", handleUncaughtException);
+    process.on("unhandledRejection", handleUnhandledRejection);
   },
 });
 

@@ -8,10 +8,12 @@ import open from "open";
 import { DEFAULT_WORKTREEMAN_MAIN_BRANCH } from "../shared/constants.js";
 import { createApiRouter } from "./routes/api.js";
 import { stopAllAiCommandJobManagers } from "./services/ai-command-job-manager-service.js";
+import { reconcileInterruptedAiCommandJobs } from "./services/ai-command-service.js";
+import { stopAllAiCommandProcesses } from "./services/ai-command-process-service.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
-import { createOperationalStateStore } from "./services/operational-state-service.js";
+import { createOperationalStateStore, stopAllOperationalStateStores } from "./services/operational-state-service.js";
 import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
@@ -32,6 +34,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   });
   const operationalState = await createOperationalStateStore(options.repo.repoRoot);
   await operationalState.resetShutdownStatus();
+  await reconcileInterruptedAiCommandJobs(options.repo.repoRoot);
   const app = express();
   const server = http.createServer(app);
   let terminalService: WebSocketServer | undefined;
@@ -134,88 +137,107 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       void operationalState.appendShutdownError(message);
     };
 
-    await operationalState.beginShutdown("[shutdown] Closing worktreeman server...");
-    process.stdout.write("[shutdown] Closing worktreeman server...\n");
+    let shutdownError: unknown = null;
 
-    await loadShutdownConfig().catch((error) => {
-      logError(
-        `[shutdown] Failed to reload config for shutdown: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
+    try {
+      await operationalState.beginShutdown("[shutdown] Closing worktreeman server...");
+      process.stdout.write("[shutdown] Closing worktreeman server...\n");
 
-    const activeRuntimes = await operationalState.listRuntimes();
-    if (activeRuntimes.length > 0) {
-      logInfo(`[shutdown] Stopping ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"}...`);
-    }
-
-    for (const runtime of activeRuntimes) {
-      logInfo(`[shutdown] Stopping runtime ${runtime.branch}...`);
-
-      try {
-        logInfo(`[shutdown] stopping background commands for ${runtime.branch}...`);
-        await stopAllBackgroundCommandsForShutdown(runtime.worktreePath);
-      } catch (error) {
+      await loadShutdownConfig().catch((error) => {
         logError(
-          `[shutdown] Failed to stop background commands for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
+          `[shutdown] Failed to reload config for shutdown: ${error instanceof Error ? error.message : String(error)}`,
         );
-      }
-
-      try {
-        logInfo(`[shutdown] killing tmux session for ${runtime.branch}...`);
-        await killTmuxSession(runtime);
-      } catch (error) {
-        logError(
-          `[shutdown] Failed to stop tmux session for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-
-      await operationalState.deleteRuntime(runtime.branch);
-    }
-
-    if (terminalService) {
-      logInfo(`[shutdown] Closing terminal websocket service (${terminalService.clients.size} client${terminalService.clients.size === 1 ? "" : "s"})...`);
-      for (const client of terminalService.clients) {
-        client.close();
-      }
-
-      await new Promise<void>((resolve) => {
-        const forceTerminateTimer = setTimeout(() => {
-          logInfo("[shutdown] Forcing terminal client disconnects...");
-          for (const client of terminalService?.clients ?? []) {
-            client.terminate();
-          }
-        }, 250);
-
-        terminalService?.close(() => {
-          clearTimeout(forceTerminateTimer);
-          resolve();
-        });
       });
-    }
 
-    if (server.listening) {
-      logInfo("[shutdown] Closing HTTP server...");
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
+      const activeRuntimes = await operationalState.listRuntimes();
+      if (activeRuntimes.length > 0) {
+        logInfo(`[shutdown] Stopping ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"}...`);
+      }
+
+      for (const runtime of activeRuntimes) {
+        logInfo(`[shutdown] Stopping runtime ${runtime.branch}...`);
+
+        try {
+          logInfo(`[shutdown] stopping background commands for ${runtime.branch}...`);
+          await stopAllBackgroundCommandsForShutdown(runtime.worktreePath);
+        } catch (error) {
+          logError(
+            `[shutdown] Failed to stop background commands for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
+        try {
+          logInfo(`[shutdown] killing tmux session for ${runtime.branch}...`);
+          await killTmuxSession(runtime);
+        } catch (error) {
+          logError(
+            `[shutdown] Failed to stop tmux session for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
+        await operationalState.deleteRuntime(runtime.branch);
+      }
+
+      if (terminalService) {
+        logInfo(`[shutdown] Closing terminal websocket service (${terminalService.clients.size} client${terminalService.clients.size === 1 ? "" : "s"})...`);
+        for (const client of terminalService.clients) {
+          client.close();
+        }
+
+        await new Promise<void>((resolve) => {
+          const forceTerminateTimer = setTimeout(() => {
+            logInfo("[shutdown] Forcing terminal client disconnects...");
+            for (const client of terminalService?.clients ?? []) {
+              client.terminate();
+            }
+          }, 250);
+
+          terminalService?.close(() => {
+            clearTimeout(forceTerminateTimer);
+            resolve();
+          });
         });
-      });
+      }
+
+      if (server.listening) {
+        logInfo("[shutdown] Closing HTTP server...");
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        });
+      }
+
+      if (vite) {
+        logInfo("[shutdown] Closing Vite dev server...");
+        await vite.close();
+      }
+
+      logInfo("[shutdown] Stopping AI command processes...");
+      await stopAllAiCommandProcesses();
+      await reconcileInterruptedAiCommandJobs(options.repo.repoRoot);
+
+      logInfo("[shutdown] Stopping AI job managers...");
+      await stopAllAiCommandJobManagers();
+
+      await operationalState.completeShutdown("[shutdown] Shutdown complete.");
+      process.stdout.write("[shutdown] Shutdown complete.\n");
+    } catch (error) {
+      shutdownError = error;
+      const message = `[shutdown] Shutdown failed: ${error instanceof Error ? error.message : String(error)}`;
+      process.stderr.write(`${message}\n`);
+      await operationalState.failShutdown(message).catch(() => undefined);
+    } finally {
+      await stopAllOperationalStateStores();
     }
 
-    if (vite) {
-      logInfo("[shutdown] Closing Vite dev server...");
-      await vite.close();
+    if (shutdownError) {
+      throw shutdownError;
     }
-
-    logInfo("[shutdown] Stopping AI job managers...");
-    await stopAllAiCommandJobManagers();
-
-    await operationalState.completeShutdown("[shutdown] Shutdown complete.");
-    process.stdout.write("[shutdown] Shutdown complete.\n");
   };
 
   const cleanupFailedStart = async (error: unknown) => {
@@ -238,6 +260,10 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       process.stdout.write("[startup] Closing Vite dev server after failed startup...\n");
       await vite.close();
     }
+
+    await stopAllAiCommandProcesses().catch(() => undefined);
+    await stopAllAiCommandJobManagers().catch(() => undefined);
+    await stopAllOperationalStateStores().catch(() => undefined);
   };
 
   try {
