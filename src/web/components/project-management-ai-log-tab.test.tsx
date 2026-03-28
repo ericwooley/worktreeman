@@ -161,6 +161,20 @@ test("running entries are not duplicated in the saved logs list", () => {
   assert.equal((markup.match(/feature-ai-log/g) ?? []).length >= 2, true);
 });
 
+test("historical list excludes running-status logs even without running job cards", () => {
+  const markup = renderAiLogTab({
+    logDetail: null,
+    logs: [{ ...summaryLog, status: "running" }],
+    runningJobs: [],
+  });
+
+  assert.match(markup, /Saved logs/);
+  assert.match(markup, /No AI logs have been written yet\./);
+  assert.match(markup, /AI runs from environment, git, and project-management flows will appear here/);
+  assert.equal((markup.match(/log-1\.json/g) ?? []).length, 0);
+  assert.equal((markup.match(/Environment terminal · feature-ai-log/g) ?? []).length, 0);
+});
+
 test("AI log header shows passive sync status and retry only on error", () => {
   const originalNow = Date.now;
   Date.now = () => Date.parse("2026-03-28T15:37:31.000Z");
