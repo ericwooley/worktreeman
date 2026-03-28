@@ -520,6 +520,68 @@ function createProjectManagementDocumentWorktreeBranch(document: ProjectManageme
   return branch || `pm-${sanitizeBranchName(document.id) || "document"}`;
 }
 
+function createProjectManagementDocumentWorktreeBranchCandidate(baseBranch: string, runNumber: number) {
+  if (runNumber <= 1) {
+    return baseBranch;
+  }
+
+  const suffix = `-${runNumber}`;
+  const truncatedBase = baseBranch
+    .slice(0, Math.max(1, 72 - suffix.length))
+    .replace(/-+$/g, "");
+  return `${truncatedBase || "pm-document"}${suffix}`;
+}
+
+async function branchRefExists(repoRoot: string, branch: string): Promise<boolean> {
+  const { stdout } = await runCommand("git", ["branch", "--list", "--format=%(refname:short)", "--", branch], {
+    cwd: repoRoot,
+  });
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .includes(branch);
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveProjectManagementDocumentWorktreeBranch(options: {
+  repoRoot: string;
+  baseDir: string;
+  document: ProjectManagementDocumentResponse["document"];
+}) {
+  const baseBranch = createProjectManagementDocumentWorktreeBranch(options.document);
+  const existingWorktrees = await listWorktrees(options.repoRoot);
+  const existingBranches = new Set(existingWorktrees.map((entry) => entry.branch));
+  const existingPaths = new Set(existingWorktrees.map((entry) => path.resolve(entry.worktreePath)));
+
+  for (let runNumber = 1; runNumber < 10_000; runNumber += 1) {
+    const candidate = createProjectManagementDocumentWorktreeBranchCandidate(baseBranch, runNumber);
+    const candidatePath = path.join(options.baseDir, sanitizeBranchName(candidate));
+    if (existingBranches.has(candidate) || existingPaths.has(path.resolve(candidatePath))) {
+      continue;
+    }
+
+    if (await branchRefExists(options.repoRoot, candidate)) {
+      continue;
+    }
+
+    if (await pathExists(candidatePath)) {
+      continue;
+    }
+
+    return candidate;
+  }
+
+  throw new Error(`Unable to allocate a unique worktree branch for project management document ${options.document.id}.`);
+}
+
 function buildProjectManagementExecutionAiPrompt(options: {
   branch: string;
   worktreePath: string;
@@ -2330,7 +2392,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const documentPayload = await getProjectManagementDocument(options.repoRoot, documentId);
       const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
 
-      branch = createProjectManagementDocumentWorktreeBranch(documentPayload.document);
+      branch = await resolveProjectManagementDocumentWorktreeBranch({
+        repoRoot: options.repoRoot,
+        baseDir: path.resolve(options.repoRoot, config.worktrees.baseDir),
+        document: documentPayload.document,
+      });
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
       const defaultOrigin = createProjectManagementDocumentOrigin({
         branch,
