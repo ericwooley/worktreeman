@@ -6,6 +6,7 @@ import type {
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
+  RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
   WorktreeRecord,
 } from "@shared/types";
@@ -83,9 +84,13 @@ interface ProjectManagementPanelProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onUpdateStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
+  onBatchUpdateDocuments: (documentIds: string[], overrides: {
+    status?: string;
+    archived?: boolean;
+  }) => Promise<boolean>;
   onAddComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
   onRunAiCommand: (payload: { input: string; documentId: string; commandId: AiCommandId }) => Promise<AiCommandJob | null>;
-  onRunDocumentAi: (payload: { documentId: string; input?: string; commandId: AiCommandId }) => Promise<RunAiCommandResponse | null>;
+  onRunDocumentAi: (payload: { documentId: string; commandId: AiCommandId } & RunProjectManagementDocumentAiRequest) => Promise<RunAiCommandResponse | null>;
   onCancelDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelAiCommand: () => Promise<AiCommandJob | null>;
 }
@@ -250,6 +255,7 @@ export function ProjectManagementPanel({
   onUpdateDocument,
   onUpdateDependencies,
   onUpdateStatus,
+  onBatchUpdateDocuments,
   onAddComment,
   onRunAiCommand,
   onRunDocumentAi,
@@ -575,6 +581,21 @@ export function ProjectManagementPanel({
     if (document?.id === documentId) {
       void onSelectDocument(documentId, { silent: true });
     }
+  }
+
+  async function handleBatchBoardUpdate(documentIds: string[], overrides: {
+    status?: string;
+    archived?: boolean;
+  }) {
+    if (!documentIds.length) {
+      return false;
+    }
+
+    const updated = await onBatchUpdateDocuments(documentIds, overrides);
+    if (updated && document && documentIds.includes(document.id)) {
+      void onSelectDocument(document.id, { silent: true });
+    }
+    return updated;
   }
 
   const dependencyOptions = useMemo(
@@ -1202,11 +1223,15 @@ export function ProjectManagementPanel({
                 <ProjectManagementBoardTab
                   swimlaneDocuments={swimlaneDocuments}
                   document={document}
+                  documentRunJob={documentRunJob}
                   showBacklogLane={showBacklogLane}
                   saving={saving}
+                  smartAiReady={isAiCommandReady(aiCommands, "smart")}
                   onToggleBacklogLane={() => setShowBacklogLane((current) => !current)}
                   onSelectDocument={handleSelectDocument}
                   onMoveDocument={handleMoveDocument}
+                  onBatchUpdateDocuments={handleBatchBoardUpdate}
+                  onRunDocumentAi={onRunDocumentAi}
                 />
               </Suspense>
             </div>

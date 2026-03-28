@@ -428,6 +428,7 @@ async function startApiServer(
     url: ensureLiveBaseUrl,
     close: async () => {
       await stopAiCommandJobManager(repo.repoRoot);
+      await stopOperationalStateStore(repo.repoRoot);
 
       if (!server) {
         return;
@@ -461,6 +462,9 @@ test.after(async () => {
   await Promise.all(repos.map((repoRoot) => stopOperationalStateStore(repoRoot)));
   await stopAllOperationalStateStores();
   await stopAllAiCommandJobManagers();
+  await Promise.all(repos.map(async (repoRoot) => {
+    await fs.rm(repoRoot, { recursive: true, force: true }).catch(() => undefined);
+  }));
 });
 
 test("GET /api/state returns favicon and preferred port config", async () => {
@@ -2693,6 +2697,105 @@ test("project-management document AI creates a derived worktree and streams stdo
       };
       return latestStatePayload.worktrees.find((entry) => entry.branch === payload.job.branch)?.runtime === undefined;
     });
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management document AI preserves board origin metadata when requested", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 9191, stdout: "Starting from board...\n", stderr: "" },
+    { status: "stopped", pid: 9191, stdout: "Starting from board...\nDone.\n", stderr: "", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const response = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "start from the board",
+        origin: {
+          kind: "project-management-document-run",
+          label: "Project management board run",
+          description: "#1 Project Outline",
+          location: {
+            tab: "project-management",
+            projectManagementSubTab: "board",
+            documentId: outline.id,
+            projectManagementDocumentViewMode: "document",
+          },
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      job: { branch: string; status: string; origin?: AiCommandOrigin | null };
+    };
+    assert.equal(payload.job.status, "running");
+    assert.equal(payload.job.origin?.kind, "project-management-document-run");
+    assert.equal(payload.job.origin?.location.tab, "project-management");
+    assert.equal(payload.job.origin?.location.projectManagementSubTab, "board");
+    assert.equal(payload.job.origin?.location.documentId, outline.id);
+    assert.equal(payload.job.origin?.location.projectManagementDocumentViewMode, "document");
+    assert.equal(payload.job.origin?.location.branch, payload.job.branch);
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{
+          branch: string;
+          status: string;
+          origin?: AiCommandOrigin | null;
+        }>;
+      };
+      const boardRunLog = logsPayload.logs.find((entry) => entry.branch === payload.job.branch);
+      if (!boardRunLog) {
+        return false;
+      }
+
+      assert.equal(boardRunLog.status, "completed");
+      assert.equal(boardRunLog.origin?.kind, "project-management-document-run");
+      assert.equal(boardRunLog.origin?.label, "Project management board run");
+      assert.equal(boardRunLog.origin?.location.tab, "project-management");
+      assert.equal(boardRunLog.origin?.location.projectManagementSubTab, "board");
+      assert.equal(boardRunLog.origin?.location.documentId, outline.id);
+      assert.equal(boardRunLog.origin?.location.projectManagementDocumentViewMode, "document");
+      assert.equal(boardRunLog.origin?.location.branch, payload.job.branch);
+      return true;
+    });
+
+    await waitFor(async () => {
+      const latestStateResponse = await server.fetch(`/api/state`);
+      if (latestStateResponse.status !== 200) {
+        return false;
+      }
+
+      const latestStatePayload = await latestStateResponse.json() as {
+        worktrees: Array<{ branch: string; runtime?: { tmuxSession: string } }>;
+      };
+      return latestStatePayload.worktrees.find((entry) => entry.branch === payload.job.branch)?.runtime === undefined;
+    });
+
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

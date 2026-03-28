@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ProjectManagementDocument, ProjectManagementDocumentSummary, WorktreeRecord } from "@shared/types";
+import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementPanel } from "./project-management-panel";
 
@@ -148,6 +149,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     onUpdateDocument: async () => null,
     onUpdateDependencies: async () => null,
     onUpdateStatus: async () => null,
+    onBatchUpdateDocuments: async () => true,
     onAddComment: async () => null,
     onRunAiCommand: async () => null,
     onRunDocumentAi: async () => null,
@@ -185,6 +187,7 @@ test("create form renders without seeded defaults", () => {
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
       onUpdateStatus={async () => null}
+      onBatchUpdateDocuments={async () => true}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
@@ -231,6 +234,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
       onUpdateStatus={async () => null}
+      onBatchUpdateDocuments={async () => true}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
@@ -290,6 +294,7 @@ test("document view renders summary, comments, and comment attribution", () => {
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
       onUpdateStatus={async () => null}
+      onBatchUpdateDocuments={async () => true}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
@@ -380,4 +385,36 @@ test("document worktree run in the selected branch shows running state and contr
   assert.match(markup, /Document worktree AI run in progress/);
   assert.match(markup, /Cancel worktree AI/);
   assert.match(markup, /Streaming live output from pm-doc-1-dependencies while the worktree run is active\./);
+});
+
+test("board view renders multi-select controls and AI quick actions", () => {
+  const markup = renderToStaticMarkup(
+    <ProjectManagementBoardTab
+      swimlaneDocuments={[
+        { status: "todo", documents: [sampleDocuments[0]] },
+        { status: "in-progress", documents: [sampleDocuments[1]] },
+      ]}
+      document={sampleDocument}
+      documentRunJob={null}
+      showBacklogLane={true}
+      saving={false}
+      smartAiReady={true}
+      onToggleBacklogLane={() => undefined}
+      onSelectDocument={async () => null}
+      onMoveDocument={async () => undefined}
+      onBatchUpdateDocuments={async () => true}
+      onRunDocumentAi={async () => null}
+    />,
+  );
+
+  assert.match(markup, /Status board/);
+  assert.match(markup, /board quick actions/);
+  assert.match(markup, /Select all visible/);
+  assert.match(markup, /Board selection/);
+  assert.match(markup, /Select one or more cards to move or archive them together\./);
+  assert.match(markup, /Move selected/);
+  assert.match(markup, /Archive selected/);
+  assert.match(markup, /Start AI/);
+  assert.match(markup, /aria-label="Select Dependencies"/);
+  assert.match(markup, /aria-label="Select Shared document list"/);
 });

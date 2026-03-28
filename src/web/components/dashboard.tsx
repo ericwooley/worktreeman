@@ -134,6 +134,7 @@ export function Dashboard() {
     clearLastEnvSync,
     clearBackgroundLogs,
     addProjectManagementComment,
+    batchUpdateProjectManagementDocuments,
     create,
     createProjectManagementDocument,
     remove,
@@ -1309,6 +1310,12 @@ export function Dashboard() {
               setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementStatus(documentId, { status });
             }}
+            onBatchUpdateProjectManagementDocuments={async (documentIds, overrides) => {
+              if (projectManagementSelectedDocumentId && documentIds.includes(projectManagementSelectedDocumentId)) {
+                setProjectManagementSelectedDocumentId(projectManagementSelectedDocumentId);
+              }
+              return batchUpdateProjectManagementDocuments(documentIds, overrides);
+            }}
             onAddProjectManagementComment={addProjectManagementComment}
             projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
@@ -1328,6 +1335,7 @@ export function Dashboard() {
               return runProjectManagementDocumentAi(payload.documentId, {
                 input: payload.input,
                 commandId: payload.commandId,
+                origin: payload.origin,
               }).then((result) => {
                 if (!result) {
                   return null;
