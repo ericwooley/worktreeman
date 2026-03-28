@@ -1,6 +1,6 @@
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
-import type { WorktreeEnvironmentSubTab } from "./worktree-detail";
+import type { WorktreeEnvironmentSubTab, WorktreeGitSubTab } from "./worktree-detail";
 
 export type DashboardActiveTab = "environment" | "git" | "project-management" | "ai-log";
 
@@ -9,11 +9,17 @@ export interface DashboardUrlState {
   activeTab: DashboardActiveTab;
   aiActivitySubTab: AiActivitySubTab;
   environmentSubTab: WorktreeEnvironmentSubTab;
+  gitSubTab: WorktreeGitSubTab;
   gitView: "diff" | "graph";
+  gitPullRequestDocumentId: string | null;
   isTerminalVisible: boolean;
   projectManagementSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
+}
+
+export function parseWorktreeGitSubTab(value: string | null): WorktreeGitSubTab {
+  return value === "pull-request" ? "pull-request" : "status";
 }
 
 export function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {
@@ -57,7 +63,9 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
       : tab === "shell"
         ? "terminal"
         : parseWorktreeEnvironmentSubTab(params.get("envTab")),
+    gitSubTab: parseWorktreeGitSubTab(params.get("gitTab")),
     gitView: params.get("git") === "diff" ? "diff" : "graph",
+    gitPullRequestDocumentId: params.get("gitPr"),
     isTerminalVisible: params.get("terminal") === "open",
     projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),
     projectManagementSelectedDocumentId: params.get("pmDoc"),
