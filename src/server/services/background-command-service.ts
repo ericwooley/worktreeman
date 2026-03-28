@@ -42,6 +42,10 @@ function getPm2CommandName(branch: string, commandName: string): string {
   return `wtm:${branch}:${commandName}`;
 }
 
+function getPm2Namespace(branch: string): string {
+  return `${PM2_NAMESPACE}:${branch}`;
+}
+
 export function getBackgroundCommandEntries(config: WorktreeManagerConfig): Record<string, BackgroundCommandConfigEntry> {
   return {
     ...(config.backgroundCommands ?? {}),
@@ -269,7 +273,7 @@ export async function startBackgroundCommand(options: {
       script: process.env.SHELL || "/usr/bin/bash",
       args: ["-lc", entry.command],
       interpreter: "none",
-      namespace: PM2_NAMESPACE,
+      namespace: getPm2Namespace(options.branch),
       name: processName,
       cwd: options.worktreePath,
       time: true,
