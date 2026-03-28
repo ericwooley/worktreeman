@@ -301,8 +301,12 @@ export async function startConfiguredBackgroundCommands(options: {
 }
 
 export async function stopBackgroundCommand(branch: string, worktreePath: string, commandName: string): Promise<void> {
-  void worktreePath;
   const processName = getPm2CommandName(branch, commandName);
+  const metadata = await readMetadata(processName);
+  if (metadata && metadata.worktreePath !== worktreePath) {
+    return;
+  }
+
   await deletePm2Process(processName).catch(() => undefined);
   await deleteMetadata(processName);
 }
@@ -441,7 +445,6 @@ export async function streamBackgroundCommandLogs(options: {
 }
 
 export async function stopAllBackgroundCommands(branch: string, worktreePath: string): Promise<void> {
-  void worktreePath;
   const processes = await listPm2Processes();
   const branchPrefix = `wtm:${branch}:`;
 
@@ -449,6 +452,11 @@ export async function stopAllBackgroundCommands(branch: string, worktreePath: st
     [...processes.keys()]
       .filter((name) => name.startsWith(branchPrefix))
       .map(async (name) => {
+        const metadata = await readMetadata(name);
+        if (!metadata || metadata.branch !== branch || metadata.worktreePath !== worktreePath) {
+          return;
+        }
+
         await deletePm2Process(name).catch(() => undefined);
         await deleteMetadata(name);
       }),
