@@ -195,9 +195,20 @@ export function ProjectManagementAiLogTab({
   onOpenOrigin,
   onRetry,
 }: ProjectManagementAiLogTabProps) {
-  const primaryCandidate = runningJobs[0] ?? logs[0] ?? null;
   const autoSelectedFileRef = useRef<string | null>(null);
   const refreshStatusLabel = formatAutoRefreshStatus(lastUpdatedAt);
+
+  const visibleLogs = useMemo(() => {
+    const historicalLogs = logs.filter((log) => log.status !== "running");
+    if (!runningJobs.length) {
+      return historicalLogs;
+    }
+
+    const runningFileNames = new Set(runningJobs.map((job) => job.fileName));
+    return historicalLogs.filter((log) => !runningFileNames.has(log.fileName));
+  }, [logs, runningJobs]);
+
+  const primaryCandidate = runningJobs[0] ?? visibleLogs[0] ?? null;
 
   useEffect(() => {
     if (loading || logDetail || !primaryCandidate) {
@@ -216,15 +227,6 @@ export function ProjectManagementAiLogTab({
     () => (logDetail ? getOutputEvents(logDetail) : []),
     [logDetail],
   );
-
-  const visibleLogs = useMemo(() => {
-    if (!runningJobs.length) {
-      return logs;
-    }
-
-    const runningFileNames = new Set(runningJobs.map((job) => job.fileName));
-    return logs.filter((log) => !runningFileNames.has(log.fileName));
-  }, [logs, runningJobs]);
 
   const recentEntries = useMemo(() => visibleLogs.slice(0, 4), [visibleLogs]);
 
