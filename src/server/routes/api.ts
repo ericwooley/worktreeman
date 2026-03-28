@@ -37,6 +37,7 @@ import type {
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  ReconnectTerminalResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
   UpdateProjectManagementDependenciesRequest,
@@ -1080,15 +1081,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     gitFile: options.configFile,
   });
 
-  const ensureWorktreeRuntime = async (
+  const findWorktree = async (branch: string): Promise<WorktreeRecord | undefined> => {
+    const worktrees = await listWorktrees(options.repoRoot);
+    return worktrees.find((entry) => entry.branch === branch);
+  };
+
+  const createWorktreeRuntime = async (
     config: WorktreeManagerConfig,
     worktree: WorktreeRecord,
   ): Promise<WorktreeRuntime> => {
-    const existingRuntime = await options.operationalState.getRuntime(worktree.branch);
-    if (existingRuntime) {
-      return existingRuntime;
-    }
-
     const { runtime } = await createRuntime(config, options.repoRoot, worktree.branch, worktree.worktreePath);
     await options.operationalState.setRuntime(runtime);
     await ensureRuntimeTerminalSession(runtime, options.repoRoot);
@@ -1102,9 +1103,24 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     return runtime;
   };
 
-  const stopWorktreeRuntime = async (branch: string): Promise<void> => {
+  const ensureWorktreeRuntime = async (
+    config: WorktreeManagerConfig,
+    worktree: WorktreeRecord,
+  ): Promise<WorktreeRuntime> => {
+    const existingRuntime = await options.operationalState.getRuntime(worktree.branch);
+    if (existingRuntime) {
+      return existingRuntime;
+    }
+
+    return createWorktreeRuntime(config, worktree);
+  };
+
+  const stopWorktreeRuntime = async (branch: string, worktreePath?: string): Promise<void> => {
     const runtime = await options.operationalState.getRuntime(branch);
     if (!runtime) {
+      if (worktreePath) {
+        await killTmuxSessionByName(getTmuxSessionName(options.repoRoot, branch), worktreePath);
+      }
       return;
     }
 
@@ -1127,6 +1143,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     if (stopError) {
       throw stopError;
     }
+  };
+
+  const restartWorktreeRuntime = async (
+    config: WorktreeManagerConfig,
+    worktree: WorktreeRecord,
+  ): Promise<WorktreeRuntime> => {
+    await stopWorktreeRuntime(worktree.branch, worktree.worktreePath);
+    return createWorktreeRuntime(config, worktree);
   };
 
   const scheduleRuntimeStopAfterAiJob = (details: { branch: string; jobId: string; shouldStopRuntime: boolean }) => {
@@ -2456,8 +2480,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.post("/worktrees/:branch/runtime/start", async (req, res, next) => {
     try {
       const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
 
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
@@ -2875,16 +2898,66 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/runtime/stop", async (req, res, next) => {
     try {
+      const worktree = await findWorktree(req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
       const runtime = await options.operationalState.getRuntime(req.params.branch);
       if (!runtime) {
         res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
         return;
       }
 
-      await stopAllBackgroundCommands(req.params.branch, runtime.worktreePath);
-      await killTmuxSession(runtime);
-      await options.operationalState.deleteRuntime(req.params.branch);
+      await stopWorktreeRuntime(req.params.branch, worktree.worktreePath);
       res.status(204).send();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/runtime/restart", async (req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const worktree = await findWorktree(req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const runtime = await restartWorktreeRuntime(config, worktree);
+      res.json(runtime);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/runtime/reconnect", async (req, res, next) => {
+    try {
+      const worktree = await findWorktree(req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const runtime = await options.operationalState.getRuntime(worktree.branch) ?? undefined;
+      const tmuxSession = await ensureTerminalSession({
+        repoRoot: options.repoRoot,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        runtime,
+      });
+      const clients = await listTmuxClients({
+        tmuxSession,
+        worktreePath: worktree.worktreePath,
+      });
+      const payload: ReconnectTerminalResponse = {
+        tmuxSession,
+        clients,
+        runtime,
+      };
+      res.json(payload);
     } catch (error) {
       next(error);
     }
@@ -2893,8 +2966,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.get("/worktrees/:branch/runtime/tmux-clients", async (req, res, next) => {
     try {
       const runtime = await options.operationalState.getRuntime(req.params.branch);
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
         return;
@@ -2919,8 +2991,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/runtime/tmux-clients/:clientId/disconnect", async (req, res, next) => {
     try {
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
         return;
@@ -2957,14 +3028,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await options.operationalState.getRuntime(worktree.branch);
-      if (runtime) {
-        await stopAllBackgroundCommands(worktree.branch, runtime.worktreePath);
-        await killTmuxSession(runtime);
-        await options.operationalState.deleteRuntime(worktree.branch);
-      } else {
-        await killTmuxSessionByName(getTmuxSessionName(options.repoRoot, worktree.branch), worktree.worktreePath);
-      }
+      await stopWorktreeRuntime(worktree.branch, worktree.worktreePath);
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);
       await clearWorktreeDocumentLink(options.repoRoot, worktree.branch);

@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
 import type {
   WorktreeRecord,
   TerminalClientMessage,
   TerminalServerMessage,
   TmuxClientInfo,
 } from "@shared/types";
-import { disconnectTmuxClient, getTmuxClients } from "../lib/api";
+import { disconnectTmuxClient, getTmuxClients, reconnectTerminal, restartRuntime } from "../lib/api";
 import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
@@ -19,6 +17,7 @@ const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
 const TERMINAL_SURFACE_MODE_STORAGE_KEY = "worktreeman.terminalSurfaceMode";
 
 type TerminalSurfaceMode = "dark" | "light";
+type TerminalConnectionState = "connecting" | "connected" | "disconnected";
 
 function getCssVariable(name: string, fallback: string): string {
   if (typeof window === "undefined") {
@@ -92,6 +91,13 @@ export function WorktreeTerminal({
   const [disconnectingClientId, setDisconnectingClientId] = useState<
     string | null
   >(null);
+  const [terminalConnectionState, setTerminalConnectionState] = useState<TerminalConnectionState>(
+    worktree?.runtime ? "connected" : "disconnected",
+  );
+  const [terminalStatusMessage, setTerminalStatusMessage] = useState<string | null>(null);
+  const [reconnectGeneration, setReconnectGeneration] = useState(0);
+  const [reconnectingTerminal, setReconnectingTerminal] = useState(false);
+  const [restartingRuntime, setRestartingRuntime] = useState(false);
   const [terminalSurfaceMode, setTerminalSurfaceMode] = useState<TerminalSurfaceMode>(() => {
     if (typeof window === "undefined") {
       return "dark";
@@ -115,6 +121,16 @@ export function WorktreeTerminal({
     () => runtimeEnvEntries.slice(0, 8),
     [runtimeEnvEntries],
   );
+  const connectionBadgeTone = terminalConnectionState === "connected"
+    ? "active"
+    : terminalConnectionState === "connecting"
+      ? "warning"
+      : "danger";
+  const connectionBadgeLabel = terminalConnectionState === "connected"
+    ? "Connected"
+    : terminalConnectionState === "connecting"
+      ? "Connecting"
+      : "Disconnected";
 
   useEffect(() => {
     commandPaletteShortcutRef.current = commandPaletteShortcut;
@@ -122,6 +138,15 @@ export function WorktreeTerminal({
     commandPaletteToggleRef.current = onCommandPaletteToggle;
     terminalShortcutToggleRef.current = onTerminalShortcutToggle;
   }, [commandPaletteShortcut, onCommandPaletteToggle, onTerminalShortcutToggle, terminalShortcut]);
+
+  useEffect(() => {
+    if (!worktree) {
+      setTerminalConnectionState("disconnected");
+      return;
+    }
+
+    setTerminalConnectionState(worktree.runtime ? "connected" : "disconnected");
+  }, [worktree]);
 
   useEffect(() => {
     window.localStorage.setItem(TERMINAL_SURFACE_MODE_STORAGE_KEY, terminalSurfaceMode);
@@ -222,6 +247,53 @@ export function WorktreeTerminal({
     return clients;
   };
 
+  const handleReconnectTerminal = async () => {
+    if (!terminalBranch) {
+      return;
+    }
+
+    setReconnectingTerminal(true);
+    setTerminalConnectionState("connecting");
+    setTerminalStatusMessage(null);
+    setCurrentClientId(null);
+
+    try {
+      const payload = await reconnectTerminal(terminalBranch);
+      setTmuxClients(payload.clients);
+      setReconnectGeneration((value) => value + 1);
+      setTerminalStatusMessage(`Reconnected to tmux session ${payload.tmuxSession}.`);
+    } catch (error) {
+      setTerminalConnectionState("disconnected");
+      setTerminalStatusMessage(error instanceof Error ? error.message : "Unable to reconnect to the shell.");
+    } finally {
+      setReconnectingTerminal(false);
+    }
+  };
+
+  const handleRestartRuntime = async () => {
+    if (!terminalBranch) {
+      return;
+    }
+
+    setRestartingRuntime(true);
+    setTerminalConnectionState("connecting");
+    setTerminalStatusMessage(null);
+    setCurrentClientId(null);
+
+    try {
+      await restartRuntime(terminalBranch);
+      const payload = await reconnectTerminal(terminalBranch);
+      setTmuxClients(payload.clients);
+      setReconnectGeneration((value) => value + 1);
+      setTerminalStatusMessage("Restarted the worktree environment and reloaded the shell environment.");
+    } catch (error) {
+      setTerminalConnectionState("disconnected");
+      setTerminalStatusMessage(error instanceof Error ? error.message : "Unable to restart the worktree environment.");
+    } finally {
+      setRestartingRuntime(false);
+    }
+  };
+
   useEffect(() => {
     if (!terminalBranch || !worktree) {
       setTmuxClients([]);
@@ -259,309 +331,365 @@ export function WorktreeTerminal({
 
   useEffect(() => {
     if (!hostRef.current || !terminalBranch || !sessionName) {
+      setTerminalConnectionState("disconnected");
       return;
     }
 
+    setTerminalConnectionState("connecting");
+
     hostRef.current.replaceChildren();
 
-    const terminal = new Terminal({
-      cursorBlink: true,
-      fontFamily:
-        '"MesloLGS NF", "SauceCodePro Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font Mono", monospace',
-      fontSize: 13,
-      altClickMovesCursor: false,
-      macOptionClickForcesSelection: true,
-      theme: getTerminalTheme(terminalSurfaceMode),
-    });
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    hostRef.current.style.width = "100%";
-    hostRef.current.style.maxWidth = "100%";
-    terminal.open(hostRef.current);
-    const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
-      const separatorIndex = data.indexOf(";");
-      if (separatorIndex === -1) {
-        return false;
-      }
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
 
-      const clipboardTarget = data.slice(0, separatorIndex);
-      const encodedPayload = data.slice(separatorIndex + 1);
-      if (!encodedPayload || encodedPayload === "?") {
-        return true;
-      }
-
+    void (async () => {
       try {
-        const decoded = decodeOsc52Payload(encodedPayload);
-        void navigator.clipboard?.writeText(decoded).catch(() => undefined);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-    terminal.attachCustomKeyEventHandler((event) => {
-      const shortcut = shortcutFromKeyboardEvent(event);
-      if (!shortcut) {
-        if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c") {
-          const selection = terminal.getSelection();
-          if (!selection) {
+        const [{ Terminal }, { FitAddon }] = await Promise.all([
+          import("@xterm/xterm"),
+          import("@xterm/addon-fit"),
+        ]);
+
+        if (disposed || !hostRef.current) {
+          return;
+        }
+
+        const host = hostRef.current;
+        const terminal = new Terminal({
+          cursorBlink: true,
+          fontFamily:
+            '"MesloLGS NF", "SauceCodePro Nerd Font Mono", "Hack Nerd Font Mono", "FiraCode Nerd Font Mono", monospace',
+          fontSize: 13,
+          altClickMovesCursor: false,
+          macOptionClickForcesSelection: true,
+          theme: getTerminalTheme(terminalSurfaceMode),
+        });
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+        host.style.width = "100%";
+        host.style.maxWidth = "100%";
+        terminal.open(host);
+        const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
+          const separatorIndex = data.indexOf(";");
+          if (separatorIndex === -1) {
+            return false;
+          }
+
+          const encodedPayload = data.slice(separatorIndex + 1);
+          if (!encodedPayload || encodedPayload === "?") {
             return true;
           }
 
-          void navigator.clipboard?.writeText(selection).then(() => {
-            lastCopiedSelectionRef.current = selection;
-          }).catch(() => {
+          try {
+            const decoded = decodeOsc52Payload(encodedPayload);
+            void navigator.clipboard?.writeText(decoded).catch(() => undefined);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+        terminal.attachCustomKeyEventHandler((event) => {
+          const shortcut = shortcutFromKeyboardEvent(event);
+          if (!shortcut) {
+            if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c") {
+              const selection = terminal.getSelection();
+              if (!selection) {
+                return true;
+              }
+
+              void navigator.clipboard?.writeText(selection).then(() => {
+                lastCopiedSelectionRef.current = selection;
+              }).catch(() => {
+                lastCopiedSelectionRef.current = "";
+              });
+              event.preventDefault();
+              return false;
+            }
+
+            return true;
+          }
+
+          if (shortcut === terminalShortcutRef.current) {
+            event.preventDefault();
+            terminalShortcutToggleRef.current();
+            return false;
+          }
+
+          if (shortcut !== commandPaletteShortcutRef.current) {
+            return true;
+          }
+
+          event.preventDefault();
+          commandPaletteToggleRef.current();
+          return false;
+        });
+        terminal.focus();
+        fitAddon.fit();
+
+        let lastCols = terminal.cols;
+        let lastRows = terminal.rows;
+        let lastHostWidth = Math.round(host.clientWidth);
+        let lastHostHeight = Math.round(host.clientHeight);
+        let resizeFrame: number | null = null;
+        let outputFrame: number | null = null;
+        let outputBuffer = "";
+
+        const flushOutput = () => {
+          outputFrame = null;
+          if (!outputBuffer) {
+            return;
+          }
+
+          terminal.write(outputBuffer);
+          outputBuffer = "";
+        };
+
+        const enqueueOutput = (data: string) => {
+          outputBuffer += data;
+
+          if (outputFrame !== null) {
+            return;
+          }
+
+          outputFrame = window.requestAnimationFrame(flushOutput);
+        };
+
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(
+          `${protocol}//${window.location.host}/ws/terminal?branch=${encodeURIComponent(terminalBranch)}`,
+        );
+
+        socket.addEventListener("message", (event) => {
+          if (disposed) {
+            return;
+          }
+
+          const message = JSON.parse(event.data) as TerminalServerMessage;
+          if (message.type === "output") {
+            enqueueOutput(message.data);
+          }
+          if (message.type === "error") {
+            setTerminalConnectionState("disconnected");
+            setTerminalStatusMessage(message.message);
+            terminal.writeln(`\r\n[error] ${message.message}`);
+          }
+          if (message.type === "exit") {
+            setTerminalConnectionState("disconnected");
+            setCurrentClientId(null);
+            setTerminalStatusMessage(`Terminal session closed (${message.exitCode ?? "unknown"}).`);
+            terminal.writeln(
+              `\r\n[session closed: ${message.exitCode ?? "unknown"}]`,
+            );
+          }
+          if (message.type === "ready") {
+            setTerminalConnectionState("connected");
+            setTerminalStatusMessage(null);
+            setCurrentClientId(message.clientId);
+            terminal.focus();
+          }
+        });
+
+        socket.addEventListener("close", () => {
+          if (disposed) {
+            return;
+          }
+
+          setTerminalConnectionState("disconnected");
+          setCurrentClientId(null);
+          setTerminalStatusMessage((current) => current ?? "Terminal disconnected. Reconnect to attach again.");
+        });
+
+        terminal.onData((data) => {
+          const payload: TerminalClientMessage = { type: "input", data };
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(payload));
+          }
+        });
+
+        const resize = (force = false) => {
+          fitAddon.fit();
+
+          const nextCols = terminal.cols;
+          const nextRows = terminal.rows;
+
+          if (nextCols !== terminal.cols || nextRows !== terminal.rows) {
+            terminal.resize(nextCols, nextRows);
+          }
+
+          if (!force && nextCols === lastCols && nextRows === lastRows) {
+            return;
+          }
+
+          lastCols = nextCols;
+          lastRows = nextRows;
+
+          const payload: TerminalClientMessage = {
+            type: "resize",
+            cols: nextCols,
+            rows: nextRows,
+          };
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify(payload));
+          }
+        };
+
+        const scheduleResize = (force = false) => {
+          if (resizeFrame !== null) {
+            return;
+          }
+
+          resizeFrame = window.requestAnimationFrame(() => {
+            resizeFrame = null;
+            resize(force);
+          });
+        };
+
+        scheduleResizeRef.current = scheduleResize;
+
+        const resizeObserver = new ResizeObserver((entries) => {
+          const entry = entries[0];
+          if (!entry) {
+            return;
+          }
+
+          const nextWidth = Math.round(entry.contentRect.width);
+          const nextHeight = Math.round(entry.contentRect.height);
+
+          if (
+            nextWidth <= 0 ||
+            nextHeight <= 0 ||
+            (nextWidth === lastHostWidth && nextHeight === lastHostHeight)
+          ) {
+            return;
+          }
+
+          lastHostWidth = nextWidth;
+          lastHostHeight = nextHeight;
+          scheduleResize();
+        });
+        resizeObserver.observe(host);
+
+        const hasDomSelection = () => Boolean(window.getSelection()?.toString());
+        const focusTerminal = () => {
+          if (terminal.getSelection() || hasDomSelection()) {
+            return;
+          }
+
+          terminal.focus();
+          scheduleResize(true);
+        };
+        const hasTerminalFocus = () => Boolean(host.contains(document.activeElement));
+        const copySelection = () => {
+          const selection = terminal.getSelection();
+
+          if (
+            !selection ||
+            selection === lastCopiedSelectionRef.current ||
+            !navigator.clipboard?.writeText
+          ) {
+            return;
+          }
+
+          lastCopiedSelectionRef.current = selection;
+          void navigator.clipboard.writeText(selection).catch(() => {
             lastCopiedSelectionRef.current = "";
           });
+        };
+        const handleViewportResize = () => {
+          lastHostWidth = Math.round(host.clientWidth);
+          lastHostHeight = Math.round(host.clientHeight);
+          scheduleResize(true);
+        };
+        const scheduleCopySelection = () => {
+          window.requestAnimationFrame(() => {
+            window.setTimeout(() => copySelection(), 0);
+          });
+        };
+        const handleMouseUp = () => {
+          scheduleCopySelection();
+        };
+        const handleSelectionChange = () => {
+          const selection = terminal.getSelection();
+          const domSelection = window.getSelection()?.toString() ?? "";
+          if (!selection) {
+            lastCopiedSelectionRef.current = "";
+          }
+
+          if (selection || domSelection) {
+            scheduleCopySelection();
+          }
+        };
+        const handleCopy = (event: ClipboardEvent) => {
+          if (!hasTerminalFocus()) {
+            return;
+          }
+
+          const selection = terminal.getSelection();
+          if (!selection) {
+            return;
+          }
+
           event.preventDefault();
-          return false;
+          event.clipboardData?.setData("text/plain", selection);
+          lastCopiedSelectionRef.current = selection;
+        };
+        socket.addEventListener("open", () => scheduleResize(true));
+        terminal.onSelectionChange(handleSelectionChange);
+        host.addEventListener("click", focusTerminal);
+        host.addEventListener("mouseup", handleMouseUp);
+        host.addEventListener("focusin", focusTerminal);
+        document.addEventListener("copy", handleCopy, true);
+        window.addEventListener("resize", handleViewportResize);
+        window.visualViewport?.addEventListener("resize", handleViewportResize);
+        window.addEventListener("focus", handleViewportResize);
+        void document.fonts?.ready?.then(() => scheduleResize(true));
+
+        cleanup = () => {
+          if (scheduleResizeRef.current === scheduleResize) {
+            scheduleResizeRef.current = null;
+          }
+          if (resizeFrame !== null) {
+            window.cancelAnimationFrame(resizeFrame);
+          }
+          if (outputFrame !== null) {
+            window.cancelAnimationFrame(outputFrame);
+          }
+          resizeObserver.disconnect();
+          host.removeEventListener("click", focusTerminal);
+          host.removeEventListener("mouseup", handleMouseUp);
+          host.removeEventListener("focusin", focusTerminal);
+          document.removeEventListener("copy", handleCopy, true);
+          window.removeEventListener("resize", handleViewportResize);
+          window.visualViewport?.removeEventListener("resize", handleViewportResize);
+          window.removeEventListener("focus", handleViewportResize);
+          socket.close();
+          if (outputBuffer) {
+            terminal.write(outputBuffer);
+          }
+          osc52Disposable.dispose();
+          terminal.dispose();
+        };
+
+        if (disposed) {
+          cleanup();
+          cleanup = null;
+        }
+      } catch (error) {
+        if (disposed) {
+          return;
         }
 
-        return true;
-      }
-
-      if (shortcut === terminalShortcutRef.current) {
-        event.preventDefault();
-        terminalShortcutToggleRef.current();
-        return false;
-      }
-
-      if (shortcut !== commandPaletteShortcutRef.current) {
-        return true;
-      }
-
-      event.preventDefault();
-      commandPaletteToggleRef.current();
-      return false;
-    });
-    terminal.focus();
-    fitAddon.fit();
-
-    let lastCols = terminal.cols;
-    let lastRows = terminal.rows;
-    let lastHostWidth = Math.round(hostRef.current.clientWidth);
-    let lastHostHeight = Math.round(hostRef.current.clientHeight);
-    let resizeFrame: number | null = null;
-    let outputFrame: number | null = null;
-    let outputBuffer = "";
-
-    const flushOutput = () => {
-      outputFrame = null;
-      if (!outputBuffer) {
-        return;
-      }
-
-      terminal.write(outputBuffer);
-      outputBuffer = "";
-    };
-
-    const enqueueOutput = (data: string) => {
-      outputBuffer += data;
-
-      if (outputFrame !== null) {
-        return;
-      }
-
-      outputFrame = window.requestAnimationFrame(flushOutput);
-    };
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(
-      `${protocol}//${window.location.host}/ws/terminal?branch=${encodeURIComponent(terminalBranch)}`,
-    );
-
-    socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data) as TerminalServerMessage;
-      if (message.type === "output") {
-        enqueueOutput(message.data);
-      }
-      if (message.type === "error") {
-        terminal.writeln(`\r\n[error] ${message.message}`);
-      }
-      if (message.type === "exit") {
-        terminal.writeln(
-          `\r\n[session closed: ${message.exitCode ?? "unknown"}]`,
+        setTerminalConnectionState("disconnected");
+        setTerminalStatusMessage(
+          error instanceof Error ? error.message : "Unable to load the terminal client.",
         );
       }
-      if (message.type === "ready") {
-        setCurrentClientId(message.clientId);
-        terminal.focus();
-      }
-    });
-
-    terminal.onData((data) => {
-      const payload: TerminalClientMessage = { type: "input", data };
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(payload));
-      }
-    });
-
-    const resize = (force = false) => {
-      fitAddon.fit();
-
-      const nextCols = terminal.cols;
-      const nextRows = terminal.rows;
-
-      if (nextCols !== terminal.cols || nextRows !== terminal.rows) {
-        terminal.resize(nextCols, nextRows);
-      }
-
-      if (!force && nextCols === lastCols && nextRows === lastRows) {
-        return;
-      }
-
-      lastCols = nextCols;
-      lastRows = nextRows;
-
-      const payload: TerminalClientMessage = {
-        type: "resize",
-        cols: nextCols,
-        rows: nextRows,
-      };
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(payload));
-      }
-    };
-
-    const scheduleResize = (force = false) => {
-      if (resizeFrame !== null) {
-        return;
-      }
-
-      resizeFrame = window.requestAnimationFrame(() => {
-        resizeFrame = null;
-        resize(force);
-      });
-    };
-
-    scheduleResizeRef.current = scheduleResize;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) {
-        return;
-      }
-
-      const nextWidth = Math.round(entry.contentRect.width);
-      const nextHeight = Math.round(entry.contentRect.height);
-
-      if (
-        nextWidth <= 0 ||
-        nextHeight <= 0 ||
-        (nextWidth === lastHostWidth && nextHeight === lastHostHeight)
-      ) {
-        return;
-      }
-
-      lastHostWidth = nextWidth;
-      lastHostHeight = nextHeight;
-      scheduleResize();
-    });
-    resizeObserver.observe(hostRef.current);
-
-    const hasDomSelection = () => Boolean(window.getSelection()?.toString());
-    const focusTerminal = () => {
-      if (terminal.getSelection() || hasDomSelection()) {
-        return;
-      }
-
-      terminal.focus();
-      scheduleResize(true);
-    };
-    const hasTerminalFocus = () => Boolean(hostRef.current?.contains(document.activeElement));
-    const copySelection = (source: string) => {
-      const selection = terminal.getSelection();
-
-      if (
-        !selection ||
-        selection === lastCopiedSelectionRef.current ||
-        !navigator.clipboard?.writeText
-      ) {
-        return;
-      }
-
-      lastCopiedSelectionRef.current = selection;
-      void navigator.clipboard.writeText(selection).catch(() => {
-        lastCopiedSelectionRef.current = "";
-      });
-    };
-    const handleViewportResize = () => {
-      lastHostWidth = Math.round(hostRef.current?.clientWidth ?? 0);
-      lastHostHeight = Math.round(hostRef.current?.clientHeight ?? 0);
-      scheduleResize(true);
-    };
-    const scheduleCopySelection = (source: string) => {
-      window.requestAnimationFrame(() => {
-        window.setTimeout(() => copySelection(source), 0);
-      });
-    };
-    const handleMouseUp = () => {
-      scheduleCopySelection("mouseup");
-    };
-    const handleSelectionChange = () => {
-      const selection = terminal.getSelection();
-      const domSelection = window.getSelection()?.toString() ?? "";
-      if (!selection) {
-        lastCopiedSelectionRef.current = "";
-      }
-
-      if (selection || domSelection) {
-        scheduleCopySelection("selection-change");
-      }
-    };
-    const handleCopy = (event: ClipboardEvent) => {
-      if (!hasTerminalFocus()) {
-        return;
-      }
-
-      const selection = terminal.getSelection();
-      if (!selection) {
-        return;
-      }
-
-      event.preventDefault();
-      event.clipboardData?.setData("text/plain", selection);
-      lastCopiedSelectionRef.current = selection;
-    };
-    socket.addEventListener("open", () => scheduleResize(true));
-    terminal.onSelectionChange(handleSelectionChange);
-    hostRef.current.addEventListener("click", focusTerminal);
-    hostRef.current.addEventListener("mouseup", handleMouseUp);
-    hostRef.current.addEventListener("focusin", focusTerminal);
-    document.addEventListener("copy", handleCopy, true);
-    window.addEventListener("resize", handleViewportResize);
-    window.visualViewport?.addEventListener("resize", handleViewportResize);
-    window.addEventListener("focus", handleViewportResize);
-    void document.fonts?.ready?.then(() => scheduleResize(true));
+    })();
 
     return () => {
-      if (scheduleResizeRef.current === scheduleResize) {
-        scheduleResizeRef.current = null;
-      }
-      if (resizeFrame !== null) {
-        window.cancelAnimationFrame(resizeFrame);
-      }
-      if (outputFrame !== null) {
-        window.cancelAnimationFrame(outputFrame);
-      }
-      resizeObserver.disconnect();
-      hostRef.current?.removeEventListener("click", focusTerminal);
-      hostRef.current?.removeEventListener("mouseup", handleMouseUp);
-      hostRef.current?.removeEventListener("focusin", focusTerminal);
-      document.removeEventListener("copy", handleCopy, true);
-      window.removeEventListener("resize", handleViewportResize);
-      window.visualViewport?.removeEventListener(
-        "resize",
-        handleViewportResize,
-      );
-      window.removeEventListener("focus", handleViewportResize);
-      socket.close();
-      if (outputBuffer) {
-        terminal.write(outputBuffer);
-      }
-      osc52Disposable.dispose();
-      terminal.dispose();
+      disposed = true;
+      cleanup?.();
     };
-  }, [sessionName, terminalBranch, terminalSurfaceMode]);
+  }, [reconnectGeneration, sessionName, terminalBranch, terminalSurfaceMode]);
 
   const handleDisconnectClient = async (clientId: string) => {
     if (!terminalBranch || clientId === currentClientId) {
@@ -595,17 +723,41 @@ export function WorktreeTerminal({
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+                <MatrixBadge tone={connectionBadgeTone}>{connectionBadgeLabel}</MatrixBadge>
                 <button
                   type="button"
                   className="matrix-button rounded-none px-4 py-2 text-sm"
                   onClick={() => onTerminalVisibilityChange(!isTerminalVisible)}
-                   disabled={!worktree}
+                    disabled={!worktree}
                 >
                 {isTerminalVisible ? "Stow terminal" : "Show terminal"}
               </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-4 py-2 text-sm"
+                onClick={() => void handleReconnectTerminal()}
+                disabled={!worktree || reconnectingTerminal || restartingRuntime}
+              >
+                {reconnectingTerminal ? "Reconnecting…" : "Reconnect shell"}
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-4 py-2 text-sm"
+                onClick={() => void handleRestartRuntime()}
+                disabled={!worktree || restartingRuntime || reconnectingTerminal}
+              >
+                {restartingRuntime ? "Restarting…" : "Restart environment"}
+              </button>
             </div>
           </div>
+
+          {terminalStatusMessage ? (
+            <div className="theme-inline-panel theme-text-muted mt-4 px-4 py-3 text-sm" data-terminal-status-message>
+              <p className="theme-text-strong">Terminal status</p>
+              <p className="mt-1">{terminalStatusMessage}</p>
+            </div>
+          ) : null}
 
           <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">

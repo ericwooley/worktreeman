@@ -462,6 +462,12 @@ export interface RunAiCommandResponse {
   runtime?: WorktreeRuntime;
 }
 
+export interface ReconnectTerminalResponse {
+  tmuxSession: string;
+  clients: TmuxClientInfo[];
+  runtime?: WorktreeRuntime;
+}
+
 export interface AiCommandStreamEvent {
   type: "snapshot" | "update";
   job: AiCommandJob | null;

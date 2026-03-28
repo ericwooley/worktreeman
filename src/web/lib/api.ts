@@ -25,6 +25,7 @@ import type {
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  ReconnectTerminalResponse,
   RunAiCommandRequest,
   RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
@@ -354,8 +355,20 @@ export function stopRuntime(branch: string): Promise<void> {
   });
 }
 
+export function restartRuntime(branch: string): Promise<WorktreeRuntime> {
+  return request<WorktreeRuntime>(`/api/worktrees/${encodeURIComponent(branch)}/runtime/restart`, {
+    method: "POST",
+  });
+}
+
 export function syncEnvFiles(branch: string): Promise<EnvSyncResponse> {
   return request<EnvSyncResponse>(`/api/worktrees/${encodeURIComponent(branch)}/env/sync`, {
+    method: "POST",
+  });
+}
+
+export function reconnectTerminal(branch: string): Promise<ReconnectTerminalResponse> {
+  return request<ReconnectTerminalResponse>(`/api/worktrees/${encodeURIComponent(branch)}/runtime/reconnect`, {
     method: "POST",
   });
 }
