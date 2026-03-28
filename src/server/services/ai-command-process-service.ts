@@ -34,6 +34,25 @@ export function isAiCommandProcessActive(status: string | undefined): boolean {
   return status === "online" || status === "launching";
 }
 
+async function terminateManagedProcess(processName: string, managed: ManagedAiCommandProcess): Promise<void> {
+  const child = managed.child;
+  if (child && !child.killed) {
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        child.off("close", finish);
+        child.off("error", finish);
+        resolve();
+      };
+
+      child.on("close", finish);
+      child.on("error", finish);
+      child.kill("SIGTERM");
+    });
+  }
+
+  aiCommandProcesses.delete(processName);
+}
+
 function cloneProcessDescription(processInfo: AiCommandProcessDescription): AiCommandProcessDescription {
   return { ...processInfo };
 }
@@ -76,22 +95,14 @@ export async function deleteAiCommandProcess(processName: string): Promise<void>
     return;
   }
 
-  const child = managed.child;
-  if (child && !child.killed) {
-    await new Promise<void>((resolve) => {
-      const finish = () => {
-        child.off("close", finish);
-        child.off("error", finish);
-        resolve();
-      };
+  await terminateManagedProcess(processName, managed);
+}
 
-      child.on("close", finish);
-      child.on("error", finish);
-      child.kill("SIGTERM");
-    });
-  }
-
-  aiCommandProcesses.delete(processName);
+export async function stopAllAiCommandProcesses(): Promise<void> {
+  const entries = Array.from(aiCommandProcesses.entries());
+  await Promise.all(entries.map(async ([processName, managed]) => {
+    await terminateManagedProcess(processName, managed);
+  }));
 }
 
 export async function startAiCommandProcess(options: {

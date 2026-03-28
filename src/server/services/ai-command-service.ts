@@ -2,8 +2,27 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { AiCommandId, AiCommandJob, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
 import { createOperationalStateStore } from "./operational-state-service.js";
+import {
+  getAiCommandProcess,
+  isAiCommandProcessActive,
+  readAiCommandProcessLogs,
+  type AiCommandProcessDescription,
+} from "./ai-command-process-service.js";
 
 const aiCommandJobEmitter = new EventEmitter();
+const AI_COMMAND_PROCESS_METADATA_GRACE_MS = 5_000;
+
+interface AiCommandProcessAdapter {
+  getProcess: (processName: string) => Promise<AiCommandProcessDescription | null>;
+  readProcessLogs: (processInfo: AiCommandProcessDescription | null) => Promise<{ stdout: string; stderr: string }>;
+  isProcessActive: (status: string | undefined) => boolean;
+}
+
+const defaultAiCommandProcessAdapter: AiCommandProcessAdapter = {
+  getProcess: getAiCommandProcess,
+  readProcessLogs: readAiCommandProcessLogs,
+  isProcessActive: isAiCommandProcessActive,
+};
 
 function getAiCommandEventKey(repoRoot: string, branch: string) {
   return `${repoRoot}:${branch}`;
@@ -46,23 +65,158 @@ function appendOutputEvent(events: AiCommandOutputEvent[] | undefined, source: A
   return [...(events?.map((event) => ({ ...event })) ?? []), createOutputEvent(source, chunk)];
 }
 
+function resolveAppendedChunk(previous: string, next: string): string {
+  if (!next || next === previous) {
+    return "";
+  }
+
+  if (next.startsWith(previous)) {
+    return next.slice(previous.length);
+  }
+
+  return next.slice(Math.min(previous.length, next.length));
+}
+
+async function reconcileAiCommandJob(
+  repoRoot: string,
+  job: AiCommandJob | null,
+  aiProcesses: AiCommandProcessAdapter = defaultAiCommandProcessAdapter,
+): Promise<AiCommandJob | null> {
+  if (!job || job.status !== "running") {
+    return cloneAiCommandJob(job);
+  }
+
+  const store = await createOperationalStateStore(repoRoot);
+
+  if (!job.processName) {
+    const startedAtMs = Date.parse(job.startedAt);
+    if (Number.isFinite(startedAtMs) && Date.now() - startedAtMs < AI_COMMAND_PROCESS_METADATA_GRACE_MS) {
+      return cloneAiCommandJob(job);
+    }
+
+    const error = "AI process metadata was missing while the job was still marked running.";
+    const failedJob: AiCommandJob = {
+      ...job,
+      status: "failed",
+      completedAt: job.completedAt ?? new Date().toISOString(),
+      stderr: `${job.stderr}${error}`,
+      outputEvents: appendOutputEvent(job.outputEvents, "stderr", error),
+      error,
+    };
+    await store.setAiCommandJob(failedJob);
+    return cloneAiCommandJob(failedJob);
+  }
+
+  const processInfo = await aiProcesses.getProcess(job.processName);
+  if (processInfo && aiProcesses.isProcessActive(processInfo.status)) {
+    const logs = await aiProcesses.readProcessLogs(processInfo);
+    const stdoutDelta = resolveAppendedChunk(job.stdout, logs.stdout);
+    const stderrDelta = resolveAppendedChunk(job.stderr, logs.stderr);
+    const nextPid = processInfo.pid ?? job.pid ?? null;
+    const nextJob: AiCommandJob = {
+      ...job,
+      stdout: logs.stdout,
+      stderr: logs.stderr,
+      pid: nextPid,
+      outputEvents: appendOutputEvent(
+        appendOutputEvent(job.outputEvents, "stdout", stdoutDelta),
+        "stderr",
+        stderrDelta,
+      ),
+    };
+
+    const hasChanged = nextJob.stdout !== job.stdout
+      || nextJob.stderr !== job.stderr
+      || nextJob.pid !== (job.pid ?? null)
+      || (nextJob.outputEvents?.length ?? 0) !== (job.outputEvents?.length ?? 0);
+
+    if (!hasChanged) {
+      return cloneAiCommandJob(job);
+    }
+
+    await store.setAiCommandJob(nextJob);
+    return cloneAiCommandJob(nextJob);
+  }
+
+  const logs = await aiProcesses.readProcessLogs(processInfo);
+  const resolvedExitCode = processInfo?.exitCode ?? job.exitCode ?? null;
+  const completedAt = job.completedAt ?? new Date().toISOString();
+  const baseJob: AiCommandJob = {
+    ...job,
+    completedAt,
+    stdout: logs.stdout || job.stdout,
+    stderr: logs.stderr || job.stderr,
+    pid: processInfo?.pid ?? job.pid ?? null,
+    exitCode: resolvedExitCode,
+    outputEvents: appendOutputEvent(
+      appendOutputEvent(job.outputEvents, "stdout", resolveAppendedChunk(job.stdout, logs.stdout || job.stdout)),
+      "stderr",
+      resolveAppendedChunk(job.stderr, logs.stderr || job.stderr),
+    ),
+  };
+
+  const settledJob: AiCommandJob = resolvedExitCode === 0
+    ? {
+        ...baseJob,
+        status: "completed",
+        error: null,
+      }
+    : {
+        ...baseJob,
+        status: "failed",
+        stderr: `${baseJob.stderr}${job.error ?? (processInfo
+          ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
+          : "AI process was no longer available. The server may have restarted or the process may have crashed.")}`,
+        outputEvents: appendOutputEvent(
+          baseJob.outputEvents,
+          "stderr",
+          job.error ?? (processInfo
+            ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
+            : "AI process was no longer available. The server may have restarted or the process may have crashed."),
+        ),
+        error: job.error ?? (processInfo
+          ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
+          : "AI process was no longer available. The server may have restarted or the process may have crashed."),
+      };
+
+  await store.setAiCommandJob(settledJob);
+  return cloneAiCommandJob(settledJob);
+}
+
 async function emitAiCommandJobUpdate(repoRoot: string, branch: string) {
   const store = await createOperationalStateStore(repoRoot);
   const job = await store.getAiCommandJob(branch);
   aiCommandJobEmitter.emit(getAiCommandEventKey(repoRoot, branch), cloneAiCommandJob(job));
 }
 
-export async function getAiCommandJob(repoRoot: string, branch: string): Promise<AiCommandJob | null> {
+export async function getAiCommandJob(
+  repoRoot: string,
+  branch: string,
+  options?: { aiProcesses?: AiCommandProcessAdapter },
+): Promise<AiCommandJob | null> {
   const store = await createOperationalStateStore(repoRoot);
-  return cloneAiCommandJob(await store.getAiCommandJob(branch));
+  return await reconcileAiCommandJob(repoRoot, await store.getAiCommandJob(branch), options?.aiProcesses);
 }
 
-export async function listAiCommandJobs(repoRoot: string): Promise<AiCommandJob[]> {
+export async function listAiCommandJobs(
+  repoRoot: string,
+  options?: { aiProcesses?: AiCommandProcessAdapter },
+): Promise<AiCommandJob[]> {
   const store = await createOperationalStateStore(repoRoot);
-  return (await store.listAiCommandJobs())
+  const jobs = await Promise.all(
+    (await store.listAiCommandJobs()).map((job) => reconcileAiCommandJob(repoRoot, job, options?.aiProcesses)),
+  );
+  return jobs
     .map((job) => cloneAiCommandJob(job))
     .filter((job): job is AiCommandJob => job !== null)
     .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+}
+
+export async function reconcileInterruptedAiCommandJobs(
+  repoRoot: string,
+  options?: { aiProcesses?: AiCommandProcessAdapter },
+): Promise<AiCommandJob[]> {
+  return await listAiCommandJobs(repoRoot, options);
 }
 
 export async function clearAiCommandJobs(repoRoot: string, branch?: string) {
@@ -89,7 +243,8 @@ export function subscribeToAiCommandJob(repoRoot: string, branch: string, listen
 }
 
 export async function waitForAiCommandJob(repoRoot: string, branch: string, jobId: string): Promise<AiCommandJob> {
-  const currentJob = await getAiCommandJob(repoRoot, branch);
+  const store = await createOperationalStateStore(repoRoot);
+  const currentJob = cloneAiCommandJob(await store.getAiCommandJob(branch));
   if (currentJob?.jobId === jobId && currentJob.status !== "running") {
     return currentJob;
   }
@@ -116,12 +271,13 @@ export async function waitForAiCommandJob(repoRoot: string, branch: string, jobI
     });
 
     const interval = setInterval(() => {
-      void getAiCommandJob(repoRoot, branch).then((job) => {
-        if (!job || job.jobId !== jobId || job.status === "running") {
+      void store.getAiCommandJob(branch).then((job) => {
+        const snapshot = cloneAiCommandJob(job);
+        if (!snapshot || snapshot.jobId !== jobId || snapshot.status === "running") {
           return;
         }
 
-        finish(job);
+        finish(snapshot);
       });
     }, 250);
   });
@@ -375,6 +531,13 @@ export async function startAiCommandJob(options: {
         worktreePath: options.worktreePath,
         hooks,
       });
+      const storedJob = await store.getAiCommandJob(options.branch);
+      if (storedJob && storedJob.jobId === jobId && storedJob.status !== "running") {
+        currentJob = cloneAiCommandJob(storedJob) ?? currentJob;
+        resolveStartup();
+        return;
+      }
+
       await options.onComplete?.({
         job: {
           ...currentJob,

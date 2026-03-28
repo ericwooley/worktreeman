@@ -8,6 +8,7 @@ import test from "node:test";
 import { startServer } from "./app.js";
 import { initRepository } from "./services/init-service.js";
 import { createOperationalStateStore, stopOperationalStateStore } from "./services/operational-state-service.js";
+import { getAiCommandProcess, getAiCommandProcessName, startAiCommandProcess } from "./services/ai-command-process-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "./services/repository-layout-service.js";
 import { findRepoContext } from "./utils/paths.js";
 
@@ -162,6 +163,75 @@ test("startServer clears persisted shutdown status from a previous server run", 
       failed: false,
       logs: [],
     });
+  } finally {
+    await startedServer?.close();
+    await stopOperationalStateStore(repo.repoRoot);
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer reconciles interrupted running AI jobs on startup", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    await operationalState.setAiCommandJob({
+      jobId: "interrupted-job",
+      fileName: "interrupted-job.json",
+      branch: "main",
+      commandId: "smart",
+      command: "printf %s 'resume'",
+      input: "resume",
+      status: "running",
+      startedAt: new Date(Date.now() - 60_000).toISOString(),
+      stdout: "partial output",
+      stderr: "",
+      outputEvents: [],
+      pid: 9999,
+      exitCode: null,
+      processName: "wtm:ai:missing-restart-process",
+    });
+    await stopOperationalStateStore(repo.repoRoot);
+
+    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
+
+    const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
+    const reconciledJob = await restartedOperationalState.getAiCommandJob("main");
+    assert.equal(reconciledJob?.status, "failed");
+    assert.match(reconciledJob?.error ?? "", /no longer available/);
+    assert.equal(reconciledJob?.stdout, "partial output");
+    assert.equal(typeof reconciledJob?.completedAt, "string");
+  } finally {
+    await startedServer?.close();
+    await stopOperationalStateStore(repo.repoRoot);
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer closes managed AI command processes during shutdown", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+  const processName = getAiCommandProcessName(`shutdown-${Date.now()}`);
+  const outFile = path.join(repo.repoRoot, ".logs", "ai", "shutdown-stdout.log");
+  const errFile = path.join(repo.repoRoot, ".logs", "ai", "shutdown-stderr.log");
+
+  try {
+    await startAiCommandProcess({
+      processName,
+      command: "node -e \"setInterval(() => {}, 1000)\"",
+      worktreePath: path.join(repo.repoRoot, "main"),
+      env: process.env,
+      outFile,
+      errFile,
+    });
+
+    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
+    await startedServer.close();
+    startedServer = undefined;
+
+    const processInfo = await getAiCommandProcess(processName);
+    assert.equal(processInfo, null);
   } finally {
     await startedServer?.close();
     await stopOperationalStateStore(repo.repoRoot);

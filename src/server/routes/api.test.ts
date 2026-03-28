@@ -18,7 +18,7 @@ import { runCommand } from "../utils/process.js";
 import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
 import { startAiCommandJob } from "../services/ai-command-service.js";
-import { stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
+import { stopAiCommandJobManager, stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
@@ -47,7 +47,16 @@ interface FakeAiProcessSnapshot {
   exitCode?: number | null;
 }
 
-const testContextRepoRoots: string[] = [];
+const testContextRepoRoots = new Set<string>();
+
+async function repoRootExists(repoRoot: string) {
+  try {
+    await fs.access(repoRoot);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function createFakeAiProcesses() {
   const queuedScripts: FakeAiProcessSnapshot[][] = [];
@@ -130,6 +139,9 @@ function createFakeAiProcesses() {
       }
 
       const snapshot = state.snapshots[state.current] ?? normalizeSnapshot();
+      if (state.current < state.snapshots.length - 1) {
+        state.current += 1;
+      }
       return {
         stdout: snapshot.stdout ?? "",
         stderr: snapshot.stderr ?? "",
@@ -137,8 +149,27 @@ function createFakeAiProcesses() {
     },
     async deleteProcess(processName) {
       deletedProcesses.push(processName);
-      manualStates.delete(processName);
-      scriptedStates.delete(processName);
+      const manual = manualStates.get(processName);
+      if (manual) {
+        manualStates.set(processName, {
+          ...manual,
+          status: "stopped",
+          exitCode: manual.exitCode ?? null,
+        });
+        return;
+      }
+
+      const state = scriptedStates.get(processName);
+      if (state) {
+        const current = state.snapshots[state.current] ?? normalizeSnapshot();
+        state.snapshots = [{
+          ...current,
+          status: "stopped",
+          exitCode: current.exitCode ?? null,
+        }];
+        state.cursor = 0;
+        state.current = 0;
+      }
     },
     isProcessActive(status) {
       return status === "online" || status === "launching";
@@ -308,7 +339,7 @@ async function startApiServer(
   const app = express();
   app.use(express.json());
   const operationalState = await createOperationalStateStore(repo.repoRoot);
-  testContextRepoRoots.push(repo.repoRoot);
+  testContextRepoRoots.add(repo.repoRoot);
   app.use("/api", createApiRouter({
     repoRoot: repo.repoRoot,
     configPath: repo.configPath,
@@ -396,6 +427,8 @@ async function startApiServer(
     fetch: apiFetch,
     url: ensureLiveBaseUrl,
     close: async () => {
+      await stopAiCommandJobManager(repo.repoRoot);
+
       if (!server) {
         return;
       }
@@ -408,10 +441,26 @@ async function startApiServer(
 }
 
 test.afterEach(async () => {
-  const repos = Array.from(new Set(testContextRepoRoots.splice(0, testContextRepoRoots.length)));
+  const repos = Array.from(testContextRepoRoots);
+  const staleRepos = await Promise.all(repos.map(async (repoRoot) => {
+    return await repoRootExists(repoRoot) ? null : repoRoot;
+  }));
+  const repoRootsToCleanup = staleRepos.filter((repoRoot): repoRoot is string => Boolean(repoRoot));
+
+  await Promise.all(repoRootsToCleanup.map(async (repoRoot) => {
+    testContextRepoRoots.delete(repoRoot);
+    await stopAiCommandJobManager(repoRoot);
+    await stopOperationalStateStore(repoRoot);
+  }));
+});
+
+test.after(async () => {
+  const repos = Array.from(testContextRepoRoots);
+  testContextRepoRoots.clear();
+  await Promise.all(repos.map((repoRoot) => stopAiCommandJobManager(repoRoot)));
   await Promise.all(repos.map((repoRoot) => stopOperationalStateStore(repoRoot)));
-  await stopAllAiCommandJobManagers();
   await stopAllOperationalStateStores();
+  await stopAllAiCommandJobManagers();
 });
 
 test("GET /api/state returns favicon and preferred port config", async () => {
@@ -1959,7 +2008,90 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
   }
 });
 
-test("project-management AI runs update the saved document on the server", { concurrency: false }, async () => {
+test("stale persisted running AI jobs reconcile on the worktree stream and no longer block new runs", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  await createWorktree(repo.repoRoot, config, { branch: "feature-ai-restart" });
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+  await operationalState.setAiCommandJob({
+    jobId: "stale-job",
+    fileName: "stale-job.json",
+    branch: "feature-ai-restart",
+    commandId: "smart",
+    command: "printf %s 'recover me'",
+    input: "recover me",
+    status: "running",
+    startedAt: new Date(Date.now() - 60_000).toISOString(),
+    stdout: "partial output",
+    stderr: "",
+    outputEvents: [],
+    pid: 4321,
+    exitCode: null,
+    processName: "wtm:ai:stale-process",
+    origin: {
+      kind: "worktree-environment",
+      label: "Worktree environment",
+      description: "Started from feature-ai-restart.",
+      location: {
+        tab: "environment",
+        branch: "feature-ai-restart",
+        environmentSubTab: "terminal",
+      },
+    },
+  });
+
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 7001, stdout: "fresh output\n", stderr: "" },
+    { status: "stopped", pid: 7001, stdout: "fresh output\n", stderr: "", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+    aiLogStreamPollIntervalMs: 10,
+  });
+
+  try {
+    const stream = await openSse(`${await server.url()}/api/worktrees/${encodeURIComponent("feature-ai-restart")}/ai-command/stream`);
+    try {
+      const snapshot = await stream.nextEvent();
+      const snapshotJob = (snapshot as {
+        type: string;
+        job?: { status?: string; error?: string | null; stdout?: string; branch?: string } | null;
+      }).job;
+
+      assert.equal(snapshot.type, "snapshot");
+      assert.equal(snapshotJob?.branch, "feature-ai-restart");
+      assert.equal(snapshotJob?.status, "failed");
+      assert.equal(snapshotJob?.stdout, "partial output");
+      assert.match(snapshotJob?.error ?? "", /no longer available/);
+    } finally {
+      await stream.close();
+    }
+
+    const runResponse = await server.fetch(`/api/worktrees/feature-ai-restart/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "run again after restart" }),
+    });
+    assert.equal(runResponse.status, 200);
+
+    const runPayload = await runResponse.json() as {
+      job: { branch: string; status: string };
+    };
+    assert.equal(runPayload.job.branch, "feature-ai-restart");
+    assert.equal(runPayload.job.status, "running");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management AI runs update the saved document on the server", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   let capturedCommand = "";

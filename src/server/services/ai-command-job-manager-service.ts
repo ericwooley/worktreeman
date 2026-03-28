@@ -6,6 +6,7 @@ import type { AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/ty
 
 const PROJECT_MANAGEMENT_AI_QUEUE = "project-management-ai-update";
 const JOB_START_TIMEOUT_MS = 10000;
+const JOB_POLL_INTERVAL_SECONDS = 0.5;
 
 export interface ProjectManagementAiQueuePayload {
   branch: string;
@@ -37,6 +38,7 @@ interface ManagedAiCommandJobQueue {
   db: PGlite;
   readyPromise: Promise<void>;
   startWaiters: Map<string, StartWaiter>;
+  startedJobs: Map<string, AiCommandJob>;
 }
 
 const managedQueues = new Map<string, ManagedAiCommandJobQueue>();
@@ -81,6 +83,7 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
   });
 
   const startWaiters = new Map<string, StartWaiter>();
+  const startedJobs = new Map<string, AiCommandJob>();
   const readyPromise = (async () => {
     boss.on("error", (error) => {
       console.error("[ai-jobs] pg-boss error", error);
@@ -89,7 +92,7 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
     await boss.createQueue(PROJECT_MANAGEMENT_AI_QUEUE);
     await boss.work<ProjectManagementAiQueuePayload>(
       PROJECT_MANAGEMENT_AI_QUEUE,
-      { pollingIntervalSeconds: 0.5 },
+      { pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS },
       async (jobs) => {
         for (const job of jobs) {
           try {
@@ -98,6 +101,7 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
               notifyStarted(startedJob) {
                 const waiter = startWaiters.get(job.id);
                 if (!waiter) {
+                  startedJobs.set(job.id, startedJob);
                   return;
                 }
 
@@ -120,7 +124,7 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
     );
   })();
 
-  const managed: ManagedAiCommandJobQueue = { boss, db, readyPromise, startWaiters };
+  const managed: ManagedAiCommandJobQueue = { boss, db, readyPromise, startWaiters, startedJobs };
   managedQueues.set(options.repoRoot, managed);
 
   try {
@@ -150,13 +154,52 @@ export async function enqueueProjectManagementAiJob(options: AiCommandJobManager
     throw new Error("Failed to enqueue the project management AI job.");
   }
 
+  const alreadyStarted = manager.startedJobs.get(queueJobId);
+  if (alreadyStarted) {
+    manager.startedJobs.delete(queueJobId);
+    return alreadyStarted;
+  }
+
   return await new Promise<AiCommandJob>((resolve, reject) => {
+    let settled = false;
+    const resolveStartedJob = (job: AiCommandJob) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+      manager.startWaiters.delete(queueJobId);
+      manager.startedJobs.delete(queueJobId);
+      resolve(job);
+    };
+
     const timer = setTimeout(() => {
+      settled = true;
       manager.startWaiters.delete(queueJobId);
       reject(new Error(`Timed out waiting for AI job ${queueJobId} to start.`));
     }, options.timeoutMs ?? JOB_START_TIMEOUT_MS);
 
-    manager.startWaiters.set(queueJobId, { resolve, reject, timer });
+    manager.startWaiters.set(queueJobId, {
+      resolve: resolveStartedJob,
+      reject: (error) => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        clearTimeout(timer);
+        manager.startWaiters.delete(queueJobId);
+        manager.startedJobs.delete(queueJobId);
+        reject(error);
+      },
+      timer,
+    });
+
+    const startedAfterWaiterRegistered = manager.startedJobs.get(queueJobId);
+    if (startedAfterWaiterRegistered) {
+      resolveStartedJob(startedAfterWaiterRegistered);
+    }
   });
 }
 
@@ -170,6 +213,28 @@ export async function stopAllAiCommandJobManagers() {
       waiter.reject(new Error("AI job manager stopped before the job started."));
     }
     manager.startWaiters.clear();
+    manager.startedJobs.clear();
     await Promise.allSettled([manager.boss.stop(), manager.db.close()]);
   }));
+}
+
+export async function stopAiCommandJobManager(repoRoot: string) {
+  const manager = managedQueues.get(repoRoot);
+  if (!manager) {
+    return;
+  }
+
+  managedQueues.delete(repoRoot);
+
+  await Promise.all([
+    (async () => {
+    for (const waiter of manager.startWaiters.values()) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("AI job manager stopped before the job started."));
+    }
+    manager.startWaiters.clear();
+    manager.startedJobs.clear();
+    })(),
+    Promise.allSettled([manager.boss.stop(), manager.db.close()]),
+  ]);
 }
