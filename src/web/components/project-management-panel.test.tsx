@@ -151,6 +151,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     },
     aiJob: null,
     documentRunJob: null,
+    runningAiJobs: [],
     selectedWorktreeBranch: null,
     onSelectWorktree: () => undefined,
     onSubTabChange: () => undefined,
@@ -189,6 +190,7 @@ test("create form renders without seeded defaults", () => {
       aiCommands={null}
       aiJob={null}
       documentRunJob={null}
+      runningAiJobs={[]}
       selectedWorktreeBranch={null}
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
@@ -284,6 +286,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       aiCommands={null}
       aiJob={null}
       documentRunJob={null}
+      runningAiJobs={[]}
       selectedWorktreeBranch={null}
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
@@ -344,6 +347,7 @@ test("document view renders summary, comments, and comment attribution", () => {
       aiCommands={null}
       aiJob={null}
       documentRunJob={null}
+      runningAiJobs={[]}
       selectedWorktreeBranch="feature/doc-1-primary"
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
@@ -482,6 +486,7 @@ test("board view renders multi-select controls and AI quick actions", () => {
       ]}
       document={sampleDocument}
       documentRunJob={null}
+      runningAiJobs={[]}
       showBacklogLane={true}
       saving={false}
       smartAiReady={true}
@@ -503,4 +508,54 @@ test("board view renders multi-select controls and AI quick actions", () => {
   assert.match(markup, /Start AI/);
   assert.match(markup, /aria-label="Select Dependencies"/);
   assert.match(markup, /aria-label="Select Shared document list"/);
+});
+
+test("board view marks AI running for documents even when the active worktree differs", () => {
+  const markup = renderToStaticMarkup(
+    <ProjectManagementBoardTab
+      swimlaneDocuments={[
+        { status: "todo", documents: [sampleDocuments[0]] },
+        { status: "in-progress", documents: [sampleDocuments[1]] },
+      ]}
+      document={sampleDocument}
+      documentRunJob={null}
+      runningAiJobs={[
+        {
+          jobId: "job-3",
+          fileName: "job-3.log",
+          branch: "feature/doc-1-runtime",
+          documentId: "doc-1",
+          commandId: "smart",
+          command: "runner --prompt $WTM_AI_INPUT",
+          input: "Implement the document",
+          status: "running",
+          startedAt: "2026-03-26T10:10:00.000Z",
+          stdout: "",
+          stderr: "",
+          origin: {
+            kind: "project-management-document-run",
+            label: "Project management board run",
+            description: "#1 Dependencies",
+            location: {
+              tab: "project-management",
+              projectManagementSubTab: "board",
+              documentId: "doc-1",
+              projectManagementDocumentViewMode: "document",
+            },
+          },
+        },
+      ]}
+      showBacklogLane={true}
+      saving={false}
+      smartAiReady={true}
+      onToggleBacklogLane={() => undefined}
+      onSelectDocument={async () => null}
+      onMoveDocument={async () => undefined}
+      onBatchUpdateDocuments={async () => true}
+      onRunDocumentAi={async () => null}
+    />,
+  );
+
+  assert.match(markup, /AI running/);
+  assert.match(markup, /title="AI is already running in feature\/doc-1-runtime"/);
 });

@@ -1846,6 +1846,7 @@ export function WorktreeDetail({
               aiCommands={projectManagementAiCommands}
               aiJob={projectManagementAiJob}
               documentRunJob={projectManagementDocumentAiJob}
+              runningAiJobs={projectManagementRunningAiJobs}
               selectedWorktreeBranch={worktree?.branch ?? null}
               onSelectWorktree={onSelectWorktree}
               onSubTabChange={onProjectManagementSubTabChange}
