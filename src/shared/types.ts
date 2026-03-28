@@ -402,6 +402,7 @@ export interface RunAiCommandRequest {
 export interface RunProjectManagementDocumentAiRequest {
   input?: string;
   commandId?: AiCommandId;
+  origin?: AiCommandOrigin | null;
 }
 
 export type AiCommandOriginTab = "environment" | "git" | "project-management";

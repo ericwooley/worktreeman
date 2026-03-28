@@ -18,6 +18,7 @@ import type {
   DeleteWorktreeRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
+  ProjectManagementBatchUpdateEntry,
   ProjectManagementDocument,
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
@@ -32,6 +33,7 @@ import type {
 } from "@shared/types";
 import {
   addProjectManagementComment as addProjectManagementCommentRequest,
+  appendProjectManagementBatch as appendProjectManagementBatchRequest,
   createProjectManagementDocument as createProjectManagementDocumentRequest,
   createWorktree,
   deleteWorktree,
@@ -923,6 +925,63 @@ export function useDashboardState() {
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management status.");
           return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async batchUpdateProjectManagementDocuments(documentIds: string[], overrides: {
+        status?: string;
+        archived?: boolean;
+      }) {
+        const uniqueDocumentIds = [...new Set(documentIds.map((entry) => entry.trim()).filter(Boolean))];
+        if (!uniqueDocumentIds.length) {
+          return true;
+        }
+
+        setProjectManagementSaving(true);
+        try {
+          const documentsToUpdate = await Promise.all(
+            uniqueDocumentIds.map(async (documentId) => {
+              if (projectManagementDocument?.id === documentId) {
+                return projectManagementDocument;
+              }
+
+              const response = await fetchProjectManagementDocument(documentId);
+              return response.document;
+            }),
+          );
+
+          const entries: ProjectManagementBatchUpdateEntry[] = documentsToUpdate.map((document) => ({
+            documentId: document.id,
+            title: document.title,
+            summary: document.summary || undefined,
+            markdown: document.markdown,
+            tags: document.tags,
+            dependencies: document.dependencies,
+            status: overrides.status ?? document.status,
+            assignee: document.assignee || undefined,
+            archived: overrides.archived ?? document.archived,
+          }));
+
+          await appendProjectManagementBatchRequest({ entries });
+          const listResponse = await loadProjectManagementDocumentsState({ silent: true });
+          const currentSelectedDocumentId = projectManagementDocument?.id;
+          if (currentSelectedDocumentId && uniqueDocumentIds.includes(currentSelectedDocumentId)) {
+            const refreshedDocument = await fetchProjectManagementDocument(currentSelectedDocumentId);
+            setProjectManagementDocument(refreshedDocument.document);
+            const history = await fetchProjectManagementHistory(currentSelectedDocumentId);
+            setProjectManagementHistory(history.history);
+          }
+
+          if (!currentSelectedDocumentId && listResponse && projectManagementDocument) {
+            setProjectManagementDocument(null);
+          }
+
+          setError(null);
+          return true;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to update project management documents.");
+          return false;
         } finally {
           setProjectManagementSaving(false);
         }

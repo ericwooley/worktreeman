@@ -151,6 +151,7 @@ interface ApiRouterOptions {
 interface RunProjectManagementDocumentAiRequest {
   input?: unknown;
   commandId?: unknown;
+  origin?: unknown;
 }
 
 const CONFIG_COMMIT_ENV = {
@@ -2272,18 +2273,34 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const documentId = decodeURIComponent(req.params.id).trim();
       const body = req.body as RunProjectManagementDocumentAiRequest | undefined;
       const requestedChange = typeof body?.input === "string" ? body.input : null;
+      const requestedOrigin = parseAiCommandOrigin(body?.origin);
       const documentPayload = await getProjectManagementDocument(options.repoRoot, documentId);
       const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
 
       branch = createProjectManagementDocumentWorktreeBranch(documentPayload.document);
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
-      origin = createProjectManagementDocumentOrigin({
+      const defaultOrigin = createProjectManagementDocumentOrigin({
         branch,
         document: documentPayload.document,
         kind: "project-management-document-run",
         label: "Project management document run",
         viewMode: "document",
       });
+      origin = requestedOrigin?.kind === "project-management-document-run"
+        && requestedOrigin.location.tab === "project-management"
+        ? {
+          ...requestedOrigin,
+          description: requestedOrigin.description?.trim() || defaultOrigin.description,
+          location: {
+            ...requestedOrigin.location,
+            tab: "project-management",
+            branch,
+            documentId: documentPayload.document.id,
+            projectManagementSubTab: requestedOrigin.location.projectManagementSubTab ?? "document",
+            projectManagementDocumentViewMode: requestedOrigin.location.projectManagementDocumentViewMode ?? "document",
+          },
+        }
+        : defaultOrigin;
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {

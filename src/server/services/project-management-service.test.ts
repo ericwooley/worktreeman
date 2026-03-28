@@ -241,6 +241,78 @@ test("documents can be archived and restored with metadata preserved", async () 
   }
 });
 
+test("appendProjectManagementBatch updates multiple existing documents in one commit", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const first = await createProjectManagementDocument(repoRoot, {
+      title: "Board Card Alpha",
+      summary: "Move this card together with the next one.",
+      markdown: "# Board Card Alpha\n",
+      tags: ["feature"],
+      status: "todo",
+      assignee: "Avery",
+    });
+    const second = await createProjectManagementDocument(repoRoot, {
+      title: "Board Card Beta",
+      summary: "Archive this card in the same batch.",
+      markdown: "# Board Card Beta\n",
+      tags: ["bug"],
+      status: "todo",
+      assignee: "Casey",
+    });
+
+    const batch = await appendProjectManagementBatch(repoRoot, {
+      entries: [
+        {
+          documentId: first.document.id,
+          title: first.document.title,
+          summary: first.document.summary,
+          markdown: first.document.markdown,
+          tags: first.document.tags,
+          dependencies: first.document.dependencies,
+          status: "in-progress",
+          assignee: first.document.assignee,
+          archived: false,
+        },
+        {
+          documentId: second.document.id,
+          title: second.document.title,
+          summary: second.document.summary,
+          markdown: second.document.markdown,
+          tags: second.document.tags,
+          dependencies: second.document.dependencies,
+          status: "done",
+          assignee: second.document.assignee,
+          archived: true,
+        },
+      ],
+    });
+
+    assert.deepEqual(batch.documentIds.sort(), [first.document.id, second.document.id].sort());
+
+    const firstUpdated = await getProjectManagementDocument(repoRoot, first.document.id);
+    const secondUpdated = await getProjectManagementDocument(repoRoot, second.document.id);
+    assert.equal(firstUpdated.document.status, "in-progress");
+    assert.equal(firstUpdated.document.summary, first.document.summary);
+    assert.deepEqual(firstUpdated.document.tags, first.document.tags);
+    assert.equal(firstUpdated.document.archived, false);
+    assert.equal(secondUpdated.document.status, "done");
+    assert.equal(secondUpdated.document.archived, true);
+    assert.equal(secondUpdated.document.assignee, second.document.assignee);
+
+    const firstHistory = await getProjectManagementDocumentHistory(repoRoot, first.document.id);
+    const secondHistory = await getProjectManagementDocumentHistory(repoRoot, second.document.id);
+    assert.equal(firstHistory.history.length, 2);
+    assert.equal(secondHistory.history.length, 2);
+    assert.equal(firstHistory.history.at(-1)?.commitSha, secondHistory.history.at(-1)?.commitSha);
+    assert.match(firstHistory.history.at(-1)?.diff ?? "", /\+status: in-progress/);
+    assert.match(secondHistory.history.at(-1)?.diff ?? "", /\+archived: true/);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
 test("dependencies persist on create and can be updated independently", async () => {
   const repoRoot = await createTestRepo();
 

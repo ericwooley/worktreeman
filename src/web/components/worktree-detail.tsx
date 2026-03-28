@@ -3,6 +3,7 @@ import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/r
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
 import type {
+  AiCommandOrigin,
   AiCommandConfig,
   AiCommandId,
   AiCommandLogEntry,
@@ -414,9 +415,18 @@ interface WorktreeDetailProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
+  onBatchUpdateProjectManagementDocuments: (documentIds: string[], overrides: {
+    status?: string;
+    archived?: boolean;
+  }) => Promise<boolean>;
   onAddProjectManagementComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
   onRunProjectManagementAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
-  onRunProjectManagementDocumentAi: (payload: { documentId: string; input?: string; commandId: "smart" | "simple" }) => Promise<RunAiCommandResponse | null>;
+  onRunProjectManagementDocumentAi: (payload: {
+    documentId: string;
+    input?: string;
+    commandId: AiCommandId;
+    origin?: AiCommandOrigin | null;
+  }) => Promise<RunAiCommandResponse | null>;
   onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiLogJob: (branch: string) => Promise<AiCommandJob | null>;
@@ -494,6 +504,7 @@ export function WorktreeDetail({
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
   onUpdateProjectManagementStatus,
+  onBatchUpdateProjectManagementDocuments,
   onAddProjectManagementComment,
   onRunProjectManagementAiCommand,
   onRunProjectManagementDocumentAi,
@@ -1320,6 +1331,7 @@ export function WorktreeDetail({
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
               onUpdateStatus={onUpdateProjectManagementStatus}
+              onBatchUpdateDocuments={onBatchUpdateProjectManagementDocuments}
               onAddComment={onAddProjectManagementComment}
               onRunAiCommand={onRunProjectManagementAiCommand}
               onRunDocumentAi={onRunProjectManagementDocumentAi}
