@@ -46,11 +46,14 @@ interface ProjectManagementAiTabProps {
   logs: AiCommandLogSummary[];
   logDetail: AiCommandLogEntry | null;
   loading: boolean;
+  error?: string | null;
+  lastUpdatedAt?: string | null;
   runningJobs: AiCommandJob[];
   onSubTabChange: (tab: AiActivitySubTab) => void;
   onSelectLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCancelJob: (branch: string) => Promise<AiCommandJob | null>;
   onOpenOrigin: (origin: AiCommandOrigin) => void | Promise<void>;
+  onRetry?: () => void | Promise<void>;
 }
 
 export function ProjectManagementAiTab({
@@ -58,11 +61,14 @@ export function ProjectManagementAiTab({
   logs,
   logDetail,
   loading,
+  error = null,
+  lastUpdatedAt = null,
   runningJobs,
   onSubTabChange,
   onSelectLog,
   onCancelJob,
   onOpenOrigin,
+  onRetry,
 }: ProjectManagementAiTabProps) {
   const [selectedRunningJobId, setSelectedRunningJobId] = useState<string | null>(runningJobs[0]?.jobId ?? null);
   const [now, setNow] = useState(() => Date.now());
@@ -220,10 +226,13 @@ export function ProjectManagementAiTab({
           logs={logs}
           logDetail={logDetail}
           loading={loading}
+          error={error}
+          lastUpdatedAt={lastUpdatedAt}
           runningJobs={runningJobs}
           onSelectLog={onSelectLog}
           onCancelJob={onCancelJob}
           onOpenOrigin={onOpenOrigin}
+          onRetry={onRetry}
         />
       )}
     </div>

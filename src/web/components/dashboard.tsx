@@ -125,11 +125,15 @@ export function Dashboard() {
     aiCommandLogs,
     aiCommandLogDetail,
     aiCommandLogsLoading,
+    aiCommandLogsError,
+    aiCommandLogsLastUpdatedAt,
     runningAiCommandJobs,
     projectManagement,
     projectManagementDocument,
     projectManagementHistory,
     projectManagementLoading,
+    projectManagementError,
+    projectManagementLastUpdatedAt,
     projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,
@@ -1324,10 +1328,14 @@ export function Dashboard() {
             projectManagementDocument={projectManagementDocument}
             projectManagementHistory={projectManagementHistory}
             projectManagementLoading={projectManagementLoading}
+            projectManagementError={projectManagementError}
+            projectManagementLastUpdatedAt={projectManagementLastUpdatedAt}
             projectManagementSaving={projectManagementSaving}
             projectManagementAiLogs={aiCommandLogs}
             projectManagementAiLogDetail={aiCommandLogDetail}
             projectManagementAiLogsLoading={aiCommandLogsLoading}
+            projectManagementAiLogsError={aiCommandLogsError}
+            projectManagementAiLogsLastUpdatedAt={aiCommandLogsLastUpdatedAt}
             projectManagementRunningAiJobs={runningAiCommandJobs}
             projectManagementAiActiveSubTab={aiActivitySubTab}
             onProjectManagementSubTabChange={handleProjectManagementSubTabChange}

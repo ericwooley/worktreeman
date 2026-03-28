@@ -126,11 +126,15 @@ export function useDashboardState() {
   const [aiCommandLogs, setAiCommandLogs] = useState<AiCommandLogSummary[]>([]);
   const [aiCommandLogDetail, setAiCommandLogDetail] = useState<AiCommandLogEntry | null>(null);
   const [aiCommandLogsLoading, setAiCommandLogsLoading] = useState(false);
+  const [aiCommandLogsError, setAiCommandLogsError] = useState<string | null>(null);
+  const [aiCommandLogsLastUpdatedAt, setAiCommandLogsLastUpdatedAt] = useState<string | null>(null);
   const [runningAiCommandJobs, setRunningAiCommandJobs] = useState<AiCommandJob[]>([]);
   const [projectManagement, setProjectManagement] = useState<ProjectManagementListResponse | null>(null);
   const [projectManagementDocument, setProjectManagementDocument] = useState<ProjectManagementDocument | null>(null);
   const [projectManagementHistory, setProjectManagementHistory] = useState<ProjectManagementHistoryEntry[]>([]);
   const [projectManagementLoading, setProjectManagementLoading] = useState(false);
+  const [projectManagementError, setProjectManagementError] = useState<string | null>(null);
+  const [projectManagementLastUpdatedAt, setProjectManagementLastUpdatedAt] = useState<string | null>(null);
   const [projectManagementSaving, setProjectManagementSaving] = useState(false);
   const aiCommandSubscriptionRef = useRef<(() => void) | null>(null);
   const projectManagementDocumentAiSubscriptionRef = useRef<(() => void) | null>(null);
@@ -295,6 +299,8 @@ export function useDashboardState() {
       }
       return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
     });
+    setAiCommandLogsError(null);
+    setAiCommandLogsLastUpdatedAt(new Date().toISOString());
   }, []);
 
   const upsertRunningAiJob = useCallback((job: AiCommandJob | null) => {
@@ -384,11 +390,15 @@ export function useDashboardState() {
     try {
       const payload = await fetchProjectManagementDocuments();
       setProjectManagement(payload);
+      setProjectManagementError(null);
+      setProjectManagementLastUpdatedAt(new Date().toISOString());
       setError(null);
       return payload;
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load project management documents.";
       setProjectManagement(null);
-      setError(err instanceof Error ? err.message : "Failed to load project management documents.");
+      setProjectManagementError(message);
+      setError(message);
       return null;
     } finally {
       if (!options?.silent) {
@@ -409,12 +419,16 @@ export function useDashboardState() {
       ]);
       setProjectManagementDocument(documentPayload.document);
       setProjectManagementHistory(historyPayload.history);
+      setProjectManagementError(null);
+      setProjectManagementLastUpdatedAt(new Date().toISOString());
       setError(null);
       return documentPayload.document;
     } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load project management document.";
       setProjectManagementDocument(null);
       setProjectManagementHistory([]);
-      setError(err instanceof Error ? err.message : "Failed to load project management document.");
+      setProjectManagementError(message);
+      setError(message);
       return null;
     } finally {
       if (!options?.silent) {
@@ -737,12 +751,16 @@ export function useDashboardState() {
               setAiCommandLogDetail(null);
             }
           }
+          setAiCommandLogsError(null);
+          setAiCommandLogsLastUpdatedAt(new Date().toISOString());
           setError(null);
           return payload;
         } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to load AI logs.";
           setAiCommandLogs([]);
           setRunningAiCommandJobs([]);
-          setError(err instanceof Error ? err.message : "Failed to load AI logs.");
+          setAiCommandLogsError(message);
+          setError(message);
           return null;
         } finally {
           if (!options?.silent) {
@@ -764,12 +782,16 @@ export function useDashboardState() {
 
           const payload = await fetchAiCommandLog(fileName);
           setAiCommandLogDetail(payload.log);
+          setAiCommandLogsError(null);
+          setAiCommandLogsLastUpdatedAt(new Date().toISOString());
           setError(null);
           return payload.log;
         } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to load AI log.";
           clearTrackedAiCommandLogSubscription();
           setAiCommandLogDetail(null);
-          setError(err instanceof Error ? err.message : "Failed to load AI log.");
+          setAiCommandLogsError(message);
+          setError(message);
           return null;
         } finally {
           if (!options?.silent) {
@@ -1024,16 +1046,20 @@ export function useDashboardState() {
       aiCommandSettingsLoading,
       aiCommandJob,
       aiCommandRunningBranch,
-      projectManagementDocumentAiJob,
-      projectManagementDocumentAiRunningBranch,
+    projectManagementDocumentAiJob,
+    projectManagementDocumentAiRunningBranch,
       aiCommandLogs,
       aiCommandLogDetail,
       aiCommandLogsLoading,
+    aiCommandLogsError,
+    aiCommandLogsLastUpdatedAt,
     runningAiCommandJobs,
     projectManagement,
     projectManagementDocument,
     projectManagementHistory,
     projectManagementLoading,
+    projectManagementError,
+    projectManagementLastUpdatedAt,
     projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,

@@ -24,6 +24,7 @@ import {
 } from "./project-management-document-browser";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { MatrixBadge, MatrixModal, MatrixTabButton } from "./matrix-primitives";
+import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
 const ProjectManagementBoardTab = lazy(async () => {
   const module = await import("./project-management-board-tab");
@@ -54,6 +55,8 @@ interface ProjectManagementPanelProps {
   document: ProjectManagementDocument | null;
   history: ProjectManagementHistoryEntry[];
   loading: boolean;
+  refreshError?: string | null;
+  lastUpdatedAt?: string | null;
   saving: boolean;
   aiCommands: AiCommandConfig | null;
   aiJob: AiCommandJob | null;
@@ -93,6 +96,7 @@ interface ProjectManagementPanelProps {
   onRunDocumentAi: (payload: { documentId: string; commandId: AiCommandId } & RunProjectManagementDocumentAiRequest) => Promise<RunAiCommandResponse | null>;
   onCancelDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelAiCommand: () => Promise<AiCommandJob | null>;
+  onRetryRefresh?: () => void | Promise<void>;
 }
 
 function getAiCommandLabel(commandId: AiCommandId): string {
@@ -242,6 +246,8 @@ export function ProjectManagementPanel({
   document,
   history,
   loading,
+  refreshError = null,
+  lastUpdatedAt = null,
   saving,
   aiCommands,
   aiJob,
@@ -261,6 +267,7 @@ export function ProjectManagementPanel({
   onRunDocumentAi,
   onCancelDocumentAiCommand,
   onCancelAiCommand,
+  onRetryRefresh,
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
   const [showBacklogLane, setShowBacklogLane] = useState(false);
@@ -400,6 +407,29 @@ export function ProjectManagementPanel({
   }, [documentRunFailureToast]);
 
   const filteredDocuments = documentBrowser.filteredDocuments;
+  const refreshStatusLabel = formatAutoRefreshStatus(lastUpdatedAt);
+  const refreshStatus = refreshError ? (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <MatrixBadge tone="danger" compact>Sync issue</MatrixBadge>
+      <span className="theme-text-danger">{refreshError}</span>
+      {onRetryRefresh ? (
+        <button
+          type="button"
+          className="matrix-button rounded-none px-2 py-1 text-xs"
+          onClick={() => void onRetryRefresh()}
+        >
+          Retry
+        </button>
+      ) : null}
+    </div>
+  ) : (
+    <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
+      {loading ? <MatrixBadge tone="warning" compact>Loading…</MatrixBadge> : <MatrixBadge tone="neutral" compact>{refreshStatusLabel}</MatrixBadge>}
+      {!loading && lastUpdatedAt ? <span>{refreshStatusLabel}</span> : null}
+      {loading && lastUpdatedAt ? <span>{refreshStatusLabel}</span> : null}
+      {!loading && !lastUpdatedAt ? <span>{refreshStatusLabel}</span> : null}
+    </div>
+  );
 
   const selectedDocumentAiOutput = useMemo(() => {
     if (!document) {
@@ -732,6 +762,7 @@ export function ProjectManagementPanel({
         <div>
           <p className="matrix-kicker">Project management</p>
           <h2 className="mt-1 text-xl font-semibold theme-text-strong">Documents</h2>
+          <div className="mt-2">{refreshStatus}</div>
         </div>
       </div>
 
@@ -789,6 +820,7 @@ export function ProjectManagementPanel({
             <p className="matrix-kicker">Project management</p>
             <h2 className="mt-2 text-2xl font-semibold theme-text-strong">Workspace</h2>
           </div>
+          <div className="shrink-0">{refreshStatus}</div>
         </div>
 
         <div className="theme-inline-panel p-4">
