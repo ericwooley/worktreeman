@@ -2954,6 +2954,95 @@ test("project-management document AI preserves board origin metadata when reques
   }
 });
 
+test("project-management document AI uses a suffixed branch when rerunning the same document", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "stopped", pid: 7101, stdout: "first run\n", stderr: "", exitCode: 0 },
+    { status: "stopped", pid: 7102, stdout: "second run\n", stderr: "", exitCode: 0 },
+  ]);
+
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const firstResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(firstResponse.status, 200);
+    const firstPayload = await firstResponse.json() as {
+      job: { branch: string; status: string };
+    };
+    assert.equal(firstPayload.job.status, "running");
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.some((entry) => entry.branch === firstPayload.job.branch && entry.status === "completed");
+    });
+
+    const secondResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(secondResponse.status, 200);
+    const secondPayload = await secondResponse.json() as {
+      job: { branch: string; status: string };
+    };
+    assert.equal(secondPayload.job.status, "running");
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.some((entry) => entry.branch === secondPayload.job.branch && entry.status === "completed");
+    });
+
+    assert.notEqual(firstPayload.job.branch, secondPayload.job.branch);
+    assert.equal(secondPayload.job.branch, `${firstPayload.job.branch}-2`);
+
+    const firstLink = await getWorktreeDocumentLink(repo.repoRoot, firstPayload.job.branch);
+    const secondLink = await getWorktreeDocumentLink(repo.repoRoot, secondPayload.job.branch);
+    assert.equal(firstLink?.documentId, outline.id);
+    assert.equal(secondLink?.documentId, outline.id);
+
+    const stateResponse = await server.fetch(`/api/state`);
+    assert.equal(stateResponse.status, 200);
+    const statePayload = await stateResponse.json() as {
+      worktrees: Array<{ branch: string }>;
+    };
+    assert.ok(statePayload.worktrees.some((entry) => entry.branch === firstPayload.job.branch));
+    assert.ok(statePayload.worktrees.some((entry) => entry.branch === secondPayload.job.branch));
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("AI cancel route deletes the running process and returns the settled failed job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({

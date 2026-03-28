@@ -446,6 +446,33 @@ test("document worktree run in the selected branch shows running state and contr
   assert.match(markup, /Streaming live output from pm-doc-1-dependencies while the worktree run is active\./);
 });
 
+test("workspace headers show passive sync status and retry only on error", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-28T15:37:31.000Z");
+
+  try {
+    const updatedMarkup = renderProjectManagementPanel({
+      lastUpdatedAt: "2026-03-28T15:37:30.000Z",
+    });
+
+    assert.match(updatedMarkup, /Updated just now|Updated \d+s ago/);
+    assert.doesNotMatch(updatedMarkup, />Refresh</);
+    assert.doesNotMatch(updatedMarkup, />Retry</);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  const errorMarkup = renderProjectManagementPanel({
+    refreshError: "Project documents are temporarily unavailable.",
+    onRetryRefresh: () => undefined,
+  });
+
+  assert.match(errorMarkup, /Sync issue/);
+  assert.match(errorMarkup, /Project documents are temporarily unavailable\./);
+  assert.match(errorMarkup, />Retry</);
+  assert.doesNotMatch(errorMarkup, />Refresh</);
+});
+
 test("board view renders multi-select controls and AI quick actions", () => {
   const markup = renderToStaticMarkup(
     <ProjectManagementBoardTab

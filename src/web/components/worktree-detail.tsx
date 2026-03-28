@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
@@ -59,6 +59,8 @@ function getCssVariable(name: string, fallback: string): string {
 }
 
 const GIT_COMPARISON_POLL_INTERVAL_MS = 3000;
+const PROJECT_MANAGEMENT_POLL_INTERVAL_MS = 5000;
+const AI_LOG_POLL_INTERVAL_MS = 3000;
 const DIFF_RENDER_MAX_CHARS = 350_000;
 const DIFF_RENDER_MAX_LINES = 8_000;
 const DIFF_RENDER_MAX_FILES = 80;
@@ -397,10 +399,14 @@ interface WorktreeDetailProps {
   projectManagementDocument: ProjectManagementDocument | null;
   projectManagementHistory: ProjectManagementHistoryEntry[];
   projectManagementLoading: boolean;
+  projectManagementError: string | null;
+  projectManagementLastUpdatedAt: string | null;
   projectManagementSaving: boolean;
   projectManagementAiLogs: AiCommandLogSummary[];
   projectManagementAiLogDetail: AiCommandLogEntry | null;
   projectManagementAiLogsLoading: boolean;
+  projectManagementAiLogsError: string | null;
+  projectManagementAiLogsLastUpdatedAt: string | null;
   projectManagementRunningAiJobs: AiCommandJob[];
   projectManagementAiActiveSubTab: AiActivitySubTab;
   projectManagementAiCommands: AiCommandConfig | null;
@@ -520,10 +526,14 @@ export function WorktreeDetail({
   projectManagementDocument,
   projectManagementHistory,
   projectManagementLoading,
+  projectManagementError,
+  projectManagementLastUpdatedAt,
   projectManagementSaving,
   projectManagementAiLogs,
   projectManagementAiLogDetail,
   projectManagementAiLogsLoading,
+  projectManagementAiLogsError,
+  projectManagementAiLogsLastUpdatedAt,
   projectManagementRunningAiJobs,
   projectManagementAiActiveSubTab,
   projectManagementAiCommands,
@@ -788,6 +798,18 @@ export function WorktreeDetail({
     const query = backgroundFilter.toLowerCase();
     return lines.filter((line) => line.text.toLowerCase().includes(query));
   }, [backgroundFilter, backgroundLogs, selectedBackgroundCommand?.name]);
+  const refreshProjectManagementWorkspace = useCallback(async (options?: { silent?: boolean }) => {
+    await onLoadProjectManagementDocuments(options);
+    if (projectManagementSelectedDocumentId) {
+      await onLoadProjectManagementDocument(projectManagementSelectedDocumentId, options);
+    }
+  }, [onLoadProjectManagementDocument, onLoadProjectManagementDocuments, projectManagementSelectedDocumentId]);
+  const refreshAiLogs = useCallback(async (options?: { silent?: boolean }) => {
+    await onLoadProjectManagementAiLogs(options);
+    if (projectManagementAiLogDetail?.fileName) {
+      await onLoadProjectManagementAiLog(projectManagementAiLogDetail.fileName, options);
+    }
+  }, [onLoadProjectManagementAiLog, onLoadProjectManagementAiLogs, projectManagementAiLogDetail?.fileName]);
 
   useEffect(() => {
     if (!selectedBackgroundCommandName && backgroundCommands[0]) {
@@ -867,8 +889,45 @@ export function WorktreeDetail({
       return;
     }
 
-    void onLoadProjectManagementDocuments({ silent: true });
-  }, [activeTab, onLoadProjectManagementDocuments]);
+    let cancelled = false;
+
+    const loadWorkspace = async () => {
+      await refreshProjectManagementWorkspace({ silent: true });
+      if (cancelled) {
+        return;
+      }
+    };
+
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void loadWorkspace();
+    };
+
+    if (document.visibilityState === "visible") {
+      void loadWorkspace();
+    }
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void loadWorkspace();
+    }, PROJECT_MANAGEMENT_POLL_INTERVAL_MS);
+
+    window.addEventListener("focus", handleVisibilityRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleVisibilityRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
+  }, [activeTab, refreshProjectManagementWorkspace]);
 
   useEffect(() => {
     if (activeTab !== "ai-log") {
@@ -877,28 +936,43 @@ export function WorktreeDetail({
 
     let cancelled = false;
 
-    const loadAiLogs = async () => {
-      await onLoadProjectManagementAiLogs({ silent: true });
+    const loadAiLogState = async () => {
+      await refreshAiLogs({ silent: true });
       if (cancelled) {
         return;
       }
     };
 
-    void loadAiLogs();
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      void loadAiLogState();
+    };
+
+    if (document.visibilityState === "visible") {
+      void loadAiLogState();
+    }
 
     const interval = window.setInterval(() => {
       if (document.visibilityState !== "visible") {
         return;
       }
 
-      void loadAiLogs();
-    }, 3000);
+      void loadAiLogState();
+    }, AI_LOG_POLL_INTERVAL_MS);
+
+    window.addEventListener("focus", handleVisibilityRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.removeEventListener("focus", handleVisibilityRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
-  }, [activeTab, onLoadProjectManagementAiLogs]);
+  }, [activeTab, refreshAiLogs]);
 
   useEffect(() => {
     if (!isBackgroundCommandsActive || !worktree?.branch) {
@@ -1424,6 +1498,8 @@ export function WorktreeDetail({
               document={projectManagementDocument}
               history={projectManagementHistory}
               loading={projectManagementLoading}
+              refreshError={projectManagementError}
+              lastUpdatedAt={projectManagementLastUpdatedAt}
               saving={projectManagementSaving}
               aiCommands={projectManagementAiCommands}
               aiJob={projectManagementAiJob}
@@ -1443,6 +1519,7 @@ export function WorktreeDetail({
               onRunDocumentAi={onRunProjectManagementDocumentAi}
               onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
               onCancelAiCommand={onCancelProjectManagementAiCommand}
+              onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false })}
             />
           </Suspense>
         ) : isAiLogTabActive ? (
@@ -1459,11 +1536,14 @@ export function WorktreeDetail({
                 logs={projectManagementAiLogs}
                 logDetail={projectManagementAiLogDetail}
                 loading={projectManagementAiLogsLoading}
+                error={projectManagementAiLogsError}
+                lastUpdatedAt={projectManagementAiLogsLastUpdatedAt}
                 runningJobs={projectManagementRunningAiJobs}
                 onSubTabChange={onProjectManagementAiSubTabChange}
                 onSelectLog={onLoadProjectManagementAiLog}
                 onCancelJob={onCancelProjectManagementAiLogJob}
                 onOpenOrigin={(origin) => void openAiLogOrigin(origin)}
+                onRetry={() => void refreshAiLogs({ silent: false })}
               />
             </div>
           </Suspense>

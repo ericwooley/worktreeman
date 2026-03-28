@@ -8,6 +8,7 @@ import type {
 } from "@shared/types";
 import { marked } from "marked";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric } from "./matrix-primitives";
+import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
 function getAiCommandLabel(commandId: "smart" | "simple") {
   return commandId === "simple" ? "Simple AI" : "Smart AI";
@@ -173,23 +174,30 @@ interface ProjectManagementAiLogTabProps {
   logs: AiCommandLogSummary[];
   logDetail: AiCommandLogEntry | null;
   loading: boolean;
+  error?: string | null;
+  lastUpdatedAt?: string | null;
   runningJobs: AiCommandJob[];
   onSelectLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCancelJob: (branch: string) => Promise<AiCommandJob | null>;
   onOpenOrigin: (origin: AiCommandOrigin) => void | Promise<void>;
+  onRetry?: () => void | Promise<void>;
 }
 
 export function ProjectManagementAiLogTab({
   logs,
   logDetail,
   loading,
+  error = null,
+  lastUpdatedAt = null,
   runningJobs,
   onSelectLog,
   onCancelJob,
   onOpenOrigin,
+  onRetry,
 }: ProjectManagementAiLogTabProps) {
   const primaryCandidate = runningJobs[0] ?? logs[0] ?? null;
   const autoSelectedFileRef = useRef<string | null>(null);
+  const refreshStatusLabel = formatAutoRefreshStatus(lastUpdatedAt);
 
   useEffect(() => {
     if (loading || logDetail || !primaryCandidate) {
@@ -243,7 +251,35 @@ export function ProjectManagementAiLogTab({
           <h3 className="mt-2 text-lg font-semibold theme-text-strong">Saved runs and live output</h3>
           <p className="mt-1 text-sm theme-text-muted">Inspect active work, review completed output, and jump back to where each AI run started.</p>
         </div>
-        {loading ? <MatrixBadge tone="warning">Loading</MatrixBadge> : null}
+        <div className="flex flex-col items-end gap-2 text-xs">
+          {error ? (
+            <>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <MatrixBadge tone="danger" compact>Sync issue</MatrixBadge>
+                {onRetry ? (
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-2 py-1 text-xs"
+                    onClick={() => void onRetry()}
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+              <span className="text-right theme-text-danger">{error}</span>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {loading ? <MatrixBadge tone="warning">Loading…</MatrixBadge> : null}
+                <MatrixBadge tone={runningJobs.length ? "warning" : "neutral"} compact>
+                  {runningJobs.length ? "Live updates on" : "Idle"}
+                </MatrixBadge>
+              </div>
+              <span className="theme-text-muted">{refreshStatusLabel}</span>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">

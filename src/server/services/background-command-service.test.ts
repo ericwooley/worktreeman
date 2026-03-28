@@ -71,6 +71,19 @@ async function listPm2ProcessNames(): Promise<string[]> {
   }));
 }
 
+async function getPm2Process(processName: string): Promise<ProcessDescription | null> {
+  return await withPm2(() => new Promise<ProcessDescription | null>((resolve, reject) => {
+    pm2.list((error, processes) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(processes.find((entry) => entry.name === processName) ?? null);
+    });
+  }));
+}
+
 async function waitForProcessPresence(processName: string, expected: boolean, timeoutMs = 20000): Promise<void> {
   const startedAt = Date.now();
 
@@ -137,6 +150,31 @@ test("stopAllBackgroundCommands removes managed background commands for the matc
     await stopAllBackgroundCommands(branch, tempDir);
 
     await waitForProcessPresence(processName, false);
+  } finally {
+    await deletePm2Process(processName).catch(() => undefined);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("startBackgroundCommand assigns a branch-specific PM2 namespace", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-background-namespace-"));
+  const branch = `feature-namespace-${Date.now()}`;
+  const commandName = "worker";
+  const processName = `wtm:${branch}:${commandName}`;
+
+  try {
+    await startBackgroundCommand({
+      config: createConfig(commandName, `${process.execPath} -e "setInterval(() => {}, 1000)"`),
+      branch,
+      worktreePath: tempDir,
+      runtime: createRuntime(branch, tempDir),
+      commandName,
+    });
+
+    await waitForProcessPresence(processName, true);
+
+    const processDescription = await getPm2Process(processName);
+    assert.equal((processDescription?.pm2_env as { namespace?: string } | undefined)?.namespace, `worktreeman:${branch}`);
   } finally {
     await deletePm2Process(processName).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
