@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { AiCommandJob } from "@shared/types";
 import type { ProjectManagementDocument, ProjectManagementDocumentSummary, WorktreeRecord } from "@shared/types";
 import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementDocumentForm } from "./project-management-document-form";
-import { ProjectManagementPanel } from "./project-management-panel";
+import { getAiOutputEvents, getCompletedAiDocumentRefreshTarget, ProjectManagementPanel } from "./project-management-panel";
 
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
   {
@@ -170,6 +171,23 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
   };
 
   return renderToStaticMarkup(<ProjectManagementPanel {...props} />);
+}
+
+function createAiJob(overrides: Partial<AiCommandJob> = {}): AiCommandJob {
+  return {
+    jobId: "job-1",
+    fileName: "job-1.log",
+    branch: "pm-doc-1-dependencies",
+    documentId: "doc-1",
+    commandId: "smart",
+    command: "runner --prompt $WTM_AI_INPUT",
+    input: "Implement the document",
+    status: "running",
+    startedAt: "2026-03-26T10:00:00.000Z",
+    stdout: "",
+    stderr: "",
+    ...overrides,
+  };
 }
 
 test("create form renders without seeded defaults", () => {
@@ -400,19 +418,7 @@ test("dependency picker modal renders current dependencies and searchable docume
 
 test("document worktree run in another branch does not lock this worktree UI", () => {
   const markup = renderProjectManagementPanel({
-    documentRunJob: {
-      jobId: "job-1",
-      fileName: "job-1.log",
-      branch: "pm-doc-1-dependencies",
-      documentId: "doc-1",
-      commandId: "smart",
-      command: "runner --prompt $WTM_AI_INPUT",
-      input: "Implement the document",
-      status: "running",
-      startedAt: "2026-03-26T10:00:00.000Z",
-      stdout: "",
-      stderr: "",
-    },
+    documentRunJob: createAiJob(),
     selectedWorktreeBranch: "feature/current-worktree",
   });
 
@@ -424,26 +430,106 @@ test("document worktree run in another branch does not lock this worktree UI", (
 
 test("document worktree run in the selected branch shows running state and controls", () => {
   const markup = renderProjectManagementPanel({
-    documentRunJob: {
-      jobId: "job-2",
-      fileName: "job-2.log",
-      branch: "pm-doc-1-dependencies",
-      documentId: "doc-1",
-      commandId: "smart",
-      command: "runner --prompt $WTM_AI_INPUT",
-      input: "Implement the document",
-      status: "running",
-      startedAt: "2026-03-26T10:05:00.000Z",
-      stdout: "",
-      stderr: "",
-    },
+    documentRunJob: createAiJob({ jobId: "job-2", startedAt: "2026-03-26T10:05:00.000Z" }),
     selectedWorktreeBranch: "pm-doc-1-dependencies",
   });
 
   assert.match(markup, /Start Worktree AI \(running\)/);
   assert.match(markup, /Document worktree AI run in progress/);
   assert.match(markup, /Cancel worktree AI/);
-  assert.match(markup, /Streaming live output from pm-doc-1-dependencies while the worktree run is active\./);
+  assert.match(markup, /Streaming mixed stdout and stderr from pm-doc-1-dependencies while the worktree run is active\./);
+});
+
+test("running document edit view shows ordered mixed AI output in the editor area", () => {
+  const markup = renderProjectManagementPanel({
+    documentViewMode: "edit",
+    aiJob: createAiJob({
+      outputEvents: [
+        {
+          id: "event-1",
+          source: "stdout",
+          text: "Planning edits",
+          timestamp: "2026-03-26T10:05:01.000Z",
+        },
+        {
+          id: "event-2",
+          source: "stderr",
+          text: "Warning: lint still running",
+          timestamp: "2026-03-26T10:05:02.000Z",
+        },
+      ],
+    }),
+  });
+
+  assert.match(markup, /Document editing locked while AI updates the saved document/);
+  assert.match(markup, /Document AI is working/);
+  assert.match(markup, /Streaming mixed stdout and stderr while the saved document updates in pm-doc-1-dependencies\./);
+  assert.match(markup, />stdout</);
+  assert.match(markup, />stderr</);
+  assert.match(markup, /Planning edits/);
+  assert.match(markup, /Warning: lint still running/);
+  assert.match(markup, /Cancel AI/);
+});
+
+test("getAiOutputEvents preserves ordered output events and falls back to stdout stderr blocks", () => {
+  const orderedEvents = getAiOutputEvents(createAiJob({
+    outputEvents: [
+      {
+        id: "event-1",
+        source: "stdout",
+        text: "First",
+        timestamp: "2026-03-26T10:00:01.000Z",
+      },
+      {
+        id: "event-2",
+        source: "stderr",
+        text: "Second",
+        timestamp: "2026-03-26T10:00:02.000Z",
+      },
+    ],
+  }));
+  assert.deepEqual(orderedEvents.map((event) => event.text), ["First", "Second"]);
+
+  const fallbackEvents = getAiOutputEvents(createAiJob({
+    outputEvents: undefined,
+    stdout: "Only stdout",
+    stderr: "Only stderr",
+    completedAt: "2026-03-26T10:00:03.000Z",
+  }));
+  assert.deepEqual(fallbackEvents, [
+    {
+      id: "job-1.log:stdout",
+      source: "stdout",
+      text: "Only stdout",
+      timestamp: "2026-03-26T10:00:00.000Z",
+    },
+    {
+      id: "job-1.log:stderr",
+      source: "stderr",
+      text: "Only stderr",
+      timestamp: "2026-03-26T10:00:03.000Z",
+    },
+  ]);
+});
+
+test("getCompletedAiDocumentRefreshTarget prefers workspace refresh when available", () => {
+  assert.equal(getCompletedAiDocumentRefreshTarget({
+    aiJob: createAiJob({ status: "completed" }),
+    documentId: "doc-1",
+    hasWorkspaceRefresh: true,
+  }), "workspace");
+
+  assert.equal(getCompletedAiDocumentRefreshTarget({
+    aiJob: createAiJob({ status: "completed" }),
+    documentId: "doc-1",
+    hasWorkspaceRefresh: false,
+  }), "document");
+
+  assert.equal(getCompletedAiDocumentRefreshTarget({
+    aiJob: createAiJob({ status: "completed", documentId: "doc-2" }),
+    documentId: "doc-1",
+    hasWorkspaceRefresh: true,
+  }), null);
 });
 
 test("workspace headers show passive sync status and retry only on error", () => {
