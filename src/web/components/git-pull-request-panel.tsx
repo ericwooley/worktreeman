@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { marked } from "marked";
 import type {
+  AiCommandJob,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
@@ -21,6 +22,8 @@ interface GitPullRequestPanelProps {
   selectedDocumentId: string | null;
   branchOptions: MatrixDropdownOption[];
   defaultBaseBranch: string | null;
+  comparisonWorkspace?: ReactNode;
+  aiReviewJob?: AiCommandJob | null;
   onSelectDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onCreatePullRequest: (payload: {
     title: string;
@@ -44,6 +47,11 @@ interface GitPullRequestPanelProps {
     draft: boolean;
   }) => Promise<ProjectManagementDocument | null>;
   onAddComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
+  onReviewByAi?: (payload: {
+    documentId: string;
+    baseBranch: string;
+    compareBranch: string;
+  }) => Promise<AiCommandJob | null>;
 }
 
 function getPullRequestTone(state: ProjectManagementPullRequestState) {
@@ -85,10 +93,13 @@ export function GitPullRequestPanel({
   selectedDocumentId,
   branchOptions,
   defaultBaseBranch,
+  comparisonWorkspace,
+  aiReviewJob,
   onSelectDocument,
   onCreatePullRequest,
   onUpdatePullRequest,
   onAddComment,
+  onReviewByAi,
 }: GitPullRequestPanelProps) {
   const [titleDraft, setTitleDraft] = useState("");
   const [summaryDraft, setSummaryDraft] = useState("");
@@ -208,11 +219,33 @@ export function GitPullRequestPanel({
             />
             <div className="flex items-end">
               {document?.pullRequest ? (
-                <div className="flex flex-wrap gap-2">
-                  <MatrixBadge tone={getPullRequestTone(document.pullRequest.state)}>
-                    {document.pullRequest.state}
-                  </MatrixBadge>
-                  {document.pullRequest.draft ? <MatrixBadge tone="warning">draft</MatrixBadge> : null}
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <MatrixBadge tone={getPullRequestTone(document.pullRequest.state)}>
+                      {document.pullRequest.state}
+                    </MatrixBadge>
+                    {document.pullRequest.draft ? <MatrixBadge tone="warning">draft</MatrixBadge> : null}
+                  </div>
+                  {onReviewByAi ? (
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={!worktree?.branch || saving || aiReviewJob?.status === "running"}
+                      onClick={() => {
+                        if (!document.id || !document.pullRequest) {
+                          return;
+                        }
+
+                        void onReviewByAi({
+                          documentId: document.id,
+                          baseBranch: document.pullRequest.baseBranch,
+                          compareBranch: document.pullRequest.compareBranch,
+                        });
+                      }}
+                    >
+                      {aiReviewJob?.status === "running" ? "AI review running..." : "Review by AI"}
+                    </button>
+                  ) : null}
                 </div>
               ) : (
                 <div className="text-sm theme-text-muted">Create a PR document to start review discussion.</div>
@@ -229,6 +262,8 @@ export function GitPullRequestPanel({
           </div>
         ) : null}
       </div>
+
+      {comparisonWorkspace ? comparisonWorkspace : null}
 
       {!document?.pullRequest ? (
         <div className="theme-inline-panel p-4">

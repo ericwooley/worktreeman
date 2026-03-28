@@ -2954,6 +2954,104 @@ test("project-management document AI preserves board origin metadata when reques
   }
 });
 
+test("worktree AI can append pull request review comments with git origin metadata", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 9292, stdout: "Review started...\n", stderr: "" },
+    { status: "stopped", pid: 9292, stdout: "Review started...\nLooks ready to merge with one missing regression test.\n", stderr: "", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const createResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Pull request review doc",
+        markdown: "# Pull request review\n\n- ready for AI feedback\n",
+        kind: "pull-request",
+        pullRequest: {
+          baseBranch: "main",
+          compareBranch: "feature-ai-log",
+          state: "open",
+          draft: false,
+        },
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createPayload = await createResponse.json() as {
+      document: { id: string; kind: string; pullRequest?: { baseBranch: string; compareBranch: string } | null };
+    };
+    assert.equal(createPayload.document.kind, "pull-request");
+
+    const documentId = createPayload.document.id;
+    const response = await server.fetch(`/api/worktrees/feature-ai-log/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "Review the pull request changes and leave reviewer notes.",
+        commandId: "smart",
+        commentDocumentId: documentId,
+        origin: {
+          kind: "git-pull-request-review",
+          label: "Git pull request review",
+          location: {
+            tab: "git",
+            branch: "feature-ai-log",
+            gitBaseBranch: "main",
+            documentId,
+          },
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      job: { branch: string; status: string; origin?: AiCommandOrigin | null };
+    };
+    assert.equal(payload.job.status, "running");
+    assert.equal(payload.job.origin?.kind, "git-pull-request-review");
+    assert.equal(payload.job.origin?.location.tab, "git");
+    assert.equal(payload.job.origin?.location.branch, "feature-ai-log");
+    assert.equal(payload.job.origin?.location.gitBaseBranch, "main");
+    assert.equal(payload.job.origin?.location.documentId, documentId);
+
+    await waitFor(async () => {
+      const updated = await getProjectManagementDocument(repo.repoRoot, documentId);
+      const latestComment = updated.document.comments.at(-1);
+      return Boolean(latestComment?.body.includes("AI worktree run completed"));
+    });
+
+    const updated = await getProjectManagementDocument(repo.repoRoot, documentId);
+    const latestComment = updated.document.comments.at(-1);
+    assert.ok(latestComment);
+    assert.match(latestComment.body, /AI worktree run completed/);
+    assert.match(latestComment.body, /feature-ai-log/);
+    assert.match(latestComment.body, /Command: smart/);
+    assert.match(latestComment.body, /Looks ready to merge with one missing regression test\./);
+
+    const logsResponse = await server.fetch(`/api/ai/logs`);
+    assert.equal(logsResponse.status, 200);
+    const logsPayload = await logsResponse.json() as {
+      logs: Array<{ branch: string; status: string; origin?: AiCommandOrigin | null }>;
+    };
+    const completedLog = logsPayload.logs.find((entry) => entry.branch === "feature-ai-log" && entry.status === "completed" && entry.origin?.kind === "git-pull-request-review");
+    assert.ok(completedLog);
+    assert.equal(completedLog.origin?.label, "Git pull request review");
+    assert.equal(completedLog.origin?.location.tab, "git");
+    assert.equal(completedLog.origin?.location.branch, "feature-ai-log");
+    assert.equal(completedLog.origin?.location.gitBaseBranch, "main");
+    assert.equal(completedLog.origin?.location.documentId, documentId);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management document AI uses a suffixed branch when rerunning the same document", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();

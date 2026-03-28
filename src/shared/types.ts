@@ -417,7 +417,9 @@ export interface AddProjectManagementCommentRequest {
 export interface RunAiCommandRequest {
   input: string;
   documentId?: string;
+  commentDocumentId?: string;
   commandId?: AiCommandId;
+  origin?: AiCommandOrigin | null;
 }
 
 export interface RunProjectManagementDocumentAiRequest {
@@ -436,7 +438,8 @@ export type AiCommandOriginKind =
   | "worktree-environment"
   | "project-management-document"
   | "project-management-document-run"
-  | "git-conflict-resolution";
+  | "git-conflict-resolution"
+  | "git-pull-request-review";
 
 export interface AiCommandOriginLocation {
   tab: AiCommandOriginTab;

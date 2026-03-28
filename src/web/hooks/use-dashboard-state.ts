@@ -811,7 +811,7 @@ export function useDashboardState() {
           setAiCommandJob(result.job);
           setAiCommandRunningBranch(result.job.status === "running" ? branch : null);
           upsertRunningAiJob(result.job);
-          if (payload.documentId) {
+          if (payload.documentId || payload.commentDocumentId) {
             void loadProjectManagementDocumentsState({ silent: true });
           }
           setError(null);

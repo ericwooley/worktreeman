@@ -178,7 +178,7 @@ export function Dashboard() {
   const [activeTab, setActiveTab] = useState<DashboardActiveTab>(initialUrlState.activeTab);
   const [aiActivitySubTab, setAiActivitySubTab] = useState<AiActivitySubTab>(initialUrlState.aiActivitySubTab);
   const [environmentSubTab, setEnvironmentSubTab] = useState<WorktreeEnvironmentSubTab>(initialUrlState.environmentSubTab);
-  const [gitSubTab, setGitSubTab] = useState<WorktreeGitSubTab>(initialUrlState.gitSubTab);
+  const [gitSubTab, setGitSubTab] = useState<WorktreeGitSubTab>("pull-request");
   const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
     initialUrlState.projectManagementSubTab,
   );
@@ -460,9 +460,9 @@ export function Dashboard() {
     } else {
       params.delete("envTab");
     }
-    params.set("gitTab", gitSubTab);
+    params.set("gitTab", "pull-request");
     params.set("git", gitView);
-    if (gitSubTab === "pull-request" && gitPullRequestDocumentId) {
+    if (gitPullRequestDocumentId) {
       params.set("gitPr", gitPullRequestDocumentId);
     } else {
       params.delete("gitPr");
@@ -534,7 +534,7 @@ export function Dashboard() {
       setActiveTab(nextUrlState.activeTab);
       setAiActivitySubTab(nextUrlState.aiActivitySubTab);
       setEnvironmentSubTab(nextUrlState.environmentSubTab);
-      setGitSubTab(nextUrlState.gitSubTab);
+      setGitSubTab("pull-request");
       setGitView(nextUrlState.gitView);
       setGitPullRequestDocumentId(nextUrlState.gitPullRequestDocumentId);
       setIsTerminalVisible(nextUrlState.isTerminalVisible);
@@ -723,7 +723,7 @@ export function Dashboard() {
 
   const navigateToGitSubTab = useCallback((tab: WorktreeGitSubTab, options?: { documentId?: string | null }) => {
     navigateToTab("git");
-    setGitSubTab(tab);
+    setGitSubTab("pull-request");
     if (options && "documentId" in options) {
       setGitPullRequestDocumentId(options.documentId ?? null);
     }
@@ -790,22 +790,11 @@ export function Dashboard() {
       {
         id: "nav-git",
         code: "ng",
-        title: "Open GIT status",
-        subtitle: "Jump to the branch comparison workflow.",
-        group: "Navigation",
-        keywords: ["git", "status", "changes"],
-        badgeLabel: activeTab === "git" && gitSubTab === "status" ? "Active" : undefined,
-        badgeTone: "active",
-        action: () => navigateToGitSubTab("status"),
-      },
-      {
-        id: "nav-git-pull-request",
-        code: "ngp",
         title: "Open GIT pull request",
-        subtitle: "Jump to the pull request review workspace.",
+        subtitle: "Jump to the combined review and branch comparison workspace.",
         group: "Navigation",
-        keywords: ["git", "pull", "request", "review", "pr"],
-        badgeLabel: activeTab === "git" && gitSubTab === "pull-request" ? "Active" : undefined,
+        keywords: ["git", "pull", "request", "review", "pr", "status", "changes", "diff"],
+        badgeLabel: activeTab === "git" ? "Active" : undefined,
         badgeTone: "active",
         action: () => navigateToGitSubTab("pull-request"),
       },
@@ -1278,7 +1267,7 @@ export function Dashboard() {
             environmentSubTab={environmentSubTab}
             onEnvironmentSubTabChange={setEnvironmentSubTab}
             gitSubTab={gitSubTab}
-            onGitSubTabChange={setGitSubTab}
+            onGitSubTabChange={() => setGitSubTab("pull-request")}
             gitView={gitView}
             onGitViewChange={setGitView}
             isTerminalVisible={isTerminalVisible}

@@ -96,10 +96,13 @@ function renderPanel(overrides: Partial<Parameters<typeof GitPullRequestPanel>[0
 }
 
 test("pull request panel renders PR details, comments, and activity", () => {
-  const markup = renderPanel();
+  const markup = renderPanel({
+    comparisonWorkspace: <div>Branch comparison workspace</div>,
+  });
 
   assert.match(markup, /Pull request/);
   assert.match(markup, /Add pull request workspace/);
+  assert.match(markup, /Branch comparison workspace/);
   assert.match(markup, /feature\/pull-request-workspace → main/);
   assert.match(markup, /Ship the GitHub-style review tab\./);
   assert.match(markup, /Rendered from the pull request markdown document\./);
@@ -109,6 +112,37 @@ test("pull request panel renders PR details, comments, and activity", () => {
   assert.match(markup, /Comment added/);
   assert.match(markup, /Edit pull request/);
   assert.match(markup, /Save pull request/);
+});
+
+test("pull request panel renders AI review action state", () => {
+  const markup = renderPanel({
+    onReviewByAi: async () => null,
+    aiReviewJob: {
+      jobId: "job-ai-review",
+      fileName: "job-ai-review.json",
+      branch: sampleWorktree.branch,
+      documentId: pullRequestDocument.id,
+      commandId: "smart",
+      command: "runner --prompt",
+      input: "Review the pull request.",
+      status: "running",
+      startedAt: "2026-03-27T12:30:00.000Z",
+      stdout: "",
+      stderr: "",
+      origin: {
+        kind: "git-pull-request-review",
+        label: "Git pull request review",
+        location: {
+          tab: "git",
+          branch: sampleWorktree.branch,
+          gitBaseBranch: "main",
+          documentId: pullRequestDocument.id,
+        },
+      },
+    },
+  });
+
+  assert.match(markup, /AI review running\.\.\./);
 });
 
 test("pull request panel renders create state when no PR is selected", () => {

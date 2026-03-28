@@ -19,7 +19,7 @@ export interface DashboardUrlState {
 }
 
 export function parseWorktreeGitSubTab(value: string | null): WorktreeGitSubTab {
-  return value === "pull-request" ? "pull-request" : "status";
+  return "pull-request";
 }
 
 export function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {

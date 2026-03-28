@@ -130,6 +130,28 @@ test("running cards prefer derived origin titles over prompt preview text", () =
   assert.doesNotMatch(markup, /A very long prompt that should not be shown as the card title/);
 });
 
+test("AI log titles include pull request review origins", () => {
+  const pullRequestReviewOrigin: AiCommandOrigin = {
+    kind: "git-pull-request-review",
+    label: "Git pull request review",
+    description: "Review the pull request workspace for feature-ai-log against main.",
+    location: {
+      tab: "git",
+      branch: "feature-ai-log",
+      gitBaseBranch: "main",
+      documentId: "pr-1",
+    },
+  };
+
+  const markup = renderAiLogTab({
+    logs: [{ ...summaryLog, origin: pullRequestReviewOrigin }],
+    logDetail: { ...detailLog, origin: pullRequestReviewOrigin },
+  });
+
+  assert.match(markup, /Pull request review · feature-ai-log/);
+  assert.match(markup, /Review the pull request workspace for feature-ai-log against main\./);
+});
+
 test("running entries are not duplicated in the saved logs list", () => {
   const runningJob: AiCommandJob = {
     jobId: "job-1",

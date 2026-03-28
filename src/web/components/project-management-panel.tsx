@@ -4,12 +4,15 @@ export type ProjectManagementDocumentViewMode = "edit" | "document" | "create";
 export type ProjectManagementSubTab = "document" | "board" | "history" | "ai" | "dependencies" | "create" | "dependency-tree";
 
 import type {
+  AiCommandOrigin,
   ProjectManagementDocumentSummary,
   WorktreeRecord,
   ProjectManagementDocument,
   ProjectManagementHistoryEntry,
   AiCommandConfig,
   AiCommandJob,
+  RunAiCommandResponse,
+  RunAiCommandRequest,
 } from "@shared/types";
 
 export interface ProjectManagementPanelProps {
@@ -38,8 +41,14 @@ export interface ProjectManagementPanelProps {
   onUpdateStatus: (...args: any[]) => Promise<ProjectManagementDocument | null>;
   onBatchUpdateDocuments: (...args: any[]) => Promise<boolean>;
   onAddComment: (...args: any[]) => Promise<ProjectManagementDocument | null>;
-  onRunAiCommand: (payload: { input: string; documentId: string; commandId: "smart" | "simple" }) => Promise<AiCommandJob | null>;
-  onRunDocumentAi: (...args: any[]) => Promise<AiCommandJob | null>;
+  onRunAiCommand: (payload: RunAiCommandRequest & {
+    input: string;
+    documentId: string;
+    commandId: "smart" | "simple";
+    commentDocumentId?: string;
+    origin?: AiCommandOrigin | null;
+  }) => Promise<AiCommandJob | null>;
+  onRunDocumentAi: (...args: any[]) => Promise<RunAiCommandResponse | null>;
   onCancelDocumentAiCommand: (...args: any[]) => Promise<AiCommandJob | null>;
   onCancelAiCommand: (...args: any[]) => Promise<AiCommandJob | null>;
   refreshError?: string | null;

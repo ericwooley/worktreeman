@@ -37,6 +37,8 @@ function describeAiJobOrigin(kind?: AiCommandOriginKind | null): string {
       return "Worktree task";
     case "git-conflict-resolution":
       return "Conflict resolution";
+    case "git-pull-request-review":
+      return "Pull request review";
     case "worktree-environment":
       return "Worktree command";
     default:

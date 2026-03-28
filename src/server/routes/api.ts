@@ -663,6 +663,25 @@ function createGitConflictResolutionOrigin(options: {
   };
 }
 
+function createGitPullRequestReviewOrigin(options: {
+  branch: string;
+  baseBranch: string;
+  documentId?: string | null;
+  label?: string;
+}): AiCommandOrigin {
+  return {
+    kind: "git-pull-request-review",
+    label: options.label ?? "Git pull request review",
+    description: `Review the pull request workspace for ${options.branch} against ${options.baseBranch}.`,
+    location: {
+      tab: "git",
+      branch: options.branch,
+      gitBaseBranch: options.baseBranch,
+      documentId: options.documentId ?? null,
+    },
+  };
+}
+
 function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -689,6 +708,7 @@ function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
     && kind !== "project-management-document"
     && kind !== "project-management-document-run"
     && kind !== "git-conflict-resolution"
+    && kind !== "git-pull-request-review"
   ) {
     return null;
   }
@@ -2654,10 +2674,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
       const explicitDocumentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
+      const requestedCommentDocumentId = typeof body?.commentDocumentId === "string" && body.commentDocumentId.trim()
+        ? body.commentDocumentId.trim()
+        : null;
+      const requestedOrigin = parseAiCommandOrigin(body?.origin);
       const linkedDocumentId = explicitDocumentId
         ? null
         : (await getWorktreeDocumentLink(options.repoRoot, req.params.branch))?.documentId ?? null;
       const documentId = explicitDocumentId ?? linkedDocumentId;
+      const commentDocumentId = explicitDocumentId ? null : requestedCommentDocumentId ?? linkedDocumentId;
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
 
       if (!worktree) {
@@ -2677,7 +2702,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       worktreePath = worktree.worktreePath;
       branch = worktree.branch;
-      origin = createWorktreeEnvironmentOrigin(worktree.branch);
+      origin = requestedOrigin?.kind === "git-pull-request-review"
+        ? createGitPullRequestReviewOrigin({
+          branch: worktree.branch,
+          baseBranch: requestedOrigin.location.gitBaseBranch ?? worktree.branch,
+          documentId: commentDocumentId,
+          label: requestedOrigin.label,
+        })
+        : requestedOrigin ?? createWorktreeEnvironmentOrigin(worktree.branch);
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
@@ -2729,7 +2761,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         try {
           explicitDocumentPayload = await getProjectManagementDocument(options.repoRoot, explicitDocumentId);
           documentsPayload = await listProjectManagementDocuments(options.repoRoot);
-          origin = createProjectManagementDocumentOrigin({
+          origin = requestedOrigin ?? createProjectManagementDocumentOrigin({
             branch: worktree.branch,
             document: explicitDocumentPayload.document,
             kind: "project-management-document",
@@ -2818,7 +2850,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         worktreePath,
         env,
         applyDocumentUpdateToDocumentId: explicitDocumentId,
-        commentDocumentId: explicitDocumentId ? null : linkedDocumentId,
+        commentDocumentId,
         commentRequestSummary: explicitDocumentId ? null : body.input,
       };
       const job = explicitDocumentId
