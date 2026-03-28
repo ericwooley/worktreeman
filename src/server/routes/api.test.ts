@@ -916,6 +916,25 @@ async function waitForPathToDisappear(targetPath: string, timeoutMs = 5000) {
   }, timeoutMs);
 }
 
+async function removePathWithRetry(targetPath: string, timeoutMs = 5000) {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      await fs.rm(targetPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || (error.code !== "ENOTEMPTY" && error.code !== "EBUSY")) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  await fs.rm(targetPath, { recursive: true, force: true });
+}
+
 async function allocateTestPort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
@@ -3268,9 +3287,142 @@ test("worktree AI auto-starts a runtime and stops it after completion when the r
         worktrees: Array<{ branch: string; runtime?: { branch: string } }>;
       };
       return statePayload.worktrees.find((entry) => entry.branch === "feature-ai-auto-stop")?.runtime === undefined;
-    });
+    }, 15000);
   } finally {
     await server.close();
-    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+    await removePathWithRetry(repo.repoRoot);
+  }
+});
+
+test("runtime restart reloads config changes and reconnect ensures the tmux session", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const initialConfig = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const branch = "feature-runtime-restart";
+  await createWorktree(repo.repoRoot, initialConfig, { branch });
+
+  const initialContents = serializeConfigContents({
+    ...initialConfig,
+    env: {
+      ...initialConfig.env,
+      FEATURE_FLAG: "old-value",
+    },
+    runtimePorts: ["APP_PORT"],
+    quickLinks: [{ name: "App", url: "http://127.0.0.1:${APP_PORT}" }],
+  }, { includeSchemaHeader: true });
+  await fs.writeFile(repo.configPath, initialContents, "utf8");
+
+  let capturedEnv: NodeJS.ProcessEnv | null = null;
+  let capturedPrompt = "";
+  const aiProcesses: InjectedAiProcesses = {
+    ...createFakeAiProcesses().aiProcesses,
+    async startProcess(options) {
+      capturedEnv = options.env;
+      const match = options.command.match(/^printf %s '([\s\S]*)'$/);
+      capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
+      return {
+        name: "wtm:ai:test-runtime-restart",
+        pid: 9993,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async getProcess() {
+      return {
+        name: "wtm:ai:test-runtime-restart",
+        pid: 9993,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async readProcessLogs() {
+      return { stdout: "done\n", stderr: "" };
+    },
+    isProcessActive(status) {
+      return status === "online";
+    },
+  };
+
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const startResponse = await server.fetch(`/api/worktrees/${branch}/runtime/start`, { method: "POST" });
+    assert.equal(startResponse.status, 200);
+    const startedRuntime = await startResponse.json() as {
+      env: Record<string, string>;
+      quickLinks: Array<{ name: string; url: string }>;
+      tmuxSession: string;
+    };
+    assert.equal(startedRuntime.env.FEATURE_FLAG, "old-value");
+    assert.equal(startedRuntime.quickLinks[0]?.name, "App");
+    assert.match(startedRuntime.quickLinks[0]?.url ?? "", /^http:\/\/127\.0\.0\.1:\d+$/);
+
+    const updatedConfig = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const updatedContents = serializeConfigContents({
+      ...updatedConfig,
+      env: {
+        ...updatedConfig.env,
+        FEATURE_FLAG: "new-value",
+      },
+      runtimePorts: ["API_PORT"],
+      quickLinks: [{ name: "API", url: "http://127.0.0.1:${API_PORT}/health" }],
+    }, { includeSchemaHeader: true });
+    await fs.writeFile(repo.configPath, updatedContents, "utf8");
+
+    const restartResponse = await server.fetch(`/api/worktrees/${branch}/runtime/restart`, { method: "POST" });
+    assert.equal(restartResponse.status, 200);
+    const restartedRuntime = await restartResponse.json() as {
+      env: Record<string, string>;
+      quickLinks: Array<{ name: string; url: string }>;
+      tmuxSession: string;
+    };
+    assert.equal(restartedRuntime.env.FEATURE_FLAG, "new-value");
+    assert.equal(restartedRuntime.quickLinks[0]?.name, "API");
+    assert.match(restartedRuntime.quickLinks[0]?.url ?? "", /^http:\/\/127\.0\.0\.1:\d+\/health$/);
+    assert.equal(restartedRuntime.tmuxSession, startedRuntime.tmuxSession);
+
+    const reconnectResponse = await server.fetch(`/api/worktrees/${branch}/runtime/reconnect`, { method: "POST" });
+    assert.equal(reconnectResponse.status, 200);
+    const reconnectPayload = await reconnectResponse.json() as {
+      tmuxSession: string;
+      clients: unknown[];
+      runtime?: { env: Record<string, string> };
+    };
+    assert.equal(reconnectPayload.tmuxSession, restartedRuntime.tmuxSession);
+    assert.deepEqual(reconnectPayload.clients, []);
+    assert.equal(reconnectPayload.runtime?.env.FEATURE_FLAG, "new-value");
+
+    const aiResponse = await server.fetch(`/api/worktrees/${branch}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "verify restarted runtime" }),
+    });
+    assert.equal(aiResponse.status, 200);
+
+    if (!capturedEnv) {
+      assert.fail("Expected AI process env to be captured after runtime restart.");
+    }
+
+    const processEnv: NodeJS.ProcessEnv = capturedEnv;
+
+    assert.equal(processEnv.FEATURE_FLAG, "new-value");
+    assert.equal(processEnv.WORKTREE_BRANCH, branch);
+    assert.match(capturedPrompt, /- Runtime env: .*FEATURE_FLAG=new-value/);
+    assert.match(capturedPrompt, /- Quicklinks: API: http:\/\/127\.0\.0\.1:\d+\/health/);
+    assert.match(capturedPrompt, /- Allocated ports: API_PORT=\d+/);
+  } finally {
+    await stopAllBackgroundCommands(branch, path.join(repo.repoRoot, branch)).catch(() => undefined);
+    await server.close();
+    await removePathWithRetry(repo.repoRoot);
   }
 });
