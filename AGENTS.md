@@ -7,6 +7,7 @@
 - Keep this file up to date as features evolve so operational conventions and UI interaction rules remain documented alongside the code.
 - Treat operational server state as durable repo-backed data. Runtime state, AI job state, shutdown status, and similar server lifecycle data must survive a server restart for the same repo.
 - Prefer server-sent events backed by durable snapshots for shared dashboard state. Polling is a resilience fallback, not the primary live-update path.
+- Prefer the shared matrix card pattern for list-style UI collections (AI logs, board lanes, dependency pickers, document rails, and similar index views) so titles, metadata, actions, and overflow handling stay consistent.
 
 ## Keep in mind
 

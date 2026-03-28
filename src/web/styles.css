@@ -154,6 +154,106 @@ body,
   cursor: not-allowed;
 }
 
+.matrix-card {
+  position: relative;
+  border: 1px solid rgb(var(--rgb-base0B) / 0.12);
+  background: rgb(var(--rgb-base00) / 0.2);
+  box-shadow:
+    inset 0 1px 0 rgb(var(--rgb-base07) / 0.03),
+    0 10px 24px rgb(var(--rgb-base00) / 0.2);
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.matrix-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: rgb(var(--rgb-base0B) / 0.32);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.matrix-card-interactive:hover,
+.matrix-card-interactive:focus-within {
+  border-color: rgb(var(--rgb-base0B) / 0.22);
+  background: rgb(var(--rgb-base00) / 0.26);
+  box-shadow:
+    inset 0 1px 0 rgb(var(--rgb-base07) / 0.04),
+    0 14px 30px rgb(var(--rgb-base00) / 0.24);
+  transform: translateY(-1px);
+}
+
+.matrix-card-interactive:hover::before,
+.matrix-card-interactive:focus-within::before,
+.matrix-card-selected::before {
+  opacity: 1;
+}
+
+.matrix-card-selected {
+  border-color: rgb(var(--rgb-base0B) / 0.24);
+  background: rgb(var(--rgb-base02) / 0.48);
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--rgb-base0B) / 0.08),
+    0 0 0 1px rgb(var(--rgb-base0B) / 0.06),
+    0 16px 34px rgb(var(--rgb-base00) / 0.26);
+}
+
+.matrix-card-title {
+  min-width: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.matrix-card-description {
+  min-width: 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.matrix-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.matrix-card-clamp-1,
+.matrix-card-clamp-2,
+.matrix-card-clamp-3,
+.matrix-card-clamp-4 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+}
+
+.matrix-card-clamp-1 {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.matrix-card-clamp-2 {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.matrix-card-clamp-3 {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.matrix-card-clamp-4 {
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+
 .matrix-button-danger {
   border-color: rgb(var(--rgb-base08) / 0.28);
   color: var(--base08);
@@ -297,28 +397,6 @@ body,
   border-radius: 999px;
   animation: pm-ai-spin 0.9s linear infinite;
   box-shadow: 0 0 20px rgb(var(--rgb-base0D) / 0.12);
-}
-
-.pm-document-card {
-  position: relative;
-  background:
-    linear-gradient(135deg, rgb(var(--rgb-base0B) / 0.04), transparent 46%),
-    rgb(var(--rgb-base00) / 0.24);
-}
-
-.pm-document-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: rgb(var(--rgb-base0B) / 0.18);
-  opacity: 0;
-  transition: opacity 160ms ease;
-}
-
-.pm-document-card:hover::before,
-.pm-document-card-active::before {
-  opacity: 1;
 }
 
 .pm-ai-output-shell {

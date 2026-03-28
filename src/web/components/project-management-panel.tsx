@@ -25,6 +25,7 @@ import {
   useProjectManagementDocumentBrowserState,
 } from "./project-management-document-browser";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
+import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixModal, MatrixTabButton } from "./matrix-primitives";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
@@ -784,28 +785,36 @@ export function ProjectManagementPanel({
           <button
             key={entry.id}
             type="button"
-            className={`pm-document-card w-full border px-3 py-3 text-left transition-colors ${document?.id === entry.id ? "pm-document-card-active theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+            className="w-full text-left"
             onClick={() => void handleSelectDocument(entry.id)}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
-                  {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
+            <MatrixCard as="div" selected={document?.id === entry.id} interactive className="p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
+                    {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
+                  </div>
+                  <MatrixCardTitle className="mt-2" lines={2} title={entry.title}>{entry.title}</MatrixCardTitle>
+                  {entry.summary ? (
+                    <MatrixCardDescription className="mt-2" lines={3} title={entry.summary}>
+                      {summarizeDocumentText(entry.summary, 220)}
+                    </MatrixCardDescription>
+                  ) : null}
+                  <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-[11px] theme-text-muted">
+                    <span className="min-w-0 truncate">{entry.assignee || "Unassigned"}</span>
+                    <span className="shrink-0">{formatDocumentTimestamp(entry.updatedAt)}</span>
+                  </MatrixCardFooter>
                 </div>
-                <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
-                {entry.summary ? <p className="mt-2 text-[11px] theme-text-muted">{summarizeDocumentText(entry.summary)}</p> : null}
-                <p className="mt-2 text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</p>
-                <p className="mt-1 text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</p>
+                <MatrixBadge tone={entry.archived ? "warning" : "neutral"} compact>
+                  {entry.archived ? "archived" : `${entry.historyCount} rev`}
+                </MatrixBadge>
               </div>
-              <MatrixBadge tone={entry.archived ? "warning" : "neutral"} compact>
-                {entry.archived ? "archived" : `${entry.historyCount} rev`}
-              </MatrixBadge>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-1">
-              {entry.tags.slice(0, 2).map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
-              {entry.tags.length > 2 ? <MatrixBadge tone="idle" compact>{`+${entry.tags.length - 2}`}</MatrixBadge> : null}
-            </div>
+              <MatrixCardFooter className="mt-3 gap-1">
+                {entry.tags.slice(0, 2).map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+                {entry.tags.length > 2 ? <MatrixBadge tone="idle" compact>{`+${entry.tags.length - 2}`}</MatrixBadge> : null}
+              </MatrixCardFooter>
+            </MatrixCard>
           </button>
         )}
       />

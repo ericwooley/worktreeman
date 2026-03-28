@@ -396,6 +396,7 @@ test("dependency picker modal renders current dependencies and searchable docume
   assert.match(markup, /Graph fallback/);
   assert.match(markup, /selected/);
   assert.match(markup, /type="checkbox"/);
+  assert.match(markup, /matrix-card matrix-card-selected/);
 });
 
 test("document worktree run in another branch does not lock this worktree UI", () => {
@@ -503,4 +504,6 @@ test("board view renders multi-select controls and AI quick actions", () => {
   assert.match(markup, /Start AI/);
   assert.match(markup, /aria-label="Select Dependencies"/);
   assert.match(markup, /aria-label="Select Shared document list"/);
+  assert.match(markup, /matrix-card matrix-card-interactive/);
+  assert.match(markup, /AI running|Start AI/);
 });

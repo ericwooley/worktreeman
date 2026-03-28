@@ -7,6 +7,8 @@ import type {
   RunAiCommandResponse,
 } from "@shared/types";
 import { MatrixDropdown } from "./matrix-dropdown";
+import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
+import { formatDocumentTimestamp } from "./project-management-document-browser";
 import { MatrixBadge } from "./matrix-primitives";
 
 interface ProjectManagementBoardTabProps {
@@ -313,7 +315,7 @@ export function ProjectManagementBoardTab({
                   <div
                     key={`${lane.status}:${entry.id}`}
                     draggable={!saving && movingDocumentId !== entry.id}
-                    className={`border px-3 py-3 ${document?.id === entry.id ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+                    className=""
                     onDragStart={(event) => {
                       draggedDocumentRef.current = entry;
                       setDraggedDocumentId(entry.id);
@@ -328,45 +330,57 @@ export function ProjectManagementBoardTab({
                       setDropTargetStatus(null);
                     }}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <input
-                          type="checkbox"
-                          className="mt-1 h-4 w-4"
-                          checked={selectedDocumentIds.includes(entry.id)}
-                          onChange={() => toggleDocumentSelection(entry.id)}
-                          aria-label={`Select ${entry.title}`}
-                          disabled={saving}
-                        />
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 text-left"
-                          onClick={() => void onSelectDocument(entry.id)}
-                        >
-                          <p className="min-w-0 truncate text-sm font-semibold theme-text-strong">{entry.title}</p>
-                          <p className="mt-1 text-xs font-semibold theme-text-muted">#{entry.number}</p>
-                          <p className="mt-1 text-xs theme-text-muted">{entry.assignee || "Unassigned"}</p>
-                        </button>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <div className="flex items-center gap-1">
-                          {movingDocumentId === entry.id ? <MatrixBadge tone="active" compact>moving</MatrixBadge> : null}
-                          {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
-                          {aiRunningForCard ? <MatrixBadge tone="warning" compact>AI running</MatrixBadge> : null}
+                    <MatrixCard selected={document?.id === entry.id} interactive className="p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4"
+                            checked={selectedDocumentIds.includes(entry.id)}
+                            onChange={() => toggleDocumentSelection(entry.id)}
+                            aria-label={`Select ${entry.title}`}
+                            disabled={saving}
+                          />
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => void onSelectDocument(entry.id)}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
+                              <MatrixBadge tone="neutral" compact>{entry.status}</MatrixBadge>
+                            </div>
+                            <MatrixCardTitle className="mt-2" lines={2} title={entry.title}>{entry.title}</MatrixCardTitle>
+                            <MatrixCardDescription className="mt-2" lines={2} title={entry.summary || entry.assignee || "Unassigned"}>
+                              {entry.summary || entry.assignee || "Unassigned"}
+                            </MatrixCardDescription>
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          className="matrix-button rounded-none px-2 py-1 text-xs"
-                          disabled={!smartAiReady || saving || startingAiDocumentId === entry.id || aiRunningForCard}
-                          onClick={() => void handleStartDocumentAi(entry)}
-                        >
-                          {aiRunningForCard ? "AI running" : startingAiDocumentId === entry.id ? "Starting AI..." : "Start AI"}
-                        </button>
+                        <div className="flex shrink-0 flex-col items-end gap-2">
+                          <div className="flex flex-wrap justify-end gap-1">
+                            {movingDocumentId === entry.id ? <MatrixBadge tone="active" compact>moving</MatrixBadge> : null}
+                            {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
+                            {aiRunningForCard ? <MatrixBadge tone="warning" compact>AI running</MatrixBadge> : null}
+                          </div>
+                          <button
+                            type="button"
+                            className="matrix-button rounded-none px-2 py-1 text-xs"
+                            disabled={!smartAiReady || saving || startingAiDocumentId === entry.id || aiRunningForCard}
+                            onClick={() => void handleStartDocumentAi(entry)}
+                          >
+                            {aiRunningForCard ? "AI running" : startingAiDocumentId === entry.id ? "Starting AI..." : "Start AI"}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {entry.tags.slice(0, 2).map((tag) => <MatrixBadge key={`${entry.id}:${tag}`} tone="active" compact>{tag}</MatrixBadge>)}
-                    </div>
+                      <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-[11px] theme-text-muted">
+                        <span className="min-w-0 truncate">{entry.assignee || "Unassigned"}</span>
+                        <span className="shrink-0">{formatDocumentTimestamp(entry.updatedAt)}</span>
+                      </MatrixCardFooter>
+                      <MatrixCardFooter className="mt-2 gap-1">
+                        {entry.tags.slice(0, 2).map((tag) => <MatrixBadge key={`${entry.id}:${tag}`} tone="active" compact>{tag}</MatrixBadge>)}
+                        {entry.tags.length > 2 ? <MatrixBadge tone="idle" compact>{`+${entry.tags.length - 2}`}</MatrixBadge> : null}
+                      </MatrixCardFooter>
+                    </MatrixCard>
                   </div>
                 );
               }) : (

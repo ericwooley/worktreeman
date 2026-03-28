@@ -7,6 +7,7 @@ import type {
   AiCommandOutputEvent,
 } from "@shared/types";
 import { marked } from "marked";
+import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric } from "./matrix-primitives";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
@@ -299,9 +300,12 @@ export function ProjectManagementAiLogTab({
             </div>
             <div className="mt-3 space-y-2">
               {runningJobs.length ? runningJobs.map((job) => (
-                <div
+                <MatrixCard
+                  as="div"
                   key={job.jobId}
-                  className={`border px-3 py-3 transition ${logDetail?.fileName === job.fileName ? "theme-pill-emphasis theme-text-strong" : "theme-border-subtle theme-surface-soft"}`}
+                  selected={logDetail?.fileName === job.fileName}
+                  interactive
+                  className="p-3"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <button
@@ -311,17 +315,23 @@ export function ProjectManagementAiLogTab({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold theme-text-strong">{getOriginContextTitle(job.origin, job.branch)}</p>
-                          <p className="mt-1 text-xs theme-text-muted">{job.branch}</p>
+                          <MatrixCardTitle lines={2} title={getOriginContextTitle(job.origin, job.branch)}>
+                            {getOriginContextTitle(job.origin, job.branch)}
+                          </MatrixCardTitle>
+                          <MatrixCardDescription className="mt-1" lines={1} title={job.branch}>{job.branch}</MatrixCardDescription>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
                           <MatrixBadge tone={getStatusTone(job.status)} compact>{job.status}</MatrixBadge>
                         </div>
                       </div>
-                      <p className="mt-2 text-xs theme-text-muted">Started {formatTimestamp(job.startedAt)}</p>
-                      <p className="mt-1 line-clamp-2 text-xs theme-text-muted">{getOriginContextSubtitle(job.origin, job.branch)}</p>
-                      {job.pid ? <p className="mt-1 text-xs theme-text-muted">PID {job.pid}</p> : null}
+                      <MatrixCardDescription className="mt-2" lines={3} title={getOriginContextSubtitle(job.origin, job.branch)}>
+                        {getOriginContextSubtitle(job.origin, job.branch)}
+                      </MatrixCardDescription>
+                      <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-xs theme-text-muted">
+                        <span className="shrink-0">Started {formatTimestamp(job.startedAt)}</span>
+                        {job.pid ? <span className="shrink-0">PID {job.pid}</span> : null}
+                      </MatrixCardFooter>
                     </button>
                     <div className="flex flex-col gap-2">
                       {job.origin ? (
@@ -342,7 +352,7 @@ export function ProjectManagementAiLogTab({
                       </button>
                     </div>
                   </div>
-                </div>
+                </MatrixCard>
               )) : (
                 <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
                   No AI jobs are currently running.
@@ -361,21 +371,30 @@ export function ProjectManagementAiLogTab({
                 <button
                   key={log.fileName}
                   type="button"
-                  className={`w-full border px-3 py-3 text-left transition ${logDetail?.fileName === log.fileName ? "theme-pill-emphasis theme-text-strong" : "theme-border-subtle theme-surface-soft hover:theme-surface-soft"}`}
+                  className="w-full text-left"
                   onClick={() => void onSelectLog(log.fileName, { silent: true })}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{getOriginContextTitle(log.origin, log.branch)}</p>
-                      <p className="mt-1 text-xs theme-text-muted">{log.branch}</p>
+                  <MatrixCard as="div" selected={logDetail?.fileName === log.fileName} interactive className="p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <MatrixCardTitle lines={2} title={getOriginContextTitle(log.origin, log.branch)}>
+                          {getOriginContextTitle(log.origin, log.branch)}
+                        </MatrixCardTitle>
+                        <MatrixCardDescription className="mt-1" lines={1} title={log.branch}>{log.branch}</MatrixCardDescription>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <MatrixBadge tone="neutral" compact>{getAiCommandLabel(log.commandId)}</MatrixBadge>
+                        <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <MatrixBadge tone="neutral" compact>{getAiCommandLabel(log.commandId)}</MatrixBadge>
-                      <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-xs theme-text-muted">{formatTimestamp(log.timestamp)}</p>
-                  <p className="mt-1 line-clamp-2 text-xs theme-text-muted">{getOriginContextSubtitle(log.origin, log.branch)}</p>
+                    <MatrixCardDescription className="mt-2" lines={3} title={getOriginContextSubtitle(log.origin, log.branch)}>
+                      {getOriginContextSubtitle(log.origin, log.branch)}
+                    </MatrixCardDescription>
+                    <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-xs theme-text-muted">
+                      <span>{formatTimestamp(log.timestamp)}</span>
+                      <span className="truncate">{log.fileName}</span>
+                    </MatrixCardFooter>
+                  </MatrixCard>
                 </button>
               )) : (
                 <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
@@ -513,24 +532,31 @@ export function ProjectManagementAiLogTab({
                     : "AI runs from environment, git, and project-management flows will appear here with mixed output and timing context."}
                 </p>
                 {primaryCandidate ? (
-                  <div className="mt-4 border theme-border-subtle p-4 theme-surface-soft">
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold theme-text-strong">{getOriginContextTitle(primaryCandidate.origin, primaryCandidate.branch)}</p>
-                        <p className="mt-1 text-xs theme-text-muted">{primaryCandidate.branch}</p>
-                        <p className="mt-2 text-xs theme-text-muted">
-                          {formatTimestamp(getCandidateStartedAt(primaryCandidate))}
-                        </p>
-                        <p className="mt-1 text-xs theme-text-muted">{getOriginContextSubtitle(primaryCandidate.origin, primaryCandidate.branch)}</p>
-                      </div>
-                      <button
-                        type="button"
+                  <div className="mt-4">
+                    <MatrixCard as="div" interactive className="p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <MatrixCardTitle lines={2} title={getOriginContextTitle(primaryCandidate.origin, primaryCandidate.branch)}>
+                            {getOriginContextTitle(primaryCandidate.origin, primaryCandidate.branch)}
+                          </MatrixCardTitle>
+                          <MatrixCardDescription className="mt-1" lines={1} title={primaryCandidate.branch}>{primaryCandidate.branch}</MatrixCardDescription>
+                          <MatrixCardDescription className="mt-2" lines={3} title={getOriginContextSubtitle(primaryCandidate.origin, primaryCandidate.branch)}>
+                            {getOriginContextSubtitle(primaryCandidate.origin, primaryCandidate.branch)}
+                          </MatrixCardDescription>
+                          <MatrixCardFooter className="mt-3 gap-3 text-xs theme-text-muted">
+                            <span>{formatTimestamp(getCandidateStartedAt(primaryCandidate))}</span>
+                            <span>{"startedAt" in primaryCandidate ? "Live" : "Saved"}</span>
+                          </MatrixCardFooter>
+                        </div>
+                        <button
+                          type="button"
                         className="matrix-button rounded-none px-3 py-2 text-sm"
                         onClick={() => void onSelectLog(primaryCandidate.fileName, { silent: true })}
-                      >
-                        Open latest run
-                      </button>
-                    </div>
+                        >
+                          Open latest run
+                        </button>
+                      </div>
+                    </MatrixCard>
                   </div>
                 ) : null}
               </div>
@@ -546,17 +572,26 @@ export function ProjectManagementAiLogTab({
                       <button
                         key={entry.fileName}
                         type="button"
-                        className="w-full border theme-border-subtle px-3 py-3 text-left transition theme-surface-soft hover:theme-surface-soft"
+                        className="w-full text-left"
                         onClick={() => void onSelectLog(entry.fileName, { silent: true })}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold theme-text-strong">{getOriginContextTitle(entry.origin, entry.branch)}</p>
-                            <p className="mt-1 text-xs theme-text-muted">{entry.branch}</p>
+                        <MatrixCard as="div" interactive className="p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <MatrixCardTitle lines={2} title={getOriginContextTitle(entry.origin, entry.branch)}>
+                                {getOriginContextTitle(entry.origin, entry.branch)}
+                              </MatrixCardTitle>
+                              <MatrixCardDescription className="mt-1" lines={1} title={entry.branch}>{entry.branch}</MatrixCardDescription>
+                            </div>
+                            <MatrixBadge tone={getStatusTone(entry.status)} compact>{entry.status}</MatrixBadge>
                           </div>
-                          <MatrixBadge tone={getStatusTone(entry.status)} compact>{entry.status}</MatrixBadge>
-                        </div>
-                        <p className="mt-2 text-xs theme-text-muted">{formatTimestamp(entry.timestamp)}</p>
+                          <MatrixCardDescription className="mt-2" lines={2} title={getOriginContextSubtitle(entry.origin, entry.branch)}>
+                            {getOriginContextSubtitle(entry.origin, entry.branch)}
+                          </MatrixCardDescription>
+                          <MatrixCardFooter className="mt-3 text-xs theme-text-muted">
+                            <span>{formatTimestamp(entry.timestamp)}</span>
+                          </MatrixCardFooter>
+                        </MatrixCard>
                       </button>
                     ))}
                   </div>

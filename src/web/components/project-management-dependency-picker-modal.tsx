@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { ProjectManagementDocument, ProjectManagementDocumentSummary } from "@shared/types";
+import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import {
   ProjectManagementDocumentBrowser,
@@ -76,16 +77,20 @@ export function ProjectManagementDependencyPickerModal({
 
           <div className="mt-3 space-y-2">
             {currentDependencies.length ? currentDependencies.map((entry) => (
-              <div key={entry.id} className="border theme-pill-emphasis px-3 py-3">
+              <MatrixCard as="div" key={entry.id} selected className="p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
                       {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
                     </div>
-                    <p className="mt-2 text-sm font-semibold theme-text-strong">{entry.title}</p>
-                    <p className="mt-1 text-[11px] theme-text-muted">{entry.status} - {entry.assignee || "Unassigned"}</p>
-                    <p className="mt-1 text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</p>
+                    <MatrixCardTitle className="mt-2" lines={2} title={entry.title}>{entry.title}</MatrixCardTitle>
+                    <MatrixCardDescription className="mt-1" lines={2} title={`${entry.status} - ${entry.assignee || "Unassigned"}`}>
+                      {entry.status} - {entry.assignee || "Unassigned"}
+                    </MatrixCardDescription>
+                    <MatrixCardFooter className="mt-3 text-[11px] theme-text-muted">
+                      <span>{formatDocumentTimestamp(entry.updatedAt)}</span>
+                    </MatrixCardFooter>
                   </div>
                   <button
                     type="button"
@@ -96,7 +101,7 @@ export function ProjectManagementDependencyPickerModal({
                     Remove
                   </button>
                 </div>
-              </div>
+              </MatrixCard>
             )) : (
               <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
                 No prerequisites yet. Use the document browser to add them.
@@ -120,7 +125,7 @@ export function ProjectManagementDependencyPickerModal({
               return (
                 <label
                   key={entry.id}
-                  className={`flex cursor-pointer items-start gap-3 border px-3 py-3 text-left ${checked ? "theme-pill-emphasis" : "theme-border-subtle theme-surface-soft"}`}
+                  className="flex cursor-pointer items-start gap-3 text-left"
                 >
                   <input
                     type="checkbox"
@@ -129,16 +134,20 @@ export function ProjectManagementDependencyPickerModal({
                     disabled={disabled}
                     onChange={() => onToggleDependency(entry.id)}
                   />
-                  <span className="min-w-0 flex-1">
+                  <MatrixCard as="div" selected={checked} interactive className="min-w-0 flex-1 p-3">
                     <span className="flex flex-wrap items-center gap-2">
                       <span className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</span>
                       <MatrixBadge tone={checked ? "active" : "neutral"} compact>{checked ? "selected" : entry.status}</MatrixBadge>
                       {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
                     </span>
-                    <span className="mt-2 block text-sm font-semibold theme-text-strong">{entry.title}</span>
-                    <span className="mt-1 block text-[11px] theme-text-muted">{entry.assignee || "Unassigned"}</span>
-                    <span className="mt-1 block text-[11px] theme-text-muted">{formatDocumentTimestamp(entry.updatedAt)}</span>
-                  </span>
+                    <MatrixCardTitle className="mt-2" lines={2} title={entry.title}>{entry.title}</MatrixCardTitle>
+                    <MatrixCardDescription className="mt-1" lines={2} title={entry.assignee || "Unassigned"}>
+                      {entry.assignee || "Unassigned"}
+                    </MatrixCardDescription>
+                    <MatrixCardFooter className="mt-3 text-[11px] theme-text-muted">
+                      <span>{formatDocumentTimestamp(entry.updatedAt)}</span>
+                    </MatrixCardFooter>
+                  </MatrixCard>
                 </label>
               );
             }}
