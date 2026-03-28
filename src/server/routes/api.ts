@@ -2117,6 +2117,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         title: body.title,
         summary: typeof body.summary === "string" ? body.summary : undefined,
         markdown: typeof body.markdown === "string" ? body.markdown : "",
+        kind: body.kind === "pull-request" ? "pull-request" : body.kind === "document" ? "document" : undefined,
+        pullRequest: body.pullRequest && typeof body.pullRequest === "object"
+          ? {
+              baseBranch: typeof body.pullRequest.baseBranch === "string" ? body.pullRequest.baseBranch : "",
+              compareBranch: typeof body.pullRequest.compareBranch === "string" ? body.pullRequest.compareBranch : "",
+              state: body.pullRequest.state === "closed" || body.pullRequest.state === "merged" ? body.pullRequest.state : "open",
+              draft: Boolean(body.pullRequest.draft),
+            }
+          : undefined,
         tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
         dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : [],
         status: typeof body.status === "string" ? body.status : undefined,
@@ -2137,6 +2146,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
             title: payload.document.title,
             summary: generatedSummary,
             markdown: payload.document.markdown,
+            kind: payload.document.kind,
+            pullRequest: payload.document.pullRequest,
             tags: payload.document.tags,
             dependencies: payload.document.dependencies,
             status: payload.document.status,
@@ -2167,6 +2178,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           title: body.title,
           summary: typeof body.summary === "string" ? body.summary : undefined,
           markdown: typeof body.markdown === "string" ? body.markdown : "",
+          kind: body.kind === "pull-request" ? "pull-request" : body.kind === "document" ? "document" : undefined,
+          pullRequest: body.pullRequest && typeof body.pullRequest === "object"
+            ? {
+                baseBranch: typeof body.pullRequest.baseBranch === "string" ? body.pullRequest.baseBranch : "",
+                compareBranch: typeof body.pullRequest.compareBranch === "string" ? body.pullRequest.compareBranch : "",
+                state: body.pullRequest.state === "closed" || body.pullRequest.state === "merged" ? body.pullRequest.state : "open",
+                draft: Boolean(body.pullRequest.draft),
+              }
+            : undefined,
           tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
           dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : [],
           status: typeof body.status === "string" ? body.status : undefined,
@@ -2194,6 +2214,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           title: String(entry.title ?? ""),
           summary: typeof entry.summary === "string" ? entry.summary : undefined,
           markdown: typeof entry.markdown === "string" ? entry.markdown : "",
+          kind: entry.kind === "pull-request" ? "pull-request" : entry.kind === "document" ? "document" : undefined,
+          pullRequest: entry.pullRequest && typeof entry.pullRequest === "object"
+            ? {
+                baseBranch: typeof entry.pullRequest.baseBranch === "string" ? entry.pullRequest.baseBranch : "",
+                compareBranch: typeof entry.pullRequest.compareBranch === "string" ? entry.pullRequest.compareBranch : "",
+                state: entry.pullRequest.state === "closed" || entry.pullRequest.state === "merged" ? entry.pullRequest.state : "open",
+                draft: Boolean(entry.pullRequest.draft),
+              }
+            : undefined,
           tags: Array.isArray(entry.tags) ? entry.tags.map((tag) => String(tag)) : [],
           dependencies: Array.isArray(entry.dependencies) ? entry.dependencies.map((dependencyId) => String(dependencyId)) : [],
           status: typeof entry.status === "string" ? entry.status : undefined,

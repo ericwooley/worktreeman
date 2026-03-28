@@ -2435,6 +2435,142 @@ test("project-management routes preserve summary and add attributed comments", {
   }
 });
 
+test("project-management routes create and update pull-request documents with preserved metadata", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    await runCommand("git", ["config", "user.name", "Riley Maintainer"], { cwd: repo.repoRoot });
+    await runCommand("git", ["config", "user.email", "riley@example.com"], { cwd: repo.repoRoot });
+
+    const createResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "PR review workspace",
+        summary: "Track review notes for the PR workspace.",
+        markdown: "# PR review workspace\n",
+        kind: "pull-request",
+        pullRequest: {
+          baseBranch: "main",
+          compareBranch: "feature/pr-workspace",
+          state: "open",
+          draft: true,
+        },
+        tags: ["pull-request", "feature"],
+        status: "in-progress",
+        assignee: "Riley",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createPayload = await createResponse.json() as {
+      document: {
+        id: string;
+        kind: string;
+        pullRequest: {
+          baseBranch: string;
+          compareBranch: string;
+          state: string;
+          draft: boolean;
+        } | null;
+      };
+    };
+    assert.equal(createPayload.document.kind, "pull-request");
+    assert.deepEqual(createPayload.document.pullRequest, {
+      baseBranch: "main",
+      compareBranch: "feature/pr-workspace",
+      state: "open",
+      draft: true,
+    });
+
+    const documentId = createPayload.document.id;
+
+    const updateResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/updates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "PR review workspace",
+        summary: "Ready for merge.",
+        markdown: "# PR review workspace\n\nReady for merge.\n",
+        kind: "pull-request",
+        pullRequest: {
+          baseBranch: "main",
+          compareBranch: "feature/pr-workspace",
+          state: "merged",
+          draft: false,
+        },
+        tags: ["pull-request", "feature"],
+        status: "done",
+        assignee: "Riley",
+      }),
+    });
+    assert.equal(updateResponse.status, 200);
+    const updatePayload = await updateResponse.json() as {
+      document: {
+        kind: string;
+        summary: string;
+        status: string;
+        pullRequest: {
+          baseBranch: string;
+          compareBranch: string;
+          state: string;
+          draft: boolean;
+        } | null;
+      };
+    };
+    assert.equal(updatePayload.document.kind, "pull-request");
+    assert.equal(updatePayload.document.summary, "Ready for merge.");
+    assert.equal(updatePayload.document.status, "done");
+    assert.deepEqual(updatePayload.document.pullRequest, {
+      baseBranch: "main",
+      compareBranch: "feature/pr-workspace",
+      state: "merged",
+      draft: false,
+    });
+
+    const commentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Merged after final review." }),
+    });
+    assert.equal(commentResponse.status, 201);
+    const commentPayload = await commentResponse.json() as {
+      document: {
+        kind: string;
+        pullRequest: {
+          baseBranch: string;
+          compareBranch: string;
+          state: string;
+          draft: boolean;
+        } | null;
+        comments: Array<{ body: string; authorName: string; authorEmail: string }>;
+      };
+    };
+    assert.equal(commentPayload.document.kind, "pull-request");
+    assert.deepEqual(commentPayload.document.pullRequest, {
+      baseBranch: "main",
+      compareBranch: "feature/pr-workspace",
+      state: "merged",
+      draft: false,
+    });
+    assert.equal(commentPayload.document.comments.at(-1)?.body, "Merged after final review.");
+    assert.equal(commentPayload.document.comments.at(-1)?.authorName, "Riley Maintainer");
+    assert.equal(commentPayload.document.comments.at(-1)?.authorEmail, "riley@example.com");
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, documentId);
+    assert.equal(updatedDocument.document.kind, "pull-request");
+    assert.deepEqual(updatedDocument.document.pullRequest, {
+      baseBranch: "main",
+      compareBranch: "feature/pr-workspace",
+      state: "merged",
+      draft: false,
+    });
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management status route updates only the lane state", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);
