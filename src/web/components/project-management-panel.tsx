@@ -520,11 +520,48 @@ export function ProjectManagementPanel({
       summary: editSummary || undefined,
       markdown: editMarkdown,
       tags: parseTags(editTags),
-      dependencies: document.dependencies,
+      dependencies: dependencySelection,
       status: editStatus,
       assignee: editAssignee,
       archived: document.archived,
     });
+  }
+
+  async function handleQuickDocumentUpdate(overrides: {
+    status?: string;
+    assignee?: string;
+    archived?: boolean;
+  }) {
+    if (!document) {
+      return;
+    }
+
+    await onUpdateDocument(document.id, {
+      title: editTitle,
+      summary: editSummary || undefined,
+      markdown: editMarkdown,
+      tags: parseTags(editTags),
+      dependencies: dependencySelection,
+      status: overrides.status ?? editStatus,
+      assignee: overrides.assignee ?? editAssignee,
+      archived: overrides.archived ?? document.archived,
+    });
+  }
+
+  async function handleSaveAssignee() {
+    if (!document || editAssignee === document.assignee) {
+      return;
+    }
+
+    await handleQuickDocumentUpdate({ assignee: editAssignee });
+  }
+
+  async function handleToggleArchive() {
+    if (!document) {
+      return;
+    }
+
+    await handleQuickDocumentUpdate({ archived: !document.archived });
   }
 
   async function handleMoveDocument(documentId: string, nextStatus: string) {
@@ -560,6 +597,8 @@ export function ProjectManagementPanel({
       : [],
     [document, worktrees],
   );
+  const metadataControlsDisabled = !document || saving || aiRunning;
+  const assigneeActionDisabled = !document || saving || aiRunning || editAssignee === document.assignee;
 
   async function handleDependencySelectionToggle(dependencyId: string) {
     if (!document || aiRunning) {
@@ -866,6 +905,69 @@ export function ProjectManagementPanel({
                   </div>
                 ) : null}
 
+                {document ? (
+                  <div className="mt-3 border theme-border-subtle p-3">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+                      <div className="xl:w-56 xl:flex-none">
+                        <MatrixDropdown
+                          label="Lane"
+                          value={editStatus}
+                          options={statuses.map((entry) => ({
+                            value: entry,
+                            label: entry,
+                            description: "Board lane",
+                          }))}
+                          placeholder="Select lane"
+                          disabled={metadataControlsDisabled}
+                          onChange={(value) => {
+                            setEditStatus(value);
+                            void handleQuickDocumentUpdate({ status: value });
+                          }}
+                        />
+                      </div>
+                      <form
+                        className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-end"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void handleSaveAssignee();
+                        }}
+                      >
+                        <label className="min-w-0 flex-1 space-y-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Assignee</span>
+                          <input
+                            value={editAssignee}
+                            onChange={(event) => setEditAssignee(event.target.value)}
+                            placeholder="Assignee"
+                            disabled={metadataControlsDisabled}
+                            className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                          />
+                        </label>
+                        <button
+                          type="submit"
+                          className="matrix-button h-10 rounded-none px-3 text-sm font-semibold"
+                          disabled={assigneeActionDisabled}
+                        >
+                          {editAssignee ? "Save assignee" : document.assignee ? "Clear assignee" : "Save assignee"}
+                        </button>
+                      </form>
+                      <div className="flex flex-wrap gap-2 xl:flex-none">
+                        <button
+                          type="button"
+                          className="matrix-button h-10 rounded-none px-3 text-sm font-semibold"
+                          disabled={metadataControlsDisabled}
+                          onClick={() => void handleToggleArchive()}
+                        >
+                          {document.archived ? "Restore document" : "Archive document"}
+                        </button>
+                        {document.archived ? <MatrixBadge tone="warning">Archived</MatrixBadge> : null}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs theme-text-muted">
+                      Update the lane, assignee, or archive state here without leaving the document view.
+                    </p>
+                  </div>
+                ) : null}
+
                 {document && selectedDocumentAiOutput ? (
                   <div className="mt-3">
                     <ProjectManagementAiOutputViewer
@@ -891,6 +993,7 @@ export function ProjectManagementPanel({
                       statuses={statuses}
                       saving={saving}
                       disabled={aiRunning}
+                      showMetadataFields={false}
                       submitDisabled={!document}
                       editorMode={editEditorMode}
                       editorOptions={documentEditorOptions}
@@ -902,28 +1005,6 @@ export function ProjectManagementPanel({
                       onStatusChange={setEditStatus}
                       onAssigneeChange={setEditAssignee}
                       onSubmit={handleSaveDocument}
-                      sidebarFooter={(
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="matrix-button rounded-none px-3 py-2 text-sm"
-                            disabled={saving || aiRunning}
-                            onClick={() => void onUpdateDocument(document.id, {
-                              title: editTitle,
-                              summary: editSummary || undefined,
-                              markdown: editMarkdown,
-                              tags: parseTags(editTags),
-                              dependencies: document.dependencies,
-                              status: editStatus,
-                              assignee: editAssignee,
-                              archived: !document.archived,
-                            })}
-                          >
-                            {document.archived ? "Restore" : "Archive"}
-                          </button>
-                          {document.archived ? <MatrixBadge tone="warning">Archived</MatrixBadge> : null}
-                        </div>
-                      )}
                       editorBlockedState={aiRunning ? (
                         <div className="pm-ai-running-state flex h-[68vh] flex-col items-center justify-center gap-4 px-6 text-center">
                           <div className="pm-ai-spinner" aria-hidden="true" />

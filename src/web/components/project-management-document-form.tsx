@@ -26,6 +26,7 @@ interface ProjectManagementDocumentFormProps {
   statuses: string[];
   saving: boolean;
   disabled?: boolean;
+  showMetadataFields?: boolean;
   submitDisabled?: boolean;
   editorMode: ProjectManagementDocumentFormEditorMode;
   editorOptions: Array<{
@@ -55,6 +56,7 @@ export function ProjectManagementDocumentForm({
   statuses,
   saving,
   disabled = false,
+  showMetadataFields = true,
   submitDisabled = false,
   editorMode,
   editorOptions,
@@ -111,23 +113,25 @@ export function ProjectManagementDocumentForm({
             disabled={fieldDisabled}
             className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
           />
-          <div className="grid gap-3 md:grid-cols-2">
-            <MatrixDropdown
-              label="Lane"
-              value={status}
-              options={statusOptions}
-              placeholder="Select lane"
-              onChange={onStatusChange}
-              disabled={fieldDisabled}
-            />
-            <input
-              value={assignee}
-              onChange={(event) => onAssigneeChange(event.target.value)}
-              placeholder="Assignee"
-              disabled={fieldDisabled}
-              className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
-            />
-          </div>
+          {showMetadataFields ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <MatrixDropdown
+                label="Lane"
+                value={status}
+                options={statusOptions}
+                placeholder="Select lane"
+                onChange={onStatusChange}
+                disabled={fieldDisabled}
+              />
+              <input
+                value={assignee}
+                onChange={(event) => onAssigneeChange(event.target.value)}
+                placeholder="Assignee"
+                disabled={fieldDisabled}
+                className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+              />
+            </div>
+          ) : null}
           <button
             type="button"
             className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
