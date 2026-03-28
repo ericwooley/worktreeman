@@ -15,18 +15,23 @@ import { stopAllBackgroundCommandsForShutdown } from "./services/background-comm
 import { listWorktrees } from "./services/git-service.js";
 import { createOperationalStateStore, stopAllOperationalStateStores } from "./services/operational-state-service.js";
 import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
+import { formatServerUrl, resolveServerHost } from "./utils/server-host.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
 import type { ViteDevServer } from "vite";
+import type os from "node:os";
 
 export interface StartServerOptions {
   repo: RepoContext;
   port?: number;
+  host?: string;
+  dangerouslyExposeToNetwork?: boolean;
   openBrowser?: boolean;
   prepareInitialTerminalSession?: (target: { repoRoot: string; branch: string; worktreePath: string }) => Promise<string | void>;
+  networkInterfaces?: ReturnType<typeof os.networkInterfaces>;
 }
 
-export async function startServer(options: StartServerOptions): Promise<{ port: number; close: () => Promise<void> }> {
+export async function startServer(options: StartServerOptions): Promise<{ port: number; host: string; url: string; close: () => Promise<void> }> {
   const config = await loadConfig({
     path: options.repo.configPath,
     repoRoot: options.repo.repoRoot,
@@ -102,7 +107,12 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   });
 
   const preferredPort = resolvePreferredPort(options.port, config.preferredPort);
-  const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null);
+  const resolvedHost = resolveServerHost({
+    requestedHost: options.host,
+    dangerouslyExposeToNetwork: options.dangerouslyExposeToNetwork,
+    networkInterfaces: options.networkInterfaces,
+  });
+  const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null, resolvedHost.listenHost);
   const prepareInitialTerminalSession = options.prepareInitialTerminalSession ?? ensureTerminalSession;
 
   const formatStartupError = (error: unknown) => {
@@ -110,7 +120,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : null;
 
     if (code === "EADDRINUSE") {
-      return `Port ${port} is already in use on 127.0.0.1. Stop the existing server or start worktreeman with --port <port>.`;
+      return `Port ${port} is already in use on ${resolvedHost.listenHost}. Stop the existing server or start worktreeman with --port <port>.`;
     }
 
     return message;
@@ -280,7 +290,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
       server.once("error", onError);
       server.once("listening", onListening);
-      server.listen(port, "127.0.0.1");
+      server.listen(port, resolvedHost.listenHost);
     });
 
     terminalService = createTerminalService({
@@ -303,9 +313,15 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
     if (fellBackFrom !== undefined) {
       process.stdout.write(
-        `[startup] Port ${fellBackFrom} is already in use on 127.0.0.1. Using ${port} instead.\n`,
+        `[startup] Port ${fellBackFrom} is already in use on ${resolvedHost.listenHost}. Using ${port} instead.\n`,
       );
     }
+
+    if (resolvedHost.warning) {
+      process.stdout.write(`${resolvedHost.warning}\n`);
+    }
+
+    process.stdout.write(`[startup] Host selection: ${resolvedHost.detail}.\n`);
 
     const startupWorktrees = await listWorktrees(options.repo.repoRoot);
     const startupWorktree = startupWorktrees.find((entry) => entry.branch === DEFAULT_WORKTREEMAN_MAIN_BRANCH)
@@ -325,7 +341,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       }
     }
 
-    const url = `http://127.0.0.1:${port}`;
+    const url = formatServerUrl(resolvedHost.urlHost, port);
     if (options.openBrowser ?? true) {
       await open(url);
     }
@@ -336,6 +352,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
   return {
     port,
+    host: resolvedHost.listenHost,
+    url: formatServerUrl(resolvedHost.urlHost, port),
     close,
   };
 }
@@ -357,16 +375,16 @@ function resolvePreferredPort(explicitPort?: number, configPreferredPort?: numbe
   return 4312;
 }
 
-async function resolveStartupPort(preferredPort: number, allowFallback: boolean): Promise<{
+async function resolveStartupPort(preferredPort: number, allowFallback: boolean, host: string): Promise<{
   port: number;
   fellBackFrom?: number;
 }> {
-  if (!allowFallback || await isLocalPortAvailable(preferredPort)) {
+  if (!allowFallback || await isHostPortAvailable(preferredPort, host)) {
     return { port: preferredPort };
   }
 
   return {
-    port: await allocateLocalPort(),
+    port: await allocateHostPort(host),
     fellBackFrom: preferredPort,
   };
 }
@@ -408,7 +426,7 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function isLocalPortAvailable(port: number): Promise<boolean> {
+async function isHostPortAvailable(port: number, host: string): Promise<boolean> {
   return new Promise<boolean>((resolve, reject) => {
     const server = net.createServer();
 
@@ -421,7 +439,7 @@ async function isLocalPortAvailable(port: number): Promise<boolean> {
       reject(error);
     });
 
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, host, () => {
       server.close((error) => {
         if (error) {
           reject(error);
@@ -434,12 +452,12 @@ async function isLocalPortAvailable(port: number): Promise<boolean> {
   });
 }
 
-async function allocateLocalPort(): Promise<number> {
+async function allocateHostPort(host: string): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const server = net.createServer();
 
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, host, () => {
       const address = server.address();
       if (!address || typeof address === "string") {
         server.close(() => reject(new Error("Unable to allocate a local port for the worktreeman server.")));

@@ -56,7 +56,7 @@ test("startServer falls back to another available port when the default port is 
 
   try {
     process.env.PORT = String(occupiedServer.port);
-    startedServer = await startServer({ repo, openBrowser: false });
+    startedServer = await startServer({ repo, host: "127.0.0.1", openBrowser: false });
 
     assert.notEqual(startedServer.port, occupiedServer.port);
     assert.ok(startedServer.port > 0);
@@ -75,11 +75,67 @@ test("startServer still fails when an explicitly requested port is occupied", as
 
   try {
     await assert.rejects(
-      () => startServer({ repo, port: occupiedServer.port, openBrowser: false }),
+      () => startServer({ repo, host: "127.0.0.1", port: occupiedServer.port, openBrowser: false }),
       /already in use/,
     );
   } finally {
     await occupiedServer.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer returns localhost URL details for auto fallback", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    startedServer = await startServer({
+      repo,
+      port: await listenFreePort(),
+      openBrowser: false,
+      networkInterfaces: {
+        lo0: [{ address: "127.0.0.1", family: "IPv4", internal: true, mac: "", netmask: "255.0.0.0", cidr: "127.0.0.1/8" }],
+      },
+    });
+
+    assert.equal(startedServer.host, "127.0.0.1");
+    assert.equal(startedServer.url, `http://127.0.0.1:${startedServer.port}`);
+  } finally {
+    await startedServer?.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer rejects wildcard host binding without explicit dangerous exposure flag", async () => {
+  const { rootDir, repo } = await createTestRepo();
+
+  try {
+    await assert.rejects(
+      () => startServer({ repo, host: "0.0.0.0", openBrowser: false }),
+      /dangerously-expose-to-network/,
+    );
+  } finally {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer allows wildcard host binding when dangerous exposure flag is set", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    startedServer = await startServer({
+      repo,
+      host: "0.0.0.0",
+      dangerouslyExposeToNetwork: true,
+      port: await listenFreePort(),
+      openBrowser: false,
+    });
+
+    assert.equal(startedServer.host, "0.0.0.0");
+    assert.equal(startedServer.url, `http://127.0.0.1:${startedServer.port}`);
+  } finally {
+    await startedServer?.close();
     await fs.rm(rootDir, { recursive: true, force: true });
   }
 });
@@ -99,7 +155,7 @@ test("startServer uses config preferredPort and falls back when it is occupied",
       "utf8",
     );
 
-    startedServer = await startServer({ repo, openBrowser: false });
+    startedServer = await startServer({ repo, host: "127.0.0.1", openBrowser: false });
 
     assert.notEqual(startedServer.port, occupiedServer.port);
     assert.ok(startedServer.port > 0);
@@ -130,8 +186,8 @@ test("startServer serves favicon from configured repository file", async () => {
       "utf8",
     );
 
-    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
-    const response = await fetch(`http://127.0.0.1:${startedServer.port}/favicon.ico`);
+    startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
+    const response = await fetch(`${startedServer.url}/favicon.ico`);
     const responseBytes = Buffer.from(await response.arrayBuffer());
 
     assert.equal(response.status, 200);
@@ -152,7 +208,7 @@ test("startServer clears persisted shutdown status from a previous server run", 
     await operationalState.completeShutdown("[shutdown] Shutdown complete.");
     await stopOperationalStateStore(repo.repoRoot);
 
-    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
+    startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
 
     const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
     const status = await restartedOperationalState.getShutdownStatus();
@@ -194,7 +250,7 @@ test("startServer reconciles interrupted running AI jobs on startup", async () =
     });
     await stopOperationalStateStore(repo.repoRoot);
 
-    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
+    startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
 
     const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
     const reconciledJob = await restartedOperationalState.getAiCommandJob("main");
@@ -226,7 +282,7 @@ test("startServer closes managed AI command processes during shutdown", async ()
       errFile,
     });
 
-    startedServer = await startServer({ repo, port: await listenFreePort(), openBrowser: false });
+    startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
     await startedServer.close();
     startedServer = undefined;
 
