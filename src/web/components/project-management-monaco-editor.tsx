@@ -6,6 +6,8 @@ interface ProjectManagementMonacoEditorProps {
   onChange: (value: string) => void;
   height?: string;
   readOnly?: boolean;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }
 
 export function ProjectManagementMonacoEditor({
@@ -13,8 +15,15 @@ export function ProjectManagementMonacoEditor({
   onChange,
   height = "65vh",
   readOnly = false,
+  onFocus,
+  onBlur,
 }: ProjectManagementMonacoEditorProps) {
   const { theme } = useTheme();
+
+  function handleMount(editor: any /* monaco.editor.IStandaloneCodeEditor */, monaco: any) {
+    if (onFocus) editor.onDidFocusEditorWidget(onFocus);
+    if (onBlur) editor.onDidBlurEditorWidget(onBlur);
+  }
 
   return (
     <Editor
@@ -23,6 +32,7 @@ export function ProjectManagementMonacoEditor({
       language="markdown"
       value={value}
       onChange={(nextValue) => onChange(nextValue ?? "")}
+      onMount={handleMount}
       options={{
         minimap: { enabled: false },
         fontSize: 13,

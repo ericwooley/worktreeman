@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOrigin } from "@shared/types";
-import { ProjectManagementAiOutputViewer } from "./project-management-panel";
+
 import { ProjectManagementAiLogTab } from "./project-management-ai-log-tab";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
 
@@ -54,6 +54,28 @@ interface ProjectManagementAiTabProps {
   onCancelJob: (branch: string) => Promise<AiCommandJob | null>;
   onOpenOrigin: (origin: AiCommandOrigin) => void | Promise<void>;
   onRetry?: () => void | Promise<void>;
+}
+
+// Define the props for ProjectManagementAiOutputViewer above its definition
+interface ProjectManagementAiOutputViewerProps {
+  source: string;
+  job: AiCommandJob;
+  summary: string;
+  expanded?: boolean;
+  onCancel: () => void;
+  onOpenModal?: () => void;
+}
+
+function ProjectManagementAiOutputViewer({
+  source,
+  job,
+  summary,
+  expanded = false,
+  onCancel,
+  onOpenModal,
+}: ProjectManagementAiOutputViewerProps) {
+  // Placeholder: Replace with real implementation
+  return <div />;
 }
 
 export function ProjectManagementAiTab({
