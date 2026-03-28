@@ -85,6 +85,23 @@ function toAiCommandRequestPreview(request: string) {
   return normalized.length <= 160 ? normalized : `${normalized.slice(0, 160)}...`;
 }
 
+function toAiCommandLogSummary(log: AiCommandLogEntry): AiCommandLogSummary {
+  return {
+    jobId: log.jobId,
+    fileName: log.fileName,
+    timestamp: log.timestamp,
+    branch: log.branch,
+    documentId: log.documentId ?? null,
+    commandId: log.commandId,
+    origin: log.origin ?? null,
+    worktreePath: log.worktreePath,
+    command: log.command,
+    requestPreview: toAiCommandRequestPreview(log.request),
+    status: log.status,
+    pid: log.pid ?? null,
+  };
+}
+
 function areGitComparisonsEqual(left: GitComparisonResponse | null, right: GitComparisonResponse | null) {
   if (left === right) {
     return true;
@@ -250,22 +267,10 @@ export function useDashboardState() {
 
     setAiCommandLogDetail(log);
     setAiCommandLogs((current) => {
-      const summary: AiCommandLogSummary = {
-        jobId: log.jobId,
-        fileName: log.fileName,
-        timestamp: log.timestamp,
-        branch: log.branch,
-        documentId: log.documentId ?? null,
-        commandId: log.commandId,
-        origin: log.origin ?? null,
-        worktreePath: log.worktreePath,
-        command: log.command,
-        requestPreview: toAiCommandRequestPreview(log.request),
-        status: log.status,
-        pid: log.pid ?? null,
-      };
-      const next = current.filter((entry) => entry.fileName !== summary.fileName);
-      next.unshift(summary);
+      const next = current.filter((entry) => entry.fileName !== log.fileName);
+      if (log.status !== "running") {
+        next.unshift(toAiCommandLogSummary(log));
+      }
       return next.sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp));
     });
 

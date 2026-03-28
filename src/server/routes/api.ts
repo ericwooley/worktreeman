@@ -856,6 +856,12 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
   };
 }
 
+function toHistoricalAiCommandLogSummaries(entries: AiCommandLogEntry[]): AiCommandLogSummary[] {
+  return entries
+    .filter((entry) => entry.status !== "running")
+    .map(toAiCommandLogSummary);
+}
+
 async function listAiCommandLogEntries(repoRoot: string): Promise<AiCommandLogEntry[]> {
   const logsDir = resolveAiLogsDir(repoRoot);
   let fileNames: string[] = [];
@@ -1720,7 +1726,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         })),
       );
       const payload: AiCommandLogsResponse = {
-        logs: entries.map(toAiCommandLogSummary),
+        logs: toHistoricalAiCommandLogSummaries(entries),
         runningJobs: entries.filter((entry) => entry.status === "running").map(toRunningAiCommandJob),
       };
       res.json(payload);

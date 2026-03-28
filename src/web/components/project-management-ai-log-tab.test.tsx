@@ -129,3 +129,34 @@ test("running cards prefer derived origin titles over prompt preview text", () =
   assert.match(markup, /Environment terminal · feature-ai-log/);
   assert.doesNotMatch(markup, /A very long prompt that should not be shown as the card title/);
 });
+
+test("running entries are not duplicated in the saved logs list", () => {
+  const runningJob: AiCommandJob = {
+    jobId: "job-1",
+    fileName: "log-1.json",
+    branch: "feature-ai-log",
+    commandId: "smart",
+    command: "runner --prompt",
+    input: "Summarize the work.",
+    status: "running",
+    startedAt: "2026-03-27T10:00:00.000Z",
+    stdout: "",
+    stderr: "",
+    outputEvents: [],
+    origin: environmentOrigin,
+  };
+
+  const markup = renderAiLogTab({
+    logDetail: null,
+    logs: [{ ...summaryLog, status: "running" }],
+    runningJobs: [runningJob],
+  });
+
+  assert.match(markup, /Running now/);
+  assert.match(markup, /Saved logs/);
+  assert.match(markup, /Recent activity/);
+  assert.match(markup, /Open latest run/);
+  assert.match(markup, />0<\/span>/);
+  assert.equal((markup.match(/log-1\.json/g) ?? []).length, 0);
+  assert.equal((markup.match(/feature-ai-log/g) ?? []).length >= 2, true);
+});

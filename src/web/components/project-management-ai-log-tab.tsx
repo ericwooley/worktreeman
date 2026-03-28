@@ -209,7 +209,16 @@ export function ProjectManagementAiLogTab({
     [logDetail],
   );
 
-  const recentEntries = useMemo(() => logs.slice(0, 4), [logs]);
+  const visibleLogs = useMemo(() => {
+    if (!runningJobs.length) {
+      return logs;
+    }
+
+    const runningFileNames = new Set(runningJobs.map((job) => job.fileName));
+    return logs.filter((log) => !runningFileNames.has(log.fileName));
+  }, [logs, runningJobs]);
+
+  const recentEntries = useMemo(() => visibleLogs.slice(0, 4), [visibleLogs]);
 
   function renderAccordionSummary(title: string, description: string) {
     return (
@@ -222,11 +231,11 @@ export function ProjectManagementAiLogTab({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <MatrixMetric label="Running jobs" value={String(runningJobs.length)} />
-        <MatrixMetric label="Saved logs" value={String(logs.length)} />
-        <MatrixMetric label="Selected log" value={formatSelectedLabel(logDetail)} />
-      </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <MatrixMetric label="Running jobs" value={String(runningJobs.length)} />
+          <MatrixMetric label="Saved logs" value={String(visibleLogs.length)} />
+          <MatrixMetric label="Selected log" value={formatSelectedLabel(logDetail)} />
+        </div>
 
       <div className="flex items-start justify-between gap-3 border theme-border-subtle p-4">
         <div>
@@ -306,7 +315,7 @@ export function ProjectManagementAiLogTab({
               {loading ? <MatrixBadge tone="warning" compact>loading</MatrixBadge> : null}
             </div>
             <div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto pr-1">
-              {logs.length ? logs.map((log) => (
+              {visibleLogs.length ? visibleLogs.map((log) => (
                 <button
                   key={log.fileName}
                   type="button"

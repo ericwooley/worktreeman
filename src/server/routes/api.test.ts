@@ -1791,18 +1791,15 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
       }>;
     };
 
-    assert.equal(listPayload.logs.length > 0, true);
-    assert.equal(listPayload.logs[0].branch, "feature-ai-log");
-    assert.equal(listPayload.logs[0].requestPreview.includes("summarize the work"), true);
-    assert.equal(listPayload.logs[0].status, "running");
-    assert.equal(listPayload.logs[0].pid, 7331);
-    assert.deepEqual(listPayload.logs[0].origin, origin);
+    assert.equal(listPayload.logs.some((entry) => entry.fileName === "running-log.json"), false);
     assert.equal(listPayload.runningJobs.length, 1);
     assert.equal(listPayload.runningJobs[0].fileName, "running-log.json");
+    assert.equal(listPayload.runningJobs[0].branch, "feature-ai-log");
+    assert.equal(listPayload.runningJobs[0].status, "running");
     assert.equal(listPayload.runningJobs[0].pid, 7331);
     assert.deepEqual(listPayload.runningJobs[0].origin, origin);
 
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(listPayload.logs[0].fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(listPayload.runningJobs[0].fileName)}`);
     assert.equal(detailResponse.status, 200);
 
     const detailPayload = await detailResponse.json() as {
@@ -1821,7 +1818,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
       };
     };
 
-    assert.equal(detailPayload.log.fileName, listPayload.logs[0].fileName);
+    assert.equal(detailPayload.log.fileName, listPayload.runningJobs[0].fileName);
     assert.equal(detailPayload.log.branch, "feature-ai-log");
     assert.equal(detailPayload.log.status, "running");
     assert.equal(detailPayload.log.pid, 7331);
