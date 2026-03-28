@@ -114,6 +114,12 @@ function createConfig(commandName: string, command: string): WorktreeManagerConf
     backgroundCommands: {
       [commandName]: { command },
     },
+    projectManagement: {
+      users: {
+        customUsers: [],
+        archivedUserIds: [],
+      },
+    },
     worktrees: { baseDir: "." },
   };
 }

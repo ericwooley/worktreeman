@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
@@ -13,7 +14,7 @@ import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/reposi
 import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
 import { loadConfig, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
-import { findRepoContext } from "../utils/paths.js";
+import { findRepoContext, findWorktreePathForRef } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
@@ -1730,6 +1731,159 @@ test("AI command settings save commits the config file", { concurrency: false },
 
     const status = await runCommand("git", ["status", "--short", "--", repo.configFile], { cwd: repo.configWorktreePath });
     assert.equal(status.stdout.trim(), "");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project management users lists discovered git authors", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const defaultBranchResult = await runCommand("git", ["symbolic-ref", "--short", "HEAD"], { cwd: repo.repoRoot });
+    const defaultWorktreePath = await findWorktreePathForRef(repo.repoRoot, defaultBranchResult.stdout.trim());
+    assert.ok(defaultWorktreePath);
+
+    await fs.writeFile(path.join(defaultWorktreePath, "alex.txt"), "alex\n", "utf8");
+    await runCommand("git", ["add", "alex.txt"], { cwd: defaultWorktreePath });
+    await runCommand(
+      "git",
+      ["-c", "user.name=Alex Example", "-c", "user.email=alex@example.com", "commit", "-m", "Add Alex commit"],
+      { cwd: defaultWorktreePath },
+    );
+
+    await fs.writeFile(path.join(defaultWorktreePath, "bailey.txt"), "bailey\n", "utf8");
+    await runCommand("git", ["add", "bailey.txt"], { cwd: defaultWorktreePath });
+    await runCommand(
+      "git",
+      ["-c", "user.name=Bailey Example", "-c", "user.email=bailey@example.com", "commit", "-m", "Add Bailey commit"],
+      { cwd: defaultWorktreePath },
+    );
+
+    const response = await server.fetch("/api/project-management/users");
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      branch: string;
+      config: {
+        customUsers: Array<{ name: string; email: string }>;
+        archivedUserIds: string[];
+      };
+      users: Array<{
+        id: string;
+        name: string;
+        email: string;
+        source: string;
+        archived: boolean;
+        avatarUrl: string;
+        commitCount: number;
+        lastCommitAt: string | null;
+      }>;
+    };
+
+    assert.ok(payload.branch);
+    assert.deepEqual(payload.config, {
+      customUsers: [],
+      archivedUserIds: [],
+    });
+
+    const alex = payload.users.find((entry) => entry.email === "alex@example.com");
+    const bailey = payload.users.find((entry) => entry.email === "bailey@example.com");
+
+    assert.ok(alex);
+    assert.ok(bailey);
+    assert.equal(alex?.name, "Alex Example");
+    assert.equal(bailey?.name, "Bailey Example");
+    assert.equal(alex?.source, "git");
+    assert.equal(bailey?.source, "git");
+    assert.equal(alex?.archived, false);
+    assert.equal(bailey?.archived, false);
+    assert.equal(alex?.commitCount, 1);
+    assert.equal(bailey?.commitCount, 1);
+    assert.match(alex?.avatarUrl ?? "", /^https:\/\/www\.gravatar\.com\/avatar\//);
+    assert.match(bailey?.avatarUrl ?? "", /^https:\/\/www\.gravatar\.com\/avatar\//);
+    assert.ok(alex?.lastCommitAt);
+    assert.ok(bailey?.lastCommitAt);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project management users save commits the config overlay", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const defaultBranchResult = await runCommand("git", ["symbolic-ref", "--short", "HEAD"], { cwd: repo.repoRoot });
+    const defaultWorktreePath = await findWorktreePathForRef(repo.repoRoot, defaultBranchResult.stdout.trim());
+    assert.ok(defaultWorktreePath);
+
+    await fs.writeFile(path.join(defaultWorktreePath, "casey.txt"), "casey\n", "utf8");
+    await runCommand("git", ["add", "casey.txt"], { cwd: defaultWorktreePath });
+    await runCommand(
+      "git",
+      ["-c", "user.name=Casey Example", "-c", "user.email=casey@example.com", "commit", "-m", "Add Casey commit"],
+      { cwd: defaultWorktreePath },
+    );
+
+    const caseyId = createHash("sha1").update("casey@example.com").digest("hex");
+    const response = await server.fetch("/api/project-management/users", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        config: {
+          customUsers: [{ name: "Jordan Example", email: "JORDAN@example.com" }],
+          archivedUserIds: [caseyId, caseyId],
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      config: {
+        customUsers: Array<{ name: string; email: string }>;
+        archivedUserIds: string[];
+      };
+      users: Array<{
+        id: string;
+        name: string;
+        email: string;
+        source: string;
+        archived: boolean;
+        commitCount: number;
+      }>;
+    };
+
+    assert.deepEqual(payload.config, {
+      customUsers: [{ name: "Jordan Example", email: "jordan@example.com" }],
+      archivedUserIds: [caseyId],
+    });
+
+    const casey = payload.users.find((entry) => entry.email === "casey@example.com");
+    const jordan = payload.users.find((entry) => entry.email === "jordan@example.com");
+    assert.ok(casey);
+    assert.ok(jordan);
+    assert.equal(casey?.archived, true);
+    assert.equal(casey?.source, "git");
+    assert.equal(jordan?.source, "config");
+    assert.equal(jordan?.archived, false);
+    assert.equal(jordan?.commitCount, 0);
+
+    const logMessage = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: repo.configWorktreePath });
+    assert.equal(logMessage.stdout.trim(), "config: update project management users");
+
+    const status = await runCommand("git", ["status", "--short", "--", repo.configFile], { cwd: repo.configWorktreePath });
+    assert.equal(status.stdout.trim(), "");
+
+    const contents = await fs.readFile(repo.configPath, "utf8");
+    assert.match(contents, /projectManagement:/);
+    assert.match(contents, /users:/);
+    assert.match(contents, /name: Jordan Example/);
+    assert.match(contents, /email: jordan@example.com/);
+    assert.match(contents, new RegExp(`- ${caseyId}`));
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

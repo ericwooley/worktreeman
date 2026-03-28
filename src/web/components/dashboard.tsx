@@ -129,6 +129,7 @@ export function Dashboard() {
     aiCommandLogsLastUpdatedAt,
     runningAiCommandJobs,
     projectManagement,
+    projectManagementUsers,
     projectManagementDocument,
     projectManagementHistory,
     projectManagementLoading,
@@ -152,6 +153,7 @@ export function Dashboard() {
     loadBackgroundLogs,
     loadProjectManagementDocument,
     loadProjectManagementDocuments,
+    loadProjectManagementUsers,
     loadConfigDocument,
     loadAiCommandSettings,
     loadAiCommandLog,
@@ -172,6 +174,7 @@ export function Dashboard() {
     updateProjectManagementDependencies,
     updateProjectManagementDocument,
     updateProjectManagementStatus,
+    updateProjectManagementUsers,
   } = useDashboardState();
   const { theme, themes, setThemeId, setPreviewThemeId, clearPreviewTheme } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
@@ -878,6 +881,17 @@ export function Dashboard() {
         action: () => navigateToProjectManagementSubTab("history"),
       },
       {
+        id: "nav-project-management-users",
+        code: "npu",
+        title: "Open project users",
+        subtitle: "Jump to discovered, archived, and custom project users.",
+        group: "Navigation",
+        keywords: ["project", "management", "users", "people", "contributors"],
+        badgeLabel: activeTab === "project-management" && projectManagementSubTab === "users" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToProjectManagementSubTab("users"),
+      },
+      {
         id: "nav-project-management-ai-log",
         code: "npa",
         title: "Open AI tab",
@@ -1309,6 +1323,7 @@ export function Dashboard() {
             projectManagementWorktrees={visibleWorktrees}
             projectManagementAvailableTags={projectManagement?.availableTags ?? []}
             projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
+            projectManagementUsers={projectManagementUsers}
             gitPullRequestDocumentId={gitPullRequestDocumentId}
             onGitPullRequestDocumentChange={setGitPullRequestDocumentId}
             projectManagementActiveSubTab={projectManagementSubTab}
@@ -1331,6 +1346,7 @@ export function Dashboard() {
             onProjectManagementAiSubTabChange={setAiActivitySubTab}
             onProjectManagementDocumentViewModeChange={setProjectManagementDocumentViewMode}
             onLoadProjectManagementDocuments={loadProjectManagementDocuments}
+            onLoadProjectManagementUsers={loadProjectManagementUsers}
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
             onLoadProjectManagementAiLogs={loadAiCommandLogs}
             onLoadProjectManagementAiLog={loadAiCommandLog}
@@ -1344,6 +1360,7 @@ export function Dashboard() {
               setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementStatus(documentId, { status });
             }}
+            onUpdateProjectManagementUsers={updateProjectManagementUsers}
             onBatchUpdateProjectManagementDocuments={async (documentIds, overrides) => {
               if (projectManagementSelectedDocumentId && documentIds.includes(projectManagementSelectedDocumentId)) {
                 setProjectManagementSelectedDocumentId(projectManagementSelectedDocumentId);

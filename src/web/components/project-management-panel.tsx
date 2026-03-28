@@ -4,12 +4,15 @@ import type {
   AiCommandConfig,
   AiCommandId,
   AiCommandJob,
+  ProjectManagementUser,
   RunAiCommandRequest,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
+  ProjectManagementUsersResponse,
   RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
+  UpdateProjectManagementUsersRequest,
   WorktreeRecord,
 } from "@shared/types";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
@@ -43,7 +46,7 @@ const ProjectManagementHistoryTab = lazy(async () => {
   return { default: module.ProjectManagementHistoryTab };
 });
 
-export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create";
+export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "users";
 export type ProjectManagementDocumentViewMode = "document" | "edit";
 
 interface ProjectManagementPanelProps {
@@ -51,6 +54,7 @@ interface ProjectManagementPanelProps {
   worktrees: WorktreeRecord[];
   availableTags: string[];
   availableStatuses: string[];
+  projectManagementUsers: ProjectManagementUsersResponse | null;
   activeSubTab: ProjectManagementSubTab;
   selectedDocumentId: string | null;
   documentViewMode: ProjectManagementDocumentViewMode;
@@ -89,6 +93,7 @@ interface ProjectManagementPanelProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onUpdateStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
+  onUpdateUsers: (payload: UpdateProjectManagementUsersRequest) => Promise<ProjectManagementUsersResponse | null>;
   onBatchUpdateDocuments: (documentIds: string[], overrides: {
     status?: string;
     archived?: boolean;
@@ -141,6 +146,10 @@ function summarizeDocumentText(value: string, maxLength = 140): string {
   }
 
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function normalizeProjectManagementUserEmail(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function getAiOutputText(job: AiCommandJob): string {
@@ -248,6 +257,7 @@ export function ProjectManagementPanel({
   worktrees,
   availableTags,
   availableStatuses,
+  projectManagementUsers,
   activeSubTab,
   selectedDocumentId,
   documentViewMode,
@@ -269,6 +279,7 @@ export function ProjectManagementPanel({
   onUpdateDocument,
   onUpdateDependencies,
   onUpdateStatus,
+  onUpdateUsers,
   onBatchUpdateDocuments,
   onAddComment,
   onRunAiCommand,
@@ -294,6 +305,9 @@ export function ProjectManagementPanel({
   const [newStatus, setNewStatus] = useState<string>("");
   const [newAssignee, setNewAssignee] = useState("");
   const [createDocumentViewMode, setCreateDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [userFormError, setUserFormError] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
   const [aiChangeRequest, setAiChangeRequest] = useState("");
@@ -490,6 +504,19 @@ export function ProjectManagementPanel({
       `${document.tags.length} tag${document.tags.length === 1 ? "" : "s"}`,
     ]
     : [];
+  const projectManagementUsersConfig = projectManagementUsers?.config ?? { customUsers: [], archivedUserIds: [] };
+  const activeUsers = useMemo(
+    () => (projectManagementUsers?.users ?? []).filter((entry) => !entry.archived),
+    [projectManagementUsers?.users],
+  );
+  const archivedUsers = useMemo(
+    () => (projectManagementUsers?.users ?? []).filter((entry) => entry.archived),
+    [projectManagementUsers?.users],
+  );
+  const customUserEmails = useMemo(
+    () => new Set(projectManagementUsersConfig.customUsers.map((entry) => normalizeProjectManagementUserEmail(entry.email)).filter(Boolean)),
+    [projectManagementUsersConfig.customUsers],
+  );
 
   const emptyStateMessage = activeSubTab === "document"
     ? "Select a document from the left rail to inspect its markdown, tags, and history."
@@ -497,7 +524,9 @@ export function ProjectManagementPanel({
       ? "No documents are available for the current filters."
       : activeSubTab === "history"
         ? "Select a document to inspect its timeline."
-        : "Create a document to start outlining the project.";
+        : activeSubTab === "users"
+          ? "No users yet. Git commit authors appear here automatically, or add a custom user below."
+          : "Create a document to start outlining the project.";
 
   useEffect(() => {
     if (documents.length === 0 || document || selectedDocumentId) {
@@ -764,6 +793,120 @@ export function ProjectManagementPanel({
     await onCancelAiCommand();
   }
 
+  async function handleToggleUserArchive(user: ProjectManagementUser) {
+    const archivedUserIds = user.archived
+      ? projectManagementUsersConfig.archivedUserIds.filter((entry) => entry !== user.id)
+      : [...projectManagementUsersConfig.archivedUserIds, user.id];
+
+    setUserFormError(null);
+    await onUpdateUsers({
+      config: {
+        ...projectManagementUsersConfig,
+        archivedUserIds: [...new Set(archivedUserIds)],
+      },
+    });
+  }
+
+  async function handleAddCustomUser() {
+    const name = newUserName.trim();
+    const email = normalizeProjectManagementUserEmail(newUserEmail);
+
+    if (!name || !email) {
+      setUserFormError("Add a name and email to save a custom user.");
+      return;
+    }
+
+    const nextCustomUsers = projectManagementUsersConfig.customUsers.some((entry) => normalizeProjectManagementUserEmail(entry.email) === email)
+      ? projectManagementUsersConfig.customUsers.map((entry) => normalizeProjectManagementUserEmail(entry.email) === email ? { name, email } : entry)
+      : [...projectManagementUsersConfig.customUsers, { name, email }];
+
+    const response = await onUpdateUsers({
+      config: {
+        ...projectManagementUsersConfig,
+        customUsers: nextCustomUsers,
+      },
+    });
+
+    if (response) {
+      setNewUserName("");
+      setNewUserEmail("");
+      setUserFormError(null);
+    }
+  }
+
+  async function handleRemoveCustomUser(user: ProjectManagementUser) {
+    const normalizedEmail = normalizeProjectManagementUserEmail(user.email);
+    const nextCustomUsers = projectManagementUsersConfig.customUsers.filter(
+      (entry) => normalizeProjectManagementUserEmail(entry.email) !== normalizedEmail,
+    );
+    const nextArchivedUserIds = user.source === "config" && user.commitCount === 0
+      ? projectManagementUsersConfig.archivedUserIds.filter((entry) => entry !== user.id)
+      : projectManagementUsersConfig.archivedUserIds;
+
+    await onUpdateUsers({
+      config: {
+        customUsers: nextCustomUsers,
+        archivedUserIds: nextArchivedUserIds,
+      },
+    });
+  }
+
+  function renderUserCard(user: ProjectManagementUser) {
+    const hasCustomEntry = customUserEmails.has(normalizeProjectManagementUserEmail(user.email));
+
+    return (
+      <div key={user.id} className="border theme-border-subtle px-3 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start gap-3">
+              <img
+                src={user.avatarUrl}
+                alt=""
+                className="h-10 w-10 shrink-0 border theme-border-subtle object-cover"
+                loading="lazy"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold theme-text-strong">{user.name || user.email}</p>
+                  <MatrixBadge tone={user.archived ? "warning" : "active"} compact>
+                    {user.archived ? "archived" : "active"}
+                  </MatrixBadge>
+                  <MatrixBadge tone="neutral" compact>{user.source === "git" ? "Git history" : "Custom"}</MatrixBadge>
+                  {hasCustomEntry ? <MatrixBadge tone="idle" compact>config override</MatrixBadge> : null}
+                </div>
+                <p className="mt-1 break-all text-xs theme-text-muted">{user.email}</p>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs theme-text-muted">
+                  <span>{user.commitCount} commit{user.commitCount === 1 ? "" : "s"}</span>
+                  <span>{user.lastCommitAt ? `Last commit ${formatDocumentTimestamp(user.lastCommitAt)}` : "No commits yet"}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <button
+              type="button"
+              className="matrix-button rounded-none px-3 py-2 text-sm"
+              disabled={saving}
+              onClick={() => void handleToggleUserArchive(user)}
+            >
+              {user.archived ? "Unarchive user" : "Archive user"}
+            </button>
+            {hasCustomEntry ? (
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                disabled={saving}
+                onClick={() => void handleRemoveCustomUser(user)}
+              >
+                Remove custom entry
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const documentRail = (
     <div className="theme-inline-panel p-4">
       <div className="flex items-start justify-between gap-3">
@@ -837,6 +980,7 @@ export function ProjectManagementPanel({
             <MatrixTabButton active={activeSubTab === "board"} label="Board" onClick={() => onSubTabChange("board")} />
             <MatrixTabButton active={activeSubTab === "dependency-tree"} label="Dependency tree" onClick={() => onSubTabChange("dependency-tree")} />
             <MatrixTabButton active={activeSubTab === "history"} label="History" onClick={() => onSubTabChange("history")} />
+            <MatrixTabButton active={activeSubTab === "users"} label="Users" onClick={() => onSubTabChange("users")} />
             <MatrixTabButton active={activeSubTab === "create"} label="Create" onClick={() => onSubTabChange("create")} />
           </div>
 
@@ -1282,6 +1426,97 @@ export function ProjectManagementPanel({
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading history...</div>}>
                 <ProjectManagementHistoryTab history={history} />
               </Suspense>
+            </div>
+          ) : activeSubTab === "users" ? (
+            <div className="pt-4">
+              <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
+                <div className="space-y-4">
+                  <div className="border theme-border-subtle p-4">
+                    <p className="matrix-kicker">People</p>
+                    <h3 className="mt-2 text-lg font-semibold theme-text-strong">Manage users</h3>
+                    <p className="mt-2 text-sm theme-text-muted">
+                      Git commit authors appear here automatically. Archive users to hide them from active planning, or add custom users in config.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                      <MatrixBadge tone="neutral" compact>{activeUsers.length} active</MatrixBadge>
+                      <MatrixBadge tone="warning" compact>{archivedUsers.length} archived</MatrixBadge>
+                      <MatrixBadge tone="idle" compact>{projectManagementUsersConfig.customUsers.length} custom entries</MatrixBadge>
+                    </div>
+                  </div>
+
+                  <div className="border theme-border-subtle p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Add custom user</p>
+                    <p className="mt-1 text-sm theme-text-muted">Use this for people who should appear in planning before they have git history in this repo.</p>
+                    <div className="mt-3 space-y-3">
+                      <label className="block space-y-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Name</span>
+                        <input
+                          value={newUserName}
+                          onChange={(event) => setNewUserName(event.target.value)}
+                          placeholder="Jane Doe"
+                          disabled={saving}
+                          className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                        />
+                      </label>
+                      <label className="block space-y-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Email</span>
+                        <input
+                          value={newUserEmail}
+                          onChange={(event) => setNewUserEmail(event.target.value)}
+                          placeholder="jane@example.com"
+                          disabled={saving}
+                          className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                        />
+                      </label>
+                      {userFormError ? <p className="text-xs theme-text-danger">{userFormError}</p> : null}
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                        disabled={saving}
+                        onClick={() => void handleAddCustomUser()}
+                      >
+                        Save custom user
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="border theme-border-subtle p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Active users</p>
+                        <p className="mt-1 text-sm theme-text-muted">These users can be assigned or referenced in project planning right now.</p>
+                      </div>
+                      <MatrixBadge tone="neutral" compact>{activeUsers.length}</MatrixBadge>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {activeUsers.length ? activeUsers.map((user) => renderUserCard(user)) : (
+                        <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                          {emptyStateMessage}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border theme-border-subtle p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Archived users</p>
+                        <p className="mt-1 text-sm theme-text-muted">Keep old contributors on record without showing them in the active planning list.</p>
+                      </div>
+                      <MatrixBadge tone="warning" compact>{archivedUsers.length}</MatrixBadge>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {archivedUsers.length ? archivedUsers.map((user) => renderUserCard(user)) : (
+                        <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                          No archived users yet.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="pt-4">

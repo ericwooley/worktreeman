@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { ProjectManagementDocument, ProjectManagementDocumentSummary, WorktreeRecord } from "@shared/types";
+import type {
+  ProjectManagementDocument,
+  ProjectManagementDocumentSummary,
+  ProjectManagementUsersResponse,
+  WorktreeRecord,
+} from "@shared/types";
 import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementDocumentForm } from "./project-management-document-form";
@@ -132,12 +137,53 @@ const sampleHistory = [
   },
 ];
 
+const sampleUsers: ProjectManagementUsersResponse = {
+  branch: "feature/doc-1-primary",
+  config: {
+    customUsers: [{ name: "Jordan Example", email: "jordan@example.com" }],
+    archivedUserIds: ["user-2"],
+  },
+  users: [
+    {
+      id: "user-1",
+      name: "Eric Woolley",
+      email: "eric@example.com",
+      source: "git",
+      archived: false,
+      avatarUrl: "https://www.gravatar.com/avatar/abc123?d=identicon&s=80",
+      commitCount: 12,
+      lastCommitAt: "2026-03-27T10:00:00.000Z",
+    },
+    {
+      id: "user-2",
+      name: "Archived Person",
+      email: "archived@example.com",
+      source: "git",
+      archived: true,
+      avatarUrl: "https://www.gravatar.com/avatar/def456?d=identicon&s=80",
+      commitCount: 2,
+      lastCommitAt: "2026-03-20T10:00:00.000Z",
+    },
+    {
+      id: "user-3",
+      name: "Jordan Example",
+      email: "jordan@example.com",
+      source: "config",
+      archived: false,
+      avatarUrl: "https://www.gravatar.com/avatar/ghi789?d=identicon&s=80",
+      commitCount: 0,
+      lastCommitAt: null,
+    },
+  ],
+};
+
 function renderProjectManagementPanel(overrides: Partial<Parameters<typeof ProjectManagementPanel>[0]> = {}) {
   const props: Parameters<typeof ProjectManagementPanel>[0] = {
     documents: [...sampleDocuments],
     worktrees: sampleWorktrees,
     availableTags: ["feature", "ux", "plan", "reference"],
     availableStatuses: ["backlog", "todo", "in-progress", "blocked", "done", "reference"],
+    projectManagementUsers: sampleUsers,
     activeSubTab: "document",
     selectedDocumentId: "doc-1",
     documentViewMode: "document",
@@ -160,6 +206,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     onUpdateDocument: async () => null,
     onUpdateDependencies: async () => null,
     onUpdateStatus: async () => null,
+    onUpdateUsers: async () => null,
     onBatchUpdateDocuments: async () => true,
     onAddComment: async () => null,
     onRunAiCommand: async () => null,
@@ -179,6 +226,7 @@ test("create form renders without seeded defaults", () => {
       worktrees={[]}
       availableTags={[]}
       availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      projectManagementUsers={sampleUsers}
       activeSubTab="create"
       selectedDocumentId={null}
       documentViewMode="document"
@@ -198,6 +246,7 @@ test("create form renders without seeded defaults", () => {
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
       onUpdateStatus={async () => null}
+      onUpdateUsers={async () => null}
       onBatchUpdateDocuments={async () => true}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
@@ -274,6 +323,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       worktrees={sampleWorktrees}
       availableTags={["feature", "ux", "plan", "reference"]}
       availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      projectManagementUsers={sampleUsers}
       activeSubTab="document"
       selectedDocumentId="doc-1"
       documentViewMode="document"
@@ -293,6 +343,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
       onUpdateStatus={async () => null}
+      onUpdateUsers={async () => null}
       onBatchUpdateDocuments={async () => true}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
@@ -324,6 +375,7 @@ test("document view renders summary, comments, and comment attribution", () => {
       worktrees={sampleWorktrees}
       availableTags={["feature", "ux", "plan", "reference"]}
       availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      projectManagementUsers={sampleUsers}
       activeSubTab="document"
       selectedDocumentId="doc-1"
       documentViewMode="document"
@@ -353,6 +405,7 @@ test("document view renders summary, comments, and comment attribution", () => {
       onUpdateDocument={async () => null}
       onUpdateDependencies={async () => null}
       onUpdateStatus={async () => null}
+      onUpdateUsers={async () => null}
       onBatchUpdateDocuments={async () => true}
       onAddComment={async () => null}
       onRunAiCommand={async () => null}
@@ -503,4 +556,27 @@ test("board view renders multi-select controls and AI quick actions", () => {
   assert.match(markup, /Start AI/);
   assert.match(markup, /aria-label="Select Dependencies"/);
   assert.match(markup, /aria-label="Select Shared document list"/);
+});
+
+test("users tab renders discovered users, archived users, and custom user controls", () => {
+  const markup = renderProjectManagementPanel({
+    activeSubTab: "users",
+    selectedDocumentId: null,
+    document: null,
+    history: [],
+  });
+
+  assert.match(markup, />Users</);
+  assert.match(markup, /Manage users/);
+  assert.match(markup, /Git commit authors appear here automatically/);
+  assert.match(markup, /Add custom user/);
+  assert.match(markup, /Save custom user/);
+  assert.match(markup, /Active users/);
+  assert.match(markup, /Archived users/);
+  assert.match(markup, /Eric Woolley/);
+  assert.match(markup, /Jordan Example/);
+  assert.match(markup, /Archived Person/);
+  assert.match(markup, /Archive user/);
+  assert.match(markup, /Unarchive user/);
+  assert.match(markup, /Remove custom entry/);
 });
