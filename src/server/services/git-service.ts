@@ -44,6 +44,27 @@ const GIT_COMMIT_ENV = {
 
 const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+function isInvalidWorktreeErrorMessage(message: string): boolean {
+  return message.includes("must be run in a work tree")
+    || message.includes("not a git repository")
+    || message.includes("No such file or directory");
+}
+
+async function isUsableWorktreePath(worktreePath: string): Promise<boolean> {
+  try {
+    await fs.access(worktreePath);
+  } catch {
+    return false;
+  }
+
+  try {
+    const { stdout } = await runCommand("git", ["rev-parse", "--is-inside-work-tree"], { cwd: worktreePath });
+    return stdout.trim() === "true";
+  } catch {
+    return false;
+  }
+}
+
 function createMergeStatus(overrides: Partial<GitMergeStatus> = {}): GitMergeStatus {
   return {
     canMerge: false,
@@ -300,13 +321,21 @@ function parsePorcelain(output: string): ParsedPorcelainEntry[] {
 
 export async function listWorktrees(repoRoot: string): Promise<WorktreeRecord[]> {
   const { stdout } = await runCommand("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot });
-  return parsePorcelain(stdout).filter((entry) => {
-    if (entry.isBare) {
-      return false;
-    }
+  const entries = parsePorcelain(stdout);
+  const usablePaths = await Promise.all(entries.map(async (entry) => ({
+    entry,
+    usable: await isUsableWorktreePath(entry.worktreePath),
+  })));
 
-    return path.basename(entry.worktreePath) === sanitizeBranchName(entry.branch);
-  });
+  return usablePaths
+    .filter(({ entry, usable }) => {
+      if (entry.isBare || entry.prunable || !usable) {
+        return false;
+      }
+
+      return path.basename(entry.worktreePath) === sanitizeBranchName(entry.branch);
+    })
+    .map(({ entry }) => entry);
 }
 
 export async function createWorktree(
@@ -361,7 +390,24 @@ async function gitRefExists(repoRoot: string, ref: string): Promise<boolean> {
 }
 
 export async function removeWorktree(repoRoot: string, worktreePath: string): Promise<void> {
-  await runCommand("git", ["worktree", "remove", worktreePath, "--force"], { cwd: repoRoot });
+  try {
+    await runCommand("git", ["worktree", "remove", worktreePath, "--force"], { cwd: repoRoot });
+    return;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Directory not empty")) {
+      throw error;
+    }
+  }
+
+  await fs.rm(worktreePath, { recursive: true, force: true });
+  await runCommand("git", ["worktree", "prune"], { cwd: repoRoot });
+
+  const { stdout } = await runCommand("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot });
+  const stillRegistered = parsePorcelain(stdout).some((entry) => path.resolve(entry.worktreePath) === path.resolve(worktreePath));
+  if (stillRegistered) {
+    throw new Error(`Failed to remove worktree ${worktreePath}: git still reports it after pruning.`);
+  }
 }
 
 export async function deleteBranch(repoRoot: string, branch: string): Promise<void> {
@@ -559,7 +605,27 @@ async function listBranchOptions(repoRoot: string, worktrees: WorktreeRecord[], 
 }
 
 async function getWorkingTreeSummary(worktreePath: string): Promise<GitWorkingTreeSummary> {
-  const { stdout } = await runCommand("git", ["status", "--short"], { cwd: worktreePath });
+  let stdout = "";
+  try {
+    ({ stdout } = await runCommand("git", ["status", "--short"], { cwd: worktreePath }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isInvalidWorktreeErrorMessage(message)) {
+      throw error;
+    }
+
+    return {
+      dirty: false,
+      staged: false,
+      unstaged: false,
+      untracked: false,
+      conflicted: false,
+      changedFiles: 0,
+      conflictedFiles: 0,
+      untrackedFiles: 0,
+    };
+  }
+
   const lines = stdout.split(/\r?\n/).filter(Boolean);
 
   let staged = false;
@@ -611,7 +677,18 @@ async function getWorkingTreeSummary(worktreePath: string): Promise<GitWorkingTr
 }
 
 async function getWorkingTreeConflicts(worktreePath: string): Promise<GitMergeConflict[]> {
-  const { stdout } = await runCommand("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: worktreePath });
+  let stdout = "";
+  try {
+    ({ stdout } = await runCommand("git", ["diff", "--name-only", "--diff-filter=U"], { cwd: worktreePath }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isInvalidWorktreeErrorMessage(message)) {
+      throw error;
+    }
+
+    return [];
+  }
+
   const conflictPaths = stdout.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
   if (conflictPaths.length === 0) {
     return [];
@@ -621,11 +698,24 @@ async function getWorkingTreeConflicts(worktreePath: string): Promise<GitMergeCo
 }
 
 async function getWorkingTreeDiff(worktreePath: string): Promise<string> {
-  const [stagedResult, unstagedResult, untrackedResult] = await Promise.all([
-    runCommand("git", ["diff", "--cached"], { cwd: worktreePath }),
-    runCommand("git", ["diff"], { cwd: worktreePath }),
-    runCommand("git", ["ls-files", "--others", "--exclude-standard"], { cwd: worktreePath }),
-  ]);
+  let stagedResult;
+  let unstagedResult;
+  let untrackedResult;
+
+  try {
+    [stagedResult, unstagedResult, untrackedResult] = await Promise.all([
+      runCommand("git", ["diff", "--cached"], { cwd: worktreePath }),
+      runCommand("git", ["diff"], { cwd: worktreePath }),
+      runCommand("git", ["ls-files", "--others", "--exclude-standard"], { cwd: worktreePath }),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isInvalidWorktreeErrorMessage(message)) {
+      throw error;
+    }
+
+    return "";
+  }
 
   const sections: string[] = [];
   if (unstagedResult.stdout.trim()) {
