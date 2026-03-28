@@ -129,3 +129,31 @@ test("running cards prefer derived origin titles over prompt preview text", () =
   assert.match(markup, /Environment terminal · feature-ai-log/);
   assert.doesNotMatch(markup, /A very long prompt that should not be shown as the card title/);
 });
+
+test("AI log header shows passive sync status and retry only on error", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-28T15:37:31.000Z");
+
+  try {
+    const updatedMarkup = renderAiLogTab({
+      lastUpdatedAt: "2026-03-28T15:37:30.000Z",
+    });
+
+    assert.match(updatedMarkup, /Live updates on|Idle/);
+    assert.match(updatedMarkup, /Updated just now|Updated \d+s ago/);
+    assert.doesNotMatch(updatedMarkup, />Refresh logs</);
+    assert.doesNotMatch(updatedMarkup, />Retry</);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  const errorMarkup = renderAiLogTab({
+    error: "AI logs are temporarily unavailable.",
+    onRetry: () => undefined,
+  });
+
+  assert.match(errorMarkup, /Sync issue/);
+  assert.match(errorMarkup, /AI logs are temporarily unavailable\./);
+  assert.match(errorMarkup, />Retry</);
+  assert.doesNotMatch(errorMarkup, />Refresh logs</);
+});

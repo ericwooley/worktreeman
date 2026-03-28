@@ -101,6 +101,22 @@ test("AI log sub tab renders saved log detail and origin actions", () => {
   assert.match(markup, />Open origin</);
 });
 
+test("AI log sub tab passes passive sync status through to the log header", () => {
+  const originalNow = Date.now;
+  Date.now = () => Date.parse("2026-03-28T15:37:31.000Z");
+
+  try {
+    const markup = renderAiTab({
+      lastUpdatedAt: "2026-03-28T15:37:30.000Z",
+    });
+
+    assert.match(markup, /Updated just now|Updated \d+s ago/);
+    assert.doesNotMatch(markup, />Refresh logs</);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("active AI worktrees sub tab renders live output and runtime details", () => {
   const originalNow = Date.now;
   Date.now = () => Date.parse("2026-03-27T10:05:30.000Z");
