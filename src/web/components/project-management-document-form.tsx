@@ -1,19 +1,15 @@
 import { Suspense, lazy, useMemo, type ReactNode } from "react";
+import { marked } from "marked";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixTabButton } from "./matrix-primitives";
-
-const ProjectManagementWysiwyg = lazy(async () => {
-  const module = await import("./project-management-wysiwyg");
-  return { default: module.ProjectManagementWysiwyg };
-});
 
 const ProjectManagementMonacoEditor = lazy(async () => {
   const module = await import("./project-management-monaco-editor");
   return { default: module.ProjectManagementMonacoEditor };
 });
 
-export type ProjectManagementDocumentFormEditorMode = "markdown" | "wysiwyg" | "monaco";
+export type ProjectManagementDocumentFormViewMode = "write" | "preview";
 
 interface ProjectManagementDocumentFormProps {
   mode: "create" | "edit";
@@ -28,12 +24,8 @@ interface ProjectManagementDocumentFormProps {
   disabled?: boolean;
   showMetadataFields?: boolean;
   submitDisabled?: boolean;
-  editorMode: ProjectManagementDocumentFormEditorMode;
-  editorOptions: Array<{
-    value: ProjectManagementDocumentFormEditorMode;
-    label: string;
-  }>;
-  onEditorModeChange: (value: ProjectManagementDocumentFormEditorMode) => void;
+  viewMode: ProjectManagementDocumentFormViewMode;
+  onViewModeChange: (value: ProjectManagementDocumentFormViewMode) => void;
   onTitleChange: (value: string) => void;
   onSummaryChange: (value: string) => void;
   onTagsChange: (value: string) => void;
@@ -58,9 +50,8 @@ export function ProjectManagementDocumentForm({
   disabled = false,
   showMetadataFields = true,
   submitDisabled = false,
-  editorMode,
-  editorOptions,
-  onEditorModeChange,
+  viewMode,
+  onViewModeChange,
   onTitleChange,
   onSummaryChange,
   onTagsChange,
@@ -149,33 +140,21 @@ export function ProjectManagementDocumentForm({
               {mode === "create" ? "Initial document" : "Document body"}
             </span>
             <div className="flex flex-wrap gap-2">
-              {editorOptions.map((option) => (
-                <MatrixTabButton
-                  key={option.value}
-                  active={editorMode === option.value}
-                  label={option.label}
-                  onClick={() => onEditorModeChange(option.value)}
-                />
-              ))}
+              <MatrixTabButton active={viewMode === "write"} label="Write" onClick={() => onViewModeChange("write")} />
+              <MatrixTabButton active={viewMode === "preview"} label="Preview" onClick={() => onViewModeChange("preview")} />
             </div>
           </div>
 
-          {editorBlockedState ?? (editorMode === "markdown" ? (
-            <textarea
-              value={markdown}
-              onChange={(event) => onMarkdownChange(event.target.value)}
-              placeholder={mode === "create" ? "# New document" : "# Document"}
-              rows={20}
-              disabled={fieldDisabled}
-              className={`matrix-input w-full rounded-none border-0 px-4 py-3 font-mono text-sm outline-none ${mode === "create" ? "min-h-[55vh]" : "min-h-[68vh]"}`}
-            />
+          {editorBlockedState ?? (viewMode === "preview" ? (
+            <div className={`min-h-[55vh] px-4 py-3 ${mode === "edit" ? "md:min-h-[68vh]" : ""}`}>
+              <div
+                className="pm-markdown text-sm theme-text"
+                dangerouslySetInnerHTML={{ __html: marked.parse(markdown || "(empty markdown document)") }}
+              />
+            </div>
           ) : (
             <Suspense fallback={<div className="px-4 py-6 text-sm theme-empty-note">Loading editor...</div>}>
-              {editorMode === "monaco" ? (
-                <ProjectManagementMonacoEditor value={markdown} onChange={onMarkdownChange} height={editorHeight} readOnly={fieldDisabled} />
-              ) : (
-                <ProjectManagementWysiwyg value={markdown} onChange={onMarkdownChange} height={editorHeight} readOnly={fieldDisabled} />
-              )}
+              <ProjectManagementMonacoEditor value={markdown} onChange={onMarkdownChange} height={editorHeight} readOnly={fieldDisabled} />
             </Suspense>
           ))}
         </div>

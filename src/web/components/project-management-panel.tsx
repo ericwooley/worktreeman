@@ -14,7 +14,7 @@ import { marked } from "marked";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import {
   ProjectManagementDocumentForm,
-  type ProjectManagementDocumentFormEditorMode,
+  type ProjectManagementDocumentFormViewMode,
 } from "./project-management-document-form";
 import {
   ProjectManagementDocumentBrowser,
@@ -265,14 +265,14 @@ export function ProjectManagementPanel({
   const [dependencySelection, setDependencySelection] = useState<string[]>(() => Array.isArray(document?.dependencies) ? document.dependencies : []);
   const [editStatus, setEditStatus] = useState<string>(() => document?.status ?? PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [editAssignee, setEditAssignee] = useState(() => document?.assignee ?? "");
-  const [editEditorMode, setEditEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("wysiwyg");
+  const [editDocumentViewMode, setEditDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
   const [newTags, setNewTags] = useState("");
   const [newMarkdown, setNewMarkdown] = useState("");
   const [newStatus, setNewStatus] = useState<string>("");
   const [newAssignee, setNewAssignee] = useState("");
-  const [createEditorMode, setCreateEditorMode] = useState<ProjectManagementDocumentFormEditorMode>("markdown");
+  const [createDocumentViewMode, setCreateDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
   const [commentDraft, setCommentDraft] = useState("");
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
   const [aiChangeRequest, setAiChangeRequest] = useState("");
@@ -306,15 +306,6 @@ export function ProjectManagementPanel({
       badgeTone: isAiCommandReady(aiCommands, "simple") ? "active" : "idle",
     },
   ]), [aiCommands]);
-  const documentEditorOptions = useMemo(
-    () => [
-      { value: "markdown", label: "Markdown" },
-      { value: "wysiwyg", label: "WYSIWYG" },
-      { value: "monaco", label: "Monaco" },
-    ] satisfies Array<{ value: ProjectManagementDocumentFormEditorMode; label: string }>,
-    [],
-  );
-
   useEffect(() => {
     if (!document) {
       setEditTitle("");
@@ -324,7 +315,7 @@ export function ProjectManagementPanel({
       setDependencySelection([]);
       setEditStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
       setEditAssignee("");
-      setEditEditorMode("wysiwyg");
+      setEditDocumentViewMode("write");
       setAiChangeRequest("");
       setSelectedAiCommandId("simple");
       setDependencyModalOpen(false);
@@ -338,7 +329,7 @@ export function ProjectManagementPanel({
     setDependencySelection(Array.isArray(document.dependencies) ? document.dependencies : []);
     setEditStatus(document.status);
     setEditAssignee(document.assignee);
-    setEditEditorMode("wysiwyg");
+    setEditDocumentViewMode("write");
     setAiFailureToast(null);
     setAiRequestModalOpen(false);
     setDependencyModalOpen(false);
@@ -506,7 +497,7 @@ export function ProjectManagementPanel({
     setNewMarkdown("");
     setNewStatus("");
     setNewAssignee("");
-    setCreateEditorMode("markdown");
+    setCreateDocumentViewMode("write");
     await handleSelectDocument(created.id, { silent: true });
   }
 
@@ -995,9 +986,8 @@ export function ProjectManagementPanel({
                       disabled={aiRunning}
                       showMetadataFields={false}
                       submitDisabled={!document}
-                      editorMode={editEditorMode}
-                      editorOptions={documentEditorOptions}
-                      onEditorModeChange={setEditEditorMode}
+                      viewMode={editDocumentViewMode}
+                      onViewModeChange={setEditDocumentViewMode}
                       onTitleChange={setEditTitle}
                       onSummaryChange={setEditSummary}
                       onTagsChange={setEditTags}
@@ -1242,9 +1232,8 @@ export function ProjectManagementPanel({
                   statuses={statuses}
                   saving={saving}
                   submitDisabled={!newTitle.trim()}
-                  editorMode={createEditorMode}
-                  editorOptions={documentEditorOptions}
-                  onEditorModeChange={setCreateEditorMode}
+                  viewMode={createDocumentViewMode}
+                  onViewModeChange={setCreateDocumentViewMode}
                   onTitleChange={setNewTitle}
                   onSummaryChange={setNewSummary}
                   onTagsChange={setNewTags}

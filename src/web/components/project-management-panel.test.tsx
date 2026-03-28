@@ -3,6 +3,7 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ProjectManagementDocument, ProjectManagementDocumentSummary, WorktreeRecord } from "@shared/types";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
+import { ProjectManagementDocumentForm } from "./project-management-document-form";
 import { ProjectManagementPanel } from "./project-management-panel";
 
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
@@ -198,11 +199,59 @@ test("create form renders without seeded defaults", () => {
   assert.match(markup, /placeholder="bug, feature, plan"/);
   assert.match(markup, /Select lane/);
   assert.match(markup, /placeholder="Assignee"/);
-  assert.match(markup, /<textarea[^>]*><\/textarea>/);
+  assert.match(markup, />Write</);
+  assert.match(markup, />Preview</);
+  assert.match(markup, /Loading editor\.\.\./);
   assert.equal(markup.includes("No short summary yet."), false);
   assert.doesNotMatch(markup, /value="Project Outline"/);
   assert.doesNotMatch(markup, /value="plan"/);
   assert.doesNotMatch(markup, /# Project Outline/);
+  assert.doesNotMatch(markup, />WYSIWYG</);
+  assert.doesNotMatch(markup, />Monaco</);
+  assert.doesNotMatch(markup, />Markdown</);
+});
+
+test("edit form uses write and preview tabs instead of multiple editor modes", () => {
+  const markup = renderProjectManagementPanel({
+    documentViewMode: "edit",
+  });
+
+  assert.match(markup, />Write</);
+  assert.match(markup, />Preview</);
+  assert.match(markup, /Loading editor\.\.\./);
+  assert.doesNotMatch(markup, />WYSIWYG</);
+  assert.doesNotMatch(markup, />Monaco</);
+  assert.doesNotMatch(markup, />Markdown</);
+});
+
+test("document form preview renders parsed markdown from the Monaco-backed draft", () => {
+  const markup = renderToStaticMarkup(
+    <ProjectManagementDocumentForm
+      mode="edit"
+      title="Dependencies"
+      summary="Track prerequisite document work."
+      tags="feature, ux"
+      markdown={"# Dependencies\n\n- First item"}
+      status="todo"
+      assignee="Eric"
+      statuses={["todo", "in-progress", "done"]}
+      saving={false}
+      viewMode="preview"
+      onViewModeChange={() => undefined}
+      onTitleChange={() => undefined}
+      onSummaryChange={() => undefined}
+      onTagsChange={() => undefined}
+      onMarkdownChange={() => undefined}
+      onStatusChange={() => undefined}
+      onAssigneeChange={() => undefined}
+      onSubmit={async () => undefined}
+    />,
+  );
+
+  assert.match(markup, /pm-markdown text-sm theme-text/);
+  assert.match(markup, /<h1>Dependencies<\/h1>/);
+  assert.match(markup, /<li>First item<\/li>/);
+  assert.doesNotMatch(markup, /Loading editor\.\.\./);
 });
 
 test("document view shows dependency summary and modal entrypoint", () => {
