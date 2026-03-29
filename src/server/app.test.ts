@@ -84,7 +84,7 @@ test("startServer still fails when an explicitly requested port is occupied", as
   }
 });
 
-test("startServer returns localhost URL details for auto fallback", async () => {
+test("startServer defaults to localhost URLs when no host is requested", async () => {
   const { rootDir, repo } = await createTestRepo();
   let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
 
@@ -93,13 +93,33 @@ test("startServer returns localhost URL details for auto fallback", async () => 
       repo,
       port: await listenFreePort(),
       openBrowser: false,
+    });
+
+    assert.equal(startedServer.host, "127.0.0.1");
+    assert.equal(startedServer.url, `http://localhost:${startedServer.port}`);
+  } finally {
+    await startedServer?.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer returns localhost URL details for auto fallback", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    startedServer = await startServer({
+      repo,
+      host: "auto",
+      port: await listenFreePort(),
+      openBrowser: false,
       networkInterfaces: {
         lo0: [{ address: "127.0.0.1", family: "IPv4", internal: true, mac: "", netmask: "255.0.0.0", cidr: "127.0.0.1/8" }],
       },
     });
 
     assert.equal(startedServer.host, "127.0.0.1");
-    assert.equal(startedServer.url, `http://127.0.0.1:${startedServer.port}`);
+    assert.equal(startedServer.url, `http://localhost:${startedServer.port}`);
   } finally {
     await startedServer?.close();
     await fs.rm(rootDir, { recursive: true, force: true });

@@ -285,7 +285,7 @@ worktreeman start
 Then open:
 
 ```text
-http://127.0.0.1:4312
+http://localhost:4312
 ```
 
 ## First run

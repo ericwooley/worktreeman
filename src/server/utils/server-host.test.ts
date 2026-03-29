@@ -17,6 +17,16 @@ test("resolveServerHost auto prefers Tailscale over WireGuard, LAN, and localhos
   assert.equal(resolved.source, "auto");
 });
 
+test("resolveServerHost defaults to localhost when no host is requested", () => {
+  const resolved = resolveServerHost();
+
+  assert.equal(resolved.listenHost, "127.0.0.1");
+  assert.equal(resolved.urlHost, "localhost");
+  assert.equal(resolved.category, "loopback");
+  assert.equal(resolved.source, "auto");
+  assert.equal(resolved.detail, "default localhost");
+});
+
 test("resolveServerHost auto prefers WireGuard over LAN when Tailscale is unavailable", () => {
   const resolved = resolveServerHost({
     networkInterfaces: {
@@ -37,6 +47,7 @@ test("resolveServerHost auto falls back to localhost when no external private in
   });
 
   assert.equal(resolved.listenHost, "127.0.0.1");
+  assert.equal(resolved.urlHost, "localhost");
   assert.equal(resolved.category, "loopback");
 });
 

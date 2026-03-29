@@ -52,7 +52,7 @@ const startCommand = command({
       type: optional(string),
       long: "host",
       description:
-        "Host interface for the local web server. Defaults to auto, which prefers Tailscale, then WireGuard, then LAN, then localhost.",
+        "Host interface for the local web server. Defaults to localhost. Use auto to prefer Tailscale, then WireGuard, then LAN, then localhost.",
     }),
     dangerouslyExposeToNetwork: flag({
       type: boolean,
