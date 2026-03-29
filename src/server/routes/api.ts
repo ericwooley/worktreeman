@@ -37,6 +37,7 @@ import type {
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  ProjectManagementUsersResponse,
   ReconnectTerminalResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
@@ -45,6 +46,7 @@ import type {
   TmuxClientInfo,
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDocumentRequest,
+  UpdateProjectManagementUsersRequest,
   WorktreeManagerConfig,
   WorktreeRecord,
   WorktreeRuntime,
@@ -76,7 +78,13 @@ import {
 } from "../services/git-service.js";
 import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
-import { loadConfig, parseConfigContents, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
+import {
+  loadConfig,
+  parseConfigContents,
+  readConfigContents,
+  updateAiCommandInConfigContents,
+  updateProjectManagementUsersInConfigContents,
+} from "../services/config-service.js";
 import type { ShutdownStatus } from "../../shared/types.js";
 import { failAiCommandJob, getAiCommandJob, startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
 import {
@@ -97,6 +105,7 @@ import {
   getProjectManagementDocument,
   getProjectManagementDocumentHistory,
   listProjectManagementDocuments,
+  listProjectManagementUsers,
   updateProjectManagementDependencies,
   updateProjectManagementDocument,
   updateProjectManagementStatus,
@@ -752,6 +761,7 @@ function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
           || location.projectManagementSubTab === "dependency-tree"
           || location.projectManagementSubTab === "history"
           || location.projectManagementSubTab === "create"
+          || location.projectManagementSubTab === "users"
           ? location.projectManagementSubTab
           : undefined,
       documentId: typeof location.documentId === "string"
@@ -1737,6 +1747,61 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         aiCommands,
       };
 
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/project-management/users", async (_req, res, next) => {
+    try {
+      const config = await loadCurrentConfig();
+      const payload: ProjectManagementUsersResponse = await listProjectManagementUsers(
+        options.repoRoot,
+        config.projectManagement.users,
+      );
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.put("/project-management/users", async (req, res, next) => {
+    try {
+      const body = req.body as UpdateProjectManagementUsersRequest | undefined;
+      const config = body?.config;
+      if (!config || typeof config !== "object") {
+        res.status(400).json({ message: "Project management users config is required." });
+        return;
+      }
+
+      const currentContents = await readConfigContents({
+        path: options.configPath,
+        repoRoot: options.repoRoot,
+        gitFile: options.configFile,
+      });
+
+      const nextContents = updateProjectManagementUsersInConfigContents(currentContents, {
+        customUsers: Array.isArray(config.customUsers)
+          ? config.customUsers.map((entry) => ({
+              name: typeof entry?.name === "string" ? entry.name : "",
+              email: typeof entry?.email === "string" ? entry.email : "",
+            }))
+          : [],
+        archivedUserIds: Array.isArray(config.archivedUserIds)
+          ? config.archivedUserIds.map((entry) => String(entry))
+          : [],
+      });
+
+      const absoluteConfigPath = path.join(options.configWorktreePath, options.configFile);
+      await fs.writeFile(absoluteConfigPath, nextContents, "utf8");
+      await commitConfigEdit("config: update project management users");
+
+      const nextConfig = await loadCurrentConfig();
+      const payload: ProjectManagementUsersResponse = await listProjectManagementUsers(
+        options.repoRoot,
+        nextConfig.projectManagement.users,
+      );
       res.json(payload);
     } catch (error) {
       next(error);

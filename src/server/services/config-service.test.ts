@@ -3,7 +3,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { loadConfig, updateAiCommandInConfigContents } from "./config-service.js";
+import {
+  loadConfig,
+  updateAiCommandInConfigContents,
+  updateProjectManagementUsersInConfigContents,
+} from "./config-service.js";
 
 test("loadConfig parses runtime env, links, and background commands", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-config-"));
@@ -54,6 +58,10 @@ test("loadConfig parses runtime env, links, and background commands", async () =
        Worker: { command: "bun run worker" },
      });
      assert.deepEqual(config.quickLinks, [{ name: "App", url: "http://localhost:${PORT}" }]);
+     assert.deepEqual(config.projectManagement.users, {
+       customUsers: [],
+       archivedUserIds: [],
+     });
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
@@ -105,6 +113,68 @@ test("updateAiCommandInConfigContents preserves schema header and upserts aiComm
   assert.match(nextContents, /^# yaml-language-server: \$schema=/);
   assert.match(nextContents, /aiCommands:\n  smart: opencode run \$WTM_AI_INPUT\n  simple: opencode run --model gpt-5-mini \$WTM_AI_INPUT/);
   assert.doesNotMatch(nextContents, /\naiCommand:/);
+});
+
+test("loadConfig parses project management users config", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-config-pm-users-"));
+  const configPath = path.join(tempDir, "worktree.yml");
+
+  try {
+    await fs.writeFile(
+      configPath,
+      [
+        "projectManagement:",
+        "  users:",
+        "    customUsers:",
+        "      - name:  Jane Doe  ",
+        "        email:  JANE@example.com  ",
+        "      - name: ''",
+        "        email: ''",
+        "    archivedUserIds:",
+        "      - abc",
+        "      - abc",
+        "worktrees:",
+        "  baseDir: .",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const config = await loadConfig(configPath);
+
+    assert.deepEqual(config.projectManagement.users, {
+      customUsers: [{ name: "Jane Doe", email: "jane@example.com" }],
+      archivedUserIds: ["abc"],
+    });
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("updateProjectManagementUsersInConfigContents preserves schema header and removes empty overlay", () => {
+  const source = [
+    "# yaml-language-server: $schema=https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json",
+    "",
+    "worktrees:",
+    "  baseDir: .worktrees",
+    "",
+  ].join("\n");
+
+  const populated = updateProjectManagementUsersInConfigContents(source, {
+    customUsers: [{ name: "Jane Doe", email: "JANE@example.com" }],
+    archivedUserIds: ["abc", "abc"],
+  });
+
+  assert.match(populated, /^# yaml-language-server: \$schema=/);
+  assert.match(populated, /projectManagement:\n  users:\n    customUsers:\n      - name: Jane Doe\n        email: jane@example.com\n    archivedUserIds:\n      - abc/);
+
+  const emptied = updateProjectManagementUsersInConfigContents(populated, {
+    customUsers: [],
+    archivedUserIds: [],
+  });
+
+  assert.match(emptied, /^# yaml-language-server: \$schema=/);
+  assert.doesNotMatch(emptied, /projectManagement:/);
 });
 
 test("loadConfig rejects invalid preferredPort values", async () => {

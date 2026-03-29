@@ -74,6 +74,9 @@
         "$ref": "#/$defs/backgroundCommandEntry"
       }
     },
+    "projectManagement": {
+      "$ref": "#/$defs/projectManagementConfig"
+    },
     "worktrees": {
       "$ref": "#/$defs/worktreesConfig"
     }
@@ -152,6 +155,47 @@
       "required": [
         "baseDir"
       ]
+    },
+    "projectManagementConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "users": {
+          "$ref": "#/$defs/projectManagementUsersConfig"
+        }
+      }
+    },
+    "projectManagementUsersConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "customUsers": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/projectManagementUserConfigEntry"
+          }
+        },
+        "archivedUserIds": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "projectManagementUserConfigEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        }
+      }
     }
   }
 }

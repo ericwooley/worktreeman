@@ -16,8 +16,10 @@ import type {
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
+  ProjectManagementUsersResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
+  UpdateProjectManagementUsersRequest,
   WorktreeRecord,
 } from "@shared/types";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
@@ -392,6 +394,7 @@ interface WorktreeDetailProps {
   projectManagementWorktrees: WorktreeRecord[];
   projectManagementAvailableTags: string[];
   projectManagementAvailableStatuses: string[];
+  projectManagementUsers: ProjectManagementUsersResponse | null;
   gitPullRequestDocumentId: string | null;
   onGitPullRequestDocumentChange: (documentId: string | null) => void;
   projectManagementActiveSubTab: ProjectManagementSubTab;
@@ -416,6 +419,7 @@ interface WorktreeDetailProps {
   onProjectManagementSubTabChange: (tab: ProjectManagementSubTab) => void;
   onProjectManagementDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
+  onLoadProjectManagementUsers: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onLoadProjectManagementAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
@@ -454,6 +458,7 @@ interface WorktreeDetailProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
+  onUpdateProjectManagementUsers: (payload: UpdateProjectManagementUsersRequest) => Promise<ProjectManagementUsersResponse | null>;
   onBatchUpdateProjectManagementDocuments: (documentIds: string[], overrides: {
     status?: string;
     archived?: boolean;
@@ -523,6 +528,7 @@ export function WorktreeDetail({
   projectManagementWorktrees,
   projectManagementAvailableTags,
   projectManagementAvailableStatuses,
+  projectManagementUsers,
   gitPullRequestDocumentId,
   onGitPullRequestDocumentChange,
   projectManagementActiveSubTab,
@@ -547,6 +553,7 @@ export function WorktreeDetail({
   onProjectManagementSubTabChange,
   onProjectManagementDocumentViewModeChange,
   onLoadProjectManagementDocuments,
+  onLoadProjectManagementUsers,
   onLoadProjectManagementDocument,
   onLoadProjectManagementAiLogs,
   onLoadProjectManagementAiLog,
@@ -555,6 +562,7 @@ export function WorktreeDetail({
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
   onUpdateProjectManagementStatus,
+  onUpdateProjectManagementUsers,
   onBatchUpdateProjectManagementDocuments,
   onAddProjectManagementComment,
   onRunProjectManagementAiCommand,
@@ -805,10 +813,11 @@ export function WorktreeDetail({
   }, [backgroundFilter, backgroundLogs, selectedBackgroundCommand?.name]);
   const refreshProjectManagementWorkspace = useCallback(async (options?: { silent?: boolean }) => {
     await onLoadProjectManagementDocuments(options);
+    await onLoadProjectManagementUsers(options);
     if (projectManagementSelectedDocumentId) {
       await onLoadProjectManagementDocument(projectManagementSelectedDocumentId, options);
     }
-  }, [onLoadProjectManagementDocument, onLoadProjectManagementDocuments, projectManagementSelectedDocumentId]);
+  }, [onLoadProjectManagementDocument, onLoadProjectManagementDocuments, onLoadProjectManagementUsers, projectManagementSelectedDocumentId]);
   const refreshAiLogs = useCallback(async (options?: { silent?: boolean }) => {
     await onLoadProjectManagementAiLogs(options);
     if (projectManagementAiLogDetail?.fileName) {
@@ -1834,6 +1843,7 @@ export function WorktreeDetail({
               worktrees={projectManagementWorktrees}
               availableTags={projectManagementAvailableTags}
               availableStatuses={projectManagementAvailableStatuses}
+              projectManagementUsers={projectManagementUsers}
               activeSubTab={projectManagementActiveSubTab}
               selectedDocumentId={projectManagementSelectedDocumentId}
               documentViewMode={projectManagementDocumentViewMode}
@@ -1846,6 +1856,7 @@ export function WorktreeDetail({
               aiCommands={projectManagementAiCommands}
               aiJob={projectManagementAiJob}
               documentRunJob={projectManagementDocumentAiJob}
+              runningAiJobs={projectManagementRunningAiJobs}
               selectedWorktreeBranch={worktree?.branch ?? null}
               onSelectWorktree={onSelectWorktree}
               onSubTabChange={onProjectManagementSubTabChange}
@@ -1855,6 +1866,7 @@ export function WorktreeDetail({
               onUpdateDocument={onUpdateProjectManagementDocument}
               onUpdateDependencies={onUpdateProjectManagementDependencies}
               onUpdateStatus={onUpdateProjectManagementStatus}
+              onUpdateUsers={onUpdateProjectManagementUsers}
               onBatchUpdateDocuments={onBatchUpdateProjectManagementDocuments}
               onAddComment={onAddProjectManagementComment}
               onRunAiCommand={onRunProjectManagementAiCommand}

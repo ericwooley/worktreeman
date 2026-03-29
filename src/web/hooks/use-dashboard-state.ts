@@ -22,6 +22,7 @@ import type {
   ProjectManagementDocument,
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
+  ProjectManagementUsersResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
   RunProjectManagementDocumentAiRequest,
@@ -30,6 +31,7 @@ import type {
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
   UpdateProjectManagementStatusRequest,
+  UpdateProjectManagementUsersRequest,
 } from "@shared/types";
 import {
   addProjectManagementComment as addProjectManagementCommentRequest,
@@ -41,6 +43,7 @@ import {
   getProjectManagementDocument as fetchProjectManagementDocument,
   getProjectManagementHistory as fetchProjectManagementHistory,
   listProjectManagementDocuments as fetchProjectManagementDocuments,
+  getProjectManagementUsers as fetchProjectManagementUsers,
   getConfigDocument as fetchConfigDocument,
   getBackgroundCommandLogs as fetchBackgroundCommandLogs,
   getBackgroundCommands as fetchBackgroundCommands,
@@ -71,6 +74,7 @@ import {
   updateProjectManagementDependencies as updateProjectManagementDependenciesRequest,
   updateProjectManagementDocument as updateProjectManagementDocumentRequest,
   updateProjectManagementStatus as updateProjectManagementStatusRequest,
+  updateProjectManagementUsers as updateProjectManagementUsersRequest,
   type EnvSyncResponse,
 } from "../lib/api";
 import {
@@ -147,6 +151,7 @@ export function useDashboardState() {
   const [aiCommandLogsLastUpdatedAt, setAiCommandLogsLastUpdatedAt] = useState<string | null>(null);
   const [runningAiCommandJobs, setRunningAiCommandJobs] = useState<AiCommandJob[]>([]);
   const [projectManagement, setProjectManagement] = useState<ProjectManagementListResponse | null>(null);
+  const [projectManagementUsers, setProjectManagementUsers] = useState<ProjectManagementUsersResponse | null>(null);
   const [projectManagementDocument, setProjectManagementDocument] = useState<ProjectManagementDocument | null>(null);
   const [projectManagementHistory, setProjectManagementHistory] = useState<ProjectManagementHistoryEntry[]>([]);
   const [projectManagementLoading, setProjectManagementLoading] = useState(false);
@@ -432,6 +437,31 @@ export function useDashboardState() {
       const message = err instanceof Error ? err.message : "Failed to load project management document.";
       setProjectManagementDocument(null);
       setProjectManagementHistory([]);
+      setProjectManagementError(message);
+      setError(message);
+      return null;
+    } finally {
+      if (!options?.silent) {
+        setProjectManagementLoading(false);
+      }
+    }
+  }, []);
+
+  const loadProjectManagementUsersState = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setProjectManagementLoading(true);
+    }
+
+    try {
+      const payload = await fetchProjectManagementUsers();
+      setProjectManagementUsers(payload);
+      setProjectManagementError(null);
+      setProjectManagementLastUpdatedAt(new Date().toISOString());
+      setError(null);
+      return payload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load project management users.";
+      setProjectManagementUsers(null);
       setProjectManagementError(message);
       setError(message);
       return null;
@@ -871,6 +901,7 @@ export function useDashboardState() {
       },
       trackAiCommandJob,
       loadProjectManagementDocuments: loadProjectManagementDocumentsState,
+      loadProjectManagementUsers: loadProjectManagementUsersState,
       loadProjectManagementDocument: loadProjectManagementDocumentState,
       async createProjectManagementDocument(payload: CreateProjectManagementDocumentRequest) {
         setProjectManagementSaving(true);
@@ -1030,8 +1061,24 @@ export function useDashboardState() {
           setProjectManagementSaving(false);
         }
       },
+      async updateProjectManagementUsers(payload: UpdateProjectManagementUsersRequest) {
+        setProjectManagementSaving(true);
+        try {
+          const response = await updateProjectManagementUsersRequest(payload);
+          setProjectManagementUsers(response);
+          setProjectManagementError(null);
+          setProjectManagementLastUpdatedAt(new Date().toISOString());
+          setError(null);
+          return response;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to update project management users.");
+          return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
     }),
-    [appendBackgroundLogs, applyAiLogStreamEvent, clearTrackedAiCommandLogSubscription, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, refresh, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, applyAiLogStreamEvent, clearTrackedAiCommandLogSubscription, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, refresh, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {
@@ -1060,6 +1107,7 @@ export function useDashboardState() {
     aiCommandLogsLastUpdatedAt,
     runningAiCommandJobs,
     projectManagement,
+    projectManagementUsers,
     projectManagementDocument,
     projectManagementHistory,
     projectManagementLoading,

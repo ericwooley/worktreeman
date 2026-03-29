@@ -48,6 +48,20 @@ const startCommand = command({
       short: "p",
       description: "Port for the local web server. Defaults to PORT or 4312, then falls back to another open port.",
     }),
+    host: option({
+      type: optional(string),
+      long: "host",
+      description:
+        "Host interface for the local web server. Defaults to localhost. Use auto to prefer Tailscale, then WireGuard, then LAN, then localhost.",
+    }),
+    dangerouslyExposeToNetwork: flag({
+      type: boolean,
+      long: "dangerously-expose-to-network",
+      description:
+        "Required when binding to wildcard hosts like 0.0.0.0 or :: because that exposes the terminal UI to the network.",
+      defaultValue: () => false,
+      defaultValueIsSerializable: true,
+    }),
     open: flag({
       type: boolean,
       long: "open",
@@ -64,7 +78,7 @@ const startCommand = command({
       defaultValueIsSerializable: true,
     }),
   },
-  handler: async ({ cwd, port, open, noOpen }) => {
+  handler: async ({ cwd, port, host, dangerouslyExposeToNetwork, open, noOpen }) => {
     const repo = await findRepoContext(cwd);
     let server: Awaited<ReturnType<typeof startServer>>;
 
@@ -72,6 +86,8 @@ const startCommand = command({
       server = await startServer({
         repo,
         port,
+        host,
+        dangerouslyExposeToNetwork,
         openBrowser: noOpen ? false : open,
       });
     } catch (error) {
@@ -81,7 +97,7 @@ const startCommand = command({
     }
 
     process.stdout.write(
-      `worktreeman running at http://127.0.0.1:${server.port}\n`,
+      `worktreeman running at ${server.url}\n`,
     );
 
     let shuttingDown = false;
@@ -317,7 +333,9 @@ run(cli, normalizedArgv).catch((error) => {
 });
 
 function normalizeArgv(argv: string[]): string[] {
-  return argv.filter((value) => value !== "--");
+  return argv
+    .filter((value) => value !== "--")
+    .map((value) => value === "--danagerously-expose-to-network" ? "--dangerously-expose-to-network" : value);
 }
 
 function cliArgvIncludesOption(argv: string[], longName: string, shortName?: string): boolean {

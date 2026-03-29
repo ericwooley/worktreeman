@@ -27,6 +27,7 @@ export function parseProjectManagementSubTab(value: string | null): ProjectManag
     || value === "history"
     || value === "create"
     || value === "dependency-tree"
+    || value === "users"
     ? value
     : "board";
 }

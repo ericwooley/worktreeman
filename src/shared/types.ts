@@ -14,6 +14,16 @@ export interface AiCommandConfig {
   simple: string;
 }
 
+export interface ProjectManagementUserConfigEntry {
+  name: string;
+  email: string;
+}
+
+export interface ProjectManagementUsersConfig {
+  customUsers: ProjectManagementUserConfigEntry[];
+  archivedUserIds: string[];
+}
+
 export interface WorktreeManagerConfig {
   favicon: string;
   preferredPort?: number;
@@ -24,6 +34,9 @@ export interface WorktreeManagerConfig {
   aiCommands: AiCommandConfig;
   startupCommands: string[];
   backgroundCommands: Record<string, BackgroundCommandConfigEntry>;
+  projectManagement: {
+    users: ProjectManagementUsersConfig;
+  };
   worktrees: {
     baseDir: string;
   };
@@ -359,6 +372,27 @@ export interface ProjectManagementBatchResponse {
   documentIds: string[];
 }
 
+export interface ProjectManagementUser {
+  id: string;
+  name: string;
+  email: string;
+  source: "git" | "config";
+  archived: boolean;
+  avatarUrl: string;
+  commitCount: number;
+  lastCommitAt: string | null;
+}
+
+export interface ProjectManagementUsersResponse {
+  branch: string;
+  users: ProjectManagementUser[];
+  config: ProjectManagementUsersConfig;
+}
+
+export interface UpdateProjectManagementUsersRequest {
+  config: ProjectManagementUsersConfig;
+}
+
 export interface CreateProjectManagementDocumentRequest {
   title: string;
   summary?: string;
@@ -432,7 +466,7 @@ export type AiCommandOriginTab = "environment" | "git" | "project-management";
 
 export type AiCommandOriginEnvironmentSubTab = "terminal" | "background";
 
-export type AiCommandOriginProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create";
+export type AiCommandOriginProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "users";
 
 export type AiCommandOriginKind =
   | "worktree-environment"

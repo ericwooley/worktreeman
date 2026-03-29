@@ -25,6 +25,7 @@ import type {
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  ProjectManagementUsersResponse,
   ReconnectTerminalResponse,
   RunAiCommandRequest,
   RunProjectManagementDocumentAiRequest,
@@ -35,6 +36,7 @@ import type {
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
   UpdateProjectManagementStatusRequest,
+  UpdateProjectManagementUsersRequest,
   WorktreeRuntime,
 } from "@shared/types";
 
@@ -260,6 +262,10 @@ export function listProjectManagementDocuments(): Promise<ProjectManagementListR
   return request<ProjectManagementListResponse>("/api/project-management/documents");
 }
 
+export function getProjectManagementUsers(): Promise<ProjectManagementUsersResponse> {
+  return request<ProjectManagementUsersResponse>("/api/project-management/users");
+}
+
 export function getProjectManagementDocument(documentId: string): Promise<ProjectManagementDocumentResponse> {
   return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}`);
 }
@@ -322,6 +328,15 @@ export function appendProjectManagementBatch(
 ): Promise<ProjectManagementBatchResponse> {
   return request<ProjectManagementBatchResponse>("/api/project-management/batches", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateProjectManagementUsers(
+  payload: UpdateProjectManagementUsersRequest,
+): Promise<ProjectManagementUsersResponse> {
+  return request<ProjectManagementUsersResponse>("/api/project-management/users", {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }

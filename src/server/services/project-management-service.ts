@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
 import * as Automerge from "@automerge/automerge";
 import {
   DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS,
@@ -25,8 +26,12 @@ import type {
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
   ProjectManagementPullRequest,
+  ProjectManagementUser,
+  ProjectManagementUsersConfig,
+  ProjectManagementUsersResponse,
   UpdateProjectManagementDocumentRequest,
 } from "../../shared/types.js";
+import { loadConfig } from "./config-service.js";
 import { runCommand } from "../utils/process.js";
 
 const PROJECT_MANAGEMENT_MAX_APPEND_RETRIES = 5;
@@ -36,6 +41,14 @@ type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restor
 interface ProjectManagementAuthor {
   name: string;
   email: string;
+}
+
+interface GitDiscoveredProjectManagementUser {
+  id: string;
+  name: string;
+  email: string;
+  commitCount: number;
+  lastCommitAt: string | null;
 }
 
 interface ProjectManagementAutomergeDocument {
@@ -247,6 +260,133 @@ function buildProjectManagementCommitEnv(author: ProjectManagementAuthor): NodeJ
     GIT_AUTHOR_EMAIL: author.email,
     GIT_COMMITTER_NAME: author.name,
     GIT_COMMITTER_EMAIL: author.email,
+  };
+}
+
+function createProjectManagementUserId(email: string): string {
+  const normalizedEmail = email.trim().toLowerCase();
+  return createHash("sha1").update(normalizedEmail).digest("hex");
+}
+
+function createGravatarUrl(email: string): string {
+  const hash = createHash("md5").update(email.trim().toLowerCase()).digest("hex");
+  return `https://www.gravatar.com/avatar/${hash}?d=identicon&s=80`;
+}
+
+async function listGitDiscoveredProjectManagementUsers(repoRoot: string): Promise<GitDiscoveredProjectManagementUser[]> {
+  const { stdout } = await runCommand(
+    "git",
+    ["log", "--format=%aN%x1f%aE%x1f%aI"],
+    { cwd: repoRoot, allowExitCodes: [0, 128] },
+  );
+
+  const users = new Map<string, GitDiscoveredProjectManagementUser>();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const [rawName = "", rawEmail = "", rawDate = ""] = trimmed.split("\u001f");
+    const email = rawEmail.trim().toLowerCase();
+    const name = rawName.trim();
+    if (!email) {
+      continue;
+    }
+
+    const id = createProjectManagementUserId(email);
+    const existing = users.get(id);
+    if (!existing) {
+      users.set(id, {
+        id,
+        name,
+        email,
+        commitCount: 1,
+        lastCommitAt: rawDate || null,
+      });
+      continue;
+    }
+
+    existing.commitCount += 1;
+    if (!existing.name && name) {
+      existing.name = name;
+    }
+    if (!existing.lastCommitAt || (rawDate && rawDate > existing.lastCommitAt)) {
+      existing.lastCommitAt = rawDate || existing.lastCommitAt;
+    }
+  }
+
+  return [...users.values()].sort((left, right) => {
+    if (right.commitCount !== left.commitCount) {
+      return right.commitCount - left.commitCount;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+export async function listProjectManagementUsers(
+  repoRoot: string,
+  configUsersOverride?: ProjectManagementUsersConfig,
+): Promise<ProjectManagementUsersResponse> {
+  const [documents, discoveredUsers, loadedConfig] = await Promise.all([
+    listProjectManagementDocuments(repoRoot),
+    listGitDiscoveredProjectManagementUsers(repoRoot),
+    configUsersOverride
+      ? Promise.resolve(null)
+      : loadConfig(path.resolve(repoRoot, "worktree.yml")).catch(() => loadConfig(path.resolve(repoRoot, "worktreeman.yml"))),
+  ]);
+  const configUsers = configUsersOverride ?? loadedConfig?.projectManagement.users ?? {
+    customUsers: [],
+    archivedUserIds: [],
+  };
+  const users = new Map<string, ProjectManagementUser>();
+
+  for (const entry of discoveredUsers) {
+    users.set(entry.id, {
+      id: entry.id,
+      name: entry.name || entry.email,
+      email: entry.email,
+      source: "git",
+      archived: configUsers.archivedUserIds.includes(entry.id),
+      avatarUrl: createGravatarUrl(entry.email),
+      commitCount: entry.commitCount,
+      lastCommitAt: entry.lastCommitAt,
+    });
+  }
+
+  for (const entry of configUsers.customUsers) {
+    const id = createProjectManagementUserId(entry.email);
+    const existing = users.get(id);
+    if (existing) {
+      existing.name = existing.name || entry.name || entry.email;
+      existing.archived = configUsers.archivedUserIds.includes(id);
+      continue;
+    }
+
+    users.set(id, {
+      id,
+      name: entry.name || entry.email,
+      email: entry.email,
+      source: "config",
+      archived: configUsers.archivedUserIds.includes(id),
+      avatarUrl: createGravatarUrl(entry.email),
+      commitCount: 0,
+      lastCommitAt: null,
+    });
+  }
+
+  return {
+    branch: documents.branch,
+    users: [...users.values()].sort((left, right) => {
+      if (left.archived !== right.archived) {
+        return Number(left.archived) - Number(right.archived);
+      }
+      if (right.commitCount !== left.commitCount) {
+        return right.commitCount - left.commitCount;
+      }
+      return left.name.localeCompare(right.name);
+    }),
+    config: configUsers,
   };
 }
 

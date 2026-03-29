@@ -34,7 +34,7 @@ test("initRepository creates the shared config in wtm-settings with root-level w
     assert.match(configContents, /^preferredPort: 4312/m);
     assert.match(configContents, /baseDir: \./);
     assert.match(configContents, /runtimePorts:\n  - PORT\n  - WEB_PORT/);
-    assert.match(configContents, /derivedEnv:\n  APP_URL: http:\/\/127\.0\.0\.1:\$\{PORT\}/);
+    assert.match(configContents, /derivedEnv:\n  APP_URL: http:\/\/localhost:\$\{PORT\}/);
 
     await fs.access(path.join(rootDir, DEFAULT_WORKTREEMAN_MAIN_BRANCH));
     await fs.access(path.join(rootDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH));
@@ -98,7 +98,7 @@ test("initRepository links Vite proxy defaults to the allocated backend server p
     const configPath = path.join(rootDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH, "worktree.yml");
     const configContents = await fs.readFile(configPath, "utf8");
 
-    assert.match(configContents, /derivedEnv:\n  APP_URL: http:\/\/127\.0\.0\.1:\$\{SERVER_PORT\}\n  BACKEND_SERVER_PORT: \$\{SERVER_PORT\}/);
+    assert.match(configContents, /derivedEnv:\n  APP_URL: http:\/\/localhost:\$\{SERVER_PORT\}\n  BACKEND_SERVER_PORT: \$\{SERVER_PORT\}/);
   } finally {
     await fs.rm(rootDir, { recursive: true, force: true });
   }

@@ -4,12 +4,16 @@ import type {
   AiCommandConfig,
   AiCommandId,
   AiCommandJob,
+  ProjectManagementUser,
+  AiCommandOutputEvent,
   RunAiCommandRequest,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
+  ProjectManagementUsersResponse,
   RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
+  UpdateProjectManagementUsersRequest,
   WorktreeRecord,
 } from "@shared/types";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
@@ -44,7 +48,7 @@ const ProjectManagementHistoryTab = lazy(async () => {
   return { default: module.ProjectManagementHistoryTab };
 });
 
-export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create";
+export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "users";
 export type ProjectManagementDocumentViewMode = "document" | "edit";
 
 interface ProjectManagementPanelProps {
@@ -52,6 +56,7 @@ interface ProjectManagementPanelProps {
   worktrees: WorktreeRecord[];
   availableTags: string[];
   availableStatuses: string[];
+  projectManagementUsers: ProjectManagementUsersResponse | null;
   activeSubTab: ProjectManagementSubTab;
   selectedDocumentId: string | null;
   documentViewMode: ProjectManagementDocumentViewMode;
@@ -64,6 +69,7 @@ interface ProjectManagementPanelProps {
   aiCommands: AiCommandConfig | null;
   aiJob: AiCommandJob | null;
   documentRunJob: AiCommandJob | null;
+  runningAiJobs: AiCommandJob[];
   selectedWorktreeBranch: string | null;
   onSelectWorktree: (branch: string) => void;
   onSubTabChange: (tab: ProjectManagementSubTab) => void;
@@ -90,6 +96,7 @@ interface ProjectManagementPanelProps {
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onUpdateStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
+  onUpdateUsers: (payload: UpdateProjectManagementUsersRequest) => Promise<ProjectManagementUsersResponse | null>;
   onBatchUpdateDocuments: (documentIds: string[], overrides: {
     status?: string;
     archived?: boolean;
@@ -144,6 +151,10 @@ function summarizeDocumentText(value: string, maxLength = 140): string {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
 }
 
+function normalizeProjectManagementUserEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function getAiOutputText(job: AiCommandJob): string {
   if (job.stdout && job.stderr) {
     return `${job.stdout}\n\n--- stderr ---\n${job.stderr}`;
@@ -158,6 +169,46 @@ function getAiOutputText(job: AiCommandJob): string {
   }
 
   return job.status === "running" ? "Waiting for live output..." : "No output captured.";
+}
+
+export function getAiOutputEvents(job: AiCommandJob): AiCommandOutputEvent[] {
+  if (job.outputEvents?.length) {
+    return job.outputEvents;
+  }
+
+  const fallbackEvents: AiCommandOutputEvent[] = [];
+  if (job.stdout) {
+    fallbackEvents.push({
+      id: `${job.fileName}:stdout`,
+      source: "stdout",
+      text: job.stdout,
+      timestamp: job.startedAt,
+    });
+  }
+
+  if (job.stderr) {
+    fallbackEvents.push({
+      id: `${job.fileName}:stderr`,
+      source: "stderr",
+      text: job.stderr,
+      timestamp: job.completedAt ?? job.startedAt,
+    });
+  }
+
+  return fallbackEvents;
+}
+
+export function getCompletedAiDocumentRefreshTarget(options: {
+  aiJob: AiCommandJob | null;
+  documentId: string | null;
+  hasWorkspaceRefresh: boolean;
+}): "workspace" | "document" | null {
+  const { aiJob, documentId, hasWorkspaceRefresh } = options;
+  if (!aiJob || aiJob.status !== "completed" || !documentId || aiJob.documentId !== documentId) {
+    return null;
+  }
+
+  return hasWorkspaceRefresh ? "workspace" : "document";
 }
 
 interface ProjectManagementAiOutputViewerProps {
@@ -179,12 +230,13 @@ export function ProjectManagementAiOutputViewer({
 }: ProjectManagementAiOutputViewerProps) {
   const running = job.status === "running";
   const title = source === "worktree" ? "Worktree AI" : "Document AI";
+  const outputEvents = getAiOutputEvents(job);
   const description = source === "worktree"
     ? running
-      ? `Streaming live output from ${job.branch} while the worktree run is active.`
+      ? `Streaming mixed stdout and stderr from ${job.branch} while the worktree run is active.`
       : summary ?? `Captured output from ${job.branch}.`
     : running
-      ? `Updating the saved document in ${job.branch}.`
+      ? `Streaming mixed stdout and stderr while the saved document updates in ${job.branch}.`
       : summary ?? `Captured output from ${job.branch}.`;
 
   return (
@@ -237,9 +289,22 @@ export function ProjectManagementAiOutputViewer({
         </div>
       ) : null}
 
-      <pre className={`pm-ai-output-pre mt-4 overflow-auto px-4 py-4 font-mono text-xs leading-6 ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
-        {getAiOutputText(job)}
-      </pre>
+      {outputEvents.length ? (
+        <div className={`mt-4 space-y-3 overflow-auto ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
+          {outputEvents.map((event) => (
+            <div key={event.id} className={`border px-3 py-3 ${event.source === "stderr" ? "theme-log-entry-error" : "theme-log-entry"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <MatrixBadge tone={event.source === "stderr" ? "warning" : "neutral"} compact>{event.source}</MatrixBadge>
+              </div>
+              <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-6">{event.text}</pre>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <pre className={`pm-ai-output-pre mt-4 overflow-auto px-4 py-4 font-mono text-xs leading-6 ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
+          {getAiOutputText(job)}
+        </pre>
+      )}
     </div>
   );
 }
@@ -249,6 +314,7 @@ export function ProjectManagementPanel({
   worktrees,
   availableTags,
   availableStatuses,
+  projectManagementUsers,
   activeSubTab,
   selectedDocumentId,
   documentViewMode,
@@ -261,6 +327,7 @@ export function ProjectManagementPanel({
   aiCommands,
   aiJob,
   documentRunJob,
+  runningAiJobs,
   selectedWorktreeBranch,
   onSelectWorktree,
   onSubTabChange,
@@ -270,6 +337,7 @@ export function ProjectManagementPanel({
   onUpdateDocument,
   onUpdateDependencies,
   onUpdateStatus,
+  onUpdateUsers,
   onBatchUpdateDocuments,
   onAddComment,
   onRunAiCommand,
@@ -295,6 +363,9 @@ export function ProjectManagementPanel({
   const [newStatus, setNewStatus] = useState<string>("");
   const [newAssignee, setNewAssignee] = useState("");
   const [createDocumentViewMode, setCreateDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [userFormError, setUserFormError] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
   const [aiChangeRequest, setAiChangeRequest] = useState("");
@@ -369,7 +440,14 @@ export function ProjectManagementPanel({
       setAiRunSummary(`${getAiCommandLabel(aiJob.commandId)} updated the saved document on ${aiJob.branch}. Use history to roll back if needed.`);
       setAiChangeRequest("");
       setAiRequestModalOpen(false);
-      if (document && aiJob.documentId === document.id) {
+      const refreshTarget = getCompletedAiDocumentRefreshTarget({
+        aiJob,
+        documentId: document?.id ?? null,
+        hasWorkspaceRefresh: Boolean(onRetryRefresh),
+      });
+      if (refreshTarget === "workspace") {
+        void onRetryRefresh?.();
+      } else if (refreshTarget === "document" && document) {
         void onSelectDocument(document.id, { silent: true });
       }
       return;
@@ -379,7 +457,7 @@ export function ProjectManagementPanel({
       setAiRunSummary(null);
       setAiFailureToast(aiJob.error || aiJob.stderr || "⚡ request failed. Check the AI logs for details.");
     }
-  }, [aiJob]);
+  }, [aiJob, document, onRetryRefresh, onSelectDocument]);
 
   useEffect(() => {
     if (!documentRunJob) {
@@ -468,6 +546,12 @@ export function ProjectManagementPanel({
 
     return null;
   }, [aiJob, aiRunSummary, document, documentRunJob, documentRunSummary, selectedWorktreeBranch]);
+  const showInlineSelectedAiOutput = Boolean(
+    document
+    && selectedDocumentAiOutput
+    && !(documentViewMode === "edit" && selectedDocumentAiOutput.source === "document" && aiRunning),
+  );
+  const inlineSelectedAiOutput = showInlineSelectedAiOutput ? selectedDocumentAiOutput : null;
 
   const laneStatuses = useMemo(
     () => statuses.filter((status) => status !== "reference" && (showBacklogLane || status !== "backlog")),
@@ -491,6 +575,19 @@ export function ProjectManagementPanel({
       `${document.tags.length} tag${document.tags.length === 1 ? "" : "s"}`,
     ]
     : [];
+  const projectManagementUsersConfig = projectManagementUsers?.config ?? { customUsers: [], archivedUserIds: [] };
+  const activeUsers = useMemo(
+    () => (projectManagementUsers?.users ?? []).filter((entry) => !entry.archived),
+    [projectManagementUsers?.users],
+  );
+  const archivedUsers = useMemo(
+    () => (projectManagementUsers?.users ?? []).filter((entry) => entry.archived),
+    [projectManagementUsers?.users],
+  );
+  const customUserEmails = useMemo(
+    () => new Set(projectManagementUsersConfig.customUsers.map((entry) => normalizeProjectManagementUserEmail(entry.email)).filter(Boolean)),
+    [projectManagementUsersConfig.customUsers],
+  );
 
   const emptyStateMessage = activeSubTab === "document"
     ? "Select a document from the left rail to inspect its markdown, tags, and history."
@@ -498,7 +595,9 @@ export function ProjectManagementPanel({
       ? "No documents are available for the current filters."
       : activeSubTab === "history"
         ? "Select a document to inspect its timeline."
-        : "Create a document to start outlining the project.";
+        : activeSubTab === "users"
+          ? "No users yet. Git commit authors appear here automatically, or add a custom user below."
+          : "Create a document to start outlining the project.";
 
   useEffect(() => {
     if (documents.length === 0 || document || selectedDocumentId) {
@@ -706,15 +805,17 @@ export function ProjectManagementPanel({
 
     setAiRunSummary(null);
     setAiFailureToast(null);
+    setAiRequestModalOpen(false);
+    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} is starting. Live output will stream in the editor while the saved document updates.`);
 
     const job = await onRunAiCommand({ input: requestedChange, documentId: document.id, commandId: selectedAiCommandId });
     if (!job) {
+      setAiRunSummary(null);
       setAiFailureToast(`${getAiCommandLabel(selectedAiCommandId)} request failed. Check the AI command output for details.`);
       return false;
     }
 
-    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} started for ${job.branch}. The saved document will update on the server when it finishes.`);
-    setAiRequestModalOpen(false);
+    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} started for ${job.branch}. Live output is streaming below while the saved document updates on the server.`);
     return true;
   }
 
@@ -763,6 +864,120 @@ export function ProjectManagementPanel({
     }
 
     await onCancelAiCommand();
+  }
+
+  async function handleToggleUserArchive(user: ProjectManagementUser) {
+    const archivedUserIds = user.archived
+      ? projectManagementUsersConfig.archivedUserIds.filter((entry) => entry !== user.id)
+      : [...projectManagementUsersConfig.archivedUserIds, user.id];
+
+    setUserFormError(null);
+    await onUpdateUsers({
+      config: {
+        ...projectManagementUsersConfig,
+        archivedUserIds: [...new Set(archivedUserIds)],
+      },
+    });
+  }
+
+  async function handleAddCustomUser() {
+    const name = newUserName.trim();
+    const email = normalizeProjectManagementUserEmail(newUserEmail);
+
+    if (!name || !email) {
+      setUserFormError("Add a name and email to save a custom user.");
+      return;
+    }
+
+    const nextCustomUsers = projectManagementUsersConfig.customUsers.some((entry) => normalizeProjectManagementUserEmail(entry.email) === email)
+      ? projectManagementUsersConfig.customUsers.map((entry) => normalizeProjectManagementUserEmail(entry.email) === email ? { name, email } : entry)
+      : [...projectManagementUsersConfig.customUsers, { name, email }];
+
+    const response = await onUpdateUsers({
+      config: {
+        ...projectManagementUsersConfig,
+        customUsers: nextCustomUsers,
+      },
+    });
+
+    if (response) {
+      setNewUserName("");
+      setNewUserEmail("");
+      setUserFormError(null);
+    }
+  }
+
+  async function handleRemoveCustomUser(user: ProjectManagementUser) {
+    const normalizedEmail = normalizeProjectManagementUserEmail(user.email);
+    const nextCustomUsers = projectManagementUsersConfig.customUsers.filter(
+      (entry) => normalizeProjectManagementUserEmail(entry.email) !== normalizedEmail,
+    );
+    const nextArchivedUserIds = user.source === "config" && user.commitCount === 0
+      ? projectManagementUsersConfig.archivedUserIds.filter((entry) => entry !== user.id)
+      : projectManagementUsersConfig.archivedUserIds;
+
+    await onUpdateUsers({
+      config: {
+        customUsers: nextCustomUsers,
+        archivedUserIds: nextArchivedUserIds,
+      },
+    });
+  }
+
+  function renderUserCard(user: ProjectManagementUser) {
+    const hasCustomEntry = customUserEmails.has(normalizeProjectManagementUserEmail(user.email));
+
+    return (
+      <div key={user.id} className="border theme-border-subtle px-3 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start gap-3">
+              <img
+                src={user.avatarUrl}
+                alt=""
+                className="h-10 w-10 shrink-0 border theme-border-subtle object-cover"
+                loading="lazy"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold theme-text-strong">{user.name || user.email}</p>
+                  <MatrixBadge tone={user.archived ? "warning" : "active"} compact>
+                    {user.archived ? "archived" : "active"}
+                  </MatrixBadge>
+                  <MatrixBadge tone="neutral" compact>{user.source === "git" ? "Git history" : "Custom"}</MatrixBadge>
+                  {hasCustomEntry ? <MatrixBadge tone="idle" compact>config override</MatrixBadge> : null}
+                </div>
+                <p className="mt-1 break-all text-xs theme-text-muted">{user.email}</p>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs theme-text-muted">
+                  <span>{user.commitCount} commit{user.commitCount === 1 ? "" : "s"}</span>
+                  <span>{user.lastCommitAt ? `Last commit ${formatDocumentTimestamp(user.lastCommitAt)}` : "No commits yet"}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <button
+              type="button"
+              className="matrix-button rounded-none px-3 py-2 text-sm"
+              disabled={saving}
+              onClick={() => void handleToggleUserArchive(user)}
+            >
+              {user.archived ? "Unarchive user" : "Archive user"}
+            </button>
+            {hasCustomEntry ? (
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                disabled={saving}
+                onClick={() => void handleRemoveCustomUser(user)}
+              >
+                Remove custom entry
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const documentRail = (
@@ -846,6 +1061,7 @@ export function ProjectManagementPanel({
             <MatrixTabButton active={activeSubTab === "board"} label="Board" onClick={() => onSubTabChange("board")} />
             <MatrixTabButton active={activeSubTab === "dependency-tree"} label="Dependency tree" onClick={() => onSubTabChange("dependency-tree")} />
             <MatrixTabButton active={activeSubTab === "history"} label="History" onClick={() => onSubTabChange("history")} />
+            <MatrixTabButton active={activeSubTab === "users"} label="Users" onClick={() => onSubTabChange("users")} />
             <MatrixTabButton active={activeSubTab === "create"} label="Create" onClick={() => onSubTabChange("create")} />
           </div>
 
@@ -1029,12 +1245,12 @@ export function ProjectManagementPanel({
                   </div>
                 ) : null}
 
-                {document && selectedDocumentAiOutput ? (
+                {inlineSelectedAiOutput ? (
                   <div className="mt-3">
                     <ProjectManagementAiOutputViewer
-                      source={selectedDocumentAiOutput.source}
-                      job={selectedDocumentAiOutput.job}
-                      summary={selectedDocumentAiOutput.summary}
+                      source={inlineSelectedAiOutput.source}
+                      job={inlineSelectedAiOutput.job}
+                      summary={inlineSelectedAiOutput.summary}
                       onCancel={() => void handleCancelSelectedDocumentAiOutput()}
                       onOpenModal={() => setAiOutputModalOpen(true)}
                     />
@@ -1065,27 +1281,18 @@ export function ProjectManagementPanel({
                       onStatusChange={setEditStatus}
                       onAssigneeChange={setEditAssignee}
                       onSubmit={handleSaveDocument}
-                      editorBlockedState={aiRunning ? (
-                        <div className="pm-ai-running-state flex h-[68vh] flex-col items-center justify-center gap-4 px-6 text-center">
-                          <div className="pm-ai-spinner" aria-hidden="true" />
-                          <div>
-                            <p className="text-lg font-semibold theme-text-strong">AI Running</p>
-                            <p className="mt-2 text-sm theme-text-muted">
-                              The saved document is being updated on the server. You can leave this view and come back later.
-                            </p>
-                            <button
-                              type="button"
-                              className="matrix-button mt-4 rounded-none px-3 py-2 text-sm"
-                              onClick={() => void onCancelAiCommand()}
-                            >
-                              Cancel AI job
-                            </button>
-                          </div>
-                        </div>
-                      ) : undefined}
-                    />
-                  </div>
-                ) : document ? (
+                       editorBlockedState={aiRunning && selectedDocumentAiOutput?.source === "document" ? (
+                         <ProjectManagementAiOutputViewer
+                           source="document"
+                           job={selectedDocumentAiOutput.job}
+                           summary={selectedDocumentAiOutput.summary}
+                           expanded
+                           onCancel={() => void onCancelAiCommand()}
+                         />
+                       ) : undefined}
+                     />
+                   </div>
+                 ) : document ? (
                   <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
                     <div className="space-y-3">
                       <div className="border theme-border-subtle p-4">
@@ -1263,6 +1470,7 @@ export function ProjectManagementPanel({
                   swimlaneDocuments={swimlaneDocuments}
                   document={document}
                   documentRunJob={documentRunJob}
+                  runningAiJobs={runningAiJobs}
                   showBacklogLane={showBacklogLane}
                   saving={saving}
                   smartAiReady={isAiCommandReady(aiCommands, "smart")}
@@ -1291,6 +1499,97 @@ export function ProjectManagementPanel({
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading history...</div>}>
                 <ProjectManagementHistoryTab history={history} />
               </Suspense>
+            </div>
+          ) : activeSubTab === "users" ? (
+            <div className="pt-4">
+              <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
+                <div className="space-y-4">
+                  <div className="border theme-border-subtle p-4">
+                    <p className="matrix-kicker">People</p>
+                    <h3 className="mt-2 text-lg font-semibold theme-text-strong">Manage users</h3>
+                    <p className="mt-2 text-sm theme-text-muted">
+                      Git commit authors appear here automatically. Archive users to hide them from active planning, or add custom users in config.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                      <MatrixBadge tone="neutral" compact>{activeUsers.length} active</MatrixBadge>
+                      <MatrixBadge tone="warning" compact>{archivedUsers.length} archived</MatrixBadge>
+                      <MatrixBadge tone="idle" compact>{projectManagementUsersConfig.customUsers.length} custom entries</MatrixBadge>
+                    </div>
+                  </div>
+
+                  <div className="border theme-border-subtle p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Add custom user</p>
+                    <p className="mt-1 text-sm theme-text-muted">Use this for people who should appear in planning before they have git history in this repo.</p>
+                    <div className="mt-3 space-y-3">
+                      <label className="block space-y-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Name</span>
+                        <input
+                          value={newUserName}
+                          onChange={(event) => setNewUserName(event.target.value)}
+                          placeholder="Jane Doe"
+                          disabled={saving}
+                          className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                        />
+                      </label>
+                      <label className="block space-y-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Email</span>
+                        <input
+                          value={newUserEmail}
+                          onChange={(event) => setNewUserEmail(event.target.value)}
+                          placeholder="jane@example.com"
+                          disabled={saving}
+                          className="matrix-input h-10 w-full rounded-none px-3 text-sm outline-none"
+                        />
+                      </label>
+                      {userFormError ? <p className="text-xs theme-text-danger">{userFormError}</p> : null}
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                        disabled={saving}
+                        onClick={() => void handleAddCustomUser()}
+                      >
+                        Save custom user
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="border theme-border-subtle p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Active users</p>
+                        <p className="mt-1 text-sm theme-text-muted">These users can be assigned or referenced in project planning right now.</p>
+                      </div>
+                      <MatrixBadge tone="neutral" compact>{activeUsers.length}</MatrixBadge>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {activeUsers.length ? activeUsers.map((user) => renderUserCard(user)) : (
+                        <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                          {emptyStateMessage}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border theme-border-subtle p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Archived users</p>
+                        <p className="mt-1 text-sm theme-text-muted">Keep old contributors on record without showing them in the active planning list.</p>
+                      </div>
+                      <MatrixBadge tone="warning" compact>{archivedUsers.length}</MatrixBadge>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {archivedUsers.length ? archivedUsers.map((user) => renderUserCard(user)) : (
+                        <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                          No archived users yet.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="pt-4">

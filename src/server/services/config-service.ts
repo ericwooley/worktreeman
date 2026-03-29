@@ -2,7 +2,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import { DEFAULT_WORKTREE_BASE_DIR } from "../../shared/constants.js";
-import type { AiCommandConfig, BackgroundCommandConfigEntry, QuickLinkConfigEntry, WorktreeManagerConfig } from "../../shared/types.js";
+import type {
+  AiCommandConfig,
+  BackgroundCommandConfigEntry,
+  ProjectManagementUserConfigEntry,
+  ProjectManagementUsersConfig,
+  QuickLinkConfigEntry,
+  WorktreeManagerConfig,
+} from "../../shared/types.js";
 import { runCommand } from "../utils/process.js";
 
 export const WORKTREE_CONFIG_SCHEMA_URL = "https://raw.githubusercontent.com/ericwooley/worktreeman/main/worktree.schema.json";
@@ -127,6 +134,45 @@ function parseAiCommands(value: unknown, legacyAiCommand: unknown): AiCommandCon
   };
 }
 
+function parseProjectManagementUserConfigEntry(value: unknown, label: string): ProjectManagementUserConfigEntry {
+  if (typeof value !== "object" || !value || Array.isArray(value)) {
+    throw new Error(`${label} must be a mapping/object.`);
+  }
+
+  const entry = value as Record<string, unknown>;
+  return {
+    name: String(entry.name ?? "").trim(),
+    email: String(entry.email ?? "").trim().toLowerCase(),
+  };
+}
+
+function parseProjectManagementUsers(value: unknown): ProjectManagementUsersConfig {
+  if (value == null) {
+    return {
+      customUsers: [],
+      archivedUserIds: [],
+    };
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("projectManagement.users must be a mapping/object.");
+  }
+
+  const users = value as Record<string, unknown>;
+  const customUsers = Array.isArray(users.customUsers)
+    ? users.customUsers.map((entry, index) => parseProjectManagementUserConfigEntry(entry, `projectManagement.users.customUsers[${index}]`))
+      .filter((entry) => entry.name || entry.email)
+    : [];
+  const archivedUserIds = Array.isArray(users.archivedUserIds)
+    ? users.archivedUserIds.map((entry) => String(entry).trim()).filter(Boolean)
+    : [];
+
+  return {
+    customUsers,
+    archivedUserIds: [...new Set(archivedUserIds)],
+  };
+}
+
 export async function loadConfig(configSource: string | ConfigSource, repoRoot?: string): Promise<WorktreeManagerConfig> {
   const source = typeof configSource === "string" ? { path: configSource, repoRoot } : configSource;
   const raw = await readConfigContents(source);
@@ -144,6 +190,9 @@ export function parseConfigContents(raw: string): WorktreeManagerConfig {
   const worktrees = typeof parsed.worktrees === "object" && parsed.worktrees && !Array.isArray(parsed.worktrees)
     ? parsed.worktrees
     : {};
+  const projectManagement = typeof parsed.projectManagement === "object" && parsed.projectManagement && !Array.isArray(parsed.projectManagement)
+    ? parsed.projectManagement as Record<string, unknown>
+    : {};
 
   return {
     favicon: parseFavicon(parsed.favicon),
@@ -157,6 +206,9 @@ export function parseConfigContents(raw: string): WorktreeManagerConfig {
     aiCommands: parseAiCommands(parsed.aiCommands, parsed.aiCommand),
     startupCommands,
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
+    projectManagement: {
+      users: parseProjectManagementUsers(projectManagement.users),
+    },
     worktrees: {
       baseDir: String((worktrees as { baseDir?: string }).baseDir ?? DEFAULT_WORKTREE_BASE_DIR),
     },
@@ -211,6 +263,46 @@ export function updateAiCommandInConfigContents(raw: string, aiCommands: AiComma
   }
 
   delete parsed.aiCommand;
+
+  const nextContents = serializeConfigContents(parsed, { includeSchemaHeader: true });
+  parseConfigContents(nextContents);
+  return nextContents;
+}
+
+export function updateProjectManagementUsersInConfigContents(raw: string, users: ProjectManagementUsersConfig): string {
+  const { body } = extractSchemaHeader(raw);
+  const parsed = (yaml.load(body) as Record<string, unknown> | undefined) ?? {};
+
+  const nextUsers: ProjectManagementUsersConfig = {
+    customUsers: Array.isArray(users.customUsers)
+      ? users.customUsers.map((entry) => ({
+          name: typeof entry?.name === "string" ? entry.name.trim() : "",
+          email: typeof entry?.email === "string" ? entry.email.trim().toLowerCase() : "",
+        })).filter((entry) => entry.name || entry.email)
+      : [],
+    archivedUserIds: Array.isArray(users.archivedUserIds)
+      ? [...new Set(users.archivedUserIds.map((entry) => String(entry).trim()).filter(Boolean))]
+      : [],
+  };
+
+  const hasUsers = nextUsers.customUsers.length > 0 || nextUsers.archivedUserIds.length > 0;
+  const existingProjectManagement = typeof parsed.projectManagement === "object" && parsed.projectManagement && !Array.isArray(parsed.projectManagement)
+    ? parsed.projectManagement as Record<string, unknown>
+    : {};
+
+  if (hasUsers) {
+    parsed.projectManagement = {
+      ...existingProjectManagement,
+      users: nextUsers,
+    };
+  } else if (existingProjectManagement.users) {
+    delete existingProjectManagement.users;
+    if (Object.keys(existingProjectManagement).length > 0) {
+      parsed.projectManagement = existingProjectManagement;
+    } else {
+      delete parsed.projectManagement;
+    }
+  }
 
   const nextContents = serializeConfigContents(parsed, { includeSchemaHeader: true });
   parseConfigContents(nextContents);
