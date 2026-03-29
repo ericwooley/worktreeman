@@ -16,6 +16,7 @@ interface ProjectManagementBoardTabProps {
   }>;
   document: ProjectManagementDocument | null;
   documentRunJob: AiCommandJob | null;
+  runningAiJobs: AiCommandJob[];
   showBacklogLane: boolean;
   saving: boolean;
   smartAiReady: boolean;
@@ -38,6 +39,7 @@ export function ProjectManagementBoardTab({
   swimlaneDocuments,
   document,
   documentRunJob,
+  runningAiJobs,
   showBacklogLane,
   saving,
   smartAiReady,
@@ -93,6 +95,14 @@ export function ProjectManagementBoardTab({
     })),
     [swimlaneDocuments],
   );
+
+  const runningDocumentAiJobByDocumentId = useMemo(() => {
+    const entries = runningAiJobs
+      .filter((job) => job.status === "running" && job.documentId && job.origin?.kind === "project-management-document-run")
+      .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
+
+    return new Map(entries.map((job) => [job.documentId as string, job]));
+  }, [runningAiJobs]);
 
   useEffect(() => {
     setSelectedDocumentIds((current) => current.filter((documentId) => documentMap.has(documentId)));
@@ -305,9 +315,11 @@ export function ProjectManagementBoardTab({
                 Move #{draggedDocument.number} here
               </div>
             ) : null}
-            <div className="mt-3 space-y-2">
+              <div className="mt-3 space-y-2">
               {lane.documents.length ? lane.documents.map((entry) => {
-                const aiRunningForCard = documentRunJob?.status === "running" && documentRunJob.documentId === entry.id;
+                const runningJobForCard = runningDocumentAiJobByDocumentId.get(entry.id)
+                  ?? (documentRunJob?.status === "running" && documentRunJob.documentId === entry.id ? documentRunJob : null);
+                const aiRunningForCard = Boolean(runningJobForCard);
 
                 return (
                   <div
@@ -359,6 +371,7 @@ export function ProjectManagementBoardTab({
                           className="matrix-button rounded-none px-2 py-1 text-xs"
                           disabled={!smartAiReady || saving || startingAiDocumentId === entry.id || aiRunningForCard}
                           onClick={() => void handleStartDocumentAi(entry)}
+                          title={runningJobForCard ? `AI is already running in ${runningJobForCard.branch}` : "Start AI"}
                         >
                           {aiRunningForCard ? "AI running" : startingAiDocumentId === entry.id ? "Starting AI..." : "Start AI"}
                         </button>

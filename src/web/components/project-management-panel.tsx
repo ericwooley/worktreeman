@@ -64,6 +64,7 @@ interface ProjectManagementPanelProps {
   aiCommands: AiCommandConfig | null;
   aiJob: AiCommandJob | null;
   documentRunJob: AiCommandJob | null;
+  runningAiJobs: AiCommandJob[];
   selectedWorktreeBranch: string | null;
   onSelectWorktree: (branch: string) => void;
   onSubTabChange: (tab: ProjectManagementSubTab) => void;
@@ -315,6 +316,7 @@ export function ProjectManagementPanel({
   aiCommands,
   aiJob,
   documentRunJob,
+  runningAiJobs,
   selectedWorktreeBranch,
   onSelectWorktree,
   onSubTabChange,
@@ -1315,6 +1317,7 @@ export function ProjectManagementPanel({
                   swimlaneDocuments={swimlaneDocuments}
                   document={document}
                   documentRunJob={documentRunJob}
+                  runningAiJobs={runningAiJobs}
                   showBacklogLane={showBacklogLane}
                   saving={saving}
                   smartAiReady={isAiCommandReady(aiCommands, "smart")}
