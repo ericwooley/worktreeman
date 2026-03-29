@@ -24,6 +24,7 @@ interface AiCommandJobManagerOptions {
   onProcessProjectManagementAiJob: (payload: ProjectManagementAiQueuePayload, context: {
     queueJobId: string;
     notifyStarted: (job: AiCommandJob) => void;
+    started: (job: AiCommandJob) => Promise<AiCommandJob>;
   }) => Promise<void>;
 }
 
@@ -96,18 +97,23 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
       async (jobs) => {
         for (const job of jobs) {
           try {
+            const notifyStarted = (startedJob: AiCommandJob) => {
+              const waiter = startWaiters.get(job.id);
+              if (!waiter) {
+                startedJobs.set(job.id, startedJob);
+                return;
+              }
+
+              clearTimeout(waiter.timer);
+              startWaiters.delete(job.id);
+              waiter.resolve(startedJob);
+            };
             await options.onProcessProjectManagementAiJob(job.data, {
               queueJobId: job.id,
-              notifyStarted(startedJob) {
-                const waiter = startWaiters.get(job.id);
-                if (!waiter) {
-                  startedJobs.set(job.id, startedJob);
-                  return;
-                }
-
-                clearTimeout(waiter.timer);
-                startWaiters.delete(job.id);
-                waiter.resolve(startedJob);
+              notifyStarted,
+              started(startedJob) {
+                notifyStarted(startedJob);
+                return Promise.resolve(startedJob);
               },
             });
           } catch (error) {

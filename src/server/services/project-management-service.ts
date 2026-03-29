@@ -236,11 +236,15 @@ function createActorId(): string {
 }
 
 async function readGitConfigValue(repoRoot: string, key: string): Promise<string> {
-  const { stdout } = await runCommand("git", ["config", "--get", key], {
-    cwd: repoRoot,
-    allowExitCodes: [1],
-  });
-  return stdout.trim();
+  try {
+    const { stdout } = await runCommand("git", ["config", "--get", key], {
+      cwd: repoRoot,
+      allowExitCodes: [1],
+    });
+    return stdout.trim();
+  } catch {
+    return "";
+  }
 }
 
 async function resolveProjectManagementAuthor(repoRoot: string): Promise<ProjectManagementAuthor> {

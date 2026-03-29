@@ -38,7 +38,10 @@ type StartAiQueueJob = (payload: {
   renderedCommand: string;
   worktreePath: string;
   env: Record<string, string>;
-}, context: { notifyStarted: (job: AiCommandJob) => void }) => Promise<void>;
+}, context: {
+  notifyStarted: (job: AiCommandJob) => void;
+  started: (job: AiCommandJob) => Promise<AiCommandJob>;
+}) => Promise<void>;
 
 interface FakeAiProcessSnapshot {
   status: string | null;
@@ -2500,6 +2503,89 @@ test("project-management AI document updates ignore stderr while logs retain it"
   }
 });
 
+test("project-management AI document update failures settle the job without taking down the server", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 5014, stdout: "", stderr: "" },
+    { status: "stopped", pid: 5014, stdout: "", stderr: "", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string; markdown?: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const original = await getProjectManagementDocument(repo.repoRoot, outline.id);
+
+    const runResponse = await server.fetch(`/api/worktrees/feature-ai-log/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "rewrite with nothing",
+        documentId: outline.id,
+      }),
+    });
+    assert.equal(runResponse.status, 200);
+
+    const runPayload = await runResponse.json() as {
+      job: {
+        fileName: string;
+        status: string;
+      };
+    };
+    assert.equal(runPayload.job.status, "running");
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      const logsPayload = await logsResponse.json() as {
+        runningJobs: Array<unknown>;
+        logs: Array<{ fileName: string; status: string }>;
+      };
+      return logsPayload.runningJobs.length === 0 && logsPayload.logs.some((entry) => entry.fileName === runPayload.job.fileName && entry.status === "failed");
+    });
+
+    const unchanged = await getProjectManagementDocument(repo.repoRoot, outline.id);
+    assert.equal(unchanged.document.markdown, original.document.markdown);
+
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(runPayload.job.fileName)}`);
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json() as {
+      log: {
+        status: string;
+        error: { message: string } | null;
+        response: {
+          stdout: string;
+          stderr: string;
+        };
+      };
+    };
+
+    assert.equal(detailPayload.log.status, "failed");
+    assert.equal(detailPayload.log.response.stdout, "");
+    assert.equal(detailPayload.log.response.stderr, "AI command finished without returning updated markdown.");
+    assert.equal(detailPayload.log.error?.message, "AI command finished without returning updated markdown.");
+
+    const followUpResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(followUpResponse.status, 200);
+    const followUpPayload = await followUpResponse.json() as {
+      documents: Array<{ id: string }>;
+    };
+    assert.equal(followUpPayload.documents.some((entry) => entry.id === outline.id), true);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("project-management AI rejects unknown target documents and logs the failure", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
@@ -3408,7 +3494,7 @@ test("AI cancel route returns 409 when the running job has no process name", { c
     gitFile: repo.configFile,
   });
   await createWorktree(repo.repoRoot, config, { branch: "feature-ai-no-process" });
-  await startAiCommandJob({
+  await (await startAiCommandJob({
     branch: "feature-ai-no-process",
     commandId: "smart",
     input: "wait",
@@ -3417,7 +3503,7 @@ test("AI cancel route returns 409 when the running job has no process name", { c
     worktreePath: path.join(repo.repoRoot, "feature-ai-no-process"),
     execute: async () => await new Promise<{ stdout: string; stderr: string }>(() => {}),
     writeLog: async () => null,
-  });
+  })).started;
   const server = await startApiServer(repo, {
   });
 

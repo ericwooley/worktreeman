@@ -137,6 +137,47 @@ test("comments use the repo git user for attribution and history", async () => {
   }
 });
 
+test("comments fall back to default author when git is unavailable", async () => {
+  const repoRoot = await createTestRepo();
+  const originalPath = process.env.PATH;
+  const shimDir = await fs.mkdtemp(path.join(repoRoot, "git-shim-"));
+  const realGit = (await runCommand("which", ["git"], { cwd: repoRoot })).stdout.trim();
+
+  try {
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Offline author fallback",
+      summary: "Ensure comments still persist when git config lookups fail.",
+      markdown: "# Offline author fallback\n",
+      tags: ["fallback"],
+    });
+
+    const shimPath = path.join(shimDir, "git");
+    await fs.writeFile(shimPath, `#!/bin/sh
+if [ "$1" = "config" ] && [ "$2" = "--get" ]; then
+  exit 127
+fi
+exec ${realGit} "$@"
+`, "utf8");
+    await fs.chmod(shimPath, 0o755);
+    process.env.PATH = `${shimDir}:${originalPath ?? ""}`;
+
+    const commented = await addProjectManagementComment(repoRoot, created.document.id, {
+      body: "Git config lookup failures should not break comment writes.",
+    });
+
+    assert.equal(commented.document.comments.at(-1)?.authorName, "worktreeman");
+    assert.equal(commented.document.comments.at(-1)?.authorEmail, "worktreeman@example.com");
+
+    const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
+    assert.equal(history.history.at(-1)?.authorName, "worktreeman");
+    assert.equal(history.history.at(-1)?.authorEmail, "worktreeman@example.com");
+  } finally {
+    process.env.PATH = originalPath;
+    await fs.rm(shimDir, { recursive: true, force: true });
+    await destroyTestRepo(repoRoot);
+  }
+});
+
 test("pull-request documents persist metadata and preserve it across updates", async () => {
   const repoRoot = await createTestRepo();
 
