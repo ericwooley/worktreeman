@@ -12,6 +12,19 @@ interface MatrixCardProps {
   as?: "article" | "div";
 }
 
+interface MatrixCardHeaderProps {
+  title: ReactNode;
+  titleLines?: 1 | 2 | 3 | 4;
+  titleText?: string;
+  description?: ReactNode;
+  descriptionLines?: 1 | 2 | 3 | 4;
+  descriptionText?: string;
+  eyebrow?: ReactNode;
+  badges?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+}
+
 export function MatrixCard({
   children,
   selected = false,
@@ -81,6 +94,41 @@ export function MatrixCardDescription({
       title={title}
     >
       {children}
+    </div>
+  );
+}
+
+export function MatrixCardHeader({
+  title,
+  titleLines = 2,
+  titleText,
+  description,
+  descriptionLines = 2,
+  descriptionText,
+  eyebrow,
+  badges,
+  actions,
+  className = "",
+}: MatrixCardHeaderProps) {
+  return (
+    <div className={["matrix-card-header", className].filter(Boolean).join(" ")}>
+      <div className="matrix-card-header-main">
+        {eyebrow ? <div className="matrix-card-eyebrow">{eyebrow}</div> : null}
+        <MatrixCardTitle lines={titleLines} title={titleText}>
+          {title}
+        </MatrixCardTitle>
+        {description ? (
+          <MatrixCardDescription className="mt-2" lines={descriptionLines} title={descriptionText}>
+            {description}
+          </MatrixCardDescription>
+        ) : null}
+      </div>
+      {badges || actions ? (
+        <div className="matrix-card-header-side">
+          {badges ? <div className="matrix-card-badge-row">{badges}</div> : null}
+          {actions ? <div className="matrix-card-actions">{actions}</div> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

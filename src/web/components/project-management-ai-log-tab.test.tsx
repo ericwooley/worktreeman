@@ -130,6 +130,35 @@ test("running cards prefer derived origin titles over prompt preview text", () =
   assert.doesNotMatch(markup, /A very long prompt that should not be shown as the card title/);
 });
 
+test("running cards keep branch context and side actions near the card title", () => {
+  const runningJob: AiCommandJob = {
+    jobId: "job-2",
+    fileName: "log-2.json",
+    branch: "feature-ai-log",
+    commandId: "simple",
+    command: "runner --fast",
+    input: "Prompt",
+    status: "running",
+    startedAt: "2026-03-27T10:02:00.000Z",
+    stdout: "",
+    stderr: "",
+    outputEvents: [],
+    origin: environmentOrigin,
+  };
+
+  const markup = renderAiLogTab({
+    logDetail: detailLog,
+    runningJobs: [runningJob],
+  });
+
+  assert.match(markup, /matrix-card-header/);
+  assert.match(markup, /feature-ai-log/);
+  assert.match(markup, />Open origin</);
+  assert.match(markup, />Cancel</);
+  assert.match(markup, />Simple AI</);
+  assert.match(markup, />running</);
+});
+
 test("AI log titles include pull request review origins", () => {
   const pullRequestReviewOrigin: AiCommandOrigin = {
     kind: "git-pull-request-review",

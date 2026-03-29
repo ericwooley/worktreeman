@@ -7,7 +7,7 @@ import type {
   AiCommandOutputEvent,
 } from "@shared/types";
 import { marked } from "marked";
-import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
+import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric } from "./matrix-primitives";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
@@ -131,6 +131,10 @@ function getOriginContextSubtitle(origin: AiCommandOrigin | null | undefined, br
 
 function getOriginDescription(origin: AiCommandOrigin | null | undefined) {
   return origin?.description ?? "This run does not include a saved start location.";
+}
+
+function getEntryActionLabel(origin: AiCommandOrigin | null | undefined) {
+  return origin ? "Open origin" : "Open run";
 }
 
 function renderMarkdownOutput(markdown: string, tone: "default" | "danger" = "default") {
@@ -307,51 +311,53 @@ export function ProjectManagementAiLogTab({
                   interactive
                   className="p-3"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => void onSelectLog(job.fileName, { silent: true })}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <MatrixCardTitle lines={2} title={getOriginContextTitle(job.origin, job.branch)}>
-                            {getOriginContextTitle(job.origin, job.branch)}
-                          </MatrixCardTitle>
-                          <MatrixCardDescription className="mt-1" lines={1} title={job.branch}>{job.branch}</MatrixCardDescription>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
-                          <MatrixBadge tone={getStatusTone(job.status)} compact>{job.status}</MatrixBadge>
-                        </div>
-                      </div>
-                      <MatrixCardDescription className="mt-2" lines={3} title={getOriginContextSubtitle(job.origin, job.branch)}>
-                        {getOriginContextSubtitle(job.origin, job.branch)}
-                      </MatrixCardDescription>
-                      <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-xs theme-text-muted">
-                        <span className="shrink-0">Started {formatTimestamp(job.startedAt)}</span>
-                        {job.pid ? <span className="shrink-0">PID {job.pid}</span> : null}
-                      </MatrixCardFooter>
-                    </button>
-                    <div className="flex flex-col gap-2">
-                      {job.origin ? (
+                  <MatrixCardHeader
+                    eyebrow={<span className="theme-text-soft">{job.branch}</span>}
+                    title={(
+                      <button
+                        type="button"
+                        className="min-w-0 text-left theme-text-strong"
+                        onClick={() => void onSelectLog(job.fileName, { silent: true })}
+                      >
+                        {getOriginContextTitle(job.origin, job.branch)}
+                      </button>
+                    )}
+                    titleLines={2}
+                    titleText={getOriginContextTitle(job.origin, job.branch)}
+                    description={getOriginContextSubtitle(job.origin, job.branch)}
+                    descriptionLines={3}
+                    descriptionText={getOriginContextSubtitle(job.origin, job.branch)}
+                    badges={(
+                      <>
+                        <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
+                        <MatrixBadge tone={getStatusTone(job.status)} compact>{job.status}</MatrixBadge>
+                      </>
+                    )}
+                    actions={(
+                      <>
+                        {job.origin ? (
+                          <button
+                            type="button"
+                            className="matrix-button rounded-none px-2 py-1 text-xs"
+                            onClick={() => void onOpenOrigin(job.origin as AiCommandOrigin)}
+                          >
+                            {getEntryActionLabel(job.origin)}
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="matrix-button rounded-none px-2 py-1 text-xs"
-                          onClick={() => void onOpenOrigin(job.origin as AiCommandOrigin)}
+                          onClick={() => void onCancelJob(job.branch)}
                         >
-                          Open origin
+                          Cancel
                         </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-2 py-1 text-xs"
-                        onClick={() => void onCancelJob(job.branch)}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
+                      </>
+                    )}
+                  />
+                  <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-xs theme-text-muted">
+                    <span className="shrink-0">Started {formatTimestamp(job.startedAt)}</span>
+                    {job.pid ? <span className="shrink-0">PID {job.pid}</span> : null}
+                  </MatrixCardFooter>
                 </MatrixCard>
               )) : (
                 <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
@@ -375,21 +381,21 @@ export function ProjectManagementAiLogTab({
                   onClick={() => void onSelectLog(log.fileName, { silent: true })}
                 >
                   <MatrixCard as="div" selected={logDetail?.fileName === log.fileName} interactive className="p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <MatrixCardTitle lines={2} title={getOriginContextTitle(log.origin, log.branch)}>
-                          {getOriginContextTitle(log.origin, log.branch)}
-                        </MatrixCardTitle>
-                        <MatrixCardDescription className="mt-1" lines={1} title={log.branch}>{log.branch}</MatrixCardDescription>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <MatrixBadge tone="neutral" compact>{getAiCommandLabel(log.commandId)}</MatrixBadge>
-                        <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
-                      </div>
-                    </div>
-                    <MatrixCardDescription className="mt-2" lines={3} title={getOriginContextSubtitle(log.origin, log.branch)}>
-                      {getOriginContextSubtitle(log.origin, log.branch)}
-                    </MatrixCardDescription>
+                    <MatrixCardHeader
+                      eyebrow={<span className="theme-text-soft">{log.branch}</span>}
+                      title={getOriginContextTitle(log.origin, log.branch)}
+                      titleLines={2}
+                      titleText={getOriginContextTitle(log.origin, log.branch)}
+                      description={getOriginContextSubtitle(log.origin, log.branch)}
+                      descriptionLines={3}
+                      descriptionText={getOriginContextSubtitle(log.origin, log.branch)}
+                      badges={(
+                        <>
+                          <MatrixBadge tone="neutral" compact>{getAiCommandLabel(log.commandId)}</MatrixBadge>
+                          <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
+                        </>
+                      )}
+                    />
                     <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-xs theme-text-muted">
                       <span>{formatTimestamp(log.timestamp)}</span>
                       <span className="truncate">{log.fileName}</span>
@@ -534,28 +540,32 @@ export function ProjectManagementAiLogTab({
                 {primaryCandidate ? (
                   <div className="mt-4">
                     <MatrixCard as="div" interactive className="p-4">
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                        <div className="min-w-0 flex-1">
-                          <MatrixCardTitle lines={2} title={getOriginContextTitle(primaryCandidate.origin, primaryCandidate.branch)}>
-                            {getOriginContextTitle(primaryCandidate.origin, primaryCandidate.branch)}
-                          </MatrixCardTitle>
-                          <MatrixCardDescription className="mt-1" lines={1} title={primaryCandidate.branch}>{primaryCandidate.branch}</MatrixCardDescription>
-                          <MatrixCardDescription className="mt-2" lines={3} title={getOriginContextSubtitle(primaryCandidate.origin, primaryCandidate.branch)}>
-                            {getOriginContextSubtitle(primaryCandidate.origin, primaryCandidate.branch)}
-                          </MatrixCardDescription>
-                          <MatrixCardFooter className="mt-3 gap-3 text-xs theme-text-muted">
-                            <span>{formatTimestamp(getCandidateStartedAt(primaryCandidate))}</span>
-                            <span>{"startedAt" in primaryCandidate ? "Live" : "Saved"}</span>
-                          </MatrixCardFooter>
-                        </div>
-                        <button
-                          type="button"
-                        className="matrix-button rounded-none px-3 py-2 text-sm"
-                        onClick={() => void onSelectLog(primaryCandidate.fileName, { silent: true })}
-                        >
-                          Open latest run
-                        </button>
-                      </div>
+                      <MatrixCardHeader
+                        eyebrow={<span className="theme-text-soft">{primaryCandidate.branch}</span>}
+                        title={getOriginContextTitle(primaryCandidate.origin, primaryCandidate.branch)}
+                        titleLines={2}
+                        titleText={getOriginContextTitle(primaryCandidate.origin, primaryCandidate.branch)}
+                        description={getOriginContextSubtitle(primaryCandidate.origin, primaryCandidate.branch)}
+                        descriptionLines={3}
+                        descriptionText={getOriginContextSubtitle(primaryCandidate.origin, primaryCandidate.branch)}
+                        badges={(
+                          <MatrixBadge tone={"startedAt" in primaryCandidate ? "warning" : "neutral"} compact>
+                            {"startedAt" in primaryCandidate ? "Live" : "Saved"}
+                          </MatrixBadge>
+                        )}
+                        actions={(
+                          <button
+                            type="button"
+                            className="matrix-button rounded-none px-3 py-2 text-sm"
+                            onClick={() => void onSelectLog(primaryCandidate.fileName, { silent: true })}
+                          >
+                            Open latest run
+                          </button>
+                        )}
+                      />
+                      <MatrixCardFooter className="mt-3 gap-3 text-xs theme-text-muted">
+                        <span>{formatTimestamp(getCandidateStartedAt(primaryCandidate))}</span>
+                      </MatrixCardFooter>
                     </MatrixCard>
                   </div>
                 ) : null}
@@ -576,18 +586,16 @@ export function ProjectManagementAiLogTab({
                         onClick={() => void onSelectLog(entry.fileName, { silent: true })}
                       >
                         <MatrixCard as="div" interactive className="p-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <MatrixCardTitle lines={2} title={getOriginContextTitle(entry.origin, entry.branch)}>
-                                {getOriginContextTitle(entry.origin, entry.branch)}
-                              </MatrixCardTitle>
-                              <MatrixCardDescription className="mt-1" lines={1} title={entry.branch}>{entry.branch}</MatrixCardDescription>
-                            </div>
-                            <MatrixBadge tone={getStatusTone(entry.status)} compact>{entry.status}</MatrixBadge>
-                          </div>
-                          <MatrixCardDescription className="mt-2" lines={2} title={getOriginContextSubtitle(entry.origin, entry.branch)}>
-                            {getOriginContextSubtitle(entry.origin, entry.branch)}
-                          </MatrixCardDescription>
+                          <MatrixCardHeader
+                            eyebrow={<span className="theme-text-soft">{entry.branch}</span>}
+                            title={getOriginContextTitle(entry.origin, entry.branch)}
+                            titleLines={2}
+                            titleText={getOriginContextTitle(entry.origin, entry.branch)}
+                            description={getOriginContextSubtitle(entry.origin, entry.branch)}
+                            descriptionLines={2}
+                            descriptionText={getOriginContextSubtitle(entry.origin, entry.branch)}
+                            badges={<MatrixBadge tone={getStatusTone(entry.status)} compact>{entry.status}</MatrixBadge>}
+                          />
                           <MatrixCardFooter className="mt-3 text-xs theme-text-muted">
                             <span>{formatTimestamp(entry.timestamp)}</span>
                           </MatrixCardFooter>

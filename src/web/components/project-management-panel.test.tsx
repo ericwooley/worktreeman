@@ -649,6 +649,7 @@ test("board view renders multi-select controls and AI quick actions", () => {
   assert.match(markup, /aria-label="Select Dependencies"/);
   assert.match(markup, /aria-label="Select Shared document list"/);
   assert.match(markup, /matrix-card matrix-card-interactive/);
+  assert.match(markup, /matrix-card-header/);
   assert.match(markup, /AI running|Start AI/);
 });
 
