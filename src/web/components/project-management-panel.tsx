@@ -4,6 +4,7 @@ import type {
   AiCommandConfig,
   AiCommandId,
   AiCommandJob,
+  AiCommandOutputEvent,
   RunAiCommandRequest,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
@@ -159,6 +160,46 @@ function getAiOutputText(job: AiCommandJob): string {
   return job.status === "running" ? "Waiting for live output..." : "No output captured.";
 }
 
+export function getAiOutputEvents(job: AiCommandJob): AiCommandOutputEvent[] {
+  if (job.outputEvents?.length) {
+    return job.outputEvents;
+  }
+
+  const fallbackEvents: AiCommandOutputEvent[] = [];
+  if (job.stdout) {
+    fallbackEvents.push({
+      id: `${job.fileName}:stdout`,
+      source: "stdout",
+      text: job.stdout,
+      timestamp: job.startedAt,
+    });
+  }
+
+  if (job.stderr) {
+    fallbackEvents.push({
+      id: `${job.fileName}:stderr`,
+      source: "stderr",
+      text: job.stderr,
+      timestamp: job.completedAt ?? job.startedAt,
+    });
+  }
+
+  return fallbackEvents;
+}
+
+export function getCompletedAiDocumentRefreshTarget(options: {
+  aiJob: AiCommandJob | null;
+  documentId: string | null;
+  hasWorkspaceRefresh: boolean;
+}): "workspace" | "document" | null {
+  const { aiJob, documentId, hasWorkspaceRefresh } = options;
+  if (!aiJob || aiJob.status !== "completed" || !documentId || aiJob.documentId !== documentId) {
+    return null;
+  }
+
+  return hasWorkspaceRefresh ? "workspace" : "document";
+}
+
 interface ProjectManagementAiOutputViewerProps {
   source: "worktree" | "document";
   job: AiCommandJob;
@@ -178,12 +219,13 @@ export function ProjectManagementAiOutputViewer({
 }: ProjectManagementAiOutputViewerProps) {
   const running = job.status === "running";
   const title = source === "worktree" ? "Worktree AI" : "Document AI";
+  const outputEvents = getAiOutputEvents(job);
   const description = source === "worktree"
     ? running
-      ? `Streaming live output from ${job.branch} while the worktree run is active.`
+      ? `Streaming mixed stdout and stderr from ${job.branch} while the worktree run is active.`
       : summary ?? `Captured output from ${job.branch}.`
     : running
-      ? `Updating the saved document in ${job.branch}.`
+      ? `Streaming mixed stdout and stderr while the saved document updates in ${job.branch}.`
       : summary ?? `Captured output from ${job.branch}.`;
 
   return (
@@ -236,9 +278,22 @@ export function ProjectManagementAiOutputViewer({
         </div>
       ) : null}
 
-      <pre className={`pm-ai-output-pre mt-4 overflow-auto px-4 py-4 font-mono text-xs leading-6 ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
-        {getAiOutputText(job)}
-      </pre>
+      {outputEvents.length ? (
+        <div className={`mt-4 space-y-3 overflow-auto ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
+          {outputEvents.map((event) => (
+            <div key={event.id} className={`border px-3 py-3 ${event.source === "stderr" ? "theme-log-entry-error" : "theme-log-entry"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <MatrixBadge tone={event.source === "stderr" ? "warning" : "neutral"} compact>{event.source}</MatrixBadge>
+              </div>
+              <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-6">{event.text}</pre>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <pre className={`pm-ai-output-pre mt-4 overflow-auto px-4 py-4 font-mono text-xs leading-6 ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
+          {getAiOutputText(job)}
+        </pre>
+      )}
     </div>
   );
 }
@@ -368,7 +423,14 @@ export function ProjectManagementPanel({
       setAiRunSummary(`${getAiCommandLabel(aiJob.commandId)} updated the saved document on ${aiJob.branch}. Use history to roll back if needed.`);
       setAiChangeRequest("");
       setAiRequestModalOpen(false);
-      if (document && aiJob.documentId === document.id) {
+      const refreshTarget = getCompletedAiDocumentRefreshTarget({
+        aiJob,
+        documentId: document?.id ?? null,
+        hasWorkspaceRefresh: Boolean(onRetryRefresh),
+      });
+      if (refreshTarget === "workspace") {
+        void onRetryRefresh?.();
+      } else if (refreshTarget === "document" && document) {
         void onSelectDocument(document.id, { silent: true });
       }
       return;
@@ -378,7 +440,7 @@ export function ProjectManagementPanel({
       setAiRunSummary(null);
       setAiFailureToast(aiJob.error || aiJob.stderr || "⚡ request failed. Check the AI logs for details.");
     }
-  }, [aiJob]);
+  }, [aiJob, document, onRetryRefresh, onSelectDocument]);
 
   useEffect(() => {
     if (!documentRunJob) {
@@ -467,6 +529,12 @@ export function ProjectManagementPanel({
 
     return null;
   }, [aiJob, aiRunSummary, document, documentRunJob, documentRunSummary, selectedWorktreeBranch]);
+  const showInlineSelectedAiOutput = Boolean(
+    document
+    && selectedDocumentAiOutput
+    && !(documentViewMode === "edit" && selectedDocumentAiOutput.source === "document" && aiRunning),
+  );
+  const inlineSelectedAiOutput = showInlineSelectedAiOutput ? selectedDocumentAiOutput : null;
 
   const laneStatuses = useMemo(
     () => statuses.filter((status) => status !== "reference" && (showBacklogLane || status !== "backlog")),
@@ -705,15 +773,17 @@ export function ProjectManagementPanel({
 
     setAiRunSummary(null);
     setAiFailureToast(null);
+    setAiRequestModalOpen(false);
+    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} is starting. Live output will stream in the editor while the saved document updates.`);
 
     const job = await onRunAiCommand({ input: requestedChange, documentId: document.id, commandId: selectedAiCommandId });
     if (!job) {
+      setAiRunSummary(null);
       setAiFailureToast(`${getAiCommandLabel(selectedAiCommandId)} request failed. Check the AI command output for details.`);
       return false;
     }
 
-    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} started for ${job.branch}. The saved document will update on the server when it finishes.`);
-    setAiRequestModalOpen(false);
+    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} started for ${job.branch}. Live output is streaming below while the saved document updates on the server.`);
     return true;
   }
 
@@ -1020,12 +1090,12 @@ export function ProjectManagementPanel({
                   </div>
                 ) : null}
 
-                {document && selectedDocumentAiOutput ? (
+                {inlineSelectedAiOutput ? (
                   <div className="mt-3">
                     <ProjectManagementAiOutputViewer
-                      source={selectedDocumentAiOutput.source}
-                      job={selectedDocumentAiOutput.job}
-                      summary={selectedDocumentAiOutput.summary}
+                      source={inlineSelectedAiOutput.source}
+                      job={inlineSelectedAiOutput.job}
+                      summary={inlineSelectedAiOutput.summary}
                       onCancel={() => void handleCancelSelectedDocumentAiOutput()}
                       onOpenModal={() => setAiOutputModalOpen(true)}
                     />
@@ -1056,27 +1126,18 @@ export function ProjectManagementPanel({
                       onStatusChange={setEditStatus}
                       onAssigneeChange={setEditAssignee}
                       onSubmit={handleSaveDocument}
-                      editorBlockedState={aiRunning ? (
-                        <div className="pm-ai-running-state flex h-[68vh] flex-col items-center justify-center gap-4 px-6 text-center">
-                          <div className="pm-ai-spinner" aria-hidden="true" />
-                          <div>
-                            <p className="text-lg font-semibold theme-text-strong">AI Running</p>
-                            <p className="mt-2 text-sm theme-text-muted">
-                              The saved document is being updated on the server. You can leave this view and come back later.
-                            </p>
-                            <button
-                              type="button"
-                              className="matrix-button mt-4 rounded-none px-3 py-2 text-sm"
-                              onClick={() => void onCancelAiCommand()}
-                            >
-                              Cancel AI job
-                            </button>
-                          </div>
-                        </div>
-                      ) : undefined}
-                    />
-                  </div>
-                ) : document ? (
+                       editorBlockedState={aiRunning && selectedDocumentAiOutput?.source === "document" ? (
+                         <ProjectManagementAiOutputViewer
+                           source="document"
+                           job={selectedDocumentAiOutput.job}
+                           summary={selectedDocumentAiOutput.summary}
+                           expanded
+                           onCancel={() => void onCancelAiCommand()}
+                         />
+                       ) : undefined}
+                     />
+                   </div>
+                 ) : document ? (
                   <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_18rem]">
                     <div className="space-y-3">
                       <div className="border theme-border-subtle p-4">
