@@ -40,7 +40,17 @@ interface InterfaceCandidate {
 export function resolveServerHost(options: ResolveServerHostOptions = {}): ResolvedServerHost {
   const requestedHost = normalizeHost(options.requestedHost);
 
-  if (!requestedHost || requestedHost === "auto") {
+  if (!requestedHost) {
+    return {
+      listenHost: "127.0.0.1",
+      urlHost: "localhost",
+      category: "loopback",
+      source: "auto",
+      detail: "default localhost",
+    };
+  }
+
+  if (requestedHost === "auto") {
     return resolveAutoServerHost(options.networkInterfaces ?? os.networkInterfaces());
   }
 
@@ -87,7 +97,7 @@ function resolveAutoServerHost(networkInterfaces: ReturnType<typeof os.networkIn
   if (candidates.length === 0) {
     return {
       listenHost: "127.0.0.1",
-      urlHost: "127.0.0.1",
+      urlHost: "localhost",
       category: "loopback",
       source: "auto",
       detail: "auto fallback to localhost",
