@@ -8,15 +8,16 @@ worktreeman is the local app for creating Git worktrees, preparing branch-scoped
 bun install
 bun run dev -- create --cwd /path/to/repo
 bun run dev:watch -- --cwd /path/to/repo
-node --import tsx src/cli.ts start --cwd /path/to/repo --host auto
+node --import tsx src/cli.ts start --cwd /path/to/repo
 ```
 
-Then open `http://127.0.0.1:4312`.
+Then open `http://localhost:4312`.
 
 - `bun run dev -- <subcommand>` runs the CLI once and exits
 - `bun run dev -- create --cwd /path/to/repo` bootstraps the required bare layout with `.bare/`, `.git`, `main/`, and `wtm-settings/`
 - `bun run dev -- clone <remote> --cwd /path/to/repo` clones a remote into that same layout and checks out `main/` plus `wtm-settings/`
 - `bun run dev:watch -- --cwd /path/to/repo` starts the watched local server flow and refuses to run outside the required bare layout
+- `worktreeman start` defaults to localhost for the local-only UI
 - `worktreeman start --host auto` prefers a Tailscale address, then WireGuard, then a private LAN address, then localhost
 - `worktreeman start --host 0.0.0.0 --dangerously-expose-to-network` is required for wildcard binds because the terminal UI would otherwise be exposed to the network
 

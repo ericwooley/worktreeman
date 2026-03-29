@@ -42,9 +42,9 @@ function buildConfigYaml(
   const derivedEnv: Record<string, string> = {};
 
   if (hasRuntimePort("SERVER_PORT")) {
-    derivedEnv.APP_URL = "http://127.0.0.1:${SERVER_PORT}";
+    derivedEnv.APP_URL = "http://localhost:${SERVER_PORT}";
   } else if (hasRuntimePort("PORT")) {
-    derivedEnv.APP_URL = "http://127.0.0.1:${PORT}";
+    derivedEnv.APP_URL = "http://localhost:${PORT}";
   }
 
   if (hasRuntimePort("SERVER_PORT") && hasRuntimePort("VITE_PORT")) {
