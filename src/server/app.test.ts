@@ -126,6 +126,26 @@ test("startServer returns localhost URL details for auto fallback", async () => 
   }
 });
 
+test("startServer treats local host alias as localhost", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    startedServer = await startServer({
+      repo,
+      host: "local",
+      port: await listenFreePort(),
+      openBrowser: false,
+    });
+
+    assert.equal(startedServer.host, "localhost");
+    assert.equal(startedServer.url, `http://localhost:${startedServer.port}`);
+  } finally {
+    await startedServer?.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("startServer rejects wildcard host binding without explicit dangerous exposure flag", async () => {
   const { rootDir, repo } = await createTestRepo();
 
