@@ -9,7 +9,7 @@ import test from "node:test";
 import express from "express";
 import request from "supertest";
 import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "../../shared/constants.js";
-import { createApiRouter, resolveAiLogsDir } from "./api.js";
+import { createApiRouter } from "./api.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
@@ -25,7 +25,7 @@ import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { getTmuxSessionName } from "../../shared/tmux.js";
-import type { AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
+import type { AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
 
 type RouterOptions = Parameters<typeof createApiRouter>[0];
 type InjectedAiProcesses = NonNullable<RouterOptions["aiProcesses"]>;
@@ -217,32 +217,94 @@ async function writeAiLogFixture(options: {
   exitCode?: number | null;
   error?: unknown;
 }) {
+  const store = await createOperationalStateStore(options.repoRoot);
   const timestamp = new Date().toISOString();
-  const logsDir = resolveAiLogsDir(options.repoRoot);
-  await fs.mkdir(logsDir, { recursive: true });
-  const logPath = path.join(logsDir, options.fileName);
-  await fs.writeFile(logPath, `${JSON.stringify({
-    jobId: `job-${options.fileName}`,
+  const jobId = `job-${options.fileName}`;
+  const status = options.completedAt
+    ? (options.error ? "failed" : "completed")
+    : "running";
+  const events: AiCommandOutputEvent[] = options.events?.map((event, index) => ({
+    ...event,
+    runId: event.runId ?? jobId,
+    entry: event.entry ?? index + 1,
+  })) ?? (() => {
+    const nextEvents: AiCommandOutputEvent[] = [];
+    if (options.stdout) {
+      nextEvents.push({
+        id: `${jobId}:1`,
+        runId: jobId,
+        entry: 1,
+        source: "stdout",
+        text: options.stdout,
+        timestamp,
+      });
+    }
+    if (options.stderr) {
+      nextEvents.push({
+        id: `${jobId}:${nextEvents.length + 1}`,
+        runId: jobId,
+        entry: nextEvents.length + 1,
+        source: "stderr",
+        text: options.stderr,
+        timestamp,
+      });
+    }
+    return nextEvents;
+  })();
+
+  const entry: AiCommandLogEntry = {
+    jobId,
+    fileName: options.fileName,
     timestamp,
-    startedAt: timestamp,
-    completedAt: options.completedAt ?? null,
     branch: options.branch,
+    documentId: null,
     commandId: options.commandId ?? "smart",
     origin: options.origin ?? null,
     worktreePath: options.worktreePath,
     command: options.command,
-    pid: options.pid ?? null,
-    exitCode: options.exitCode ?? null,
-    processName: options.processName ?? null,
     request: options.request,
     response: {
       stdout: options.stdout ?? "",
       stderr: options.stderr ?? "",
-      events: options.events ?? [],
+      events,
     },
-    error: options.error ?? null,
-  }, null, 2)}\n`, "utf8");
-  return logPath;
+    status,
+    pid: options.pid ?? null,
+    exitCode: options.exitCode ?? null,
+    processName: options.processName ?? null,
+    completedAt: options.completedAt ?? undefined,
+    error: options.error
+      ? { message: options.error instanceof Error ? options.error.message : String(options.error) }
+      : null,
+  };
+
+  await store.upsertAiCommandLogEntry(entry);
+  await store.syncAiCommandOutputEvents(entry.jobId, entry.fileName, entry.branch, entry.response.events);
+
+  if (status === "running") {
+    await store.setAiCommandJob({
+      jobId,
+      fileName: options.fileName,
+      branch: options.branch,
+      documentId: null,
+      commandId: options.commandId ?? "smart",
+      command: options.command,
+      input: options.request,
+      status: "running",
+      startedAt: timestamp,
+      stdout: options.stdout ?? "",
+      stderr: options.stderr ?? "",
+      outputEvents: events,
+      pid: options.pid ?? null,
+      exitCode: options.exitCode ?? null,
+      processName: options.processName ?? null,
+      logPath: options.worktreePath,
+      error: null,
+      origin: options.origin ?? null,
+    });
+  }
+
+  return entry.fileName;
 }
 
 async function openSse(url: string) {
@@ -957,7 +1019,7 @@ async function allocateTestPort(): Promise<number> {
   });
 }
 
-test("AI command logs are written under the resolved repo root .logs directory", { concurrency: false }, async () => {
+test("AI command runs persist durable log entries without config-worktree file logs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -982,59 +1044,46 @@ test("AI command logs are written under the resolved repo root .logs directory",
     assert.equal(payload.job.branch, "feature-ai-log");
     assert.equal(payload.job.status, "running");
 
-    const logsDir = resolveAiLogsDir(repo.repoRoot);
     await waitFor(async () => {
       try {
-        const entries = (await fs.readdir(logsDir)).filter((entry) => entry.endsWith(".json"));
+        const store = await createOperationalStateStore(repo.repoRoot);
+        const entries = await store.listAiCommandLogEntries();
         return entries.length > 0;
       } catch {
         return false;
       }
     });
 
-    await waitFor(async () => {
-      const entries = (await fs.readdir(logsDir)).filter((entry) => entry.endsWith(".json"));
-      if (entries.length === 0) {
-        return false;
-      }
+    const logsResponse = await server.fetch(`/api/ai/logs`);
+    assert.equal(logsResponse.status, 200);
+    const logsPayload = await logsResponse.json() as {
+      logs: Array<{ fileName: string; branch: string }>;
+    };
+    assert.equal(logsPayload.logs.length > 0, true);
 
-      const payload = JSON.parse(await fs.readFile(path.join(logsDir, entries[0]), "utf8")) as {
-        request?: string;
-        response?: { stdout?: string };
-        pid?: number | null;
-        completedAt?: string | null;
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].fileName)}`);
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json() as {
+      log: {
+        branch: string;
+        pid: number | null;
+        processName: string | null;
+        request: string;
+        completedAt?: string;
+        response: { stdout: string; stderr: string };
       };
-      return Boolean(payload.request?.includes("Operator request:\nrewrite the document"))
-        && payload.response?.stdout === "rewrite the document"
-        && payload.pid === 4123
-        && typeof payload.completedAt === "string";
-    });
-
-    const entries = (await fs.readdir(logsDir)).filter((entry) => entry.endsWith(".json"));
-    assert.equal(entries.length > 0, true);
-
-    const logPath = path.join(logsDir, entries[0]);
-    const logPayload = JSON.parse(await fs.readFile(logPath, "utf8")) as {
-      branch: string;
-      pid: number | null;
-      processName: string | null;
-      request: string;
-      completedAt: string | null;
-      response: { stdout: string; stderr: string };
     };
 
-    assert.equal(logPayload.branch, "feature-ai-log");
-    assert.equal(logPayload.pid, 4123);
-    assert.equal(typeof logPayload.processName, "string");
-    assert.equal(logPayload.request.includes("Environment wrapper:"), true);
-    assert.equal(logPayload.request.includes("Operator request:\nrewrite the document"), true);
-    assert.equal(typeof logPayload.completedAt, "string");
-    assert.equal(logPayload.response.stdout, "rewrite the document");
+    assert.equal(detailPayload.log.branch, "feature-ai-log");
+    assert.equal(detailPayload.log.pid, 4123);
+    assert.equal(typeof detailPayload.log.processName, "string");
+    assert.equal(detailPayload.log.request.includes("Environment wrapper:"), true);
+    assert.equal(detailPayload.log.request.includes("Operator request:\nrewrite the document"), true);
+    assert.equal(typeof detailPayload.log.completedAt, "string");
+    assert.equal(detailPayload.log.response.stdout, "rewrite the document");
     await assert.rejects(fs.access(path.join(repo.configWorktreePath, ".logs")));
   } finally {
     await server.close();
-    await waitForPathToDisappear(path.join(resolveAiLogsDir(repo.repoRoot), "cancel-job.stdout.log")).catch(() => undefined);
-    await waitForPathToDisappear(path.join(resolveAiLogsDir(repo.repoRoot), "cancel-job.stderr.log")).catch(() => undefined);
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
 });
@@ -2058,6 +2107,8 @@ test("AI log detail stream emits live updates and completion for running logs", 
       stdout: "first line\nsecond line\n",
       stderr: "warn\n",
     });
+    const reconcileRunningResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent("stream-log.json")}`);
+    assert.equal(reconcileRunningResponse.status, 200);
 
     const runningUpdate = await sse.nextEvent();
     const runningLog = runningUpdate.log as {
@@ -2084,6 +2135,8 @@ test("AI log detail stream emits live updates and completion for running logs", 
       status: "stopped",
       exitCode: 0,
     });
+    const reconcileCompletedResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent("stream-log.json")}`);
+    assert.equal(reconcileCompletedResponse.status, 200);
 
     const completedUpdate = await sse.nextEvent();
     const completedLog = completedUpdate.log as {
@@ -3505,7 +3558,6 @@ test("AI cancel route returns 409 when the running job has no process name", { c
     repoRoot: repo.repoRoot,
     worktreePath: path.join(repo.repoRoot, "feature-ai-no-process"),
     execute: async () => await new Promise<{ stdout: string; stderr: string }>(() => {}),
-    writeLog: async () => null,
   })).started;
   const server = await startApiServer(repo, {
   });

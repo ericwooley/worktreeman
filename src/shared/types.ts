@@ -88,6 +88,8 @@ export interface BackgroundCommandLogLine {
 
 export interface AiCommandOutputEvent {
   id: string;
+  runId?: string;
+  entry?: number;
   source: "stdout" | "stderr";
   text: string;
   timestamp: string;

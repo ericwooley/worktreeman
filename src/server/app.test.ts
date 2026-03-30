@@ -309,8 +309,6 @@ test("startServer closes managed AI command processes during shutdown", async ()
   const { rootDir, repo } = await createTestRepo();
   let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
   const processName = getAiCommandProcessName(`shutdown-${Date.now()}`);
-  const outFile = path.join(repo.repoRoot, ".logs", "ai", "shutdown-stdout.log");
-  const errFile = path.join(repo.repoRoot, ".logs", "ai", "shutdown-stderr.log");
 
   try {
     await startAiCommandProcess({
@@ -319,8 +317,6 @@ test("startServer closes managed AI command processes during shutdown", async ()
       input: "",
       worktreePath: path.join(repo.repoRoot, "main"),
       env: process.env,
-      outFile,
-      errFile,
     });
 
     startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });

@@ -30,8 +30,6 @@ async function waitForProcessToExit(processName: string, timeoutMs = 20000) {
 test("AI command processes capture stdout directly", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-${Date.now()}`;
-  const outFile = path.join(tempDir, "stdout.log");
-  const errFile = path.join(tempDir, "stderr.log");
 
   try {
     await startAiCommandProcess({
@@ -40,8 +38,6 @@ test("AI command processes capture stdout directly", async () => {
       input: "",
       worktreePath: tempDir,
       env: process.env,
-      outFile,
-      errFile,
     });
 
     const processInfo = await waitForProcessToExit(processName);
@@ -59,8 +55,6 @@ test("AI command processes capture stdout directly", async () => {
 test("AI command process logs keep stderr in log data for successful runs", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-sanitize-${Date.now()}`;
-  const outFile = path.join(tempDir, "stdout.log");
-  const errFile = path.join(tempDir, "stderr.log");
 
   try {
     await startAiCommandProcess({
@@ -69,8 +63,6 @@ test("AI command process logs keep stderr in log data for successful runs", asyn
       input: "",
       worktreePath: tempDir,
       env: process.env,
-      outFile,
-      errFile,
     });
 
     const processInfo = await waitForProcessToExit(processName);
@@ -89,8 +81,6 @@ test("AI command process logs keep stderr in log data for successful runs", asyn
 test("AI command process logs keep stderr for failed runs", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-failed-stderr-${Date.now()}`;
-  const outFile = path.join(tempDir, "stdout.log");
-  const errFile = path.join(tempDir, "stderr.log");
 
   try {
     await startAiCommandProcess({
@@ -99,8 +89,6 @@ test("AI command process logs keep stderr for failed runs", async () => {
       input: "",
       worktreePath: tempDir,
       env: process.env,
-      outFile,
-      errFile,
     });
 
     const processInfo = await waitForProcessToExit(processName);
@@ -119,8 +107,6 @@ test("AI command process logs keep stderr for failed runs", async () => {
 test("AI command process sets WTM_AI_INPUT env variable from input option", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-wtm-ai-input-${Date.now()}`;
-  const outFile = path.join(tempDir, "stdout.log");
-  const errFile = path.join(tempDir, "stderr.log");
   const testInput = "Hello, world! This is a test with 'single quotes' and \"double quotes\" and newlines\n";
 
   try {
@@ -130,8 +116,6 @@ test("AI command process sets WTM_AI_INPUT env variable from input option", asyn
       input: testInput,
       worktreePath: tempDir,
       env: process.env,
-      outFile,
-      errFile,
     });
 
     const processInfo = await waitForProcessToExit(processName);
@@ -148,8 +132,6 @@ test("AI command process sets WTM_AI_INPUT env variable from input option", asyn
 test("AI command process passes multiline input with special chars via WTM_AI_INPUT", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-wtm-multiline-${Date.now()}`;
-  const outFile = path.join(tempDir, "stdout.log");
-  const errFile = path.join(tempDir, "stderr.log");
   const testInput = "Line one\nLine two with $special chars\nLine three with `backticks`\n";
 
   try {
@@ -159,8 +141,6 @@ test("AI command process passes multiline input with special chars via WTM_AI_IN
       input: testInput,
       worktreePath: tempDir,
       env: process.env,
-      outFile,
-      errFile,
     });
 
     const processInfo = await waitForProcessToExit(processName);
@@ -177,8 +157,6 @@ test("AI command process passes multiline input with special chars via WTM_AI_IN
 test("stopAllAiCommandProcesses terminates managed running processes", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-stop-all-${Date.now()}`;
-  const outFile = path.join(tempDir, "stdout.log");
-  const errFile = path.join(tempDir, "stderr.log");
 
   try {
     await startAiCommandProcess({
@@ -187,8 +165,6 @@ test("stopAllAiCommandProcesses terminates managed running processes", async () 
       input: "",
       worktreePath: tempDir,
       env: process.env,
-      outFile,
-      errFile,
     });
 
     await new Promise((resolve) => setTimeout(resolve, 150));

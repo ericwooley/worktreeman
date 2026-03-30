@@ -1,6 +1,3 @@
-import fs from "node:fs/promises";
-import { createWriteStream } from "node:fs";
-import path from "node:path";
 import process from "node:process";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
@@ -21,8 +18,6 @@ export interface AiCommandProcessDescription {
   pid?: number;
   status: string;
   createdAt?: string;
-  outLogPath?: string;
-  errLogPath?: string;
   exitCode?: number | null;
 }
 
@@ -111,13 +106,7 @@ export async function startAiCommandProcess(options: {
   input: string;
   worktreePath: string;
   env: NodeJS.ProcessEnv;
-  outFile: string;
-  errFile: string;
 }): Promise<AiCommandProcessDescription> {
-  await fs.mkdir(path.dirname(options.outFile), { recursive: true });
-  await fs.mkdir(path.dirname(options.errFile), { recursive: true });
-  await fs.writeFile(options.outFile, "");
-  await fs.writeFile(options.errFile, "");
   await deleteAiCommandProcess(options.processName).catch(() => undefined);
 
   const shellPath = process.env.SHELL || "/usr/bin/bash";
@@ -136,8 +125,6 @@ export async function startAiCommandProcess(options: {
     pid: child.pid,
     status: "launching",
     createdAt: new Date().toISOString(),
-    outLogPath: options.outFile,
-    errLogPath: options.errFile,
     exitCode: null,
   };
   aiCommandProcesses.set(options.processName, {
@@ -147,8 +134,6 @@ export async function startAiCommandProcess(options: {
     stderr: "",
   });
 
-  const stdoutStream = createWriteStream(options.outFile, { flags: "a" });
-  const stderrStream = createWriteStream(options.errFile, { flags: "a" });
   let settled = false;
 
   const finalize = async (status: string, exitCode: number | null) => {
@@ -158,11 +143,6 @@ export async function startAiCommandProcess(options: {
       managed.description.exitCode = exitCode;
       managed.child = null;
     }
-
-    await Promise.all([
-      new Promise<void>((resolve) => stdoutStream.end(resolve)),
-      new Promise<void>((resolve) => stderrStream.end(resolve)),
-    ]);
   };
 
   child.stdout.on("data", (chunk) => {
@@ -172,7 +152,6 @@ export async function startAiCommandProcess(options: {
     }
 
     appendManagedOutput(options.processName, "stdout", sanitized);
-    stdoutStream.write(sanitized);
   });
 
   child.stderr.on("data", (chunk) => {
@@ -182,7 +161,6 @@ export async function startAiCommandProcess(options: {
     }
 
     appendManagedOutput(options.processName, "stderr", sanitized);
-    stderrStream.write(sanitized);
   });
 
   child.on("spawn", () => {
@@ -201,7 +179,6 @@ export async function startAiCommandProcess(options: {
     settled = true;
     const sanitized = sanitizeAiCommandOutput(error.message);
     appendManagedOutput(options.processName, "stderr", `${sanitized}\n`);
-    stderrStream.write(`${sanitized}\n`);
     void finalize("errored", null);
   });
 
@@ -219,18 +196,6 @@ export async function startAiCommandProcess(options: {
   return cloneProcessDescription(description);
 }
 
-async function readPersistedProcessLog(filePath: string | undefined): Promise<string> {
-  if (!filePath) {
-    return "";
-  }
-
-  try {
-    return await fs.readFile(filePath, "utf8");
-  } catch {
-    return "";
-  }
-}
-
 export async function readAiCommandProcessLogs(processInfo: AiCommandProcessDescription | null): Promise<{ stdout: string; stderr: string }> {
   if (!processInfo) {
     return { stdout: "", stderr: "" };
@@ -245,7 +210,7 @@ export async function readAiCommandProcessLogs(processInfo: AiCommandProcessDesc
   }
 
   return {
-    stdout: await readPersistedProcessLog(processInfo.outLogPath),
-    stderr: await readPersistedProcessLog(processInfo.errLogPath),
+    stdout: "",
+    stderr: "",
   };
 }
