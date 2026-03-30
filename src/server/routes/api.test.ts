@@ -212,7 +212,7 @@ async function writeAiLogFixture(options: {
   pid?: number | null;
   stdout?: string;
   stderr?: string;
-  events?: Array<{ id: string; source: "stdout" | "stderr"; text: string; timestamp: string }>;
+  events?: AiCommandOutputEvent[];
   completedAt?: string | null;
   exitCode?: number | null;
   error?: unknown;
