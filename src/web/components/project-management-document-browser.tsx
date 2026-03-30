@@ -24,6 +24,11 @@ export interface ProjectManagementDocumentBrowserState {
   }>;
 }
 
+interface ProjectManagementDocumentBrowserOptions {
+  initialArchiveFilter?: ProjectManagementDocumentArchiveFilter;
+  selectedDocumentId?: string | null;
+}
+
 export function formatDocumentTimestamp(value: string): string {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) {
@@ -63,10 +68,30 @@ function getDocumentSearchValue(entry: ProjectManagementDocumentSummary): string
   ].join(" ").toLowerCase();
 }
 
+export function sortProjectManagementDocuments(
+  documents: ProjectManagementDocumentSummary[],
+  selectedDocumentId?: string | null,
+): ProjectManagementDocumentSummary[] {
+  return [...documents].sort((left, right) => {
+    const leftSelected = selectedDocumentId !== null && selectedDocumentId !== undefined && left.id === selectedDocumentId;
+    const rightSelected = selectedDocumentId !== null && selectedDocumentId !== undefined && right.id === selectedDocumentId;
+    if (leftSelected !== rightSelected) {
+      return leftSelected ? -1 : 1;
+    }
+
+    const updatedAtDelta = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    if (updatedAtDelta !== 0) {
+      return updatedAtDelta;
+    }
+
+    return left.number - right.number;
+  });
+}
+
 export function useProjectManagementDocumentBrowserState(
   documents: ProjectManagementDocumentSummary[],
   statuses: string[],
-  options?: { initialArchiveFilter?: ProjectManagementDocumentArchiveFilter },
+  options?: ProjectManagementDocumentBrowserOptions,
 ): ProjectManagementDocumentBrowserState {
   const [selectedTag, setSelectedTag] = useState("");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("");
@@ -80,8 +105,8 @@ export function useProjectManagementDocumentBrowserState(
   );
 
   const sortedDocuments = useMemo(
-    () => [...documents].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
-    [documents],
+    () => sortProjectManagementDocuments(documents, options?.selectedDocumentId),
+    [documents, options?.selectedDocumentId],
   );
 
   const filteredDocuments = useMemo(

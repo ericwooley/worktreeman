@@ -402,7 +402,9 @@ export function ProjectManagementPanel({
   const documentRunTargetsSelectedWorktree = Boolean(selectedWorktreeBranch && documentRunJob?.branch === selectedWorktreeBranch);
   const activeDocumentRunInSelectedWorktree = documentRunInProgress && documentRunTargetsSelectedDocument && documentRunTargetsSelectedWorktree;
   const activeDocumentRunForSelectedDocument = documentRunInProgress && documentRunTargetsSelectedDocument;
-  const documentBrowser = useProjectManagementDocumentBrowserState(documents, statuses);
+  const documentBrowser = useProjectManagementDocumentBrowserState(documents, statuses, {
+    selectedDocumentId,
+  });
   const aiCommandOptions = useMemo<MatrixDropdownOption[]>(() => ([
     {
       value: "smart",

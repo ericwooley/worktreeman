@@ -11,6 +11,7 @@ import type {
 import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementDocumentForm } from "./project-management-document-form";
+import { sortProjectManagementDocuments } from "./project-management-document-browser";
 import { getAiOutputEvents, getCompletedAiDocumentRefreshTarget, ProjectManagementPanel } from "./project-management-panel";
 
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
@@ -497,6 +498,58 @@ test("dependency picker modal renders current dependencies and searchable docume
   assert.match(markup, /selected/);
   assert.match(markup, /type="checkbox"/);
   assert.match(markup, /matrix-card matrix-card-selected/);
+});
+
+test("selected document stays pinned during poll-driven document reordering", () => {
+  const polledDocuments = [
+    {
+      ...sampleDocuments[0],
+      updatedAt: "2026-03-26T10:00:00.000Z",
+    },
+    {
+      ...sampleDocuments[1],
+      updatedAt: "2026-03-30T12:00:00.000Z",
+    },
+    {
+      ...sampleDocuments[2],
+      updatedAt: "2026-03-29T12:00:00.000Z",
+    },
+  ];
+
+  const orderedIds = sortProjectManagementDocuments(polledDocuments, "doc-1").map((entry) => entry.id);
+
+  assert.deepEqual(orderedIds, ["doc-1", "doc-2", "doc-3"]);
+});
+
+test("document rail keeps the selected card first even when another document was updated more recently", () => {
+  const markup = renderProjectManagementPanel({
+    selectedDocumentId: "doc-1",
+    document: {
+      ...sampleDocument,
+      updatedAt: "2026-03-26T10:00:00.000Z",
+    },
+    documents: [
+      {
+        ...sampleDocuments[0],
+        updatedAt: "2026-03-26T10:00:00.000Z",
+      },
+      {
+        ...sampleDocuments[1],
+        updatedAt: "2026-03-30T12:00:00.000Z",
+      },
+      {
+        ...sampleDocuments[2],
+        updatedAt: "2026-03-29T12:00:00.000Z",
+      },
+    ],
+  });
+
+  const selectedIndex = markup.indexOf("matrix-card matrix-card-selected");
+  const newerDocumentIndex = markup.indexOf("Shared document list");
+
+  assert.notEqual(selectedIndex, -1);
+  assert.notEqual(newerDocumentIndex, -1);
+  assert.ok(selectedIndex < newerDocumentIndex);
 });
 
 test("document worktree run in another branch does not lock this worktree UI", () => {
