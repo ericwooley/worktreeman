@@ -8,6 +8,7 @@ export interface DashboardUrlState {
   selectedBranch: string | null;
   activeTab: DashboardActiveTab;
   aiActivitySubTab: AiActivitySubTab;
+  selectedAiLogFile: string | null;
   environmentSubTab: WorktreeEnvironmentSubTab;
   gitSubTab: WorktreeGitSubTab;
   gitView: "diff" | "graph";
@@ -59,6 +60,7 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
     selectedBranch: params.get("env"),
     activeTab,
     aiActivitySubTab: parseAiActivitySubTab(params.get("aiTab")),
+    selectedAiLogFile: params.get("aiLog"),
     environmentSubTab: tab === "background"
       ? "background"
       : tab === "shell"

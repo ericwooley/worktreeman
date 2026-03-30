@@ -181,6 +181,7 @@ export function Dashboard() {
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
   const [activeTab, setActiveTab] = useState<DashboardActiveTab>(initialUrlState.activeTab);
   const [aiActivitySubTab, setAiActivitySubTab] = useState<AiActivitySubTab>(initialUrlState.aiActivitySubTab);
+  const [selectedAiLogFile, setSelectedAiLogFile] = useState<string | null>(initialUrlState.selectedAiLogFile);
   const [environmentSubTab, setEnvironmentSubTab] = useState<WorktreeEnvironmentSubTab>(initialUrlState.environmentSubTab);
   const [gitSubTab, setGitSubTab] = useState<WorktreeGitSubTab>("pull-request");
   const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
@@ -492,8 +493,14 @@ export function Dashboard() {
 
     if (activeTab === "ai-log") {
       params.set("aiTab", aiActivitySubTab);
+      if (selectedAiLogFile) {
+        params.set("aiLog", selectedAiLogFile);
+      } else {
+        params.delete("aiLog");
+      }
     } else {
       params.delete("aiTab");
+      params.delete("aiLog");
     }
 
     if (isTerminalVisible) {
@@ -520,6 +527,7 @@ export function Dashboard() {
   }, [
     activeTab,
     aiActivitySubTab,
+    selectedAiLogFile,
     environmentSubTab,
     gitPullRequestDocumentId,
     gitSubTab,
@@ -537,6 +545,7 @@ export function Dashboard() {
       setSelectedBranch(nextUrlState.selectedBranch);
       setActiveTab(nextUrlState.activeTab);
       setAiActivitySubTab(nextUrlState.aiActivitySubTab);
+      setSelectedAiLogFile(nextUrlState.selectedAiLogFile);
       setEnvironmentSubTab(nextUrlState.environmentSubTab);
       setGitSubTab("pull-request");
       setGitView(nextUrlState.gitView);
@@ -558,6 +567,14 @@ export function Dashboard() {
 
     void loadProjectManagementDocument(projectManagementSelectedDocumentId, { silent: true });
   }, [activeTab, loadProjectManagementDocument, projectManagementSelectedDocumentId]);
+
+  useEffect(() => {
+    if (!selectedAiLogFile || activeTab !== "ai-log") {
+      return;
+    }
+
+    void loadAiCommandLog(selectedAiLogFile, { silent: true });
+  }, [activeTab, loadAiCommandLog, selectedAiLogFile]);
 
   useEffect(() => {
     void loadAiCommandSettings({ silent: true });
@@ -766,6 +783,11 @@ export function Dashboard() {
     setProjectManagementSelectedDocumentId(documentId);
     return loadProjectManagementDocument(documentId, options);
   }, [loadProjectManagementDocument]);
+
+  const handleLoadProjectManagementAiLog = useCallback(async (fileName: string, options?: { silent?: boolean }) => {
+    setSelectedAiLogFile(fileName);
+    return loadAiCommandLog(fileName, options);
+  }, [loadAiCommandLog]);
 
   const mainCommandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
     const items: CommandPaletteItem[] = [
@@ -1369,7 +1391,7 @@ export function Dashboard() {
             onLoadProjectManagementUsers={loadProjectManagementUsers}
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
             onLoadProjectManagementAiLogs={loadAiCommandLogs}
-            onLoadProjectManagementAiLog={loadAiCommandLog}
+            onLoadProjectManagementAiLog={handleLoadProjectManagementAiLog}
             onCreateProjectManagementDocument={createProjectManagementDocument}
             onUpdateProjectManagementDocument={updateProjectManagementDocument}
             onUpdateProjectManagementDependencies={async (documentId, dependencyIds) => {

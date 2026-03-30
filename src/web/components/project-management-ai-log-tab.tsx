@@ -264,7 +264,7 @@ export function ProjectManagementAiLogTab({
         <div className="grid gap-3 md:grid-cols-3">
           <MatrixMetric label="Running jobs" value={String(runningJobs.length)} />
           <MatrixMetric label="Saved logs" value={String(visibleLogs.length)} />
-          <MatrixMetric label="Selected log" value={formatSelectedLabel(logDetail)} />
+          <MatrixMetric label="Selected log" value={loadingFileName ? "Loading…" : formatSelectedLabel(logDetail)} />
         </div>
 
       <div className="flex items-start justify-between gap-3 border theme-border-subtle p-4">
@@ -318,7 +318,7 @@ export function ProjectManagementAiLogTab({
                 <MatrixCard
                   as="div"
                   key={job.jobId}
-                  selected={logDetail?.fileName === job.fileName}
+                  selected={loadingFileName === job.fileName || (!loadingFileName && logDetail?.fileName === job.fileName)}
                   interactive
                   className="p-3"
                 >
@@ -395,7 +395,7 @@ export function ProjectManagementAiLogTab({
                 >
                   <MatrixCard
                     as="div"
-                    selected={logDetail?.fileName === log.fileName}
+                    selected={loadingFileName === log.fileName || (!loadingFileName && logDetail?.fileName === log.fileName)}
                     interactive
                     className={`p-3 ${loadingFileName === log.fileName ? "matrix-card-loading" : ""}`}
                   >
@@ -431,7 +431,28 @@ export function ProjectManagementAiLogTab({
         </div>
 
         <div className="border theme-border-subtle p-4">
-          {logDetail ? (
+          {loadingFileName ? (
+            <div className="space-y-4">
+              <div className="border theme-border-subtle p-4 theme-surface-soft">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="matrix-kicker">AI log detail</p>
+                  <MatrixSpinner label="Loading log…" />
+                </div>
+                <div className="mt-3 h-6 w-48 matrix-skeleton" />
+                <div className="mt-2 h-4 w-72 matrix-skeleton" />
+              </div>
+              <div className="theme-inline-panel p-3">
+                <div className="h-4 w-32 matrix-skeleton" />
+                <div className="mt-2 h-5 w-56 matrix-skeleton" />
+                <div className="mt-1 h-3 w-64 matrix-skeleton" />
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-10 matrix-skeleton" />
+                ))}
+              </div>
+            </div>
+          ) : logDetail ? (
             <div className="space-y-4">
               <div className="border theme-border-subtle p-4 theme-surface-soft">
                 <div className="flex flex-wrap items-center gap-2">
