@@ -120,6 +120,7 @@ function parseAiCommands(value: unknown, legacyAiCommand: unknown): AiCommandCon
     return {
       smart,
       simple: "",
+      autoStartRuntime: false,
     };
   }
 
@@ -131,6 +132,7 @@ function parseAiCommands(value: unknown, legacyAiCommand: unknown): AiCommandCon
   return {
     smart: typeof aiCommands.smart === "string" ? aiCommands.smart : smart,
     simple: typeof aiCommands.simple === "string" ? aiCommands.simple : "",
+    autoStartRuntime: aiCommands.autoStartRuntime === true,
   };
 }
 
@@ -254,10 +256,13 @@ export function updateAiCommandInConfigContents(raw: string, aiCommands: AiComma
   const nextAiCommands: AiCommandConfig = {
     smart: typeof aiCommands.smart === "string" ? aiCommands.smart : "",
     simple: typeof aiCommands.simple === "string" ? aiCommands.simple : "",
+    autoStartRuntime: aiCommands.autoStartRuntime === true,
   };
 
   if (nextAiCommands.smart.trim() || nextAiCommands.simple.trim()) {
-    parsed.aiCommands = nextAiCommands;
+    parsed.aiCommands = nextAiCommands.autoStartRuntime
+      ? nextAiCommands
+      : { smart: nextAiCommands.smart, simple: nextAiCommands.simple };
   } else {
     delete parsed.aiCommands;
   }

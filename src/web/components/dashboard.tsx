@@ -38,12 +38,14 @@ type CommandPaletteScope = "main" | "worktree-select" | "theme-select";
 const EMPTY_AI_COMMANDS: AiCommandConfig = {
   smart: "",
   simple: "",
+  autoStartRuntime: false,
 };
 
 function normalizeAiCommands(aiCommands?: Partial<AiCommandConfig> | null): AiCommandConfig {
   return {
     smart: typeof aiCommands?.smart === "string" ? aiCommands.smart : "",
     simple: typeof aiCommands?.simple === "string" ? aiCommands.simple : "",
+    autoStartRuntime: aiCommands?.autoStartRuntime === true,
   };
 }
 
@@ -1782,6 +1784,17 @@ export function Dashboard() {
                     placeholder="opencode run --model gpt-5-mini $WTM_AI_INPUT"
                     className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
                   />
+                </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={aiCommandDraftValues.autoStartRuntime}
+                    onChange={(event) => setAiCommandDrafts((current) => ({ ...current, autoStartRuntime: event.target.checked }))}
+                    className="h-4 w-4"
+                  />
+                  <span className="text-sm theme-text-soft">
+                    Auto-start worktree environment when running AI
+                  </span>
                 </label>
               </div>
               <div className="border theme-border-subtle p-3 text-sm theme-text-muted">

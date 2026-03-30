@@ -195,6 +195,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     aiCommands: {
       smart: "runner --prompt $WTM_AI_INPUT",
       simple: "runner --fast $WTM_AI_INPUT",
+      autoStartRuntime: false,
     },
     aiJob: null,
     documentRunJob: null,

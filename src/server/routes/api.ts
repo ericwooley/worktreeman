@@ -1795,6 +1795,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const aiCommands: AiCommandConfig = {
         smart: typeof body?.aiCommands?.smart === "string" ? body.aiCommands.smart : "",
         simple: typeof body?.aiCommands?.simple === "string" ? body.aiCommands.simple : "",
+        autoStartRuntime: body?.aiCommands?.autoStartRuntime === true,
       };
       const currentContents = await readConfigContents({
         path: options.configPath,
@@ -2641,8 +2642,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const existingRuntime = await options.operationalState.getRuntime(branch);
-      const runtime = existingRuntime ?? await ensureWorktreeRuntime(config, worktree);
-      stopAutoStartedRuntimeOnError = !existingRuntime;
+      const runtime = existingRuntime ?? (config.aiCommands.autoStartRuntime ? await ensureWorktreeRuntime(config, worktree) : undefined);
+      stopAutoStartedRuntimeOnError = !existingRuntime && runtime != null;
       const backgroundCommands = await listBackgroundCommands(config, branch, worktreePath, runtime);
       const environmentContext = buildAiEnvironmentContext({
         repoRoot: options.repoRoot,
@@ -2659,7 +2660,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         document: documentPayload.document,
         relatedDocuments: documentsPayload.documents,
       });
-      const env = buildRuntimeProcessEnv(runtime);
+      const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
       const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
       const jobRun = await startAiProcessJob({
@@ -2952,8 +2953,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const existingRuntime = await options.operationalState.getRuntime(worktree.branch);
-      const runtime = existingRuntime ?? await ensureWorktreeRuntime(config, worktree);
-      stopAutoStartedRuntimeOnError = !existingRuntime;
+      const runtime = existingRuntime ?? (config.aiCommands.autoStartRuntime ? await ensureWorktreeRuntime(config, worktree) : undefined);
+      stopAutoStartedRuntimeOnError = !existingRuntime && runtime != null;
       const backgroundCommands = await listBackgroundCommands(config, worktree.branch, worktreePath, runtime);
       const environmentContext = buildAiEnvironmentContext({
         repoRoot: options.repoRoot,
@@ -2991,7 +2992,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         });
       }
 
-      const env = buildRuntimeProcessEnv(runtime);
+      const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
       renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
       const runDetails = {

@@ -12,6 +12,7 @@ export type AiCommandId = "smart" | "simple";
 export interface AiCommandConfig {
   smart: string;
   simple: string;
+  autoStartRuntime: boolean;
 }
 
 export interface ProjectManagementUserConfigEntry {
