@@ -108,6 +108,7 @@ export async function stopAllAiCommandProcesses(): Promise<void> {
 export async function startAiCommandProcess(options: {
   processName: string;
   command: string;
+  input: string;
   worktreePath: string;
   env: NodeJS.ProcessEnv;
   outFile: string;
@@ -123,7 +124,9 @@ export async function startAiCommandProcess(options: {
   const child = spawn(shellPath, ["-lc", options.command], {
     cwd: options.worktreePath,
     env: Object.fromEntries(
-      Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+      Object.entries({ ...options.env, WTM_AI_INPUT: options.input }).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
     ),
     stdio: ["ignore", "pipe", "pipe"],
   });

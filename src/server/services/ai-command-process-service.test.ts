@@ -37,6 +37,7 @@ test("AI command processes capture stdout directly", async () => {
     await startAiCommandProcess({
       processName,
       command: "printf 'hello from stdout\n'",
+      input: "",
       worktreePath: tempDir,
       env: process.env,
       outFile,
@@ -65,6 +66,7 @@ test("AI command process logs keep stderr in log data for successful runs", asyn
     await startAiCommandProcess({
       processName,
       command: "printf '\\033[0mhello\\033[0m\\n' && printf '\\033[31mwarn\\033[0m\\n' >&2",
+      input: "",
       worktreePath: tempDir,
       env: process.env,
       outFile,
@@ -94,6 +96,7 @@ test("AI command process logs keep stderr for failed runs", async () => {
     await startAiCommandProcess({
       processName,
       command: "printf 'partial\n' && printf '\\033[31mboom\\033[0m\\n' >&2 && exit 2",
+      input: "",
       worktreePath: tempDir,
       env: process.env,
       outFile,
@@ -113,6 +116,64 @@ test("AI command process logs keep stderr for failed runs", async () => {
   }
 });
 
+test("AI command process sets WTM_AI_INPUT env variable from input option", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
+  const processName = `wtm:ai:test-wtm-ai-input-${Date.now()}`;
+  const outFile = path.join(tempDir, "stdout.log");
+  const errFile = path.join(tempDir, "stderr.log");
+  const testInput = "Hello, world! This is a test with 'single quotes' and \"double quotes\" and newlines\n";
+
+  try {
+    await startAiCommandProcess({
+      processName,
+      command: "printf '%s' \"$WTM_AI_INPUT\"",
+      input: testInput,
+      worktreePath: tempDir,
+      env: process.env,
+      outFile,
+      errFile,
+    });
+
+    const processInfo = await waitForProcessToExit(processName);
+    const logs = await readAiCommandProcessLogs(processInfo);
+
+    assert.equal(logs.stdout, testInput);
+    assert.equal(processInfo?.exitCode ?? 0, 0);
+  } finally {
+    await deleteAiCommandProcess(processName).catch(() => undefined);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("AI command process passes multiline input with special chars via WTM_AI_INPUT", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
+  const processName = `wtm:ai:test-wtm-multiline-${Date.now()}`;
+  const outFile = path.join(tempDir, "stdout.log");
+  const errFile = path.join(tempDir, "stderr.log");
+  const testInput = "Line one\nLine two with $special chars\nLine three with `backticks`\n";
+
+  try {
+    await startAiCommandProcess({
+      processName,
+      command: "printf '%s' \"$WTM_AI_INPUT\"",
+      input: testInput,
+      worktreePath: tempDir,
+      env: process.env,
+      outFile,
+      errFile,
+    });
+
+    const processInfo = await waitForProcessToExit(processName);
+    const logs = await readAiCommandProcessLogs(processInfo);
+
+    assert.equal(logs.stdout, testInput);
+    assert.equal(processInfo?.exitCode ?? 0, 0);
+  } finally {
+    await deleteAiCommandProcess(processName).catch(() => undefined);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("stopAllAiCommandProcesses terminates managed running processes", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-stop-all-${Date.now()}`;
@@ -123,6 +184,7 @@ test("stopAllAiCommandProcesses terminates managed running processes", async () 
     await startAiCommandProcess({
       processName,
       command: "node -e \"setInterval(() => process.stdout.write('tick\\n'), 50)\"",
+      input: "",
       worktreePath: tempDir,
       env: process.env,
       outFile,
