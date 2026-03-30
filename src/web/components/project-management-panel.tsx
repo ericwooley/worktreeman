@@ -31,6 +31,8 @@ import {
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixModal, MatrixSkeletonCard, MatrixSpinner, MatrixTabButton } from "./matrix-primitives";
+import { LoadingOverlay } from "./loading";
+import { useItemLoading } from "../hooks/useItemLoading";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
 const ProjectManagementBoardTab = lazy(async () => {
@@ -348,7 +350,7 @@ export function ProjectManagementPanel({
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
   const [showBacklogLane, setShowBacklogLane] = useState(false);
-  const [loadingDocumentId, setLoadingDocumentId] = useState<string | null>(null);
+  const { loadingId: loadingDocumentId, startLoading: startLoadingDocument, stopLoading: stopLoadingDocument } = useItemLoading();
   const [editTitle, setEditTitle] = useState(() => document?.title ?? "");
   const [editSummary, setEditSummary] = useState(() => document?.summary ?? "");
   const [editMarkdown, setEditMarkdown] = useState(() => document?.markdown ?? "");
@@ -640,14 +642,14 @@ export function ProjectManagementPanel({
 
   async function handleSelectDocument(documentId: string, options?: { silent?: boolean }) {
     if (!options?.silent) {
-      setLoadingDocumentId(documentId);
+      startLoadingDocument(documentId);
     }
     onSubTabChange("document");
     onDocumentViewModeChange("document");
     try {
       return await onSelectDocument(documentId, options);
     } finally {
-      setLoadingDocumentId(null);
+      stopLoadingDocument();
     }
   }
 
@@ -1032,6 +1034,7 @@ export function ProjectManagementPanel({
             type="button"
             className="w-full text-left"
             disabled={loadingDocumentId !== null}
+            aria-busy={loadingDocumentId === entry.id}
             onClick={() => void handleSelectDocument(entry.id)}
           >
             <MatrixCard
@@ -1040,6 +1043,10 @@ export function ProjectManagementPanel({
               interactive
               className={`p-3 ${loadingDocumentId === entry.id ? "matrix-card-loading" : ""}`}
             >
+              <LoadingOverlay
+                visible={loadingDocumentId === entry.id}
+                label={`Loading document ${entry.title}…`}
+              />
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1070,7 +1077,12 @@ export function ProjectManagementPanel({
           </button>
         )}
         skeletonSlot={loading && documents.length === 0 ? (
-          <div className="space-y-2 mt-3">
+          <div
+            role="status"
+            aria-live="polite"
+            aria-label="Loading documents…"
+            className="space-y-2 mt-3"
+          >
             <MatrixSkeletonCard />
             <MatrixSkeletonCard />
             <MatrixSkeletonCard />
