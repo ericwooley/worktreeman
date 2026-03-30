@@ -107,6 +107,7 @@ import {
   getProjectManagementDocumentHistory,
   listProjectManagementDocuments,
   listProjectManagementUsers,
+  moveProjectManagementDocumentTowardInProgress,
   updateProjectManagementDependencies,
   updateProjectManagementDocument,
   updateProjectManagementStatus,
@@ -2587,6 +2588,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         autoCommitDirtyWorktree: true,
       });
       const job = await jobRun.started;
+      await moveProjectManagementDocumentTowardInProgress(options.repoRoot, documentId);
       scheduleRuntimeStopAfterAiJob({
         branch,
         jobId: job.jobId,

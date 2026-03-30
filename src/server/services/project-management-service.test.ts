@@ -14,6 +14,7 @@ import {
   getProjectManagementDocument,
   getProjectManagementDocumentHistory,
   listProjectManagementDocuments,
+  moveProjectManagementDocumentTowardInProgress,
   updateProjectManagementDocument,
   updateProjectManagementDependencies,
   updateProjectManagementStatus,
@@ -522,6 +523,71 @@ test("status can be updated independently without changing dependencies or summa
     const history = await getProjectManagementDocumentHistory(repoRoot, dependent.document.id);
     assert.match(history.history.at(-1)?.diff ?? "", /-status: todo/);
     assert.match(history.history.at(-1)?.diff ?? "", /\+status: in-progress/);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("moving a document toward in-progress only advances backlog and todo documents", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const backlog = await createProjectManagementDocument(repoRoot, {
+      title: "Backlog document",
+      markdown: "# Backlog document\n",
+      tags: ["plan"],
+      status: "backlog",
+    });
+    const todo = await createProjectManagementDocument(repoRoot, {
+      title: "Todo document",
+      markdown: "# Todo document\n",
+      tags: ["feature"],
+      status: "todo",
+    });
+    const blocked = await createProjectManagementDocument(repoRoot, {
+      title: "Blocked document",
+      markdown: "# Blocked document\n",
+      tags: ["bug"],
+      status: "blocked",
+    });
+    const done = await createProjectManagementDocument(repoRoot, {
+      title: "Done document",
+      markdown: "# Done document\n",
+      tags: ["feature"],
+      status: "done",
+    });
+    const reference = await createProjectManagementDocument(repoRoot, {
+      title: "Reference document",
+      markdown: "# Reference document\n",
+      tags: ["reference"],
+      status: "reference",
+    });
+
+    const backlogMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, backlog.document.id);
+    const todoMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, todo.document.id);
+    const blockedMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, blocked.document.id);
+    const doneMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, done.document.id);
+    const referenceMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, reference.document.id);
+
+    assert.equal(backlogMoved.document.status, "in-progress");
+    assert.equal(todoMoved.document.status, "in-progress");
+    assert.equal(blockedMoved.document.status, "blocked");
+    assert.equal(doneMoved.document.status, "done");
+    assert.equal(referenceMoved.document.status, "reference");
+
+    const backlogHistory = await getProjectManagementDocumentHistory(repoRoot, backlog.document.id);
+    const todoHistory = await getProjectManagementDocumentHistory(repoRoot, todo.document.id);
+    const blockedHistory = await getProjectManagementDocumentHistory(repoRoot, blocked.document.id);
+    const doneHistory = await getProjectManagementDocumentHistory(repoRoot, done.document.id);
+    const referenceHistory = await getProjectManagementDocumentHistory(repoRoot, reference.document.id);
+
+    assert.equal(backlogHistory.history.length, 2);
+    assert.equal(todoHistory.history.length, 2);
+    assert.equal(blockedHistory.history.length, 1);
+    assert.equal(doneHistory.history.length, 1);
+    assert.equal(referenceHistory.history.length, 1);
+    assert.match(backlogHistory.history.at(-1)?.diff ?? "", /\+status: in-progress/);
+    assert.match(todoHistory.history.at(-1)?.diff ?? "", /\+status: in-progress/);
   } finally {
     await destroyTestRepo(repoRoot);
   }

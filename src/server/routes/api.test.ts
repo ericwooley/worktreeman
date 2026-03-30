@@ -3229,7 +3229,7 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(createdWorktree.linkedDocument?.number, 1);
     assert.equal(createdWorktree.linkedDocument?.title, "Project Outline");
     assert.equal(createdWorktree.linkedDocument?.summary, "");
-    assert.equal(createdWorktree.linkedDocument?.status, "backlog");
+    assert.equal(createdWorktree.linkedDocument?.status, "in-progress");
     assert.equal(createdWorktree.linkedDocument?.archived, false);
 
     const storedLink = await getWorktreeDocumentLink(repo.repoRoot, payload.job.branch);
@@ -3303,6 +3303,7 @@ test("project-management document AI creates a derived worktree and streams stdo
 
     const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
     assert.equal(updated.document.title, "Project Outline");
+    assert.equal(updated.document.status, "in-progress");
     assert.equal(updated.document.markdown.includes("implemented"), false);
     assert.equal(updated.document.comments.length >= 1, true);
     const latestComment = updated.document.comments.at(-1);
@@ -3311,6 +3312,10 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.match(latestComment.body, new RegExp(payload.job.branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(latestComment.body, /Command: smart/);
     assert.match(latestComment.body, /Stdout: planning... implemented/);
+
+    const history = await getProjectManagementDocumentHistory(repo.repoRoot, outline.id);
+    assert.equal(history.history.length >= 2, true);
+    assert.match(history.history.at(-1)?.diff ?? "", /\+status: in-progress/);
 
     const aiLogsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(aiLogsResponse.status, 200);
