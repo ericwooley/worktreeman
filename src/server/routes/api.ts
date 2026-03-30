@@ -135,6 +135,7 @@ interface ApiRouterOptions {
     startProcess: (options: {
       processName: string;
       command: string;
+      input: string;
       worktreePath: string;
       env: NodeJS.ProcessEnv;
       outFile: string;
@@ -865,16 +866,15 @@ async function generateProjectManagementDocumentSummary(options: {
     document: options.document,
     relatedDocuments: options.relatedDocuments,
   });
-  const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
-
   try {
-    const { stdout } = await runCommand("bash", ["-lc", renderedCommand], {
+    const { stdout } = await runCommand("bash", ["-lc", template], {
       cwd: options.repoRoot,
       env: {
         ...process.env,
         ...options.config.env,
         WORKTREE_BRANCH: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
         WORKTREE_PATH: options.repoRoot,
+        WTM_AI_INPUT: input,
       },
     });
     const summary = stdout.trim();
@@ -1422,6 +1422,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const processInfo = await aiProcesses.startProcess({
         processName,
         command: details.renderedCommand,
+        input: details.input,
         worktreePath: details.worktreePath,
         env: details.env,
         outFile,
@@ -2169,9 +2170,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
         const completedAt = new Date().toISOString();
         try {
-          const { stdout, stderr } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", renderedCommand], {
+          const { stdout, stderr } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", template], {
             cwd: worktree.worktreePath,
-            env,
+            env: { ...env, WTM_AI_INPUT: input },
           });
           const normalized = stdout.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd();
           if (!normalized.trim()) {
@@ -2662,14 +2663,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
-      const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
       const jobRun = await startAiProcessJob({
         branch,
         documentId,
         commandId,
         origin,
         input,
-        renderedCommand,
+        renderedCommand: template,
         worktreePath,
         env,
         commentDocumentId: documentId,
@@ -2994,7 +2994,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
-      renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+      renderedCommand = template;
       const runDetails = {
         branch: worktree.branch,
         documentId,

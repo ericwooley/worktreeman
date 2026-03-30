@@ -174,10 +174,9 @@ async function generateResolvedConflictContents(options: {
     baseBranch: options.baseBranch,
     conflicts: [options.conflict],
   });
-  const command = template.split("$WTM_AI_INPUT").join(quoteShellArg(prompt));
-  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", command], {
+  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", template], {
     cwd: options.worktreePath,
-    env: options.env,
+    env: { ...options.env, WTM_AI_INPUT: prompt },
   });
   const normalized = stdout.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trimEnd();
   if (!normalized.trim()) {
@@ -768,10 +767,9 @@ async function generateCommitMessage(options: {
     branch: options.branch,
     baseBranch: options.baseBranch,
   });
-  const command = template.split("$WTM_AI_INPUT").join(quoteShellArg(prompt));
-  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", command], {
+  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", template], {
     cwd: options.worktreePath,
-    env: options.env,
+    env: { ...options.env, WTM_AI_INPUT: prompt },
   });
   const message = normalizeCommitMessage(stdout);
   if (!message) {
