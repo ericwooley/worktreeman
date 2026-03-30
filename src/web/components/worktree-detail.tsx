@@ -355,8 +355,8 @@ interface WorktreeDetailProps {
   runningCount: number;
   selectedStatusLabel: string;
   onSelectWorktree: (value: string) => void;
-  activeTab: "environment" | "git" | "project-management" | "ai-log";
-  onTabChange: (tab: "environment" | "git" | "project-management" | "ai-log") => void;
+  activeTab: "environment" | "git" | "merge" | "project-management" | "ai-log";
+  onTabChange: (tab: "environment" | "git" | "merge" | "project-management" | "ai-log") => void;
   environmentSubTab: WorktreeEnvironmentSubTab;
   onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
   gitSubTab: WorktreeGitSubTab;
@@ -575,6 +575,7 @@ export function WorktreeDetail({
   const isEnvironmentTabActive = activeTab === "environment";
   const isAiLogTabActive = activeTab === "ai-log";
   const isGitTabActive = activeTab === "git";
+  const isMergeTabActive = activeTab === "merge";
   const pullRequestDocuments = useMemo(
     () => projectManagementDocuments.filter((entry) => entry.kind === "pull-request"),
     [projectManagementDocuments],
@@ -838,7 +839,7 @@ export function WorktreeDetail({
   }, [backgroundCommands, selectedBackgroundCommandName]);
 
   useEffect(() => {
-    if (activeTab !== "git" || !worktree?.branch) {
+    if ((activeTab !== "git" && activeTab !== "merge") || !worktree?.branch) {
       return;
     }
 
@@ -1188,8 +1189,10 @@ export function WorktreeDetail({
       return;
     }
 
-    if (origin.location.tab === "git") {
-      onTabChange("git");
+    if (origin.location.tab === "git" || origin.location.tab === "merge") {
+      // PR reviews belong on the merge tab; support legacy "git" tab origins too
+      const targetTab = origin.location.documentId ? "merge" : "git";
+      onTabChange(targetTab);
       if (origin.location.documentId) {
         onGitPullRequestDocumentChange(origin.location.documentId);
         await onLoadProjectManagementDocument(origin.location.documentId, { silent: true });
@@ -1206,6 +1209,212 @@ export function WorktreeDetail({
     && projectManagementAiJob.origin.location.documentId === selectedPullRequestDocument.id
       ? projectManagementAiJob
       : null;
+
+  const gitDiffView = (
+    <>
+      <div className="theme-inline-panel p-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <p className="matrix-kicker">Git / Diff</p>
+            <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Branch diff</h2>
+            <p className="mt-2 text-sm theme-text-muted">
+              Review the diff between this worktree and the base branch, including staged, unstaged, and untracked local changes.
+            </p>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto] xl:min-w-[36rem] xl:grid-cols-[minmax(16rem,1fr)_auto_auto_auto]">
+            <MatrixDropdown
+              label="Base branch"
+              value={selectedGitBaseBranch}
+              options={gitBranchOptions}
+              placeholder="Choose base branch"
+              disabled={!gitBranchOptions.length}
+              emptyLabel="No branches available"
+              onChange={setSelectedGitBaseBranch}
+            />
+            <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => onGitViewChange("graph")} />
+            <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => onGitViewChange("diff")} />
+            <button
+              type="button"
+              className="matrix-button rounded-none px-3 py-2 text-sm"
+              disabled={!canCommitDiffChanges || gitComparisonLoading || !worktree?.branch}
+              onClick={() => {
+                if (!worktree?.branch || !gitComparison) {
+                  return;
+                }
+                void openCommitModal();
+              }}
+            >
+              AI commit
+            </button>
+          </div>
+        </div>
+
+        {gitComparison ? (
+          <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+            <MatrixDetailField label="Base" value={gitComparison.baseBranch} mono />
+            <MatrixDetailField label="Compare" value={gitComparison.compareBranch} mono />
+            <MatrixDetailField label="Ahead" value={String(gitComparison.ahead)} mono />
+            <MatrixDetailField label="Behind" value={String(gitComparison.behind)} mono />
+          </div>
+        ) : null}
+
+        {gitComparison ? (
+          <div className="mt-3 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+            <MatrixDetailField label="Changed files" value={String(gitComparison.workingTreeSummary.changedFiles)} mono />
+            <MatrixDetailField label="Conflicted files" value={String(gitComparison.workingTreeSummary.conflictedFiles ?? 0)} mono />
+            <MatrixDetailField label="Untracked files" value={String(gitComparison.workingTreeSummary.untrackedFiles)} mono />
+            <MatrixDetailField
+              label="Status"
+              value={gitComparison.workingTreeSummary.conflicted ? "Conflicted" : gitComparison.workingTreeSummary.unstaged ? "Unstaged" : "Clean"}
+              mono
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {gitComparisonLoading ? (
+        <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">Loading git comparison…</div>
+      ) : gitComparison ? gitView === "graph" ? (
+        gitComparison.ahead === 0 && gitComparison.behind === 0 ? (
+          <div className="theme-inline-panel p-4">
+            <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+              The branches are identical.
+            </div>
+          </div>
+        ) : (
+          <div className="matrix-diff-panel p-4">
+            <div className="overflow-auto">
+              <div className="matrix-diff-surface px-4 pb-4 pt-6">
+                <Gitgraph key={gitGraphKey} options={gitGraphOptions}>
+                  {(gitgraph) => {
+                    gitgraph.clear();
+
+                    const base = gitgraph.branch(gitComparison.baseBranch);
+
+                    if (gitComparison.mergeBase) {
+                      base.commit({
+                        subject: gitComparison.mergeBase.subject,
+                        hash: gitComparison.mergeBase.hash,
+                        author: gitComparison.mergeBase.authorName,
+                      });
+                    }
+
+                    const compare = base.branch(gitComparison.compareBranch);
+
+                    for (const commit of gitGraphData?.baseCommits ?? []) {
+                      base.commit({
+                        subject: commit.subject,
+                        hash: commit.hash,
+                        author: commit.authorName,
+                      });
+                    }
+
+                    for (const commit of gitGraphData?.compareCommits ?? []) {
+                      compare.commit({
+                        subject: commit.subject,
+                        hash: commit.hash,
+                        author: commit.authorName,
+                      });
+                    }
+                  }}
+                </Gitgraph>
+              </div>
+            </div>
+          </div>
+        )
+      ) : (
+        <div className="theme-inline-panel p-4">
+          <div className="flex flex-col gap-3">
+            <div className="grid gap-2 xl:grid-cols-[minmax(15rem,18rem)_minmax(11rem,13rem)_minmax(11rem,13rem)_auto_auto]">
+              <MatrixDropdown
+                label="View mode"
+                value={String(diffMode)}
+                options={diffModeOptions}
+                placeholder="Choose diff mode"
+                onChange={(value) => setDiffMode(Number(value) as DiffModeEnum)}
+              />
+              <MatrixDropdown
+                label="Theme"
+                value={diffTheme}
+                options={diffThemeOptions}
+                placeholder="Choose theme"
+                onChange={(value) => setDiffTheme(value as "light" | "dark")}
+              />
+              <MatrixDropdown
+                label="Font size"
+                value={String(diffFontSize)}
+                options={diffFontSizeOptions}
+                placeholder="Choose font size"
+                onChange={(value) => setDiffFontSize(Number(value))}
+              />
+              <button
+                type="button"
+                className={`matrix-button rounded-none px-3 py-2 text-sm ${diffWrap ? "theme-pill-emphasis theme-text-strong" : ""}`}
+                onClick={() => setDiffWrap((current) => !current)}
+              >
+                Wrap {diffWrap ? "on" : "off"}
+              </button>
+              <button
+                type="button"
+                className={`matrix-button rounded-none px-3 py-2 text-sm ${diffHighlight ? "theme-pill-emphasis theme-text-strong" : ""}`}
+                onClick={() => setDiffHighlight((current) => !current)}
+              >
+                Highlight {diffHighlight ? "on" : "off"}
+              </button>
+            </div>
+
+            {gitComparison.effectiveDiff ? isDiffTooLargeToRender ? (
+              <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
+                Diff is too large to render safely in the browser.
+                <div className="mt-2 font-mono text-xs theme-text-warning-soft">
+                  {parsedDiffFileCount} files, {gitDiffMetrics.lines.toLocaleString()} lines, {gitDiffMetrics.chars.toLocaleString()} chars
+                </div>
+              </div>
+            ) : gitDiffFiles.length ? (
+              <div className="space-y-4">
+                {gitDiffFiles.map((section) => (
+                  <div key={section.title} className="space-y-3">
+                    <div className="text-xs uppercase tracking-[0.18em] theme-text-emphasis">{section.title}</div>
+                    {section.files.map((file) => (
+                      <MatrixAccordion
+                        key={file.key}
+                        summary={(
+                          <div className="flex items-center justify-between gap-3 pr-3">
+                            <div className="min-w-0 font-mono text-xs theme-text-strong">{file.displayName}</div>
+                            <div className="text-[11px] theme-text-muted">{file.hunkCount} hunk{file.hunkCount === 1 ? "" : "s"}</div>
+                          </div>
+                        )}
+                      >
+                        <GitDiffAccordionContent
+                          file={file.file}
+                          diffMode={diffMode}
+                          diffTheme={diffTheme}
+                          diffWrap={diffWrap}
+                          diffHighlight={diffHighlight}
+                          diffFontSize={diffFontSize}
+                        />
+                      </MatrixAccordion>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
+                Diff data could not be parsed into file hunks for the visual viewer.
+              </div>
+            ) : (
+              <div className="px-4 py-4 theme-empty-note">No effective diff between these branches or in the selected worktree.</div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">
+          Select a worktree to load branch comparison details.
+        </div>
+      )}
+    </>
+  );
 
   const comparisonWorkspace = (
     <>
@@ -1363,146 +1572,7 @@ export function WorktreeDetail({
         ) : null}
       </div>
 
-      {gitComparisonLoading ? (
-        <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">Loading git comparison…</div>
-      ) : gitComparison ? gitView === "graph" ? (
-        gitComparison.ahead === 0 && gitComparison.behind === 0 ? (
-          <div className="theme-inline-panel p-4">
-            <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-              The branches are identical.
-            </div>
-          </div>
-        ) : (
-          <div className="matrix-diff-panel p-4">
-            <div className="overflow-auto">
-              <div className="matrix-diff-surface px-4 pb-4 pt-6">
-                <Gitgraph key={gitGraphKey} options={gitGraphOptions}>
-                  {(gitgraph) => {
-                    gitgraph.clear();
-
-                    const base = gitgraph.branch(gitComparison.baseBranch);
-
-                    if (gitComparison.mergeBase) {
-                      base.commit({
-                        subject: gitComparison.mergeBase.subject,
-                        hash: gitComparison.mergeBase.hash,
-                        author: gitComparison.mergeBase.authorName,
-                      });
-                    }
-
-                    const compare = base.branch(gitComparison.compareBranch);
-
-                    for (const commit of gitGraphData?.baseCommits ?? []) {
-                      base.commit({
-                        subject: commit.subject,
-                        hash: commit.hash,
-                        author: commit.authorName,
-                      });
-                    }
-
-                    for (const commit of gitGraphData?.compareCommits ?? []) {
-                      compare.commit({
-                        subject: commit.subject,
-                        hash: commit.hash,
-                        author: commit.authorName,
-                      });
-                    }
-                  }}
-                </Gitgraph>
-              </div>
-            </div>
-          </div>
-        )
-      ) : (
-        <div className="theme-inline-panel p-4">
-          <div className="flex flex-col gap-3">
-            <div className="grid gap-2 xl:grid-cols-[minmax(15rem,18rem)_minmax(11rem,13rem)_minmax(11rem,13rem)_auto_auto]">
-              <MatrixDropdown
-                label="View mode"
-                value={String(diffMode)}
-                options={diffModeOptions}
-                placeholder="Choose diff mode"
-                onChange={(value) => setDiffMode(Number(value) as DiffModeEnum)}
-              />
-              <MatrixDropdown
-                label="Theme"
-                value={diffTheme}
-                options={diffThemeOptions}
-                placeholder="Choose theme"
-                onChange={(value) => setDiffTheme(value as "light" | "dark")}
-              />
-              <MatrixDropdown
-                label="Font size"
-                value={String(diffFontSize)}
-                options={diffFontSizeOptions}
-                placeholder="Choose font size"
-                onChange={(value) => setDiffFontSize(Number(value))}
-              />
-              <button
-                type="button"
-                className={`matrix-button rounded-none px-3 py-2 text-sm ${diffWrap ? "theme-pill-emphasis theme-text-strong" : ""}`}
-                onClick={() => setDiffWrap((current) => !current)}
-              >
-                Wrap {diffWrap ? "on" : "off"}
-              </button>
-              <button
-                type="button"
-                className={`matrix-button rounded-none px-3 py-2 text-sm ${diffHighlight ? "theme-pill-emphasis theme-text-strong" : ""}`}
-                onClick={() => setDiffHighlight((current) => !current)}
-              >
-                Highlight {diffHighlight ? "on" : "off"}
-              </button>
-            </div>
-
-            {gitComparison.effectiveDiff ? isDiffTooLargeToRender ? (
-              <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
-                Diff is too large to render safely in the browser.
-                <div className="mt-2 font-mono text-xs theme-text-warning-soft">
-                  {parsedDiffFileCount} files, {gitDiffMetrics.lines.toLocaleString()} lines, {gitDiffMetrics.chars.toLocaleString()} chars
-                </div>
-              </div>
-            ) : gitDiffFiles.length ? (
-              <div className="space-y-4">
-                {gitDiffFiles.map((section) => (
-                  <div key={section.title} className="space-y-3">
-                    <div className="text-xs uppercase tracking-[0.18em] theme-text-emphasis">{section.title}</div>
-                    {section.files.map((file) => (
-                      <MatrixAccordion
-                        key={file.key}
-                        summary={(
-                          <div className="flex items-center justify-between gap-3 pr-3">
-                            <div className="min-w-0 font-mono text-xs theme-text-strong">{file.displayName}</div>
-                            <div className="text-[11px] theme-text-muted">{file.hunkCount} hunk{file.hunkCount === 1 ? "" : "s"}</div>
-                          </div>
-                        )}
-                      >
-                        <GitDiffAccordionContent
-                          file={file.file}
-                          diffMode={diffMode}
-                          diffTheme={diffTheme}
-                          diffWrap={diffWrap}
-                          diffHighlight={diffHighlight}
-                          diffFontSize={diffFontSize}
-                        />
-                      </MatrixAccordion>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
-                Diff data could not be parsed into file hunks for the visual viewer.
-              </div>
-            ) : (
-              <div className="px-4 py-4 theme-empty-note">No effective diff between these branches or in the selected worktree.</div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">
-          Select a worktree to load branch comparison details.
-        </div>
-      )}
+      {gitDiffView}
     </>
   );
 
@@ -1522,7 +1592,7 @@ export function WorktreeDetail({
         kind: "git-pull-request-review",
         label: "Git pull request review",
         location: {
-          tab: "git",
+          tab: "merge",
           branch: worktree.branch,
           gitBaseBranch: payload.baseBranch,
           documentId: payload.documentId,
@@ -1542,6 +1612,7 @@ export function WorktreeDetail({
         <div className="flex items-center gap-2 theme-divider border-b pb-4">
           <MatrixTabButton active={isEnvironmentTabActive} label={WORKTREE_ENVIRONMENT_TAB_LABEL} onClick={() => onTabChange("environment")} />
           <MatrixTabButton active={isGitTabActive} label="GIT" onClick={() => onTabChange("git")} />
+          <MatrixTabButton active={isMergeTabActive} label="MERGE" onClick={() => onTabChange("merge")} />
           <MatrixTabButton active={activeTab === "project-management"} label="Project management" onClick={() => onTabChange("project-management")} />
           <MatrixTabButton active={isAiLogTabActive} label="AI" onClick={() => onTabChange("ai-log")} />
         </div>
@@ -1881,6 +1952,10 @@ export function WorktreeDetail({
               />
             </div>
           </Suspense>
+        ) : isGitTabActive ? (
+          <div className="mt-4 space-y-4">
+            {gitDiffView}
+          </div>
         ) : (
           <div className="mt-4 space-y-4">
             <GitPullRequestPanel

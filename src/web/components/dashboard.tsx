@@ -745,7 +745,7 @@ export function Dashboard() {
   }, []);
 
   const navigateToGitSubTab = useCallback((tab: WorktreeGitSubTab, options?: { documentId?: string | null }) => {
-    navigateToTab("git");
+    navigateToTab("merge");
     setGitSubTab("pull-request");
     if (options && "documentId" in options) {
       setGitPullRequestDocumentId(options.documentId ?? null);
@@ -818,11 +818,22 @@ export function Dashboard() {
       {
         id: "nav-git",
         code: "ng",
-        title: "Open GIT pull request",
-        subtitle: "Jump to the combined review and branch comparison workspace.",
+        title: "Open GIT diff",
+        subtitle: "Jump to the branch diff and status view.",
         group: "Navigation",
-        keywords: ["git", "pull", "request", "review", "pr", "status", "changes", "diff"],
+        keywords: ["git", "diff", "branch", "status", "changes", "compare"],
         badgeLabel: activeTab === "git" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToTab("git"),
+      },
+      {
+        id: "nav-merge",
+        code: "nm",
+        title: "Open MERGE / Pull request tab",
+        subtitle: "Jump to the pull request review and merge workspace.",
+        group: "Navigation",
+        keywords: ["merge", "pull", "request", "review", "pr", "git"],
+        badgeLabel: activeTab === "merge" ? "Active" : undefined,
         badgeTone: "active",
         action: () => navigateToGitSubTab("pull-request"),
       },
