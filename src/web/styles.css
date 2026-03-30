@@ -602,6 +602,55 @@ body,
   }
 }
 
+/* Skeleton loading shimmer */
+@keyframes matrix-skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.matrix-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--rgb-base02) / 0.7) 25%,
+    rgb(var(--rgb-base03) / 0.35) 50%,
+    rgb(var(--rgb-base02) / 0.7) 75%
+  );
+  background-size: 200% 100%;
+  animation: matrix-skeleton-shimmer 1.6s ease-in-out infinite;
+  border-radius: 0;
+}
+
+/* Card loading overlay */
+.matrix-card-loading {
+  position: relative;
+  pointer-events: none;
+}
+
+.matrix-card-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgb(var(--rgb-base00) / 0.55);
+  backdrop-filter: blur(1px);
+  z-index: 1;
+}
+
+/* Inline spinner — smaller than pm-ai-spinner */
+.matrix-spinner-sm {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgb(var(--rgb-base0D) / 0.18);
+  border-top-color: rgb(var(--rgb-base0D) / 0.82);
+  border-radius: 999px;
+  animation: pm-ai-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
 .react-flow__node.pm-dependency-node,
 .react-flow__node-default.pm-dependency-node {
   min-width: 180px;

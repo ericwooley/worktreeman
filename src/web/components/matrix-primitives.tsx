@@ -202,3 +202,69 @@ export function MatrixModal({
 
   return createPortal(content, document.body);
 }
+
+/**
+ * A shimmer placeholder line for skeleton loading states.
+ * Use multiple stacked instances to suggest card content.
+ */
+export function MatrixSkeleton({
+  className = "",
+  heightClass = "h-3",
+  widthClass = "w-full",
+}: {
+  className?: string;
+  heightClass?: string;
+  widthClass?: string;
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`matrix-skeleton ${heightClass} ${widthClass} ${className}`}
+    />
+  );
+}
+
+/**
+ * Composable skeleton card that mimics a MatrixCard with a header and footer.
+ * Renders shimmer lines for title, description and a bottom metadata row.
+ */
+export function MatrixSkeletonCard({ className = "" }: { className?: string }) {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading…"
+      className={`border theme-border-subtle p-3 space-y-3 ${className}`}
+    >
+      {/* eyebrow */}
+      <MatrixSkeleton heightClass="h-2" widthClass="w-20" />
+      {/* title */}
+      <MatrixSkeleton heightClass="h-3" widthClass="w-3/4" />
+      {/* description line 1 */}
+      <MatrixSkeleton heightClass="h-2.5" widthClass="w-full" />
+      {/* description line 2 */}
+      <MatrixSkeleton heightClass="h-2.5" widthClass="w-5/6" />
+      {/* footer */}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <MatrixSkeleton heightClass="h-2" widthClass="w-24" />
+        <MatrixSkeleton heightClass="h-2" widthClass="w-16" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A small inline spinner that inherits the existing pm-ai-spin animation.
+ * Pair with a screen-reader label via aria-label on the wrapping element.
+ */
+export function MatrixSpinner({ label = "Loading…", className = "" }: { label?: string; className?: string }) {
+  return (
+    <span
+      role="status"
+      aria-label={label}
+      className={`inline-flex items-center gap-2 text-xs theme-text-muted ${className}`}
+    >
+      <span className="matrix-spinner-sm" aria-hidden="true" />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
