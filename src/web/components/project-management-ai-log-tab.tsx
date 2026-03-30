@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type {
   AiCommandJob,
   AiCommandLogEntry,
@@ -9,6 +9,8 @@ import type {
 import { marked } from "marked";
 import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSpinner } from "./matrix-primitives";
+import { LoadingOverlay } from "./loading";
+import { useItemLoading } from "../hooks/useItemLoading";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
 function getAiCommandLabel(commandId: "smart" | "simple") {
@@ -206,14 +208,14 @@ export function ProjectManagementAiLogTab({
 }: ProjectManagementAiLogTabProps) {
   const autoSelectedFileRef = useRef<string | null>(null);
   const refreshStatusLabel = formatAutoRefreshStatus(lastUpdatedAt);
-  const [loadingFileName, setLoadingFileName] = useState<string | null>(null);
+  const { loadingId: loadingFileName, startLoading, stopLoading } = useItemLoading();
 
   async function handleSelectLog(fileName: string, options?: { silent?: boolean }) {
-    setLoadingFileName(fileName);
+    startLoading(fileName);
     try {
       await onSelectLog(fileName, options);
     } finally {
-      setLoadingFileName(null);
+      stopLoading();
     }
   }
 
@@ -391,6 +393,7 @@ export function ProjectManagementAiLogTab({
                   type="button"
                   className="w-full text-left"
                   disabled={loadingFileName !== null}
+                  aria-busy={loadingFileName === log.fileName}
                   onClick={() => void handleSelectLog(log.fileName, { silent: true })}
                 >
                   <MatrixCard
@@ -399,6 +402,10 @@ export function ProjectManagementAiLogTab({
                     interactive
                     className={`p-3 ${loadingFileName === log.fileName ? "matrix-card-loading" : ""}`}
                   >
+                    <LoadingOverlay
+                      visible={loadingFileName === log.fileName}
+                      label={`Loading log ${log.fileName}…`}
+                    />
                     <MatrixCardHeader
                       eyebrow={<span className="theme-text-soft">{log.branch}</span>}
                       title={getOriginContextTitle(log.origin, log.branch)}
@@ -630,6 +637,7 @@ export function ProjectManagementAiLogTab({
                         type="button"
                         className="w-full text-left"
                         disabled={loadingFileName !== null}
+                        aria-busy={loadingFileName === entry.fileName}
                         onClick={() => void handleSelectLog(entry.fileName, { silent: true })}
                       >
                         <MatrixCard
@@ -637,6 +645,10 @@ export function ProjectManagementAiLogTab({
                           interactive
                           className={`p-3 ${loadingFileName === entry.fileName ? "matrix-card-loading" : ""}`}
                         >
+                          <LoadingOverlay
+                            visible={loadingFileName === entry.fileName}
+                            label={`Loading log ${entry.fileName}…`}
+                          />
                           <MatrixCardHeader
                             eyebrow={<span className="theme-text-soft">{entry.branch}</span>}
                             title={getOriginContextTitle(entry.origin, entry.branch)}

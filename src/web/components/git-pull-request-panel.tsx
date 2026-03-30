@@ -9,7 +9,7 @@ import type {
   WorktreeRecord,
 } from "@shared/types";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixBadge, MatrixDetailField } from "./matrix-primitives";
+import { MatrixBadge, MatrixDetailField, MatrixSpinner } from "./matrix-primitives";
 
 interface GitPullRequestPanelProps {
   worktree: WorktreeRecord | null;
@@ -579,7 +579,7 @@ export function GitPullRequestPanel({
             <div className="theme-inline-panel p-4">
               <p className="matrix-kicker">Recent activity</p>
               <div className="mt-4 space-y-3">
-                {history.length ? history.slice(0, 5).map((entry) => (
+                  {history.length ? history.slice(0, 5).map((entry) => (
                   <div key={`${entry.commitSha}:${entry.changeCount}`} className="border theme-border-subtle px-3 py-3 text-sm">
                     <div className="flex flex-wrap items-center gap-2 text-xs theme-text-soft">
                       <span className="font-semibold theme-text-strong">{summarizeHistoryAction(entry)}</span>
@@ -588,8 +588,17 @@ export function GitPullRequestPanel({
                     </div>
                   </div>
                 )) : (
-                  <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-                    {loading ? "Loading pull request activity..." : "No saved pull request activity yet."}
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note"
+                  >
+                    {loading ? (
+                      <span className="flex items-center gap-2">
+                        <MatrixSpinner label="Loading pull request activity…" />
+                        <span>Loading pull request activity…</span>
+                      </span>
+                    ) : "No saved pull request activity yet."}
                   </div>
                 )}
               </div>

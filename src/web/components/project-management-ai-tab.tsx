@@ -4,6 +4,7 @@ import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOri
 import { ProjectManagementAiLogTab } from "./project-management-ai-log-tab";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
+import { CardLoadingBadge } from "./loading";
 
 export type AiActivitySubTab = "log" | "active-worktrees";
 
@@ -247,7 +248,7 @@ export function ProjectManagementAiTab({
                 Track long-running AI work, inspect live mixed output, and jump back to where each run started.
               </p>
             </div>
-            {loading ? <MatrixBadge tone="warning">Loading</MatrixBadge> : null}
+            {loading ? <CardLoadingBadge label="Loading" compact /> : null}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
