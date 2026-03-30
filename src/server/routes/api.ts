@@ -175,6 +175,8 @@ const CONFIG_COMMIT_ENV = {
   GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
 };
 
+const AUTO_COMMIT_COMMAND_ID: AiCommandId = "simple";
+
 function createAiLogIdentifiers(branch: string, date = new Date()) {
   return {
     jobId: randomUUID(),
@@ -207,6 +209,23 @@ function createAiLogFileName(branch: string, date = new Date()): string {
 
 function runBackgroundTask(task: () => Promise<void>, onError: (error: unknown) => void): Promise<void> {
   return task().catch(onError);
+}
+
+function isCleanWorkingTreeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Working tree is clean.")
+    || message.includes("has no local changes to commit.");
+}
+
+function buildWorktreeGitEnv(config: WorktreeManagerConfig, worktree: WorktreeRecord, runtime?: WorktreeRuntime): NodeJS.ProcessEnv {
+  return runtime
+    ? buildRuntimeProcessEnv(runtime)
+    : {
+      ...process.env,
+      ...config.env,
+      WORKTREE_BRANCH: worktree.branch,
+      WORKTREE_PATH: worktree.worktreePath,
+    };
 }
 
 export function resolveAiLogsDir(repoRoot: string): string {
@@ -1402,6 +1421,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     renderedCommand: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
+    gitEnv?: NodeJS.ProcessEnv;
+    aiCommands?: AiCommandConfig;
     applyDocumentUpdateToDocumentId?: string | null;
     commentDocumentId?: string | null;
     commentRequestSummary?: string | null;
@@ -1486,48 +1507,77 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
     },
     writeLog: safeWriteAiRequestLog,
-    onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId
-      ? async ({ stdout, stderr }) => {
-        if (details.applyDocumentUpdateToDocumentId) {
-          const nextMarkdown = stdout.trim();
-          if (!nextMarkdown) {
-            throw new Error("AI command finished without returning updated markdown.");
-          }
-
-          const currentDocument = await getProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId);
-          await updateProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId, {
-            title: currentDocument.document.title,
-            summary: currentDocument.document.summary,
-            markdown: nextMarkdown,
-            tags: currentDocument.document.tags,
-            dependencies: currentDocument.document.dependencies,
-            status: currentDocument.document.status,
-            assignee: currentDocument.document.assignee,
-            archived: currentDocument.document.archived,
-          });
+    onComplete: async ({ stdout, stderr }) => {
+      if (details.applyDocumentUpdateToDocumentId) {
+        const nextMarkdown = stdout.trim();
+        if (!nextMarkdown) {
+          throw new Error("AI command finished without returning updated markdown.");
         }
 
-        if (details.commentDocumentId) {
-          try {
-            await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
-              body: buildWorktreeAiComment({
-                branch: details.branch,
-                commandId: details.commandId,
-                requestSummary: details.commentRequestSummary,
-                stdout,
-                stderr,
-              }),
-            });
-          } catch (error) {
-            logServerEvent("project-management-comment", "failed", {
+        const currentDocument = await getProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId);
+        await updateProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId, {
+          title: currentDocument.document.title,
+          summary: currentDocument.document.summary,
+          markdown: nextMarkdown,
+          tags: currentDocument.document.tags,
+          dependencies: currentDocument.document.dependencies,
+          status: currentDocument.document.status,
+          assignee: currentDocument.document.assignee,
+          archived: currentDocument.document.archived,
+        });
+      }
+
+      if (details.commentDocumentId) {
+        try {
+          await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
+            body: buildWorktreeAiComment({
               branch: details.branch,
-              documentId: details.commentDocumentId,
-              error: error instanceof Error ? error.message : String(error),
-            }, "error");
-          }
+              commandId: details.commandId,
+              requestSummary: details.commentRequestSummary,
+              stdout,
+              stderr,
+            }),
+          });
+        } catch (error) {
+          logServerEvent("project-management-comment", "failed", {
+            branch: details.branch,
+            documentId: details.commentDocumentId,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
         }
       }
-      : undefined,
+
+      if (!details.applyDocumentUpdateToDocumentId && details.aiCommands && details.gitEnv) {
+        try {
+          const commit = await commitGitChanges({
+            repoRoot: options.repoRoot,
+            branch: details.branch,
+            aiCommands: details.aiCommands,
+            commandId: AUTO_COMMIT_COMMAND_ID,
+            env: details.gitEnv,
+          });
+          logServerEvent("ai-command", "auto-commit-completed", {
+            branch: details.branch,
+            commandId: AUTO_COMMIT_COMMAND_ID,
+            commitSha: commit.commitSha,
+            message: commit.message,
+          });
+        } catch (error) {
+          if (isCleanWorkingTreeError(error)) {
+            logServerEvent("ai-command", "auto-commit-skipped-clean-worktree", {
+              branch: details.branch,
+            });
+            return;
+          }
+
+          logServerEvent("ai-command", "auto-commit-failed", {
+            branch: details.branch,
+            commandId: AUTO_COMMIT_COMMAND_ID,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }
+      }
+    },
   });
 
   const enqueueProjectManagementDocumentAiJob = async (details: {
@@ -2993,6 +3043,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
+      const gitEnv = buildWorktreeGitEnv(config, worktree, runtime);
 
       renderedCommand = template;
       const runDetails = {
@@ -3004,6 +3055,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         renderedCommand,
         worktreePath,
         env,
+        gitEnv,
+        aiCommands: config.aiCommands,
         applyDocumentUpdateToDocumentId: explicitDocumentId,
         commentDocumentId,
         commentRequestSummary: explicitDocumentId ? null : body.input,
