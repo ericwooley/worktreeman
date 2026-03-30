@@ -7,6 +7,7 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
     selectedBranch: "feature-one",
     activeTab: "environment",
     aiActivitySubTab: "log",
+    selectedAiLogFile: null,
     environmentSubTab: "terminal",
     gitSubTab: "pull-request",
     gitView: "graph",
@@ -15,12 +16,15 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
     projectManagementSubTab: "board",
     projectManagementSelectedDocumentId: null,
     projectManagementDocumentViewMode: "document",
+    projectManagementEditFormTab: "write",
+    projectManagementCreateFormTab: "write",
   });
 
   assert.deepEqual(readDashboardUrlState("?tab=background&terminal=open"), {
     selectedBranch: null,
     activeTab: "environment",
     aiActivitySubTab: "log",
+    selectedAiLogFile: null,
     environmentSubTab: "background",
     gitSubTab: "pull-request",
     gitView: "graph",
@@ -29,6 +33,8 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
     projectManagementSubTab: "board",
     projectManagementSelectedDocumentId: null,
     projectManagementDocumentViewMode: "document",
+    projectManagementEditFormTab: "write",
+    projectManagementCreateFormTab: "write",
   });
 });
 
@@ -39,6 +45,7 @@ test("readDashboardUrlState reads nested environment and project management stat
       selectedBranch: null,
       activeTab: "environment",
       aiActivitySubTab: "log",
+      selectedAiLogFile: null,
       environmentSubTab: "background",
       gitSubTab: "pull-request",
       gitView: "diff",
@@ -47,6 +54,8 @@ test("readDashboardUrlState reads nested environment and project management stat
       projectManagementSubTab: "document",
       projectManagementSelectedDocumentId: "doc-7",
       projectManagementDocumentViewMode: "edit",
+      projectManagementEditFormTab: "write",
+      projectManagementCreateFormTab: "write",
     },
   );
 });
@@ -58,6 +67,7 @@ test("readDashboardUrlState reads the top-level AI tab and active-worktrees sub 
       selectedBranch: null,
       activeTab: "ai-log",
       aiActivitySubTab: "active-worktrees",
+      selectedAiLogFile: null,
       environmentSubTab: "terminal",
       gitSubTab: "pull-request",
       gitView: "graph",
@@ -66,10 +76,34 @@ test("readDashboardUrlState reads the top-level AI tab and active-worktrees sub 
       projectManagementSubTab: "history",
       projectManagementSelectedDocumentId: "doc-9",
       projectManagementDocumentViewMode: "edit",
+      projectManagementEditFormTab: "write",
+      projectManagementCreateFormTab: "write",
     },
   );
 });
 
 test("readDashboardUrlState defaults AI sub tab to log", () => {
   assert.equal(readDashboardUrlState("?tab=ai-log").aiActivitySubTab, "log");
+});
+
+test("readDashboardUrlState reads project management editor tab params", () => {
+  assert.deepEqual(
+    readDashboardUrlState("?tab=project-management&pmTab=document&pmDoc=doc-7&pmView=edit&pmEditTab=preview&pmCreateTab=preview&aiLog=job-1.log"),
+    {
+      selectedBranch: null,
+      activeTab: "project-management",
+      aiActivitySubTab: "log",
+      selectedAiLogFile: "job-1.log",
+      environmentSubTab: "terminal",
+      gitSubTab: "pull-request",
+      gitView: "graph",
+      gitPullRequestDocumentId: null,
+      isTerminalVisible: false,
+      projectManagementSubTab: "document",
+      projectManagementSelectedDocumentId: "doc-7",
+      projectManagementDocumentViewMode: "edit",
+      projectManagementEditFormTab: "preview",
+      projectManagementCreateFormTab: "preview",
+    },
+  );
 });

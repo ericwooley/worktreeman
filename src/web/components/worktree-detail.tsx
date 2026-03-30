@@ -22,13 +22,14 @@ import type {
   UpdateProjectManagementUsersRequest,
   WorktreeRecord,
 } from "@shared/types";
+import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { getTmuxSessionName } from "../lib/tmux";
 import { startSequentialPoll } from "../lib/sequential-poll";
 import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabButton } from "./matrix-primitives";
+import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabs } from "./matrix-primitives";
 import { WorktreeTerminal } from "./worktree-terminal";
 import {
   BACKGROUND_COMMAND_CONTROL_DESCRIPTION,
@@ -401,6 +402,8 @@ interface WorktreeDetailProps {
   projectManagementActiveSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
+  projectManagementEditFormTab: ProjectManagementDocumentFormViewMode;
+  projectManagementCreateFormTab: ProjectManagementDocumentFormViewMode;
   projectManagementDocument: ProjectManagementDocument | null;
   projectManagementHistory: ProjectManagementHistoryEntry[];
   projectManagementLoading: boolean;
@@ -419,6 +422,8 @@ interface WorktreeDetailProps {
   projectManagementDocumentAiJob: AiCommandJob | null;
   onProjectManagementSubTabChange: (tab: ProjectManagementSubTab) => void;
   onProjectManagementDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
+  onProjectManagementEditFormTabChange: (mode: ProjectManagementDocumentFormViewMode) => void;
+  onProjectManagementCreateFormTabChange: (mode: ProjectManagementDocumentFormViewMode) => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementUsers: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
@@ -535,6 +540,8 @@ export function WorktreeDetail({
   projectManagementActiveSubTab,
   projectManagementSelectedDocumentId,
   projectManagementDocumentViewMode,
+  projectManagementEditFormTab,
+  projectManagementCreateFormTab,
   projectManagementDocument,
   projectManagementHistory,
   projectManagementLoading,
@@ -553,6 +560,8 @@ export function WorktreeDetail({
   projectManagementDocumentAiJob,
   onProjectManagementSubTabChange,
   onProjectManagementDocumentViewModeChange,
+  onProjectManagementEditFormTabChange,
+  onProjectManagementCreateFormTabChange,
   onLoadProjectManagementDocuments,
   onLoadProjectManagementUsers,
   onLoadProjectManagementDocument,
@@ -1236,8 +1245,16 @@ export function WorktreeDetail({
               emptyLabel="No branches available"
               onChange={setSelectedGitBaseBranch}
             />
-            <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => onGitViewChange("graph")} />
-            <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => onGitViewChange("diff")} />
+            <MatrixTabs
+              groupId="worktree-diff-view-tabs"
+              ariaLabel="Git view tabs"
+              activeTabId={gitView}
+              onChange={onGitViewChange}
+              tabs={[
+                { id: "graph", label: "Graph" },
+                { id: "diff", label: "Diff" },
+              ]}
+            />
             <button
               type="button"
               className="matrix-button rounded-none px-3 py-2 text-sm"
@@ -1442,8 +1459,16 @@ export function WorktreeDetail({
               emptyLabel="No branches available"
               onChange={setSelectedGitBaseBranch}
             />
-            <MatrixTabButton active={gitView === "graph"} label="Graph" onClick={() => onGitViewChange("graph")} />
-            <MatrixTabButton active={gitView === "diff"} label="Diff" onClick={() => onGitViewChange("diff")} />
+            <MatrixTabs
+              groupId="worktree-merge-view-tabs"
+              ariaLabel="Git view tabs"
+              activeTabId={gitView}
+              onChange={onGitViewChange}
+              tabs={[
+                { id: "graph", label: "Graph" },
+                { id: "diff", label: "Diff" },
+              ]}
+            />
             <button
               type="button"
               className="matrix-button rounded-none px-3 py-2 text-sm"
@@ -1613,20 +1638,34 @@ export function WorktreeDetail({
   return (
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
-        <div className="flex items-center gap-2 theme-divider border-b pb-4">
-          <MatrixTabButton active={isEnvironmentTabActive} label={WORKTREE_ENVIRONMENT_TAB_LABEL} onClick={() => onTabChange("environment")} />
-          <MatrixTabButton active={isGitTabActive} label="GIT" onClick={() => onTabChange("git")} />
-          <MatrixTabButton active={isMergeTabActive} label="MERGE" onClick={() => onTabChange("merge")} />
-          <MatrixTabButton active={activeTab === "project-management"} label="Project management" onClick={() => onTabChange("project-management")} />
-          <MatrixTabButton active={isAiLogTabActive} label="AI" onClick={() => onTabChange("ai-log")} />
-        </div>
+        <MatrixTabs
+          groupId="worktree-detail-tabs"
+          ariaLabel="Worktree detail tabs"
+          activeTabId={activeTab}
+          onChange={onTabChange}
+          className="theme-divider border-b pb-4"
+          tabs={[
+            { id: "environment", label: WORKTREE_ENVIRONMENT_TAB_LABEL },
+            { id: "git", label: "GIT" },
+            { id: "merge", label: "MERGE" },
+            { id: "project-management", label: "Project management" },
+            { id: "ai-log", label: "AI" },
+          ]}
+        />
 
         {isEnvironmentTabActive ? (
           <>
-            <div className="mt-4 flex items-center gap-2 theme-divider border-b pb-4">
-              <MatrixTabButton active={environmentSubTab === "terminal"} label={WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL} onClick={() => onEnvironmentSubTabChange("terminal")} />
-              <MatrixTabButton active={environmentSubTab === "background"} label={WORKTREE_ENVIRONMENT_BACKGROUND_SUB_TAB_LABEL} onClick={() => onEnvironmentSubTabChange("background")} />
-            </div>
+            <MatrixTabs
+              groupId="worktree-environment-tabs"
+              ariaLabel="Worktree environment tabs"
+              activeTabId={environmentSubTab}
+              onChange={onEnvironmentSubTabChange}
+              className="mt-4 theme-divider border-b pb-4"
+              tabs={[
+                { id: "terminal", label: WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL },
+                { id: "background", label: WORKTREE_ENVIRONMENT_BACKGROUND_SUB_TAB_LABEL },
+              ]}
+            />
 
             {environmentSubTab === "terminal" ? (
               <>
@@ -1902,6 +1941,8 @@ export function WorktreeDetail({
               activeSubTab={projectManagementActiveSubTab}
               selectedDocumentId={projectManagementSelectedDocumentId}
               documentViewMode={projectManagementDocumentViewMode}
+              editFormTab={projectManagementEditFormTab}
+              createFormTab={projectManagementCreateFormTab}
               document={projectManagementDocument}
               history={projectManagementHistory}
               loading={projectManagementLoading}
@@ -1916,6 +1957,8 @@ export function WorktreeDetail({
               onSelectWorktree={onSelectWorktree}
               onSubTabChange={onProjectManagementSubTabChange}
               onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
+              onEditFormTabChange={onProjectManagementEditFormTabChange}
+              onCreateFormTabChange={onProjectManagementCreateFormTabChange}
               onSelectDocument={onLoadProjectManagementDocument}
               onCreateDocument={onCreateProjectManagementDocument}
               onUpdateDocument={onUpdateProjectManagementDocument}
