@@ -5,6 +5,7 @@ import { ProjectManagementAiLogTab } from "./project-management-ai-log-tab";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { CardLoadingBadge } from "./loading";
+import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
 
 export type AiActivitySubTab = "log" | "active-worktrees";
 
@@ -18,34 +19,6 @@ function getOriginTitle(origin: AiCommandOrigin | null | undefined) {
 
 function getOriginDescription(origin: AiCommandOrigin | null | undefined) {
   return origin?.description ?? "This run does not include a saved start location.";
-}
-
-function getStatusTone(status: AiCommandJob["status"]) {
-  if (status === "running") {
-    return "warning" as const;
-  }
-
-  if (status === "failed") {
-    return "danger" as const;
-  }
-
-  return "active" as const;
-}
-
-function getAiOutputText(job: AiCommandJob): string {
-  if (job.stdout && job.stderr) {
-    return `${job.stdout}\n\n--- stderr ---\n${job.stderr}`;
-  }
-
-  if (job.stdout) {
-    return job.stdout;
-  }
-
-  if (job.stderr) {
-    return job.stderr;
-  }
-
-  return job.status === "running" ? "Waiting for live output..." : "No output captured.";
 }
 
 function formatRuntimeDuration(startedAt: string, now: number) {
@@ -84,91 +57,6 @@ interface ProjectManagementAiTabProps {
   onCancelJob: (branch: string) => Promise<AiCommandJob | null>;
   onOpenOrigin: (origin: AiCommandOrigin) => void | Promise<void>;
   onRetry?: () => void | Promise<void>;
-}
-
-// Define the props for ProjectManagementAiOutputViewer above its definition
-interface ProjectManagementAiOutputViewerProps {
-  source: string;
-  job: AiCommandJob;
-  summary: string;
-  expanded?: boolean;
-  onCancel: () => void;
-  onOpenModal?: () => void;
-}
-
-function ProjectManagementAiOutputViewer({
-  source,
-  job,
-  summary,
-  expanded = false,
-  onCancel,
-  onOpenModal,
-}: ProjectManagementAiOutputViewerProps) {
-  const running = job.status === "running";
-  const title = source === "worktree" ? "Worktree AI" : "Document AI";
-  const description = source === "worktree"
-    ? running
-      ? `Streaming live output from ${job.branch} while the worktree run is active.`
-      : summary
-    : running
-      ? `Updating the saved document in ${job.branch}.`
-      : summary;
-
-  return (
-    <div className={`pm-ai-output-shell border theme-border-subtle ${running ? "pm-ai-output-shell-running" : ""} ${expanded ? "p-5" : "p-4"}`}>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`pm-ai-live-orb ${running ? "pm-ai-live-orb-running" : ""}`} aria-hidden="true" />
-            <p className="matrix-kicker">{title}</p>
-            <MatrixBadge tone={getStatusTone(job.status)} compact>{running ? "live" : job.status}</MatrixBadge>
-            <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
-            <MatrixBadge tone="neutral" compact>{job.branch}</MatrixBadge>
-            {job.pid ? <MatrixBadge tone="neutral" compact>{`PID ${job.pid}`}</MatrixBadge> : null}
-          </div>
-          <h3 className={`mt-2 font-semibold theme-text-strong ${expanded ? "text-xl" : "text-lg"}`}>
-            {running ? `${title} is working` : `${title} output`}
-          </h3>
-          {description ? <p className="mt-1 text-sm theme-text-muted">{description}</p> : null}
-          {summary ? <p className="mt-2 text-xs theme-text-soft">{summary}</p> : null}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {running ? (
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              onClick={onCancel}
-            >
-              Cancel AI
-            </button>
-          ) : null}
-          {onOpenModal ? (
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              onClick={onOpenModal}
-            >
-              Open output modal
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {running ? (
-        <div className="pm-ai-output-activity mt-4" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
-      ) : null}
-
-      <pre className={`pm-ai-output-pre mt-4 overflow-auto px-4 py-4 font-mono text-xs leading-6 ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
-        {getAiOutputText(job)}
-      </pre>
-    </div>
-  );
 }
 
 export function ProjectManagementAiTab({
