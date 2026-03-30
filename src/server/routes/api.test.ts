@@ -1088,6 +1088,110 @@ test("AI command runs persist durable log entries without config-worktree file l
   }
 });
 
+test("worktree AI run auto-commits leftover dirty files when it completes", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-auto-commit" });
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 5111, stdout: "working\n", stderr: "" },
+    { status: "stopped", pid: 5111, stdout: "working\ndone\n", stderr: "", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "leftover.txt"), "left behind\n", "utf8");
+
+    const response = await server.fetch(`/api/worktrees/feature-ai-auto-commit/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "finish the task" }),
+    });
+
+    assert.equal(response.status, 200);
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.some((entry) => entry.branch === "feature-ai-auto-commit" && entry.status === "completed");
+    });
+
+    const latestSubject = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: feature.worktreePath });
+    assert.equal(latestSubject.stdout.trim(), "commit me");
+
+    const status = await runCommand("git", ["status", "--short"], { cwd: feature.worktreePath });
+    assert.equal(status.stdout.trim(), "");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("worktree AI run does not create an extra commit when the worktree stays clean", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-auto-commit-clean" });
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 5222, stdout: "working\n", stderr: "" },
+    { status: "stopped", pid: 5222, stdout: "working\ndone\n", stderr: "", exitCode: 0 },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const beforeHead = await runCommand("git", ["rev-parse", "HEAD"], { cwd: feature.worktreePath });
+
+    const response = await server.fetch(`/api/worktrees/feature-ai-auto-commit-clean/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "finish the clean task" }),
+    });
+
+    assert.equal(response.status, 200);
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.some((entry) => entry.branch === "feature-ai-auto-commit-clean" && entry.status === "completed");
+    });
+
+    const afterHead = await runCommand("git", ["rev-parse", "HEAD"], { cwd: feature.worktreePath });
+    assert.equal(afterHead.stdout.trim(), beforeHead.stdout.trim());
+
+    const status = await runCommand("git", ["status", "--short"], { cwd: feature.worktreePath });
+    assert.equal(status.stdout.trim(), "");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("AI command settings save writes both schema hints and aiCommands", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);

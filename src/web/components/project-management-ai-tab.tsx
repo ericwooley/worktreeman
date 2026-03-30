@@ -3,7 +3,7 @@ import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOri
 
 import { ProjectManagementAiLogTab } from "./project-management-ai-log-tab";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
-import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabButton } from "./matrix-primitives";
+import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { CardLoadingBadge } from "./loading";
 
 export type AiActivitySubTab = "log" | "active-worktrees";
@@ -227,13 +227,24 @@ export function ProjectManagementAiTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 theme-divider border-b pb-4">
-        <MatrixTabButton active={activeSubTab === "log"} label="AI log" onClick={() => onSubTabChange("log")} />
-        <MatrixTabButton active={activeSubTab === "active-worktrees"} label="Active AI Worktrees" onClick={() => onSubTabChange("active-worktrees")} />
-      </div>
+      <MatrixTabs
+        groupId="project-management-ai-activity"
+        ariaLabel="Project management AI activity tabs"
+        activeTabId={activeSubTab}
+        onChange={onSubTabChange}
+        className="theme-divider border-b pb-4"
+        tabs={[
+          { id: "log", label: "AI log", panelId: getMatrixTabPanelId("project-management-ai-activity", "log") },
+          { id: "active-worktrees", label: "Active AI Worktrees", panelId: getMatrixTabPanelId("project-management-ai-activity", "active-worktrees") },
+        ]}
+      />
 
       {activeSubTab === "active-worktrees" ? (
-        <>
+        <div
+          id={getMatrixTabPanelId("project-management-ai-activity", "active-worktrees")}
+          role="tabpanel"
+          aria-labelledby="project-management-ai-activity-active-worktrees-tab"
+        >
           <div className="grid gap-3 md:grid-cols-3">
             <MatrixMetric label="Running jobs" value={String(runningJobs.length)} />
             <MatrixMetric label="Active worktrees" value={String(activeWorktreeCount)} />
@@ -344,20 +355,26 @@ export function ProjectManagementAiTab({
               )}
             </div>
           </div>
-        </>
+        </div>
       ) : (
-        <ProjectManagementAiLogTab
-          logs={logs}
-          logDetail={logDetail}
-          loading={loading}
-          error={error}
-          lastUpdatedAt={lastUpdatedAt}
-          runningJobs={runningJobs}
-          onSelectLog={onSelectLog}
-          onCancelJob={onCancelJob}
-          onOpenOrigin={onOpenOrigin}
-          onRetry={onRetry}
-        />
+        <div
+          id={getMatrixTabPanelId("project-management-ai-activity", "log")}
+          role="tabpanel"
+          aria-labelledby="project-management-ai-activity-log-tab"
+        >
+          <ProjectManagementAiLogTab
+            logs={logs}
+            logDetail={logDetail}
+            loading={loading}
+            error={error}
+            lastUpdatedAt={lastUpdatedAt}
+            runningJobs={runningJobs}
+            onSelectLog={onSelectLog}
+            onCancelJob={onCancelJob}
+            onOpenOrigin={onOpenOrigin}
+            onRetry={onRetry}
+          />
+        </div>
       )}
     </div>
   );

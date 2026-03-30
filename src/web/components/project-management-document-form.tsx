@@ -1,8 +1,8 @@
-import { Suspense, lazy, useMemo, type ReactNode } from "react";
+import { Suspense, lazy, useMemo, useRef, type ReactNode } from "react";
 import { marked } from "marked";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixTabButton } from "./matrix-primitives";
+import { MatrixTabs } from "./matrix-primitives";
 
 const ProjectManagementMonacoEditor = lazy(async () => {
   const module = await import("./project-management-monaco-editor");
@@ -12,6 +12,7 @@ const ProjectManagementMonacoEditor = lazy(async () => {
 export type ProjectManagementDocumentFormViewMode = "write" | "preview";
 
 interface ProjectManagementDocumentFormProps {
+  tabsId: string;
   mode: "create" | "edit";
   title: string;
   summary: string;
@@ -35,41 +36,11 @@ interface ProjectManagementDocumentFormProps {
   onSubmit: () => Promise<void>;
   sidebarFooter?: React.ReactNode;
   editorBlockedState?: React.ReactNode;
-  // New prop for editing signal
   onEditingStateChange?: (editing: boolean) => void;
 }
 
-// Added isEditing prop support
-
-interface ProjectManagementDocumentFormProps {
-  mode: "create" | "edit";
-  title: string;
-  summary: string;
-  tags: string;
-  markdown: string;
-  status: string;
-  assignee: string;
-  statuses: string[];
-  saving: boolean;
-  disabled?: boolean;
-  showMetadataFields?: boolean;
-  submitDisabled?: boolean;
-  viewMode: ProjectManagementDocumentFormViewMode;
-  onViewModeChange: (value: ProjectManagementDocumentFormViewMode) => void;
-  onTitleChange: (value: string) => void;
-  onSummaryChange: (value: string) => void;
-  onTagsChange: (value: string) => void;
-  onMarkdownChange: (value: string) => void;
-  onStatusChange: (value: string) => void;
-  onAssigneeChange: (value: string) => void;
-  onSubmit: () => Promise<void>;
-  sidebarFooter?: ReactNode;
-  editorBlockedState?: ReactNode;
-}
-
-import { useRef } from "react";
-
 export function ProjectManagementDocumentForm({
+  tabsId,
   mode,
   title,
   summary,
@@ -106,7 +77,6 @@ export function ProjectManagementDocumentForm({
     [statuses],
   );
 
-  // Editing state debounce logic
   const editingTimeout = useRef<NodeJS.Timeout | null>(null);
   function triggerEditing(editing: boolean) {
     if (!onEditingStateChange) return;
@@ -193,10 +163,16 @@ export function ProjectManagementDocumentForm({
             <span className="text-xs uppercase tracking-[0.18em] theme-text-soft">
               {mode === "create" ? "Initial document" : "Document body"}
             </span>
-            <div className="flex flex-wrap gap-2">
-              <MatrixTabButton active={viewMode === "write"} label="Write" onClick={() => onViewModeChange("write")} />
-              <MatrixTabButton active={viewMode === "preview"} label="Preview" onClick={() => onViewModeChange("preview")} />
-            </div>
+            <MatrixTabs
+              groupId={tabsId}
+              ariaLabel={mode === "create" ? "Create document editor tabs" : "Edit document editor tabs"}
+              activeTabId={viewMode}
+              onChange={onViewModeChange}
+              tabs={[
+                { id: "write", label: "Write" },
+                { id: "preview", label: "Preview" },
+              ]}
+            />
           </div>
 
           {editorBlockedState ?? (viewMode === "preview" ? (

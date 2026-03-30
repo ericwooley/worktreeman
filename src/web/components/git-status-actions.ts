@@ -1,8 +1,17 @@
+export function getResolvableConflictCount(options: {
+  workingTreeConflicts: number;
+  mergeIntoWorktreeConflicts: number;
+}) {
+  return options.workingTreeConflicts > 0
+    ? options.workingTreeConflicts
+    : options.mergeIntoWorktreeConflicts;
+}
+
 export function getAiResolveButtonState(options: {
   hasWorktreeBranch: boolean;
   gitComparisonLoading: boolean;
   mergeConflictAiRunning: boolean;
-  workingTreeConflicts: number;
+  resolvableConflicts: number;
 }) {
   if (!options.hasWorktreeBranch) {
     return {
@@ -28,7 +37,7 @@ export function getAiResolveButtonState(options: {
     };
   }
 
-  if (options.workingTreeConflicts === 0) {
+  if (options.resolvableConflicts === 0) {
     return {
       disabled: true,
       title: "No git conflicts are available to resolve.",

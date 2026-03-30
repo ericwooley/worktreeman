@@ -504,11 +504,25 @@ function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiComm
   return (aiCommands[commandId] ?? "").trim();
 }
 
+type CommitMessageStyle = "default" | "short";
+
 function quoteShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function formatCommitMessagePrompt(options: { branch: string; baseBranch: string }): string {
+function formatCommitMessagePrompt(options: { branch: string; baseBranch: string; style?: CommitMessageStyle }): string {
+  if (options.style === "short") {
+    return [
+      `Write a concise git commit message for the current changes on branch ${options.branch} relative to ${options.baseBranch}.`,
+      "Inspect the repository state yourself, including staged, unstaged, and untracked changes as needed.",
+      "Return only the final git commit message text as plain text.",
+      "Use a single short subject line no longer than 50 characters.",
+      "Focus on why the change exists.",
+      "Do not use markdown, bullets, quotes, prefixes, or code fences.",
+      "Avoid mentioning generated output, AI, or the prompt.",
+    ].join("\n");
+  }
+
   return [
     `Write a concise git commit message for the current changes on branch ${options.branch} relative to ${options.baseBranch}.`,
     "Inspect the repository state yourself, including staged, unstaged, and untracked changes as needed.",
@@ -519,8 +533,8 @@ function formatCommitMessagePrompt(options: { branch: string; baseBranch: string
   ].join("\n");
 }
 
-function normalizeCommitMessage(raw: string): string {
-  return raw
+function normalizeCommitMessage(raw: string, style: CommitMessageStyle = "default"): string {
+  const normalized = raw
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .split("\n")
@@ -528,6 +542,12 @@ function normalizeCommitMessage(raw: string): string {
     .filter(Boolean)
     .join("\n")
     .trim();
+
+  if (style === "short") {
+    return normalized.split("\n")[0]?.slice(0, 50).trim() ?? "";
+  }
+
+  return normalized;
 }
 
 function parseCommitLines(stdout: string): GitCompareCommit[] {
@@ -753,6 +773,7 @@ async function generateCommitMessage(options: {
   aiCommands: AiCommandConfig;
   commandId: AiCommandId;
   env: NodeJS.ProcessEnv;
+  style?: CommitMessageStyle;
 }): Promise<string> {
   const template = resolveAiCommandTemplate(options.aiCommands, options.commandId);
   if (!template) {
@@ -766,12 +787,13 @@ async function generateCommitMessage(options: {
   const prompt = formatCommitMessagePrompt({
     branch: options.branch,
     baseBranch: options.baseBranch,
+    style: options.style,
   });
   const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", template], {
     cwd: options.worktreePath,
     env: { ...options.env, WTM_AI_INPUT: prompt },
   });
-  const message = normalizeCommitMessage(stdout);
+  const message = normalizeCommitMessage(stdout, options.style ?? "default");
   if (!message) {
     throw new Error("AI did not return a commit message.");
   }
@@ -1033,6 +1055,7 @@ export async function commitGitChanges(options: {
   commandId: AiCommandId;
   env: NodeJS.ProcessEnv;
   message?: string;
+  messageStyle?: CommitMessageStyle;
 }): Promise<CommitGitChangesResponse> {
   const normalizedBranch = parseGitBranchName(options.branch);
   if (!normalizedBranch) {
@@ -1052,7 +1075,7 @@ export async function commitGitChanges(options: {
   }
 
   const message = options.message?.trim()
-    ? normalizeCommitMessage(options.message)
+    ? normalizeCommitMessage(options.message, options.messageStyle ?? "default")
     : await generateCommitMessage({
       worktreePath: worktree.worktreePath,
       branch: normalizedBranch,
@@ -1060,6 +1083,7 @@ export async function commitGitChanges(options: {
       aiCommands: options.aiCommands,
       commandId: options.commandId,
       env: options.env,
+      style: options.messageStyle,
     });
 
   if (!message) {
@@ -1086,6 +1110,21 @@ export async function commitGitChanges(options: {
     commitSha: commitSha.trim(),
     comparison: await getGitComparison(options.repoRoot, normalizedBranch, baseBranch),
   };
+}
+
+export async function autoCommitGitChanges(options: {
+  repoRoot: string;
+  branch: string;
+  baseBranch?: string;
+  aiCommands: AiCommandConfig;
+  env: NodeJS.ProcessEnv;
+}): Promise<CommitGitChangesResponse> {
+  const commandId = resolveAiCommandTemplate(options.aiCommands, "simple") ? "simple" : "smart";
+  return commitGitChanges({
+    ...options,
+    commandId,
+    messageStyle: "short",
+  });
 }
 
 export async function generateGitCommitMessage(options: {
