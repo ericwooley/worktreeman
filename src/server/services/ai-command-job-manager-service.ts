@@ -3,6 +3,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { PgBoss } from "pg-boss";
 import type { AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
+import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 
 const PROJECT_MANAGEMENT_AI_QUEUE = "project-management-ai-update";
 const JOB_START_TIMEOUT_MS = 10000;
@@ -54,6 +55,16 @@ function toSerializableEnv(env: Record<string, string>) {
   );
 }
 
+function summarizeQueuePayload(payload: ProjectManagementAiQueuePayload) {
+  return {
+    branch: payload.branch,
+    documentId: payload.documentId,
+    commandId: payload.commandId,
+    origin: payload.origin?.kind ?? null,
+    worktreePath: payload.worktreePath,
+  };
+}
+
 async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<ManagedAiCommandJobQueue> {
   const existing = managedQueues.get(options.repoRoot);
   if (existing) {
@@ -87,7 +98,10 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
   const startedJobs = new Map<string, AiCommandJob>();
   const readyPromise = (async () => {
     boss.on("error", (error) => {
-      console.error("[ai-jobs] pg-boss error", error);
+      logServerEvent("ai-job-queue", "pg-boss-error", {
+        repoRoot: options.repoRoot,
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
     });
     await boss.start();
     await boss.createQueue(PROJECT_MANAGEMENT_AI_QUEUE);
@@ -96,6 +110,12 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
       { pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS },
       async (jobs) => {
         for (const job of jobs) {
+          const startedAt = Date.now();
+          logServerEvent("ai-job-queue", "dequeued", {
+            repoRoot: options.repoRoot,
+            queueJobId: job.id,
+            ...summarizeQueuePayload(job.data),
+          });
           try {
             const notifyStarted = (startedJob: AiCommandJob) => {
               const waiter = startWaiters.get(job.id);
@@ -116,6 +136,12 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
                 return Promise.resolve(startedJob);
               },
             });
+            logServerEvent("ai-job-queue", "completed", {
+              repoRoot: options.repoRoot,
+              queueJobId: job.id,
+              ...summarizeQueuePayload(job.data),
+              duration: formatDurationMs(Date.now() - startedAt),
+            });
           } catch (error) {
             const waiter = startWaiters.get(job.id);
             if (waiter) {
@@ -123,6 +149,13 @@ async function ensureJobManager(options: AiCommandJobManagerOptions): Promise<Ma
               startWaiters.delete(job.id);
               waiter.reject(error instanceof Error ? error : new Error(String(error)));
             }
+            logServerEvent("ai-job-queue", "failed", {
+              repoRoot: options.repoRoot,
+              queueJobId: job.id,
+              ...summarizeQueuePayload(job.data),
+              duration: formatDurationMs(Date.now() - startedAt),
+              error: error instanceof Error ? error.message : String(error),
+            }, "error");
             throw error;
           }
         }
@@ -147,6 +180,7 @@ export async function enqueueProjectManagementAiJob(options: AiCommandJobManager
   payload: ProjectManagementAiQueuePayload;
   timeoutMs?: number;
 }): Promise<AiCommandJob> {
+  const enqueueStartedAt = Date.now();
   const manager = await ensureJobManager(options);
   const payload: ProjectManagementAiQueuePayload = {
     ...options.payload,
@@ -159,6 +193,13 @@ export async function enqueueProjectManagementAiJob(options: AiCommandJobManager
   if (!queueJobId) {
     throw new Error("Failed to enqueue the project management AI job.");
   }
+
+  logServerEvent("ai-job-queue", "enqueued", {
+    repoRoot: options.repoRoot,
+    queueJobId,
+    ...summarizeQueuePayload(payload),
+    duration: formatDurationMs(Date.now() - enqueueStartedAt),
+  });
 
   const alreadyStarted = manager.startedJobs.get(queueJobId);
   if (alreadyStarted) {
@@ -177,12 +218,26 @@ export async function enqueueProjectManagementAiJob(options: AiCommandJobManager
       clearTimeout(timer);
       manager.startWaiters.delete(queueJobId);
       manager.startedJobs.delete(queueJobId);
+      logServerEvent("ai-job-queue", "started", {
+        repoRoot: options.repoRoot,
+        queueJobId,
+        ...summarizeQueuePayload(payload),
+        jobId: job.jobId,
+        branch: job.branch,
+        duration: formatDurationMs(Date.now() - enqueueStartedAt),
+      });
       resolve(job);
     };
 
     const timer = setTimeout(() => {
       settled = true;
       manager.startWaiters.delete(queueJobId);
+      logServerEvent("ai-job-queue", "start-timeout", {
+        repoRoot: options.repoRoot,
+        queueJobId,
+        ...summarizeQueuePayload(payload),
+        timeout: formatDurationMs(options.timeoutMs ?? JOB_START_TIMEOUT_MS),
+      }, "error");
       reject(new Error(`Timed out waiting for AI job ${queueJobId} to start.`));
     }, options.timeoutMs ?? JOB_START_TIMEOUT_MS);
 
@@ -197,6 +252,13 @@ export async function enqueueProjectManagementAiJob(options: AiCommandJobManager
         clearTimeout(timer);
         manager.startWaiters.delete(queueJobId);
         manager.startedJobs.delete(queueJobId);
+        logServerEvent("ai-job-queue", "start-failed", {
+          repoRoot: options.repoRoot,
+          queueJobId,
+          ...summarizeQueuePayload(payload),
+          duration: formatDurationMs(Date.now() - enqueueStartedAt),
+          error: error.message,
+        }, "error");
         reject(error);
       },
       timer,

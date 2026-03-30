@@ -16,6 +16,7 @@ import { listWorktrees } from "./services/git-service.js";
 import { createOperationalStateStore, stopAllOperationalStateStores } from "./services/operational-state-service.js";
 import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
 import { formatServerUrl, resolveServerHost } from "./utils/server-host.js";
+import { formatDurationMs, logServerEvent } from "./utils/server-logger.js";
 import type { RepoContext } from "./utils/paths.js";
 import type { WebSocketServer } from "ws";
 import type { ViteDevServer } from "vite";
@@ -49,6 +50,37 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const isDevelopment = process.env.NODE_ENV === "development";
 
   app.use(express.json());
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    let settled = false;
+
+    const logRequest = (event: "request-completed" | "request-aborted", level: "info" | "warn" = "info") => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      logServerEvent("http", event, {
+        method: req.method,
+        path: req.originalUrl || req.url,
+        status: res.statusCode,
+        duration: formatDurationMs(Date.now() - startedAt),
+        sse: req.headers.accept?.includes("text/event-stream") ?? false,
+        aborted: event === "request-aborted",
+      }, level);
+    };
+
+    res.on("finish", () => {
+      logRequest("request-completed");
+    });
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        logRequest("request-aborted", "warn");
+      }
+    });
+
+    next();
+  });
   app.get("/favicon.ico", async (_req, res) => {
     const faviconPath = await resolveFaviconPath({
       appRoot,

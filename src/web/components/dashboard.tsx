@@ -109,6 +109,7 @@ export function Dashboard() {
     state,
     error,
     loading,
+    hasLoadedInitialState,
     busyBranch,
     lastEnvSync,
     shutdownStatus,
@@ -1119,6 +1120,25 @@ export function Dashboard() {
       onReset: () => setTerminalShortcut(DEFAULT_TERMINAL_SHORTCUT),
     },
   ], [commandPaletteShortcut, terminalShortcut]);
+
+  if (!hasLoadedInitialState) {
+    return (
+      <main className="relative min-h-screen overflow-hidden px-0 pt-0 theme-text">
+        <div className="flex min-h-screen items-center justify-center px-4">
+          <div className="matrix-panel w-full max-w-md rounded-none border-x-0 p-6 text-center sm:p-8">
+            <p className="matrix-kicker">Loading</p>
+            <h1 className="mt-2 text-xl font-semibold theme-text-strong">Loading workspace state</h1>
+            <p className="mt-2 text-sm theme-text-muted">
+              Waiting for the first dashboard state snapshot from the server.
+            </p>
+            <div className="mt-4 flex justify-center">
+              <MatrixBadge tone="warning">Loading…</MatrixBadge>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main

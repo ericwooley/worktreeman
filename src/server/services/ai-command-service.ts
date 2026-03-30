@@ -8,6 +8,7 @@ import {
   readAiCommandProcessLogs,
   type AiCommandProcessDescription,
 } from "./ai-command-process-service.js";
+import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 
 const aiCommandJobEmitter = new EventEmitter();
 const AI_COMMAND_PROCESS_METADATA_GRACE_MS = 5_000;
@@ -420,6 +421,15 @@ export async function startAiCommandJob(options: {
     pending?.();
   };
   const runJob = async () => {
+    const executionStartedAt = Date.now();
+    logServerEvent("ai-command", "job-started", {
+      repoRoot: options.repoRoot,
+      branch: options.branch,
+      jobId,
+      commandId: options.commandId,
+      origin: options.origin?.kind ?? null,
+      worktreePath: options.worktreePath,
+    });
     try {
       const hooks = {
         onSpawn: async ({ pid, processName }: { pid?: number | null; processName?: string | null }) => {
@@ -429,6 +439,13 @@ export async function startAiCommandJob(options: {
             processName: processName ?? null,
           };
           await persistSnapshot(nextJob);
+          logServerEvent("ai-command", "job-process-spawned", {
+            repoRoot: options.repoRoot,
+            branch: options.branch,
+            jobId,
+            pid: pid ?? null,
+            processName: processName ?? null,
+          });
           resolveStartup();
         },
         onStdout: async (chunk: string) => {
@@ -453,6 +470,12 @@ export async function startAiCommandJob(options: {
             exitCode: exitCode ?? null,
           };
           await persistSnapshot(nextJob);
+          logServerEvent("ai-command", "job-process-exited", {
+            repoRoot: options.repoRoot,
+            branch: options.branch,
+            jobId,
+            exitCode: exitCode ?? null,
+          });
         },
       };
       const result = await options.execute({
@@ -513,6 +536,14 @@ export async function startAiCommandJob(options: {
         logPath: logPath ?? undefined,
       };
       await persistJobSafely(currentJob);
+      logServerEvent("ai-command", "job-completed", {
+        repoRoot: options.repoRoot,
+        branch: options.branch,
+        jobId,
+        commandId: options.commandId,
+        duration: formatDurationMs(Date.now() - executionStartedAt),
+        exitCode: currentJob.exitCode ?? null,
+      });
       resolveStartup();
       return cloneAiCommandJob(currentJob)!;
     } catch (error) {
@@ -562,6 +593,15 @@ export async function startAiCommandJob(options: {
         logPath: logPath ?? undefined,
       };
       await persistJobSafely(currentJob);
+      logServerEvent("ai-command", "job-failed", {
+        repoRoot: options.repoRoot,
+        branch: options.branch,
+        jobId,
+        commandId: options.commandId,
+        duration: formatDurationMs(Date.now() - executionStartedAt),
+        exitCode: currentJob.exitCode ?? null,
+        error: errorMessage,
+      }, "error");
       resolveStartup();
       return cloneAiCommandJob(currentJob)!;
     }

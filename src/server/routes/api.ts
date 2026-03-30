@@ -120,6 +120,7 @@ import {
 import type { OperationalStateStore } from "../services/operational-state-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
+import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 
 interface ApiRouterOptions {
   repoRoot: string;
@@ -298,7 +299,12 @@ async function safeWriteAiRequestLog(options: {
   try {
     return await writeAiRequestLog(options);
   } catch (logError) {
-    console.error(`[ai-command] failed to write log repoRoot=${options.repoRoot} branch=${options.branch}`, logError);
+    logServerEvent("ai-command", "failed-to-write-log", {
+      repoRoot: options.repoRoot,
+      branch: options.branch,
+      jobId: options.jobId,
+      error: logError instanceof Error ? logError.message : String(logError),
+    }, "error");
     return null;
   }
 }
@@ -848,6 +854,7 @@ async function generateProjectManagementDocumentSummary(options: {
   document: ProjectManagementDocumentResponse["document"];
   relatedDocuments: ProjectManagementListResponse["documents"];
 }) {
+  const startedAt = Date.now();
   const template = resolveAiCommandTemplate(options.config.aiCommands, "simple");
   if (!template || !template.includes("$WTM_AI_INPUT")) {
     return null;
@@ -871,9 +878,18 @@ async function generateProjectManagementDocumentSummary(options: {
       },
     });
     const summary = stdout.trim();
+    logServerEvent("project-management-summary", "generated", {
+      documentId: options.document.id,
+      duration: formatDurationMs(Date.now() - startedAt),
+      empty: !summary,
+    });
     return summary || null;
   } catch (error) {
-    console.error(`[project-management-summary] failed document=${options.document.id}`, error);
+    logServerEvent("project-management-summary", "failed", {
+      documentId: options.document.id,
+      duration: formatDurationMs(Date.now() - startedAt),
+      error: error instanceof Error ? error.message : String(error),
+    }, "error");
     return null;
   }
 }
@@ -1194,6 +1210,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     config: WorktreeManagerConfig,
     worktree: WorktreeRecord,
   ): Promise<WorktreeRuntime> => {
+    const startedAt = Date.now();
+    logServerEvent("runtime", "start-requested", {
+      branch: worktree.branch,
+      worktreePath: worktree.worktreePath,
+    });
     const { runtime } = await createRuntime(config, options.repoRoot, worktree.branch, worktree.worktreePath);
     await options.operationalState.setRuntime(runtime);
     await ensureRuntimeTerminalSession(runtime, options.repoRoot);
@@ -1203,6 +1224,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       branch: worktree.branch,
       worktreePath: worktree.worktreePath,
       runtime,
+    });
+    logServerEvent("runtime", "start-completed", {
+      branch: worktree.branch,
+      worktreePath: worktree.worktreePath,
+      duration: formatDurationMs(Date.now() - startedAt),
     });
     return runtime;
   };
@@ -1220,11 +1246,21 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   };
 
   const stopWorktreeRuntime = async (branch: string, worktreePath?: string): Promise<void> => {
+    const startedAt = Date.now();
+    logServerEvent("runtime", "stop-requested", {
+      branch,
+      worktreePath: worktreePath ?? null,
+    });
     const runtime = await options.operationalState.getRuntime(branch);
     if (!runtime) {
       if (worktreePath) {
         await killTmuxSessionByName(getTmuxSessionName(options.repoRoot, branch), worktreePath);
       }
+      logServerEvent("runtime", "stop-skipped", {
+        branch,
+        worktreePath: worktreePath ?? null,
+        duration: formatDurationMs(Date.now() - startedAt),
+      });
       return;
     }
 
@@ -1245,8 +1281,20 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     await options.operationalState.deleteRuntime(branch);
 
     if (stopError) {
+      logServerEvent("runtime", "stop-failed", {
+        branch,
+        worktreePath: runtime.worktreePath,
+        duration: formatDurationMs(Date.now() - startedAt),
+        error: stopError instanceof Error ? stopError.message : String(stopError),
+      }, "error");
       throw stopError;
     }
+
+    logServerEvent("runtime", "stop-completed", {
+      branch,
+      worktreePath: runtime.worktreePath,
+      duration: formatDurationMs(Date.now() - startedAt),
+    });
   };
 
   const restartWorktreeRuntime = async (
@@ -1266,7 +1314,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       await waitForAiCommandJob(options.repoRoot, details.branch, details.jobId).catch(() => null);
       await stopWorktreeRuntime(details.branch);
     }, (error) => {
-      console.error(`[ai-command] failed to stop runtime for ${details.branch} after AI completion`, error);
+      logServerEvent("ai-command", "runtime-stop-after-job-failed", {
+        branch: details.branch,
+        jobId: details.jobId,
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
     });
   };
 
@@ -1466,7 +1518,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
               }),
             });
           } catch (error) {
-            console.error(`[project-management-comment] failed branch=${details.branch} document=${details.commentDocumentId}`, error);
+            logServerEvent("project-management-comment", "failed", {
+              branch: details.branch,
+              documentId: details.commentDocumentId,
+              error: error instanceof Error ? error.message : String(error),
+            }, "error");
           }
         }
       }
@@ -1597,7 +1653,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
               writeEvent("update", nextState);
             }
           }, (error) => {
-            console.error("[state-stream] failed to poll state", error);
+            logServerEvent("state-stream", "poll-failed", {
+              error: error instanceof Error ? error.message : String(error),
+            }, "error");
           }).finally(() => {
             polling = false;
           });
@@ -1648,7 +1706,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
               writeStatus(nextStatus);
             }
           }, (error) => {
-            console.error("[shutdown-status] failed to poll shutdown state", error);
+            logServerEvent("shutdown-status", "poll-failed", {
+              error: error instanceof Error ? error.message : String(error),
+            }, "error");
           }).finally(() => {
             polling = false;
           });
@@ -1851,7 +1911,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
               writeEvent("update", nextJob);
             }
           }, (error) => {
-            console.error(`[ai-command-stream] failed to poll job for ${branch}`, error);
+            logServerEvent("ai-command-stream", "poll-failed", {
+              branch,
+              error: error instanceof Error ? error.message : String(error),
+            }, "error");
           }).finally(() => {
             polling = false;
           });
@@ -1959,7 +2022,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const interval = setInterval(() => {
         runBackgroundTask(poll, (error) => {
-          console.error(`[ai-log-stream] failed to poll ${fileName}`, error);
+          logServerEvent("ai-log-stream", "poll-failed", {
+            fileName,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
         });
       }, aiLogStreamPollIntervalMs);
       const keepAlive = setInterval(() => {
@@ -2621,7 +2687,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     } catch (error) {
       if (stopAutoStartedRuntimeOnError && branch) {
         await stopWorktreeRuntime(branch).catch((cleanupError) => {
-          console.error(`[ai-command] failed to stop runtime for ${branch} after project-management AI error`, cleanupError);
+          logServerEvent("ai-command", "runtime-stop-after-project-management-error-failed", {
+            branch,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          }, "error");
         });
       }
 
@@ -2641,7 +2710,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      console.error(`[project-management-ai] failed document=${req.params.id}`, error);
+      logServerEvent("project-management-ai", "request-failed", {
+        documentId: req.params.id,
+        branch,
+        commandId,
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
       next(error);
     }
   });
@@ -2901,9 +2975,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         });
       }
 
-      console.info(
-        `[ai-command] starting branch=${worktree.branch} path=${worktree.worktreePath} input=${JSON.stringify(formatLogSnippet(input))}`,
-      );
+      logServerEvent("ai-command", "request-started", {
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        documentId,
+        commandId,
+        origin: origin?.kind ?? null,
+        input: formatLogSnippet(input),
+      });
 
       if (!explicitDocumentId) {
         input = buildWorktreeAiPrompt({
@@ -2952,11 +3031,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     } catch (error) {
       if (stopAutoStartedRuntimeOnError && branch) {
         await stopWorktreeRuntime(branch).catch((cleanupError) => {
-          console.error(`[ai-command] failed to stop runtime for ${branch} after AI error`, cleanupError);
+          logServerEvent("ai-command", "runtime-stop-after-request-error-failed", {
+            branch,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          }, "error");
         });
       }
 
-      console.error(`[ai-command] failed branch=${req.params.branch}`, error);
+      logServerEvent("ai-command", "request-failed", {
+        branch: req.params.branch,
+        commandId,
+        origin: origin?.kind ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
       next(error);
     }
   });

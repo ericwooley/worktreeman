@@ -16,6 +16,7 @@ import type {
   WorktreeRuntime,
 } from "../../shared/types.js";
 import { buildRuntimeProcessEnv } from "./runtime-service.js";
+import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 
 const PM2_NAMESPACE = "worktreeman";
 const LOG_LINES_LIMIT = 400;
@@ -243,6 +244,7 @@ export async function startBackgroundCommand(options: {
   runtime: WorktreeRuntime | undefined;
   commandName: string;
 }): Promise<void> {
+  const startedAt = Date.now();
   const entry = getBackgroundCommandEntries(options.config)[options.commandName];
   if (!entry) {
     throw new Error(`Unknown background command ${options.commandName}.`);
@@ -279,8 +281,23 @@ export async function startBackgroundCommand(options: {
       time: true,
       env,
     });
+    logServerEvent("background-command", "started", {
+      branch: options.branch,
+      commandName: options.commandName,
+      processName,
+      worktreePath: options.worktreePath,
+      duration: formatDurationMs(Date.now() - startedAt),
+    });
   } catch (error) {
     await deleteMetadata(processName);
+    logServerEvent("background-command", "failed-to-start", {
+      branch: options.branch,
+      commandName: options.commandName,
+      processName,
+      worktreePath: options.worktreePath,
+      duration: formatDurationMs(Date.now() - startedAt),
+      error: error instanceof Error ? error.message : String(error),
+    }, "error");
     throw error;
   }
 }
@@ -305,6 +322,7 @@ export async function startConfiguredBackgroundCommands(options: {
 }
 
 export async function stopBackgroundCommand(branch: string, worktreePath: string, commandName: string): Promise<void> {
+  const startedAt = Date.now();
   const processName = getPm2CommandName(branch, commandName);
   const metadata = await readMetadata(processName);
   if (metadata && metadata.worktreePath !== worktreePath) {
@@ -313,6 +331,13 @@ export async function stopBackgroundCommand(branch: string, worktreePath: string
 
   await deletePm2Process(processName).catch(() => undefined);
   await deleteMetadata(processName);
+  logServerEvent("background-command", "stopped", {
+    branch,
+    commandName,
+    processName,
+    worktreePath,
+    duration: formatDurationMs(Date.now() - startedAt),
+  });
 }
 
 export async function restartBackgroundCommand(options: {

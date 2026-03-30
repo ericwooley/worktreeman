@@ -25,6 +25,7 @@ import type {
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { getTmuxSessionName } from "../lib/tmux";
+import { startSequentialPoll } from "../lib/sequential-poll";
 import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabButton } from "./matrix-primitives";
@@ -852,32 +853,25 @@ export function WorktreeDetail({
       }
     };
 
+    const pollController = startSequentialPoll(loadComparison, {
+      intervalMs: GIT_COMPARISON_POLL_INTERVAL_MS,
+      runImmediately: document.visibilityState === "visible",
+    });
+
     const handleVisibilityRefresh = () => {
       if (document.visibilityState !== "visible") {
         return;
       }
 
-      void loadComparison();
+      pollController.trigger();
     };
-
-    if (document.visibilityState === "visible") {
-      void loadComparison();
-    }
-
-    const interval = window.setInterval(() => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      void loadComparison();
-    }, GIT_COMPARISON_POLL_INTERVAL_MS);
 
     window.addEventListener("focus", handleVisibilityRefresh);
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      pollController.stop();
       window.removeEventListener("focus", handleVisibilityRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
@@ -912,32 +906,25 @@ export function WorktreeDetail({
       }
     };
 
+    const pollController = startSequentialPoll(loadWorkspace, {
+      intervalMs: PROJECT_MANAGEMENT_POLL_INTERVAL_MS,
+      runImmediately: document.visibilityState === "visible",
+    });
+
     const handleVisibilityRefresh = () => {
       if (document.visibilityState !== "visible") {
         return;
       }
 
-      void loadWorkspace();
+      pollController.trigger();
     };
-
-    if (document.visibilityState === "visible") {
-      void loadWorkspace();
-    }
-
-    const interval = window.setInterval(() => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      void loadWorkspace();
-    }, PROJECT_MANAGEMENT_POLL_INTERVAL_MS);
 
     window.addEventListener("focus", handleVisibilityRefresh);
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      pollController.stop();
       window.removeEventListener("focus", handleVisibilityRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
@@ -957,32 +944,25 @@ export function WorktreeDetail({
       }
     };
 
+    const pollController = startSequentialPoll(loadAiLogState, {
+      intervalMs: AI_LOG_POLL_INTERVAL_MS,
+      runImmediately: document.visibilityState === "visible",
+    });
+
     const handleVisibilityRefresh = () => {
       if (document.visibilityState !== "visible") {
         return;
       }
 
-      void loadAiLogState();
+      pollController.trigger();
     };
-
-    if (document.visibilityState === "visible") {
-      void loadAiLogState();
-    }
-
-    const interval = window.setInterval(() => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      void loadAiLogState();
-    }, AI_LOG_POLL_INTERVAL_MS);
 
     window.addEventListener("focus", handleVisibilityRefresh);
     document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      pollController.stop();
       window.removeEventListener("focus", handleVisibilityRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
