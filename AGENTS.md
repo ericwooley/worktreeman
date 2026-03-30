@@ -8,7 +8,12 @@
 - Treat operational server state as durable repo-backed data. Runtime state, AI job state, shutdown status, and similar server lifecycle data must survive a server restart for the same repo.
 - Prefer server-sent events backed by durable snapshots for shared dashboard state. Polling is a resilience fallback, not the primary live-update path.
 - Prefer the shared matrix card pattern for list-style UI collections (AI logs, board lanes, dependency pickers, document rails, and similar index views) so titles, metadata, actions, and overflow handling stay consistent.
-- When a list item needs a heading area, use the shared `MatrixCardHeader` inside `MatrixCard` instead of recreating ad-hoc title/badge/action layouts. Keep item actions visually attached to the same card header so users do not need to scan around for the right control.
+ - When a list item needs a heading area, use the shared `MatrixCardHeader` inside `MatrixCard` instead of recreating ad-hoc title/badge/action layouts. Keep item actions visually attached to the same card header so users do not need to scan around for the right control.
+ - Never let ordinary command failures escalate to process-wide shutdown. CLI errors such as missing binaries, non-zero exits, missing process metadata, or post-processing failures must settle as request errors or durable job failures that surface in logs/UI.
+ - When work is intended to be durable or restart-safe, the queue worker must own the full lifecycle through completion. Do not detach the real command lifecycle after reporting a started/running snapshot.
+ - Do not start long-running async work with bare `void` promises in server code. If background polling, timers, or cleanup must run detached, wrap them in a shared helper that catches and reports errors so they cannot become `unhandledRejection` process failures.
+ - Any polling or reconciliation loop that touches durable state must handle read/write failures explicitly and settle or log them locally. Never rely on process-level unhandled rejection handlers as the safety net.
+ - Treat git config/user lookup as optional metadata. Failures reading `git config` should fall back to defaults or env overrides instead of breaking the underlying operation.
 
 ## Keep in mind
 

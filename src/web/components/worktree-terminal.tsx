@@ -7,6 +7,7 @@ import type {
   TmuxClientInfo,
 } from "@shared/types";
 import { disconnectTmuxClient, getTmuxClients, reconnectTerminal, restartRuntime } from "../lib/api";
+import { startSequentialPoll } from "../lib/sequential-poll";
 import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
@@ -316,12 +317,14 @@ export function WorktreeTerminal({
       }
     };
 
-    void refreshClients();
-    const interval = window.setInterval(refreshClients, 3000);
+    const pollController = startSequentialPoll(refreshClients, {
+      intervalMs: 3000,
+      runImmediately: true,
+    });
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      pollController.stop();
     };
   }, [sessionName, terminalBranch, worktree]);
 

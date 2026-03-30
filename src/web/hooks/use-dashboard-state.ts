@@ -77,12 +77,13 @@ import {
   updateProjectManagementUsers as updateProjectManagementUsersRequest,
   type EnvSyncResponse,
 } from "../lib/api";
+import { startSequentialPoll } from "../lib/sequential-poll";
 import {
   buildProjectManagementStatusFallbackPayload,
   shouldFallbackProjectManagementStatusUpdate,
 } from "../lib/project-management-status-update";
 
-const DASHBOARD_REFRESH_INTERVAL_MS = 5000;
+const DASHBOARD_REFRESH_INTERVAL_MS = 15000;
 
 function toAiCommandRequestPreview(request: string) {
   const normalized = request.replace(/\s+/g, " ").trim();
@@ -129,6 +130,7 @@ export function useDashboardState() {
   const [stateStreamConnected, setStateStreamConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedInitialState, setHasLoadedInitialState] = useState(false);
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
   const [lastEnvSync, setLastEnvSync] = useState<{ branch: string; copiedFiles: string[] } | null>(null);
   const [shutdownStatus, setShutdownStatus] = useState<ShutdownStatus | null>(null);
@@ -174,14 +176,16 @@ export function useDashboardState() {
       const payload = await getState();
       setState(payload);
       setError(null);
+      setHasLoadedInitialState(true);
+      setLoading(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load state.");
     } finally {
-      if (!options?.silent) {
+      if (!options?.silent && hasLoadedInitialState) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [hasLoadedInitialState]);
 
   useEffect(() => {
     void refresh();
@@ -190,6 +194,7 @@ export function useDashboardState() {
   useEffect(() => subscribeToState(
     (event: ApiStateStreamEvent) => {
       setState(event.state);
+      setHasLoadedInitialState(true);
       setLoading(false);
       setStateStreamConnected(true);
       setError(null);
@@ -206,9 +211,13 @@ export function useDashboardState() {
       }
 
       if (!stateStreamConnected) {
-        void refresh({ silent: true });
+        pollController.trigger();
       }
     };
+
+    const pollController = startSequentialPoll(() => refresh({ silent: true }), {
+      intervalMs: DASHBOARD_REFRESH_INTERVAL_MS,
+    });
 
     window.addEventListener("focus", refreshIfVisible);
     document.addEventListener("visibilitychange", refreshIfVisible);
@@ -220,10 +229,8 @@ export function useDashboardState() {
       };
     }
 
-    const interval = window.setInterval(refreshIfVisible, DASHBOARD_REFRESH_INTERVAL_MS);
-
     return () => {
-      window.clearInterval(interval);
+      pollController.stop();
       window.removeEventListener("focus", refreshIfVisible);
       document.removeEventListener("visibilitychange", refreshIfVisible);
     };
@@ -1085,6 +1092,7 @@ export function useDashboardState() {
     state,
     error,
     loading,
+    hasLoadedInitialState,
     busyBranch,
     lastEnvSync,
     shutdownStatus,

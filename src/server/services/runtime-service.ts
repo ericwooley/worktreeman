@@ -3,6 +3,7 @@ import type { QuickLinkConfigEntry, WorktreeManagerConfig, WorktreeRuntime } fro
 import { renderDerivedEnv, renderTemplate } from "./config-service.js";
 import { allocateRuntimePorts } from "./runtime-port-service.js";
 import { runCommand } from "../utils/process.js";
+import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 import { getTmuxSessionName } from "./terminal-service.js";
 
 export interface RuntimeResult {
@@ -32,7 +33,17 @@ export async function runStartupCommands(
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
   for (const command of commands) {
+    const startedAt = Date.now();
+    logServerEvent("runtime", "startup-command-started", {
+      cwd,
+      command,
+    });
     await runCommand(process.env.SHELL || "bash", ["-lc", command], { cwd, env });
+    logServerEvent("runtime", "startup-command-completed", {
+      cwd,
+      command,
+      duration: formatDurationMs(Date.now() - startedAt),
+    });
   }
 }
 
@@ -42,6 +53,7 @@ export async function createRuntime(
   branch: string,
   worktreePath: string,
 ): Promise<RuntimeResult> {
+  const startedAt = Date.now();
   const allocatedPortEntries = await allocateRuntimePorts(config.runtimePorts);
   const allocatedPorts = Object.fromEntries(allocatedPortEntries.map((entry) => [entry.envName, entry.port]));
   const baseEnv = {
@@ -54,15 +66,27 @@ export async function createRuntime(
   };
   const quickLinks = renderQuickLinks(config.quickLinks ?? [], env);
 
+  const runtime = {
+    branch,
+    worktreePath,
+    env,
+    quickLinks,
+    allocatedPorts,
+    tmuxSession: getTmuxSessionName(repoRoot, branch),
+    runtimeStartedAt: new Date().toISOString(),
+  };
+
+  logServerEvent("runtime", "runtime-created", {
+    branch,
+    worktreePath,
+    ports: Object.keys(allocatedPorts).length,
+    quickLinks: quickLinks.length,
+    duration: formatDurationMs(Date.now() - startedAt),
+  });
+
   return {
     runtime: {
-      branch,
-      worktreePath,
-      env,
-      quickLinks,
-      allocatedPorts,
-      tmuxSession: getTmuxSessionName(repoRoot, branch),
-      runtimeStartedAt: new Date().toISOString(),
+      ...runtime,
     },
   };
 }
