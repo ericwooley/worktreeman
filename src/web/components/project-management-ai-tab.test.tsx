@@ -99,7 +99,7 @@ test("AI log sub tab renders saved log detail and origin actions", () => {
   assert.match(markup, /aria-labelledby="project-management-ai-activity-log-tab"/);
   assert.match(markup, /Saved logs/);
   assert.match(markup, /feature\/ai-log/);
-  assert.match(markup, /AI log detail/);
+  assert.match(markup, /Worktree AI output/);
   assert.match(markup, /Prompt passed into the configured AI command/);
   assert.match(markup, /Project document #12/);
   assert.match(markup, />Open origin</);
@@ -136,7 +136,7 @@ test("active AI worktrees sub tab renders live output and runtime details", () =
     assert.match(markup, /Active worktrees/);
     assert.match(markup, /Running for 5m 30s/);
     assert.match(markup, /AI has been running in feature\/active-run for 5m 30s\./);
-    assert.match(markup, /Streaming live output from feature\/active-run while the worktree run is active\./);
+    assert.match(markup, /Streaming mixed stdout and stderr from feature\/active-run while the worktree run is active\./);
     assert.match(markup, /PID/);
     assert.match(markup, /runner --prompt \$WTM_AI_INPUT/);
   } finally {

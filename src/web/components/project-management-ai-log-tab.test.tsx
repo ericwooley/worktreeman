@@ -80,21 +80,23 @@ function renderAiLogTab(overrides: Partial<Parameters<typeof ProjectManagementAi
   );
 }
 
-test("AI log detail renders derived titles, mixed timeline, and markdown response accordions", () => {
+test("AI log detail reuses the shared output shell and markdown response accordions", () => {
   const markup = renderAiLogTab();
 
+  assert.match(markup, /Worktree AI output/);
+  assert.match(markup, /Captured request, mixed output, and any failure details for this completed run\./);
   assert.match(markup, /Environment terminal · feature-ai-log/);
-  assert.match(markup, /Mixed output timeline/);
+  assert.match(markup, /feature-ai-log/);
   assert.match(markup, /stdout/);
   assert.match(markup, /stderr/);
   assert.match(markup, /Warning output/);
-  assert.match(markup, /\+1 minute since previous output/);
   assert.match(markup, /Response stdout/);
   assert.match(markup, /Response stderr/);
   assert.match(markup, /<h1>Stdout heading<\/h1>/);
   assert.match(markup, /<li>first item<\/li>/);
   assert.match(markup, /pm-markdown text-sm theme-text/);
   assert.doesNotMatch(markup, /pm-markdown text-sm theme-text-danger/);
+  assert.doesNotMatch(markup, /Mixed output timeline/);
 });
 
 test("AI log empty state keeps recent activity visible", () => {

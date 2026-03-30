@@ -12,7 +12,8 @@ import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementDocumentForm } from "./project-management-document-form";
 import { sortProjectManagementDocuments } from "./project-management-document-browser";
-import { getAiOutputEvents, getCompletedAiDocumentRefreshTarget, ProjectManagementPanel } from "./project-management-panel";
+import { getCompletedAiDocumentRefreshTarget, ProjectManagementPanel } from "./project-management-panel";
+import { getAiOutputEvents } from "./project-management-ai-output-viewer";
 
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
   {
