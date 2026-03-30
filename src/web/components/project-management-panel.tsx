@@ -359,6 +359,7 @@ export function ProjectManagementPanel({
   const [editDocumentViewMode, setEditDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
   // Track whether the user is actively editing to prevent poll-driven field resets
   const isEditingRef = useRef(false);
+  const aiRequestModalOpenRef = useRef(false);
   const prevDocumentIdRef = useRef<string | null>(null);
   const setIsEditing = useCallback((editing: boolean) => {
     isEditingRef.current = editing;
@@ -377,7 +378,11 @@ export function ProjectManagementPanel({
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
   const [aiChangeRequest, setAiChangeRequest] = useState("");
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
-  const [aiRequestModalOpen, setAiRequestModalOpen] = useState(false);
+  const [aiRequestModalOpen, setAiRequestModalOpenState] = useState(false);
+  const setAiRequestModalOpen = useCallback((open: boolean) => {
+    aiRequestModalOpenRef.current = open;
+    setAiRequestModalOpenState(open);
+  }, []);
   const [aiOutputModalOpen, setAiOutputModalOpen] = useState(false);
   const [dependencyModalOpen, setDependencyModalOpen] = useState(false);
   const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("simple");
@@ -427,9 +432,9 @@ export function ProjectManagementPanel({
     const documentSwitched = prevDocumentIdRef.current !== document.id;
     prevDocumentIdRef.current = document.id;
 
-    // If this is a poll refresh (same document) and the user is actively editing,
-    // do not overwrite their in-progress changes.
-    if (!documentSwitched && isEditingRef.current) {
+    // If this is a poll refresh (same document) and the user is actively editing
+    // or has the AI request modal open, do not overwrite their in-progress changes.
+    if (!documentSwitched && (isEditingRef.current || aiRequestModalOpenRef.current)) {
       return;
     }
 
