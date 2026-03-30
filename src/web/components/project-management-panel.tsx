@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AiCommandOrigin,
   AiCommandConfig,
@@ -356,6 +356,12 @@ export function ProjectManagementPanel({
   const [editStatus, setEditStatus] = useState<string>(() => document?.status ?? PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [editAssignee, setEditAssignee] = useState(() => document?.assignee ?? "");
   const [editDocumentViewMode, setEditDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
+  // Track whether the user is actively editing to prevent poll-driven field resets
+  const isEditingRef = useRef(false);
+  const prevDocumentIdRef = useRef<string | null>(null);
+  const setIsEditing = useCallback((editing: boolean) => {
+    isEditingRef.current = editing;
+  }, []);
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
   const [newTags, setNewTags] = useState("");
@@ -401,6 +407,8 @@ export function ProjectManagementPanel({
   ]), [aiCommands]);
   useEffect(() => {
     if (!document) {
+      prevDocumentIdRef.current = null;
+      isEditingRef.current = false;
       setEditTitle("");
       setEditSummary("");
       setEditMarkdown("");
@@ -412,6 +420,15 @@ export function ProjectManagementPanel({
       setAiChangeRequest("");
       setSelectedAiCommandId("simple");
       setDependencyModalOpen(false);
+      return;
+    }
+
+    const documentSwitched = prevDocumentIdRef.current !== document.id;
+    prevDocumentIdRef.current = document.id;
+
+    // If this is a poll refresh (same document) and the user is actively editing,
+    // do not overwrite their in-progress changes.
+    if (!documentSwitched && isEditingRef.current) {
       return;
     }
 
@@ -1281,6 +1298,7 @@ export function ProjectManagementPanel({
                       onStatusChange={setEditStatus}
                       onAssigneeChange={setEditAssignee}
                       onSubmit={handleSaveDocument}
+                      onEditingStateChange={setIsEditing}
                        editorBlockedState={aiRunning && selectedDocumentAiOutput?.source === "document" ? (
                          <ProjectManagementAiOutputViewer
                            source="document"
