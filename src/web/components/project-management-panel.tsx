@@ -30,7 +30,7 @@ import {
 } from "./project-management-document-browser";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
-import { MatrixBadge, MatrixModal, MatrixSkeletonCard, MatrixSpinner, MatrixTabButton } from "./matrix-primitives";
+import { MatrixBadge, MatrixModal, MatrixSkeletonCard, MatrixSpinner, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
@@ -62,6 +62,8 @@ interface ProjectManagementPanelProps {
   activeSubTab: ProjectManagementSubTab;
   selectedDocumentId: string | null;
   documentViewMode: ProjectManagementDocumentViewMode;
+  editFormTab: ProjectManagementDocumentFormViewMode;
+  createFormTab: ProjectManagementDocumentFormViewMode;
   document: ProjectManagementDocument | null;
   history: ProjectManagementHistoryEntry[];
   loading: boolean;
@@ -76,6 +78,8 @@ interface ProjectManagementPanelProps {
   onSelectWorktree: (branch: string) => void;
   onSubTabChange: (tab: ProjectManagementSubTab) => void;
   onDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
+  onEditFormTabChange: (mode: ProjectManagementDocumentFormViewMode) => void;
+  onCreateFormTabChange: (mode: ProjectManagementDocumentFormViewMode) => void;
   onSelectDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onCreateDocument: (payload: {
     title: string;
@@ -320,6 +324,8 @@ export function ProjectManagementPanel({
   activeSubTab,
   selectedDocumentId,
   documentViewMode,
+  editFormTab,
+  createFormTab,
   document,
   history,
   loading,
@@ -334,6 +340,8 @@ export function ProjectManagementPanel({
   onSelectWorktree,
   onSubTabChange,
   onDocumentViewModeChange,
+  onEditFormTabChange,
+  onCreateFormTabChange,
   onSelectDocument,
   onCreateDocument,
   onUpdateDocument,
@@ -358,7 +366,6 @@ export function ProjectManagementPanel({
   const [dependencySelection, setDependencySelection] = useState<string[]>(() => Array.isArray(document?.dependencies) ? document.dependencies : []);
   const [editStatus, setEditStatus] = useState<string>(() => document?.status ?? PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
   const [editAssignee, setEditAssignee] = useState(() => document?.assignee ?? "");
-  const [editDocumentViewMode, setEditDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
   // Track whether the user is actively editing to prevent poll-driven field resets
   const isEditingRef = useRef(false);
   const aiRequestModalOpenRef = useRef(false);
@@ -372,7 +379,6 @@ export function ProjectManagementPanel({
   const [newMarkdown, setNewMarkdown] = useState("");
   const [newStatus, setNewStatus] = useState<string>("");
   const [newAssignee, setNewAssignee] = useState("");
-  const [createDocumentViewMode, setCreateDocumentViewMode] = useState<ProjectManagementDocumentFormViewMode>("write");
   const [newUserName, setNewUserName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [userFormError, setUserFormError] = useState<string | null>(null);
@@ -424,7 +430,7 @@ export function ProjectManagementPanel({
       setDependencySelection([]);
       setEditStatus(PROJECT_MANAGEMENT_DOCUMENT_STATUSES[0]);
       setEditAssignee("");
-      setEditDocumentViewMode("write");
+      onEditFormTabChange("write");
       setAiChangeRequest("");
       setSelectedAiCommandId("simple");
       setDependencyModalOpen(false);
@@ -447,7 +453,7 @@ export function ProjectManagementPanel({
     setDependencySelection(Array.isArray(document.dependencies) ? document.dependencies : []);
     setEditStatus(document.status);
     setEditAssignee(document.assignee);
-    setEditDocumentViewMode("write");
+    onEditFormTabChange("write");
     setAiFailureToast(null);
     setAiRequestModalOpen(false);
     setDependencyModalOpen(false);
@@ -673,7 +679,7 @@ export function ProjectManagementPanel({
     setNewMarkdown("");
     setNewStatus("");
     setNewAssignee("");
-    setCreateDocumentViewMode("write");
+    onCreateFormTabChange("write");
     await handleSelectDocument(created.id, { silent: true });
   }
 
@@ -1112,17 +1118,25 @@ export function ProjectManagementPanel({
         </div>
 
         <div className="theme-inline-panel p-4">
-          <div className="flex flex-wrap gap-2 border-b theme-border-subtle pb-4">
-            <MatrixTabButton active={activeSubTab === "document"} label="Document" onClick={() => onSubTabChange("document")} />
-            <MatrixTabButton active={activeSubTab === "board"} label="Board" onClick={() => onSubTabChange("board")} />
-            <MatrixTabButton active={activeSubTab === "dependency-tree"} label="Dependency tree" onClick={() => onSubTabChange("dependency-tree")} />
-            <MatrixTabButton active={activeSubTab === "history"} label="History" onClick={() => onSubTabChange("history")} />
-            <MatrixTabButton active={activeSubTab === "users"} label="Users" onClick={() => onSubTabChange("users")} />
-            <MatrixTabButton active={activeSubTab === "create"} label="Create" onClick={() => onSubTabChange("create")} />
+          <div className="border-b theme-border-subtle pb-4">
+            <MatrixTabs
+              groupId="project-management-workspace"
+              ariaLabel="Project management workspace tabs"
+              activeTabId={activeSubTab}
+              onChange={onSubTabChange}
+              tabs={[
+                { id: "document", label: "Document", panelId: getMatrixTabPanelId("project-management-workspace", "document") },
+                { id: "board", label: "Board", panelId: getMatrixTabPanelId("project-management-workspace", "board") },
+                { id: "dependency-tree", label: "Dependency tree", panelId: getMatrixTabPanelId("project-management-workspace", "dependency-tree") },
+                { id: "history", label: "History", panelId: getMatrixTabPanelId("project-management-workspace", "history") },
+                { id: "users", label: "Users", panelId: getMatrixTabPanelId("project-management-workspace", "users") },
+                { id: "create", label: "Create", panelId: getMatrixTabPanelId("project-management-workspace", "create") },
+              ]}
+            />
           </div>
 
           {activeSubTab === "document" ? (
-            <div className="grid gap-4 pt-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
+            <div id={getMatrixTabPanelId("project-management-workspace", "document")} role="tabpanel" aria-labelledby="project-management-workspace-document-tab" className="grid gap-4 pt-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
               {documentRail}
               <div>
                 {aiFailureToast ? (
@@ -1167,10 +1181,16 @@ export function ProjectManagementPanel({
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {document ? (
-                      <div className="flex flex-wrap gap-2">
-                        <MatrixTabButton active={documentViewMode === "document"} label="Document" onClick={() => onDocumentViewModeChange("document")} />
-                        <MatrixTabButton active={documentViewMode === "edit"} label="Edit" onClick={() => onDocumentViewModeChange("edit")} />
-                      </div>
+                      <MatrixTabs
+                        groupId="project-management-document-view"
+                        ariaLabel="Project document view tabs"
+                        activeTabId={documentViewMode}
+                        onChange={onDocumentViewModeChange}
+                        tabs={[
+                          { id: "document", label: "Document", panelId: getMatrixTabPanelId("project-management-document-view", "document") },
+                          { id: "edit", label: "Edit", panelId: getMatrixTabPanelId("project-management-document-view", "edit") },
+                        ]}
+                      />
                     ) : null}
                     {documentViewMode === "document" ? (
                       <div className="flex flex-wrap gap-2">
@@ -1315,8 +1335,9 @@ export function ProjectManagementPanel({
 
                 {document && documentViewMode === "edit" ? (
                   <div className="mt-3">
-                    <ProjectManagementDocumentForm
-                      mode="edit"
+                      <ProjectManagementDocumentForm
+                        tabsId="project-management-edit-form"
+                        mode="edit"
                       title={editTitle}
                       summary={editSummary}
                       tags={editTags}
@@ -1328,8 +1349,8 @@ export function ProjectManagementPanel({
                       disabled={aiRunning}
                       showMetadataFields={false}
                       submitDisabled={!document}
-                      viewMode={editDocumentViewMode}
-                      onViewModeChange={setEditDocumentViewMode}
+                      viewMode={editFormTab}
+                      onViewModeChange={onEditFormTabChange}
                       onTitleChange={setEditTitle}
                       onSummaryChange={setEditSummary}
                       onTagsChange={setEditTags}
@@ -1521,7 +1542,7 @@ export function ProjectManagementPanel({
               </div>
             </div>
           ) : activeSubTab === "board" ? (
-            <div className="pt-4">
+            <div id={getMatrixTabPanelId("project-management-workspace", "board")} role="tabpanel" aria-labelledby="project-management-workspace-board-tab" className="pt-4">
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading board...</div>}>
                 <ProjectManagementBoardTab
                   swimlaneDocuments={swimlaneDocuments}
@@ -1540,7 +1561,7 @@ export function ProjectManagementPanel({
               </Suspense>
             </div>
           ) : activeSubTab === "dependency-tree" ? (
-            <div className="pt-4">
+            <div id={getMatrixTabPanelId("project-management-workspace", "dependency-tree")} role="tabpanel" aria-labelledby="project-management-workspace-dependency-tree-tab" className="pt-4">
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading dependency tree...</div>}>
                 <ProjectManagementDependencyTreeTab
                   documents={filteredDocuments}
@@ -1552,13 +1573,13 @@ export function ProjectManagementPanel({
               </Suspense>
             </div>
           ) : activeSubTab === "history" ? (
-            <div className="pt-4">
+            <div id={getMatrixTabPanelId("project-management-workspace", "history")} role="tabpanel" aria-labelledby="project-management-workspace-history-tab" className="pt-4">
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading history...</div>}>
                 <ProjectManagementHistoryTab history={history} />
               </Suspense>
             </div>
           ) : activeSubTab === "users" ? (
-            <div className="pt-4">
+            <div id={getMatrixTabPanelId("project-management-workspace", "users")} role="tabpanel" aria-labelledby="project-management-workspace-users-tab" className="pt-4">
               <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
                 <div className="space-y-4">
                   <div className="border theme-border-subtle p-4">
@@ -1649,9 +1670,10 @@ export function ProjectManagementPanel({
               </div>
             </div>
           ) : (
-            <div className="pt-4">
+            <div id={getMatrixTabPanelId("project-management-workspace", "create")} role="tabpanel" aria-labelledby="project-management-workspace-create-tab" className="pt-4">
               <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading create form...</div>}>
                 <ProjectManagementDocumentForm
+                  tabsId="project-management-create-form"
                   mode="create"
                   title={newTitle}
                   summary={newSummary}
@@ -1662,8 +1684,8 @@ export function ProjectManagementPanel({
                   statuses={statuses}
                   saving={saving}
                   submitDisabled={!newTitle.trim()}
-                  viewMode={createDocumentViewMode}
-                  onViewModeChange={setCreateDocumentViewMode}
+                  viewMode={createFormTab}
+                  onViewModeChange={onCreateFormTabChange}
                   onTitleChange={setNewTitle}
                   onSummaryChange={setNewSummary}
                   onTagsChange={setNewTags}

@@ -64,6 +64,7 @@ import {
   stopBackgroundCommand,
 } from "../services/background-command-service.js";
 import {
+  autoCommitGitChanges,
   commitGitChanges,
   createWorktree,
   deleteBranch,
@@ -117,7 +118,7 @@ import {
   getWorktreeDocumentLinks,
   setWorktreeDocumentLink,
 } from "../services/worktree-link-service.js";
-import type { OperationalStateStore } from "../services/operational-state-service.js";
+import { createOperationalStateStore, type OperationalStateStore } from "../services/operational-state-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
@@ -138,8 +139,6 @@ interface ApiRouterOptions {
       input: string;
       worktreePath: string;
       env: NodeJS.ProcessEnv;
-      outFile: string;
-      errFile: string;
     }) => Promise<AiCommandProcessDescription>;
     getProcess: (processName: string) => Promise<AiCommandProcessDescription | null>;
     deleteProcess: (processName: string) => Promise<void>;
@@ -175,8 +174,6 @@ const CONFIG_COMMIT_ENV = {
   GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
 };
 
-const AUTO_COMMIT_COMMAND_ID: AiCommandId = "simple";
-
 function createAiLogIdentifiers(branch: string, date = new Date()) {
   return {
     jobId: randomUUID(),
@@ -211,23 +208,6 @@ function runBackgroundTask(task: () => Promise<void>, onError: (error: unknown) 
   return task().catch(onError);
 }
 
-function isCleanWorkingTreeError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes("Working tree is clean.")
-    || message.includes("has no local changes to commit.");
-}
-
-function buildWorktreeGitEnv(config: WorktreeManagerConfig, worktree: WorktreeRecord, runtime?: WorktreeRuntime): NodeJS.ProcessEnv {
-  return runtime
-    ? buildRuntimeProcessEnv(runtime)
-    : {
-      ...process.env,
-      ...config.env,
-      WORKTREE_BRANCH: worktree.branch,
-      WORKTREE_PATH: worktree.worktreePath,
-    };
-}
-
 export function resolveAiLogsDir(repoRoot: string): string {
   return path.resolve(repoRoot, ".logs");
 }
@@ -253,46 +233,46 @@ async function writeAiRequestLog(options: {
   processName?: string | null;
   error?: unknown;
 }): Promise<string> {
-  const logsDir = resolveAiLogsDir(options.repoRoot);
-  await fs.mkdir(logsDir, { recursive: true });
-
-  const logPath = path.join(logsDir, options.fileName);
-
-  const payload = {
+  const store = await createOperationalStateStore(options.repoRoot);
+  const startedAt = options.startedAt ?? new Date().toISOString();
+  const error = toAiCommandLogError(options.error);
+  const stdout = options.stdout ?? "";
+  const stderr = options.stderr ?? (error?.message ?? "");
+  const events = ensureAiCommandOutputEvents({
+    runId: options.jobId,
+    events: options.events,
+    stdout,
+    stderr,
+    timestamp: startedAt,
+    completedAt: options.completedAt,
+  });
+  const entry: AiCommandLogEntry = {
     jobId: options.jobId,
-    timestamp: options.startedAt ?? new Date().toISOString(),
-    startedAt: options.startedAt ?? new Date().toISOString(),
-    completedAt: options.completedAt ?? null,
+    fileName: options.fileName,
+    timestamp: startedAt,
     branch: options.branch,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
     origin: options.origin ?? null,
     worktreePath: options.worktreePath,
     command: options.renderedCommand,
+    request: options.input,
+    response: {
+      stdout,
+      stderr,
+      events,
+    },
+    status: getAiCommandLogStatus(error, options.completedAt),
     pid: options.pid ?? null,
     exitCode: options.exitCode ?? null,
     processName: options.processName ?? null,
-    request: options.input,
-    response: {
-      stdout: options.stdout ?? "",
-      stderr: options.stderr ?? "",
-      events: normalizeAiCommandOutputEvents(options.events),
-    },
-    error: options.error instanceof Error
-      ? {
-        name: options.error.name,
-        message: options.error.message,
-        stack: options.error.stack,
-      }
-      : options.error
-        ? String(options.error)
-        : null,
+    completedAt: options.completedAt,
+    error,
   };
 
-  const tempLogPath = `${logPath}.${randomUUID()}.tmp`;
-  await fs.writeFile(tempLogPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await fs.rename(tempLogPath, logPath);
-  return logPath;
+  await store.upsertAiCommandLogEntry(entry);
+  await store.syncAiCommandOutputEvents(entry.jobId, entry.fileName, entry.branch, entry.response.events);
+  return options.fileName;
 }
 
 async function safeWriteAiRequestLog(options: {
@@ -358,32 +338,52 @@ function toAiCommandLogError(error: unknown) {
   return { message: String(error) };
 }
 
-function createAiCommandOutputEvent(source: "stdout" | "stderr", text: string, timestamp = new Date().toISOString()): AiCommandOutputEvent {
+function createAiCommandOutputEvent(
+  runId: string,
+  entry: number,
+  source: "stdout" | "stderr",
+  text: string,
+  timestamp = new Date().toISOString(),
+): AiCommandOutputEvent {
   return {
     id: randomUUID(),
+    runId,
+    entry,
     source,
     text,
     timestamp,
   };
 }
 
-function normalizeAiCommandOutputEvents(value: unknown): AiCommandOutputEvent[] {
+function normalizeAiCommandOutputEvents(value: unknown, runId: string): AiCommandOutputEvent[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") {
+  return value.flatMap((event, index) => {
+    if (!event || typeof event !== "object") {
       return [];
     }
 
-    const candidate = entry as { id?: unknown; source?: unknown; text?: unknown; timestamp?: unknown };
+    const candidate = event as {
+      id?: unknown;
+      runId?: unknown;
+      entry?: unknown;
+      source?: unknown;
+      text?: unknown;
+      timestamp?: unknown;
+    };
     if ((candidate.source !== "stdout" && candidate.source !== "stderr") || typeof candidate.text !== "string") {
       return [];
     }
 
+    const normalizedEntry = typeof candidate.entry === "number" && Number.isFinite(candidate.entry)
+      ? candidate.entry
+      : index + 1;
     return [{
       id: typeof candidate.id === "string" && candidate.id ? candidate.id : randomUUID(),
+      runId: typeof candidate.runId === "string" && candidate.runId ? candidate.runId : runId,
+      entry: normalizedEntry,
       source: candidate.source,
       text: candidate.text,
       timestamp: typeof candidate.timestamp === "string" && candidate.timestamp ? candidate.timestamp : new Date().toISOString(),
@@ -391,22 +391,29 @@ function normalizeAiCommandOutputEvents(value: unknown): AiCommandOutputEvent[] 
   });
 }
 
-function appendAiCommandOutputEvents(events: AiCommandOutputEvent[] | undefined, source: "stdout" | "stderr", chunk: string): AiCommandOutputEvent[] {
+function appendAiCommandOutputEvents(
+  runId: string,
+  events: AiCommandOutputEvent[] | undefined,
+  source: "stdout" | "stderr",
+  chunk: string,
+): AiCommandOutputEvent[] {
   if (!chunk) {
-    return events ? [...events] : [];
+    return events ? events.map((event) => ({ ...event })) : [];
   }
 
-  return [...(events ?? []), createAiCommandOutputEvent(source, chunk)];
+  const nextEvents = events ? events.map((event) => ({ ...event })) : [];
+  return [...nextEvents, createAiCommandOutputEvent(runId, nextEvents.length + 1, source, chunk)];
 }
 
 function ensureAiCommandOutputEvents(options: {
+  runId: string;
   events: unknown;
   stdout: string;
   stderr: string;
   timestamp: string;
   completedAt?: string;
 }): AiCommandOutputEvent[] {
-  const normalized = normalizeAiCommandOutputEvents(options.events);
+  const normalized = normalizeAiCommandOutputEvents(options.events, options.runId);
   if (normalized.length > 0) {
     return normalized;
   }
@@ -414,11 +421,11 @@ function ensureAiCommandOutputEvents(options: {
   const fallback: AiCommandOutputEvent[] = [];
   const baseTimestamp = options.timestamp || new Date().toISOString();
   if (options.stdout) {
-    fallback.push(createAiCommandOutputEvent("stdout", options.stdout, baseTimestamp));
+    fallback.push(createAiCommandOutputEvent(options.runId, fallback.length + 1, "stdout", options.stdout, baseTimestamp));
   }
 
   if (options.stderr) {
-    fallback.push(createAiCommandOutputEvent("stderr", options.stderr, options.completedAt ?? baseTimestamp));
+    fallback.push(createAiCommandOutputEvent(options.runId, fallback.length + 1, "stderr", options.stderr, options.completedAt ?? baseTimestamp));
   }
 
   return fallback;
@@ -951,13 +958,14 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
     worktreePath: typeof parsed.worktreePath === "string" ? parsed.worktreePath : "",
     command: typeof parsed.command === "string" ? parsed.command : "",
     request,
-    response: {
-      stdout,
-      stderr,
-      events: ensureAiCommandOutputEvents({
-        events: parsed.response?.events,
+      response: {
         stdout,
         stderr,
+        events: ensureAiCommandOutputEvents({
+          runId: typeof parsed.jobId === "string" ? parsed.jobId : fileName,
+          events: parsed.response?.events,
+          stdout,
+          stderr,
         timestamp,
         completedAt,
       }),
@@ -995,36 +1003,8 @@ function toHistoricalAiCommandLogSummaries(entries: AiCommandLogEntry[]): AiComm
 }
 
 async function listAiCommandLogEntries(repoRoot: string): Promise<AiCommandLogEntry[]> {
-  const logsDir = resolveAiLogsDir(repoRoot);
-  let fileNames: string[] = [];
-
-  try {
-    fileNames = await fs.readdir(logsDir);
-  } catch (error) {
-    const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-    if (code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-
-  const entries = await Promise.all(
-    fileNames
-      .filter((fileName) => fileName.endsWith(".json"))
-      .map(async (fileName) => {
-        const payload = await fs.readFile(path.join(logsDir, fileName), "utf8");
-        return parseAiCommandLogEntry(fileName, payload);
-      }),
-  );
-
-  return entries.sort((left, right) => {
-    const timestampCompare = Date.parse(right.timestamp) - Date.parse(left.timestamp);
-    if (timestampCompare !== 0) {
-      return timestampCompare;
-    }
-
-    return right.fileName.localeCompare(left.fileName);
-  });
+  const store = await createOperationalStateStore(repoRoot);
+  return await store.listAiCommandLogEntries();
 }
 
 function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
@@ -1046,14 +1026,21 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
     pid: entry.pid,
     exitCode: entry.exitCode,
     processName: entry.processName,
+    logPath: entry.worktreePath,
     error: entry.error?.message ?? null,
   };
 }
 
 async function readAiCommandLogEntry(repoRoot: string, fileName: string): Promise<AiCommandLogEntry> {
-  const logPath = path.join(resolveAiLogsDir(repoRoot), fileName);
-  const payload = await fs.readFile(logPath, "utf8");
-  return parseAiCommandLogEntry(fileName, payload);
+  const store = await createOperationalStateStore(repoRoot);
+  const entry = await store.getAiCommandLogEntry(fileName);
+  if (entry) {
+    return entry;
+  }
+
+  const error = new Error(`Unknown AI log ${fileName}`) as NodeJS.ErrnoException;
+  error.code = "ENOENT";
+  throw error;
 }
 
 async function reconcileAiCommandLogEntry(options: {
@@ -1064,135 +1051,14 @@ async function reconcileAiCommandLogEntry(options: {
   if (options.entry.status !== "running") {
     return options.entry;
   }
-
-  if (!options.entry.processName) {
-    const completedAt = new Date().toISOString();
-    await safeWriteAiRequestLog({
-      fileName: options.entry.fileName,
-      jobId: options.entry.jobId,
-      repoRoot: options.repoRoot,
-      branch: options.entry.branch,
-      documentId: options.entry.documentId ?? null,
-      commandId: options.entry.commandId,
-      origin: options.entry.origin ?? null,
-      worktreePath: options.entry.worktreePath,
-      renderedCommand: options.entry.command,
-      input: options.entry.request,
-      stdout: options.entry.response.stdout,
-      stderr: options.entry.response.stderr,
-      events: options.entry.response.events,
-      startedAt: options.entry.timestamp,
-      completedAt,
-      pid: options.entry.pid,
-      exitCode: options.entry.exitCode ?? null,
-      processName: options.entry.processName ?? null,
-      error: options.entry.error ?? new Error("AI process metadata was missing while the log was still marked running."),
-    });
-    return readAiCommandLogEntry(options.repoRoot, options.entry.fileName);
-  }
-
-  const processInfo = await options.aiProcesses.getProcess(options.entry.processName);
-  if (processInfo && options.aiProcesses.isProcessActive(processInfo.status)) {
-    const logs = await options.aiProcesses.readProcessLogs(processInfo);
-    const nextPid = processInfo.pid ?? options.entry.pid ?? null;
-    const nextEvents = appendAiCommandOutputEvents(
-      appendAiCommandOutputEvents(
-        options.entry.response.events,
-        "stdout",
-        logs.stdout.startsWith(options.entry.response.stdout)
-          ? logs.stdout.slice(options.entry.response.stdout.length)
-          : logs.stdout !== options.entry.response.stdout
-            ? logs.stdout.slice(Math.min(options.entry.response.stdout.length, logs.stdout.length))
-            : "",
-      ),
-      "stderr",
-      logs.stderr.startsWith(options.entry.response.stderr)
-        ? logs.stderr.slice(options.entry.response.stderr.length)
-        : logs.stderr !== options.entry.response.stderr
-          ? logs.stderr.slice(Math.min(options.entry.response.stderr.length, logs.stderr.length))
-          : "",
-    );
-    const hasChanged = logs.stdout !== options.entry.response.stdout
-      || logs.stderr !== options.entry.response.stderr
-      || nextPid !== (options.entry.pid ?? null);
-
-    if (!hasChanged) {
-      return options.entry;
-    }
-
-    await safeWriteAiRequestLog({
-      fileName: options.entry.fileName,
-      jobId: options.entry.jobId,
-      repoRoot: options.repoRoot,
-      branch: options.entry.branch,
-      documentId: options.entry.documentId ?? null,
-      commandId: options.entry.commandId,
-      origin: options.entry.origin ?? null,
-      worktreePath: options.entry.worktreePath,
-      renderedCommand: options.entry.command,
-      input: options.entry.request,
-      stdout: logs.stdout,
-      stderr: logs.stderr,
-      events: nextEvents,
-      startedAt: options.entry.timestamp,
-      completedAt: undefined,
-      pid: nextPid,
-      exitCode: options.entry.exitCode ?? null,
-      processName: options.entry.processName,
-      error: options.entry.error,
-    });
-
-    return readAiCommandLogEntry(options.repoRoot, options.entry.fileName);
-  }
-
-  const logs = await options.aiProcesses.readProcessLogs(processInfo);
-  const completedAt = new Date().toISOString();
-  const resolvedExitCode = processInfo?.exitCode ?? options.entry.exitCode ?? null;
-  const error = resolvedExitCode === 0
-    ? null
-    : options.entry.error ?? new Error(processInfo
-      ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
-      : "AI process was no longer available. The server may have restarted or the process may have crashed.");
-
-  await safeWriteAiRequestLog({
-    fileName: options.entry.fileName,
-    jobId: options.entry.jobId,
-    repoRoot: options.repoRoot,
-    branch: options.entry.branch,
-    documentId: options.entry.documentId ?? null,
-    commandId: options.entry.commandId,
-    origin: options.entry.origin ?? null,
-    worktreePath: options.entry.worktreePath,
-    renderedCommand: options.entry.command,
-    input: options.entry.request,
-    stdout: logs.stdout || options.entry.response.stdout,
-    stderr: logs.stderr || options.entry.response.stderr,
-    events: appendAiCommandOutputEvents(
-      appendAiCommandOutputEvents(
-        options.entry.response.events,
-        "stdout",
-        (logs.stdout || options.entry.response.stdout).startsWith(options.entry.response.stdout)
-          ? (logs.stdout || options.entry.response.stdout).slice(options.entry.response.stdout.length)
-          : (logs.stdout || options.entry.response.stdout) !== options.entry.response.stdout
-            ? (logs.stdout || options.entry.response.stdout).slice(Math.min(options.entry.response.stdout.length, (logs.stdout || options.entry.response.stdout).length))
-            : "",
-      ),
-      "stderr",
-      (logs.stderr || options.entry.response.stderr).startsWith(options.entry.response.stderr)
-        ? (logs.stderr || options.entry.response.stderr).slice(options.entry.response.stderr.length)
-        : (logs.stderr || options.entry.response.stderr) !== options.entry.response.stderr
-          ? (logs.stderr || options.entry.response.stderr).slice(Math.min(options.entry.response.stderr.length, (logs.stderr || options.entry.response.stderr).length))
-          : "",
-    ),
-    startedAt: options.entry.timestamp,
-    completedAt,
-    pid: processInfo?.pid ?? options.entry.pid ?? null,
-    exitCode: resolvedExitCode,
-    processName: options.entry.processName,
-    error,
+  await getAiCommandJob(options.repoRoot, options.entry.branch, {
+    aiProcesses: {
+      getProcess: options.aiProcesses.getProcess,
+      readProcessLogs: options.aiProcesses.readProcessLogs,
+      isProcessActive: options.aiProcesses.isProcessActive,
+    },
   });
-
-  return readAiCommandLogEntry(options.repoRoot, options.entry.fileName);
+  return await readAiCommandLogEntry(options.repoRoot, options.entry.fileName);
 }
 
 export function createApiRouter(options: ApiRouterOptions): express.Router {
@@ -1416,16 +1282,16 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     branch: string;
     documentId?: string | null;
     commandId: AiCommandId;
+    aiCommands: AiCommandConfig;
     origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
-    gitEnv?: NodeJS.ProcessEnv;
-    aiCommands?: AiCommandConfig;
     applyDocumentUpdateToDocumentId?: string | null;
     commentDocumentId?: string | null;
     commentRequestSummary?: string | null;
+    autoCommitDirtyWorktree?: boolean;
   }): Promise<StartedAiCommandJob> => startAiCommandJob({
     branch: details.branch,
     documentId: details.documentId ?? null,
@@ -1437,17 +1303,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     worktreePath: details.worktreePath,
     execute: async (payload) => {
       const processName = getAiCommandProcessName(payload.jobId);
-      const logsDir = resolveAiLogsDir(options.repoRoot);
-      const outFile = path.join(logsDir, `${payload.jobId}.stdout.log`);
-      const errFile = path.join(logsDir, `${payload.jobId}.stderr.log`);
       const processInfo = await aiProcesses.startProcess({
         processName,
         command: details.renderedCommand,
         input: details.input,
         worktreePath: details.worktreePath,
         env: details.env,
-        outFile,
-        errFile,
       });
 
       await payload.hooks.onSpawn?.({
@@ -1506,78 +1367,73 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         await new Promise((resolve) => setTimeout(resolve, aiProcessPollIntervalMs));
       }
     },
-    writeLog: safeWriteAiRequestLog,
-    onComplete: async ({ stdout, stderr }) => {
-      if (details.applyDocumentUpdateToDocumentId) {
-        const nextMarkdown = stdout.trim();
-        if (!nextMarkdown) {
-          throw new Error("AI command finished without returning updated markdown.");
-        }
+    onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId || details.autoCommitDirtyWorktree
+      ? async ({ stdout, stderr }) => {
+        if (details.applyDocumentUpdateToDocumentId) {
+          const nextMarkdown = stdout.trim();
+          if (!nextMarkdown) {
+            throw new Error("AI command finished without returning updated markdown.");
+          }
 
-        const currentDocument = await getProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId);
-        await updateProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId, {
-          title: currentDocument.document.title,
-          summary: currentDocument.document.summary,
-          markdown: nextMarkdown,
-          tags: currentDocument.document.tags,
-          dependencies: currentDocument.document.dependencies,
-          status: currentDocument.document.status,
-          assignee: currentDocument.document.assignee,
-          archived: currentDocument.document.archived,
-        });
-      }
-
-      if (details.commentDocumentId) {
-        try {
-          await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
-            body: buildWorktreeAiComment({
-              branch: details.branch,
-              commandId: details.commandId,
-              requestSummary: details.commentRequestSummary,
-              stdout,
-              stderr,
-            }),
+          const currentDocument = await getProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId);
+          await updateProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId, {
+            title: currentDocument.document.title,
+            summary: currentDocument.document.summary,
+            markdown: nextMarkdown,
+            tags: currentDocument.document.tags,
+            dependencies: currentDocument.document.dependencies,
+            status: currentDocument.document.status,
+            assignee: currentDocument.document.assignee,
+            archived: currentDocument.document.archived,
           });
-        } catch (error) {
-          logServerEvent("project-management-comment", "failed", {
-            branch: details.branch,
-            documentId: details.commentDocumentId,
-            error: error instanceof Error ? error.message : String(error),
-          }, "error");
         }
-      }
 
-      if (!details.applyDocumentUpdateToDocumentId && details.aiCommands && details.gitEnv) {
-        try {
-          const commit = await commitGitChanges({
+        if (details.autoCommitDirtyWorktree) {
+          const autoCommit = await autoCommitGitChanges({
             repoRoot: options.repoRoot,
             branch: details.branch,
             aiCommands: details.aiCommands,
-            commandId: AUTO_COMMIT_COMMAND_ID,
-            env: details.gitEnv,
-          });
-          logServerEvent("ai-command", "auto-commit-completed", {
-            branch: details.branch,
-            commandId: AUTO_COMMIT_COMMAND_ID,
-            commitSha: commit.commitSha,
-            message: commit.message,
-          });
-        } catch (error) {
-          if (isCleanWorkingTreeError(error)) {
-            logServerEvent("ai-command", "auto-commit-skipped-clean-worktree", {
-              branch: details.branch,
-            });
-            return;
-          }
+            env: details.env,
+          }).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (/has no local changes to commit\.$/.test(message)) {
+              return null;
+            }
 
-          logServerEvent("ai-command", "auto-commit-failed", {
-            branch: details.branch,
-            commandId: AUTO_COMMIT_COMMAND_ID,
-            error: error instanceof Error ? error.message : String(error),
-          }, "error");
+            throw error;
+          });
+
+          if (autoCommit) {
+            logServerEvent("ai-command", "auto-commit-created", {
+              branch: details.branch,
+              commandId: autoCommit.commandId,
+              commitSha: autoCommit.commitSha,
+              message: autoCommit.message,
+            });
+          }
+        }
+
+        if (details.commentDocumentId) {
+          try {
+            await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
+              body: buildWorktreeAiComment({
+                branch: details.branch,
+                commandId: details.commandId,
+                requestSummary: details.commentRequestSummary,
+                stdout,
+                stderr,
+              }),
+            });
+          } catch (error) {
+            logServerEvent("project-management-comment", "failed", {
+              branch: details.branch,
+              documentId: details.commentDocumentId,
+              error: error instanceof Error ? error.message : String(error),
+            }, "error");
+          }
         }
       }
-    },
+      : undefined,
   });
 
   const enqueueProjectManagementDocumentAiJob = async (details: {
@@ -1607,16 +1463,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         started: context.started,
       })
       : async (payload, context) => {
+      const config = await loadCurrentConfig();
       const jobRun = await startAiProcessJob({
         branch: payload.branch,
         documentId: payload.documentId,
         commandId: payload.commandId,
+        aiCommands: config.aiCommands,
         origin: payload.origin ?? null,
         input: payload.input,
         renderedCommand: payload.renderedCommand,
         worktreePath: payload.worktreePath,
         env: payload.env,
         applyDocumentUpdateToDocumentId: payload.documentId,
+        autoCommitDirtyWorktree: true,
       });
       context.notifyStarted(await jobRun.started);
       await jobRun.completed;
@@ -2047,46 +1906,46 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       };
 
       writeEvent("snapshot", currentLog);
-
-      let polling = false;
-      const poll = async () => {
-        if (polling) {
+      const unsubscribe = await options.operationalState.subscribeToAiCommandLogNotifications((notification) => {
+        if (notification.fileName !== fileName) {
           return;
         }
 
-        polling = true;
-        try {
-          currentLog = await loadResolvedAiLog(fileName);
-          const nextPayload = JSON.stringify(currentLog);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
-            writeEvent("update", currentLog);
-          }
-        } catch (error) {
-          const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-          if (code === "ENOENT") {
-            writeEvent("update", null);
-          }
-        } finally {
-          polling = false;
-        }
-      };
+        void runBackgroundTask(async () => {
+          try {
+            currentLog = await loadResolvedAiLog(fileName);
+            const nextPayload = JSON.stringify(currentLog);
+            if (nextPayload !== lastPayload) {
+              lastPayload = nextPayload;
+              writeEvent("update", currentLog);
+            }
+          } catch (error) {
+            const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+            if (code === "ENOENT") {
+              if (lastPayload !== "null") {
+                lastPayload = "null";
+                writeEvent("update", null);
+              }
+              return;
+            }
 
-      const interval = setInterval(() => {
-        runBackgroundTask(poll, (error) => {
-          logServerEvent("ai-log-stream", "poll-failed", {
+            throw error;
+          }
+        }, (error) => {
+          logServerEvent("ai-log-stream", "listen-failed", {
             fileName,
             error: error instanceof Error ? error.message : String(error),
           }, "error");
         });
-      }, aiLogStreamPollIntervalMs);
+      });
+
       const keepAlive = setInterval(() => {
         res.write(": keep-alive\n\n");
       }, 15000);
 
       req.on("close", () => {
-        clearInterval(interval);
         clearInterval(keepAlive);
+        void unsubscribe().catch(() => undefined);
         res.end();
       });
     } catch (error) {
@@ -2717,6 +2576,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         branch,
         documentId,
         commandId,
+        aiCommands: config.aiCommands,
         origin,
         input,
         renderedCommand: template,
@@ -2724,6 +2584,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         env,
         commentDocumentId: documentId,
         commentRequestSummary: requestedChange,
+        autoCommitDirtyWorktree: true,
       });
       const job = await jobRun.started;
       scheduleRuntimeStopAfterAiJob({
@@ -3043,23 +2904,22 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
-      const gitEnv = buildWorktreeGitEnv(config, worktree, runtime);
 
       renderedCommand = template;
       const runDetails = {
         branch: worktree.branch,
         documentId,
         commandId,
+        aiCommands: config.aiCommands,
         origin,
         input,
         renderedCommand,
         worktreePath,
         env,
-        gitEnv,
-        aiCommands: config.aiCommands,
         applyDocumentUpdateToDocumentId: explicitDocumentId,
         commentDocumentId,
         commentRequestSummary: explicitDocumentId ? null : body.input,
+        autoCommitDirtyWorktree: true,
       };
       const job = explicitDocumentId
         ? await enqueueProjectManagementDocumentAiJob({
@@ -3138,7 +2998,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: req.params.branch,
           jobId: job.jobId,
           error: cancellationMessage,
-          outputEvents: appendAiCommandOutputEvents(job.outputEvents, "stderr", cancellationMessage),
+          outputEvents: appendAiCommandOutputEvents(job.jobId, job.outputEvents, "stderr", cancellationMessage),
         })
         : null;
 
@@ -3178,7 +3038,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           input: persistedLog.request,
           stdout: persistedLog.response.stdout,
           stderr: `${persistedLog.response.stderr}${cancellationMessage}`,
-          events: appendAiCommandOutputEvents(persistedLog.response.events, "stderr", cancellationMessage),
+          events: appendAiCommandOutputEvents(persistedLog.jobId, persistedLog.response.events, "stderr", cancellationMessage),
           startedAt: persistedLog.timestamp,
           completedAt: new Date().toISOString(),
           pid: persistedLog.pid ?? null,
@@ -3245,7 +3105,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           stderr: nextStderr,
           events: hasCancellationEvent
             ? resolvedLog.response.events
-            : appendAiCommandOutputEvents(resolvedLog.response.events, "stderr", cancellationMessage),
+            : appendAiCommandOutputEvents(resolvedLog.jobId, resolvedLog.response.events, "stderr", cancellationMessage),
           startedAt: resolvedLog.timestamp,
           completedAt: resolvedLog.completedAt ?? finalJob.completedAt ?? new Date().toISOString(),
           pid: finalJob.pid ?? resolvedLog.pid ?? null,

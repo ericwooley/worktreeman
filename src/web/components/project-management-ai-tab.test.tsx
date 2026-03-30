@@ -93,6 +93,10 @@ test("AI log sub tab renders saved log detail and origin actions", () => {
 
   assert.match(markup, />AI log</);
   assert.match(markup, />Active AI Worktrees</);
+  assert.match(markup, /role="tablist"/);
+  assert.match(markup, /id="project-management-ai-activity-log-tab"/);
+  assert.match(markup, /id="project-management-ai-activity-log-panel"/);
+  assert.match(markup, /aria-labelledby="project-management-ai-activity-log-tab"/);
   assert.match(markup, /Saved logs/);
   assert.match(markup, /feature\/ai-log/);
   assert.match(markup, /AI log detail/);

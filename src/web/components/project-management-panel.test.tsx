@@ -188,6 +188,8 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     activeSubTab: "document",
     selectedDocumentId: "doc-1",
     documentViewMode: "document",
+    editFormTab: "write",
+    createFormTab: "write",
     document: sampleDocument,
     history: sampleHistory,
     loading: false,
@@ -204,6 +206,8 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     onSelectWorktree: () => undefined,
     onSubTabChange: () => undefined,
     onDocumentViewModeChange: () => undefined,
+    onEditFormTabChange: () => undefined,
+    onCreateFormTabChange: () => undefined,
     onSelectDocument: async () => null,
     onCreateDocument: async () => null,
     onUpdateDocument: async () => null,
@@ -250,6 +254,8 @@ test("create form renders without seeded defaults", () => {
       activeSubTab="create"
       selectedDocumentId={null}
       documentViewMode="document"
+      editFormTab="write"
+      createFormTab="write"
       document={null}
       history={[]}
       loading={false}
@@ -262,6 +268,8 @@ test("create form renders without seeded defaults", () => {
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
+      onEditFormTabChange={() => undefined}
+      onCreateFormTabChange={() => undefined}
       onSelectDocument={async () => null}
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
@@ -305,11 +313,16 @@ test("edit form uses write and preview tabs instead of multiple editor modes", (
   assert.doesNotMatch(markup, />WYSIWYG</);
   assert.doesNotMatch(markup, />Monaco</);
   assert.doesNotMatch(markup, />Markdown</);
+  assert.match(markup, /role="tablist"/);
+  assert.match(markup, /id="project-management-document-view-edit-tab"/);
+  assert.match(markup, /id="project-management-edit-form-write-tab"/);
+  assert.match(markup, /aria-controls="project-management-document-view-edit-panel"/);
 });
 
 test("document form preview renders parsed markdown from the Monaco-backed draft", () => {
   const markup = renderToStaticMarkup(
     <ProjectManagementDocumentForm
+      tabsId="project-management-edit-form"
       mode="edit"
       title="Dependencies"
       summary="Track prerequisite document work."
@@ -348,6 +361,8 @@ test("document view shows dependency summary and modal entrypoint", () => {
       activeSubTab="document"
       selectedDocumentId="doc-1"
       documentViewMode="document"
+      editFormTab="write"
+      createFormTab="write"
       document={sampleDocument}
       history={[]}
       loading={false}
@@ -360,6 +375,8 @@ test("document view shows dependency summary and modal entrypoint", () => {
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
+      onEditFormTabChange={() => undefined}
+      onCreateFormTabChange={() => undefined}
       onSelectDocument={async () => null}
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}
@@ -388,6 +405,9 @@ test("document view shows dependency summary and modal entrypoint", () => {
   assert.match(markup, /Archive document/);
   assert.match(markup, /Save assignee/);
   assert.match(markup, /Update the lane, assignee, or archive state here without leaving the document view\./);
+  assert.match(markup, /id="project-management-workspace-document-tab"/);
+  assert.match(markup, /id="project-management-workspace-document-panel"/);
+  assert.match(markup, /aria-labelledby="project-management-workspace-document-tab"/);
 });
 
 test("document view renders summary, comments, and comment attribution", () => {
@@ -401,6 +421,8 @@ test("document view renders summary, comments, and comment attribution", () => {
       activeSubTab="document"
       selectedDocumentId="doc-1"
       documentViewMode="document"
+      editFormTab="write"
+      createFormTab="write"
       document={{
         ...sampleDocument,
         summary: "Track prerequisite document work.",
@@ -423,6 +445,8 @@ test("document view renders summary, comments, and comment attribution", () => {
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
       onDocumentViewModeChange={() => undefined}
+      onEditFormTabChange={() => undefined}
+      onCreateFormTabChange={() => undefined}
       onSelectDocument={async () => null}
       onCreateDocument={async () => null}
       onUpdateDocument={async () => null}

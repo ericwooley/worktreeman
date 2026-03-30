@@ -1,5 +1,6 @@
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
+import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import type { WorktreeEnvironmentSubTab, WorktreeGitSubTab } from "./worktree-detail";
 
 export type DashboardActiveTab = "environment" | "git" | "merge" | "project-management" | "ai-log";
@@ -17,6 +18,8 @@ export interface DashboardUrlState {
   projectManagementSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
+  projectManagementEditFormTab: ProjectManagementDocumentFormViewMode;
+  projectManagementCreateFormTab: ProjectManagementDocumentFormViewMode;
 }
 
 export function parseWorktreeGitSubTab(value: string | null): WorktreeGitSubTab {
@@ -35,6 +38,10 @@ export function parseProjectManagementSubTab(value: string | null): ProjectManag
 
 export function parseProjectManagementDocumentViewMode(value: string | null): ProjectManagementDocumentViewMode {
   return value === "edit" ? "edit" : "document";
+}
+
+export function parseProjectManagementDocumentFormViewMode(value: string | null): ProjectManagementDocumentFormViewMode {
+  return value === "preview" ? "preview" : "write";
 }
 
 export function parseWorktreeEnvironmentSubTab(value: string | null): WorktreeEnvironmentSubTab {
@@ -75,5 +82,7 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
     projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),
     projectManagementSelectedDocumentId: params.get("pmDoc"),
     projectManagementDocumentViewMode: parseProjectManagementDocumentViewMode(params.get("pmView")),
+    projectManagementEditFormTab: parseProjectManagementDocumentFormViewMode(params.get("pmEditTab")),
+    projectManagementCreateFormTab: parseProjectManagementDocumentFormViewMode(params.get("pmCreateTab")),
   };
 }

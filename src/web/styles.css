@@ -386,6 +386,37 @@ body,
   color: var(--base06);
 }
 
+.matrix-tablist {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.125rem;
+  scrollbar-width: thin;
+}
+
+.matrix-tab {
+  min-height: 2.75rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.matrix-tab:focus-visible {
+  outline: 2px solid rgb(var(--rgb-base0D) / 0.72);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .matrix-tablist {
+    margin-inline: -0.25rem;
+    padding-inline: 0.25rem;
+  }
+
+  .matrix-tab {
+    min-width: max-content;
+    padding-inline: 0.875rem;
+  }
+}
+
 .theme-tab-idle {
   background: rgb(var(--rgb-base00) / 0.18);
   color: var(--base04);

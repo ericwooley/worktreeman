@@ -1,7 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import type { AiCommandJob, ShutdownLogEntry, ShutdownStatus, WorktreeRuntime } from "../../shared/types.js";
+import type {
+  AiCommandJob,
+  AiCommandLogEntry,
+  AiCommandLogError,
+  AiCommandOutputEvent,
+  AiCommandOrigin,
+  ShutdownLogEntry,
+  ShutdownStatus,
+  WorktreeRuntime,
+} from "../../shared/types.js";
 
 const DEFAULT_SHUTDOWN_STATUS: ShutdownStatus = {
   active: false,
@@ -13,6 +22,43 @@ const DEFAULT_SHUTDOWN_STATUS: ShutdownStatus = {
 interface ManagedOperationalStateStore {
   db: PGlite;
   readyPromise: Promise<void>;
+}
+
+interface AiCommandLogNotification {
+  fileName: string;
+  branch: string;
+  jobId: string;
+  type: "run" | "output";
+}
+
+interface AiCommandLogRow {
+  job_id: string;
+  file_name: string;
+  timestamp: string;
+  branch: string;
+  document_id: string | null;
+  command_id: string;
+  origin_json: string | null;
+  worktree_path: string;
+  command_text: string;
+  request_text: string;
+  status: string;
+  stdout_text: string;
+  stderr_text: string;
+  pid: number | null;
+  exit_code: number | null;
+  process_name: string | null;
+  completed_at: string | null;
+  error_json: string | null;
+}
+
+interface AiCommandOutputRow {
+  job_id: string;
+  event_id: string;
+  entry_number: number;
+  source: "stdout" | "stderr";
+  text: string;
+  timestamp: string;
 }
 
 const managedStores = new Map<string, ManagedOperationalStateStore>();
@@ -54,6 +100,45 @@ function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null {
   };
 }
 
+function cloneAiCommandOutputEvent(event: AiCommandOutputEvent): AiCommandOutputEvent {
+  return { ...event };
+}
+
+function cloneAiCommandLogError(error: AiCommandLogError | null): AiCommandLogError | null {
+  return error ? { ...error } : null;
+}
+
+function cloneAiCommandOrigin(origin: AiCommandOrigin | null | undefined): AiCommandOrigin | null | undefined {
+  return origin
+    ? {
+        ...origin,
+        location: { ...origin.location },
+      }
+    : origin;
+}
+
+function cloneAiCommandLogEntry(entry: AiCommandLogEntry | null): AiCommandLogEntry | null {
+  if (!entry) {
+    return null;
+  }
+
+  return {
+    ...entry,
+    documentId: entry.documentId ?? null,
+    completedAt: entry.completedAt,
+    pid: entry.pid,
+    exitCode: entry.exitCode,
+    processName: entry.processName,
+    error: cloneAiCommandLogError(entry.error),
+    origin: cloneAiCommandOrigin(entry.origin) ?? null,
+    response: {
+      stdout: entry.response.stdout,
+      stderr: entry.response.stderr,
+      events: entry.response.events?.map(cloneAiCommandOutputEvent) ?? [],
+    },
+  };
+}
+
 function cloneShutdownStatus(status: ShutdownStatus): ShutdownStatus {
   return {
     ...status,
@@ -75,6 +160,123 @@ function parseAiCommandJob(value: unknown): AiCommandJob | null {
   }
 
   return cloneAiCommandJob(value as AiCommandJob);
+}
+
+function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const origin = value as AiCommandOrigin;
+  if (typeof origin.kind !== "string" || typeof origin.label !== "string" || !origin.location || typeof origin.location !== "object") {
+    return null;
+  }
+
+  return cloneAiCommandOrigin(origin) ?? null;
+}
+
+function parseAiCommandLogError(value: unknown): AiCommandLogError | null {
+  if (!value) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return { message: value };
+  }
+
+  if (typeof value !== "object") {
+    return { message: String(value) };
+  }
+
+  const error = value as { name?: unknown; message?: unknown; stack?: unknown };
+  return {
+    name: typeof error.name === "string" ? error.name : undefined,
+    message: typeof error.message === "string" ? error.message : String(value),
+    stack: typeof error.stack === "string" ? error.stack : undefined,
+  };
+}
+
+function parseAiCommandOutputEvent(value: unknown, fallbackRunId: string, fallbackEntry: number): AiCommandOutputEvent | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const event = value as {
+    id?: unknown;
+    runId?: unknown;
+    entry?: unknown;
+    source?: unknown;
+    text?: unknown;
+    timestamp?: unknown;
+  };
+  if ((event.source !== "stdout" && event.source !== "stderr") || typeof event.text !== "string") {
+    return null;
+  }
+
+  return {
+    id: typeof event.id === "string" && event.id ? event.id : `${fallbackRunId}:${fallbackEntry}`,
+    runId: typeof event.runId === "string" && event.runId ? event.runId : fallbackRunId,
+    entry: typeof event.entry === "number" && Number.isFinite(event.entry) ? event.entry : fallbackEntry,
+    source: event.source,
+    text: event.text,
+    timestamp: typeof event.timestamp === "string" && event.timestamp ? event.timestamp : new Date().toISOString(),
+  };
+}
+
+function toAiCommandLogEntry(row: AiCommandLogRow, events: AiCommandOutputEvent[]): AiCommandLogEntry {
+  return {
+    jobId: row.job_id,
+    fileName: row.file_name,
+    timestamp: row.timestamp,
+    branch: row.branch,
+    documentId: row.document_id,
+    commandId: row.command_id === "simple" ? "simple" : "smart",
+    origin: row.origin_json ? parseAiCommandOrigin(JSON.parse(row.origin_json)) : null,
+    worktreePath: row.worktree_path,
+    command: row.command_text,
+    request: row.request_text,
+    response: {
+      stdout: row.stdout_text,
+      stderr: row.stderr_text,
+      events,
+    },
+    status: row.status === "completed" ? "completed" : row.status === "failed" ? "failed" : "running",
+    pid: row.pid,
+    exitCode: row.exit_code,
+    processName: row.process_name,
+    completedAt: row.completed_at ?? undefined,
+    error: row.error_json ? parseAiCommandLogError(JSON.parse(row.error_json)) : null,
+  };
+}
+
+async function notifyAiCommandLogUpdate(repoRoot: string, payload: AiCommandLogNotification): Promise<void> {
+  const managed = await ensureManagedStore(repoRoot);
+  await managed.db.query(`select pg_notify($1, $2)`, ["ai_command_log_updates", JSON.stringify(payload)]);
+}
+
+async function readAiCommandOutputEvents(repoRoot: string, jobId: string): Promise<AiCommandOutputEvent[]> {
+  const managed = await ensureManagedStore(repoRoot);
+  const result = await managed.db.query<AiCommandOutputRow>(
+    `
+      select job_id, event_id, entry_number, source, text, timestamp
+      from ai_run_output_entries
+      where job_id = $1
+      order by entry_number asc
+    `,
+    [jobId],
+  );
+
+  return result.rows.flatMap((row) => {
+    const event = parseAiCommandOutputEvent({
+      id: row.event_id,
+      runId: row.job_id,
+      entry: row.entry_number,
+      source: row.source,
+      text: row.text,
+      timestamp: row.timestamp,
+    }, row.job_id, row.entry_number);
+    return event ? [event] : [];
+  });
 }
 
 function parseShutdownStatus(value: unknown): ShutdownStatus {
@@ -129,6 +331,48 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
         snapshot_json text not null,
         updated_at timestamptz not null default now()
       );
+
+      create table if not exists ai_run_logs (
+        job_id text primary key,
+        file_name text not null unique,
+        timestamp text not null,
+        branch text not null,
+        document_id text,
+        command_id text not null,
+        origin_json text,
+        worktree_path text not null,
+        command_text text not null,
+        request_text text not null,
+        status text not null,
+        stdout_text text not null default '',
+        stderr_text text not null default '',
+        pid integer,
+        exit_code integer,
+        process_name text,
+        completed_at text,
+        error_json text,
+        updated_at timestamptz not null default now()
+      );
+
+      create index if not exists ai_run_logs_branch_updated_idx
+        on ai_run_logs (branch, updated_at desc);
+
+      create table if not exists ai_run_output_entries (
+        job_id text not null,
+        file_name text not null,
+        branch text not null,
+        entry_number integer not null,
+        event_id text not null,
+        source text not null,
+        text text not null,
+        timestamp text not null,
+        created_at timestamptz not null default now(),
+        primary key (job_id, entry_number),
+        foreign key (job_id) references ai_run_logs (job_id) on delete cascade
+      );
+
+      create index if not exists ai_run_output_entries_file_name_entry_idx
+        on ai_run_output_entries (file_name, entry_number asc);
     `);
 
     await db.query(
@@ -389,6 +633,250 @@ export class OperationalStateStore {
     }
 
     await managed.db.query(`delete from ai_job_state`);
+  }
+
+  async upsertAiCommandLogEntry(entry: AiCommandLogEntry): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const nextEntry = cloneAiCommandLogEntry(entry);
+    if (!nextEntry) {
+      return;
+    }
+
+    await managed.db.query(
+      `
+        insert into ai_run_logs (
+          job_id,
+          file_name,
+          timestamp,
+          branch,
+          document_id,
+          command_id,
+          origin_json,
+          worktree_path,
+          command_text,
+          request_text,
+          status,
+          stdout_text,
+          stderr_text,
+          pid,
+          exit_code,
+          process_name,
+          completed_at,
+          error_json,
+          updated_at
+        )
+        values (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11, $12, $13, $14, $15, $16, $17, $18, now()
+        )
+        on conflict (job_id) do update
+        set file_name = excluded.file_name,
+            timestamp = excluded.timestamp,
+            branch = excluded.branch,
+            document_id = excluded.document_id,
+            command_id = excluded.command_id,
+            origin_json = excluded.origin_json,
+            worktree_path = excluded.worktree_path,
+            command_text = excluded.command_text,
+            request_text = excluded.request_text,
+            status = excluded.status,
+            stdout_text = excluded.stdout_text,
+            stderr_text = excluded.stderr_text,
+            pid = excluded.pid,
+            exit_code = excluded.exit_code,
+            process_name = excluded.process_name,
+            completed_at = excluded.completed_at,
+            error_json = excluded.error_json,
+            updated_at = now()
+      `,
+      [
+        nextEntry.jobId,
+        nextEntry.fileName,
+        nextEntry.timestamp,
+        nextEntry.branch,
+        nextEntry.documentId ?? null,
+        nextEntry.commandId,
+        nextEntry.origin ? JSON.stringify(nextEntry.origin) : null,
+        nextEntry.worktreePath,
+        nextEntry.command,
+        nextEntry.request,
+        nextEntry.status,
+        nextEntry.response.stdout,
+        nextEntry.response.stderr,
+        nextEntry.pid ?? null,
+        nextEntry.exitCode ?? null,
+        nextEntry.processName ?? null,
+        nextEntry.completedAt ?? null,
+        nextEntry.error ? JSON.stringify(nextEntry.error) : null,
+      ],
+    );
+
+    await notifyAiCommandLogUpdate(this.repoRoot, {
+      fileName: nextEntry.fileName,
+      branch: nextEntry.branch,
+      jobId: nextEntry.jobId,
+      type: "run",
+    });
+  }
+
+  async syncAiCommandOutputEvents(jobId: string, fileName: string, branch: string, events: AiCommandOutputEvent[] | undefined): Promise<void> {
+    if (!events || events.length === 0) {
+      return;
+    }
+
+    const managed = await ensureManagedStore(this.repoRoot);
+    const maxResult = await managed.db.query<{ max_entry: number | null }>(
+      `select max(entry_number) as max_entry from ai_run_output_entries where job_id = $1`,
+      [jobId],
+    );
+    const maxEntry = maxResult.rows[0]?.max_entry ?? 0;
+    const pendingEvents = events
+      .map((event, index) => ({
+        ...cloneAiCommandOutputEvent(event),
+        runId: event.runId ?? jobId,
+        entry: event.entry ?? index + 1,
+      }))
+      .filter((event) => (event.entry ?? 0) > maxEntry);
+
+    for (const event of pendingEvents) {
+      await managed.db.query(
+        `
+          insert into ai_run_output_entries (
+            job_id,
+            file_name,
+            branch,
+            entry_number,
+            event_id,
+            source,
+            text,
+            timestamp
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
+        `,
+        [
+          jobId,
+          fileName,
+          branch,
+          event.entry,
+          event.id,
+          event.source,
+          event.text,
+          event.timestamp,
+        ],
+      );
+
+      await notifyAiCommandLogUpdate(this.repoRoot, {
+        fileName,
+        branch,
+        jobId,
+        type: "output",
+      });
+    }
+  }
+
+  async getAiCommandLogEntry(fileName: string): Promise<AiCommandLogEntry | null> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<AiCommandLogRow>(
+      `
+        select
+          job_id,
+          file_name,
+          timestamp,
+          branch,
+          document_id,
+          command_id,
+          origin_json,
+          worktree_path,
+          command_text,
+          request_text,
+          status,
+          stdout_text,
+          stderr_text,
+          pid,
+          exit_code,
+          process_name,
+          completed_at,
+          error_json
+        from ai_run_logs
+        where file_name = $1
+      `,
+      [fileName],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    const events = await readAiCommandOutputEvents(this.repoRoot, row.job_id);
+    return toAiCommandLogEntry(row, events);
+  }
+
+  async listAiCommandLogEntries(): Promise<AiCommandLogEntry[]> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<AiCommandLogRow>(
+      `
+        select
+          job_id,
+          file_name,
+          timestamp,
+          branch,
+          document_id,
+          command_id,
+          origin_json,
+          worktree_path,
+          command_text,
+          request_text,
+          status,
+          stdout_text,
+          stderr_text,
+          pid,
+          exit_code,
+          process_name,
+          completed_at,
+          error_json
+        from ai_run_logs
+        order by updated_at desc, file_name desc
+      `,
+    );
+
+    return await Promise.all(result.rows.map(async (row) => {
+      const events = await readAiCommandOutputEvents(this.repoRoot, row.job_id);
+      return toAiCommandLogEntry(row, events);
+    }));
+  }
+
+  async subscribeToAiCommandLogNotifications(
+    listener: (notification: AiCommandLogNotification) => void,
+  ): Promise<() => Promise<void>> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const unlisten = await managed.db.listen("ai_command_log_updates", (payload) => {
+      if (typeof payload !== "string" || !payload) {
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(payload) as AiCommandLogNotification;
+        if (!parsed || typeof parsed !== "object") {
+          return;
+        }
+
+        if (typeof parsed.fileName !== "string" || typeof parsed.branch !== "string" || typeof parsed.jobId !== "string") {
+          return;
+        }
+
+        if (parsed.type !== "run" && parsed.type !== "output") {
+          return;
+        }
+
+        listener(parsed);
+      } catch {
+        // ignore malformed notifications
+      }
+    });
+
+    return async () => {
+      await unlisten();
+    };
   }
 }
 

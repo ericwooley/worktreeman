@@ -17,6 +17,7 @@ import { useTheme } from "./theme-provider";
 import { WorktreeDetail, type WorktreeEnvironmentSubTab, type WorktreeGitSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
+import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
@@ -192,6 +193,12 @@ export function Dashboard() {
   const [projectManagementSelectedDocumentId, setProjectManagementSelectedDocumentId] = useState<string | null>(initialUrlState.projectManagementSelectedDocumentId);
   const [projectManagementDocumentViewMode, setProjectManagementDocumentViewMode] = useState<ProjectManagementDocumentViewMode>(
     initialUrlState.projectManagementDocumentViewMode,
+  );
+  const [projectManagementEditFormTab, setProjectManagementEditFormTab] = useState<ProjectManagementDocumentFormViewMode>(
+    initialUrlState.projectManagementEditFormTab,
+  );
+  const [projectManagementCreateFormTab, setProjectManagementCreateFormTab] = useState<ProjectManagementDocumentFormViewMode>(
+    initialUrlState.projectManagementCreateFormTab,
   );
   const [gitView, setGitView] = useState<"graph" | "diff">(initialUrlState.gitView);
   const [gitPullRequestDocumentId, setGitPullRequestDocumentId] = useState<string | null>(initialUrlState.gitPullRequestDocumentId);
@@ -487,10 +494,22 @@ export function Dashboard() {
       } else {
         params.delete("pmView");
       }
+      if (projectManagementSubTab === "document" && projectManagementDocumentViewMode === "edit" && projectManagementSelectedDocumentId) {
+        params.set("pmEditTab", projectManagementEditFormTab);
+      } else {
+        params.delete("pmEditTab");
+      }
+      if (projectManagementSubTab === "create") {
+        params.set("pmCreateTab", projectManagementCreateFormTab);
+      } else {
+        params.delete("pmCreateTab");
+      }
     } else {
       params.delete("pmTab");
       params.delete("pmDoc");
       params.delete("pmView");
+      params.delete("pmEditTab");
+      params.delete("pmCreateTab");
     }
 
     if (activeTab === "ai-log") {
@@ -535,7 +554,9 @@ export function Dashboard() {
     gitSubTab,
     gitView,
     isTerminalVisible,
+    projectManagementCreateFormTab,
     projectManagementDocumentViewMode,
+    projectManagementEditFormTab,
     projectManagementSelectedDocumentId,
     projectManagementSubTab,
     selectedBranch,
@@ -556,6 +577,8 @@ export function Dashboard() {
       setProjectManagementSubTab(nextUrlState.projectManagementSubTab);
       setProjectManagementSelectedDocumentId(nextUrlState.projectManagementSelectedDocumentId);
       setProjectManagementDocumentViewMode(nextUrlState.projectManagementDocumentViewMode);
+      setProjectManagementEditFormTab(nextUrlState.projectManagementEditFormTab);
+      setProjectManagementCreateFormTab(nextUrlState.projectManagementCreateFormTab);
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -1384,6 +1407,8 @@ export function Dashboard() {
             projectManagementActiveSubTab={projectManagementSubTab}
             projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
             projectManagementDocumentViewMode={projectManagementDocumentViewMode}
+            projectManagementEditFormTab={projectManagementEditFormTab}
+            projectManagementCreateFormTab={projectManagementCreateFormTab}
             projectManagementDocument={projectManagementDocument}
             projectManagementHistory={projectManagementHistory}
             projectManagementLoading={projectManagementLoading}
@@ -1400,6 +1425,8 @@ export function Dashboard() {
             onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
             onProjectManagementAiSubTabChange={setAiActivitySubTab}
             onProjectManagementDocumentViewModeChange={setProjectManagementDocumentViewMode}
+            onProjectManagementEditFormTabChange={setProjectManagementEditFormTab}
+            onProjectManagementCreateFormTabChange={setProjectManagementCreateFormTab}
             onLoadProjectManagementDocuments={loadProjectManagementDocuments}
             onLoadProjectManagementUsers={loadProjectManagementUsers}
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
