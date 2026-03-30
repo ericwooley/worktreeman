@@ -214,7 +214,8 @@ function normalizeHost(host: string | undefined): string | undefined {
     return undefined;
   }
 
-  return normalizeAddress(trimmed.toLowerCase());
+  const normalized = normalizeAddress(trimmed.toLowerCase());
+  return normalized === "local" ? "localhost" : normalized;
 }
 
 function normalizeAddress(address: string): string {
