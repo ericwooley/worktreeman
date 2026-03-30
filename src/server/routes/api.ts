@@ -1463,6 +1463,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         started: context.started,
       })
       : async (payload, context) => {
+      const config = await loadCurrentConfig();
       const jobRun = await startAiProcessJob({
         branch: payload.branch,
         documentId: payload.documentId,
