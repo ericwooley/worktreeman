@@ -30,7 +30,7 @@ import {
 } from "./project-management-document-browser";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
-import { MatrixBadge, MatrixModal, MatrixTabButton } from "./matrix-primitives";
+import { MatrixBadge, MatrixModal, MatrixSkeletonCard, MatrixSpinner, MatrixTabButton } from "./matrix-primitives";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
 const ProjectManagementBoardTab = lazy(async () => {
@@ -348,6 +348,7 @@ export function ProjectManagementPanel({
 }: ProjectManagementPanelProps) {
   const statuses = availableStatuses.length ? availableStatuses : [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES];
   const [showBacklogLane, setShowBacklogLane] = useState(false);
+  const [loadingDocumentId, setLoadingDocumentId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState(() => document?.title ?? "");
   const [editSummary, setEditSummary] = useState(() => document?.summary ?? "");
   const [editMarkdown, setEditMarkdown] = useState(() => document?.markdown ?? "");
@@ -616,9 +617,16 @@ export function ProjectManagementPanel({
   }, [selectedDocumentAiOutput]);
 
   async function handleSelectDocument(documentId: string, options?: { silent?: boolean }) {
+    if (!options?.silent) {
+      setLoadingDocumentId(documentId);
+    }
     onSubTabChange("document");
     onDocumentViewModeChange("document");
-    return onSelectDocument(documentId, options);
+    try {
+      return await onSelectDocument(documentId, options);
+    } finally {
+      setLoadingDocumentId(null);
+    }
   }
 
   async function handleCreateDocument() {
@@ -995,20 +1003,27 @@ export function ProjectManagementPanel({
         availableTags={availableTags}
         statuses={statuses}
         state={documentBrowser}
-        emptyMessage="No documents match the current filters."
+        emptyMessage={loading ? "" : "No documents match the current filters."}
         renderDocument={(entry) => (
           <button
             key={entry.id}
             type="button"
             className="w-full text-left"
+            disabled={loadingDocumentId !== null}
             onClick={() => void handleSelectDocument(entry.id)}
           >
-            <MatrixCard as="div" selected={document?.id === entry.id} interactive className="p-3">
+            <MatrixCard
+              as="div"
+              selected={document?.id === entry.id}
+              interactive
+              className={`p-3 ${loadingDocumentId === entry.id ? "matrix-card-loading" : ""}`}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] theme-text-soft">#{entry.number}</p>
                     {entry.archived ? <MatrixBadge tone="warning" compact>archived</MatrixBadge> : null}
+                    {loadingDocumentId === entry.id ? <MatrixSpinner label="Loading document…" /> : null}
                   </div>
                   <MatrixCardTitle className="mt-2" lines={2} title={entry.title}>{entry.title}</MatrixCardTitle>
                   {entry.summary ? (
@@ -1032,6 +1047,13 @@ export function ProjectManagementPanel({
             </MatrixCard>
           </button>
         )}
+        skeletonSlot={loading && documents.length === 0 ? (
+          <div className="space-y-2 mt-3">
+            <MatrixSkeletonCard />
+            <MatrixSkeletonCard />
+            <MatrixSkeletonCard />
+          </div>
+        ) : null}
       />
 
       <button

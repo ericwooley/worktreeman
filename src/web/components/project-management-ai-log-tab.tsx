@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AiCommandJob,
   AiCommandLogEntry,
@@ -8,7 +8,7 @@ import type {
 } from "@shared/types";
 import { marked } from "marked";
 import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
-import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric } from "./matrix-primitives";
+import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSpinner } from "./matrix-primitives";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
 function getAiCommandLabel(commandId: "smart" | "simple") {
@@ -206,6 +206,16 @@ export function ProjectManagementAiLogTab({
 }: ProjectManagementAiLogTabProps) {
   const autoSelectedFileRef = useRef<string | null>(null);
   const refreshStatusLabel = formatAutoRefreshStatus(lastUpdatedAt);
+  const [loadingFileName, setLoadingFileName] = useState<string | null>(null);
+
+  async function handleSelectLog(fileName: string, options?: { silent?: boolean }) {
+    setLoadingFileName(fileName);
+    try {
+      await onSelectLog(fileName, options);
+    } finally {
+      setLoadingFileName(null);
+    }
+  }
 
   const visibleLogs = useMemo(() => {
     const historicalLogs = logs.filter((log) => log.status !== "running");
@@ -229,6 +239,7 @@ export function ProjectManagementAiLogTab({
     }
 
     autoSelectedFileRef.current = primaryCandidate.fileName;
+    // Use the raw onSelectLog for silent auto-selection — no loading indicator needed
     void onSelectLog(primaryCandidate.fileName, { silent: true });
   }, [loading, logDetail, onSelectLog, primaryCandidate]);
 
@@ -317,7 +328,7 @@ export function ProjectManagementAiLogTab({
                       <button
                         type="button"
                         className="min-w-0 text-left theme-text-strong"
-                        onClick={() => void onSelectLog(job.fileName, { silent: true })}
+                        onClick={() => void handleSelectLog(job.fileName, { silent: true })}
                       >
                         {getOriginContextTitle(job.origin, job.branch)}
                       </button>
@@ -331,6 +342,7 @@ export function ProjectManagementAiLogTab({
                       <>
                         <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
                         <MatrixBadge tone={getStatusTone(job.status)} compact>{job.status}</MatrixBadge>
+                        {loadingFileName === job.fileName ? <MatrixSpinner label="Loading log…" /> : null}
                       </>
                     )}
                     actions={(
@@ -378,9 +390,15 @@ export function ProjectManagementAiLogTab({
                   key={log.fileName}
                   type="button"
                   className="w-full text-left"
-                  onClick={() => void onSelectLog(log.fileName, { silent: true })}
+                  disabled={loadingFileName !== null}
+                  onClick={() => void handleSelectLog(log.fileName, { silent: true })}
                 >
-                  <MatrixCard as="div" selected={logDetail?.fileName === log.fileName} interactive className="p-3">
+                  <MatrixCard
+                    as="div"
+                    selected={logDetail?.fileName === log.fileName}
+                    interactive
+                    className={`p-3 ${loadingFileName === log.fileName ? "matrix-card-loading" : ""}`}
+                  >
                     <MatrixCardHeader
                       eyebrow={<span className="theme-text-soft">{log.branch}</span>}
                       title={getOriginContextTitle(log.origin, log.branch)}
@@ -393,6 +411,7 @@ export function ProjectManagementAiLogTab({
                         <>
                           <MatrixBadge tone="neutral" compact>{getAiCommandLabel(log.commandId)}</MatrixBadge>
                           <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
+                          {loadingFileName === log.fileName ? <MatrixSpinner label="Loading log…" /> : null}
                         </>
                       )}
                     />
@@ -557,9 +576,15 @@ export function ProjectManagementAiLogTab({
                           <button
                             type="button"
                             className="matrix-button rounded-none px-3 py-2 text-sm"
-                            onClick={() => void onSelectLog(primaryCandidate.fileName, { silent: true })}
+                            disabled={loadingFileName !== null}
+                            onClick={() => void handleSelectLog(primaryCandidate.fileName, { silent: true })}
                           >
-                            Open latest run
+                            {loadingFileName === primaryCandidate.fileName ? (
+                              <span className="flex items-center gap-2">
+                                <span className="matrix-spinner-sm" aria-hidden="true" />
+                                Opening…
+                              </span>
+                            ) : "Open latest run"}
                           </button>
                         )}
                       />
@@ -583,9 +608,14 @@ export function ProjectManagementAiLogTab({
                         key={entry.fileName}
                         type="button"
                         className="w-full text-left"
-                        onClick={() => void onSelectLog(entry.fileName, { silent: true })}
+                        disabled={loadingFileName !== null}
+                        onClick={() => void handleSelectLog(entry.fileName, { silent: true })}
                       >
-                        <MatrixCard as="div" interactive className="p-3">
+                        <MatrixCard
+                          as="div"
+                          interactive
+                          className={`p-3 ${loadingFileName === entry.fileName ? "matrix-card-loading" : ""}`}
+                        >
                           <MatrixCardHeader
                             eyebrow={<span className="theme-text-soft">{entry.branch}</span>}
                             title={getOriginContextTitle(entry.origin, entry.branch)}
@@ -594,7 +624,12 @@ export function ProjectManagementAiLogTab({
                             description={getOriginContextSubtitle(entry.origin, entry.branch)}
                             descriptionLines={2}
                             descriptionText={getOriginContextSubtitle(entry.origin, entry.branch)}
-                            badges={<MatrixBadge tone={getStatusTone(entry.status)} compact>{entry.status}</MatrixBadge>}
+                            badges={(
+                              <>
+                                <MatrixBadge tone={getStatusTone(entry.status)} compact>{entry.status}</MatrixBadge>
+                                {loadingFileName === entry.fileName ? <MatrixSpinner label="Loading log…" /> : null}
+                              </>
+                            )}
                           />
                           <MatrixCardFooter className="mt-3 text-xs theme-text-muted">
                             <span>{formatTimestamp(entry.timestamp)}</span>

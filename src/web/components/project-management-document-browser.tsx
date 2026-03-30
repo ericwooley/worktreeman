@@ -160,6 +160,8 @@ interface ProjectManagementDocumentBrowserProps {
   searchPlaceholder?: string;
   listMaxHeightClass?: string;
   renderDocument: (entry: ProjectManagementDocumentSummary) => ReactNode;
+  /** Optional slot rendered instead of the empty-message when there are no document groups. */
+  skeletonSlot?: ReactNode;
 }
 
 export function ProjectManagementDocumentBrowser({
@@ -171,6 +173,7 @@ export function ProjectManagementDocumentBrowser({
   searchPlaceholder = "Search title, number, tag, assignee",
   listMaxHeightClass = "max-h-[min(70vh,48rem)]",
   renderDocument,
+  skeletonSlot,
 }: ProjectManagementDocumentBrowserProps) {
   return (
     <>
@@ -269,7 +272,7 @@ export function ProjectManagementDocumentBrowser({
               </section>
             ))}
           </div>
-        ) : (
+        ) : skeletonSlot ? skeletonSlot : (
           <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
             {emptyMessage}
           </div>
