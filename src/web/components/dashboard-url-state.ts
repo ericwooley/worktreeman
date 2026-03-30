@@ -2,7 +2,7 @@ import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from 
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import type { WorktreeEnvironmentSubTab, WorktreeGitSubTab } from "./worktree-detail";
 
-export type DashboardActiveTab = "environment" | "git" | "project-management" | "ai-log";
+export type DashboardActiveTab = "environment" | "git" | "merge" | "project-management" | "ai-log";
 
 export interface DashboardUrlState {
   selectedBranch: string | null;
@@ -50,11 +50,13 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
   const tab = params.get("tab");
   const activeTab: DashboardActiveTab = tab === "git"
     ? "git"
-    : tab === "ai-log"
-      ? "ai-log"
-    : tab === "project-management"
-      ? "project-management"
-      : "environment";
+    : tab === "merge"
+      ? "merge"
+      : tab === "ai-log"
+        ? "ai-log"
+      : tab === "project-management"
+        ? "project-management"
+        : "environment";
 
   return {
     selectedBranch: params.get("env"),
