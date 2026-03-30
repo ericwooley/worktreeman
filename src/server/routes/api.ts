@@ -64,6 +64,7 @@ import {
   stopBackgroundCommand,
 } from "../services/background-command-service.js";
 import {
+  autoCommitGitChanges,
   commitGitChanges,
   createWorktree,
   deleteBranch,
@@ -1397,6 +1398,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     branch: string;
     documentId?: string | null;
     commandId: AiCommandId;
+    aiCommands: AiCommandConfig;
     origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
@@ -1405,6 +1407,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     applyDocumentUpdateToDocumentId?: string | null;
     commentDocumentId?: string | null;
     commentRequestSummary?: string | null;
+    autoCommitDirtyWorktree?: boolean;
   }): Promise<StartedAiCommandJob> => startAiCommandJob({
     branch: details.branch,
     documentId: details.documentId ?? null,
@@ -1486,7 +1489,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
     },
     writeLog: safeWriteAiRequestLog,
-    onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId
+    onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId || details.autoCommitDirtyWorktree
       ? async ({ stdout, stderr }) => {
         if (details.applyDocumentUpdateToDocumentId) {
           const nextMarkdown = stdout.trim();
@@ -1505,6 +1508,31 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
             assignee: currentDocument.document.assignee,
             archived: currentDocument.document.archived,
           });
+        }
+
+        if (details.autoCommitDirtyWorktree) {
+          const autoCommit = await autoCommitGitChanges({
+            repoRoot: options.repoRoot,
+            branch: details.branch,
+            aiCommands: details.aiCommands,
+            env: details.env,
+          }).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            if (/has no local changes to commit\.$/.test(message)) {
+              return null;
+            }
+
+            throw error;
+          });
+
+          if (autoCommit) {
+            logServerEvent("ai-command", "auto-commit-created", {
+              branch: details.branch,
+              commandId: autoCommit.commandId,
+              commitSha: autoCommit.commitSha,
+              message: autoCommit.message,
+            });
+          }
         }
 
         if (details.commentDocumentId) {
@@ -1561,12 +1589,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         branch: payload.branch,
         documentId: payload.documentId,
         commandId: payload.commandId,
+        aiCommands: config.aiCommands,
         origin: payload.origin ?? null,
         input: payload.input,
         renderedCommand: payload.renderedCommand,
         worktreePath: payload.worktreePath,
         env: payload.env,
         applyDocumentUpdateToDocumentId: payload.documentId,
+        autoCommitDirtyWorktree: true,
       });
       context.notifyStarted(await jobRun.started);
       await jobRun.completed;
@@ -2667,6 +2697,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         branch,
         documentId,
         commandId,
+        aiCommands: config.aiCommands,
         origin,
         input,
         renderedCommand: template,
@@ -2674,6 +2705,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         env,
         commentDocumentId: documentId,
         commentRequestSummary: requestedChange,
+        autoCommitDirtyWorktree: true,
       });
       const job = await jobRun.started;
       scheduleRuntimeStopAfterAiJob({
@@ -2999,6 +3031,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         branch: worktree.branch,
         documentId,
         commandId,
+        aiCommands: config.aiCommands,
         origin,
         input,
         renderedCommand,
@@ -3007,6 +3040,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         applyDocumentUpdateToDocumentId: explicitDocumentId,
         commentDocumentId,
         commentRequestSummary: explicitDocumentId ? null : body.input,
+        autoCommitDirtyWorktree: true,
       };
       const job = explicitDocumentId
         ? await enqueueProjectManagementDocumentAiJob({
