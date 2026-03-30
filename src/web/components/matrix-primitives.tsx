@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 export type MatrixBadgeTone = "active" | "idle" | "warning" | "danger" | "neutral";
@@ -33,25 +33,129 @@ export function MatrixBadge({
   return <span className={getMatrixBadgeClass(tone, compact)}>{children}</span>;
 }
 
-export function MatrixTabButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
+export interface MatrixTabDefinition<TTabId extends string = string> {
+  id: TTabId;
   label: string;
-  onClick: () => void;
+  panelId?: string;
+  disabled?: boolean;
+}
+
+export function getMatrixTabId(groupId: string, tabId: string): string {
+  return `${groupId}-${tabId}-tab`;
+}
+
+export function getMatrixTabPanelId(groupId: string, tabId: string): string {
+  return `${groupId}-${tabId}-panel`;
+}
+
+export function MatrixTabs<TTabId extends string>({
+  groupId,
+  tabs,
+  activeTabId,
+  ariaLabel,
+  onChange,
+  className = "",
+}: {
+  groupId: string;
+  tabs: readonly MatrixTabDefinition<TTabId>[];
+  activeTabId: TTabId;
+  ariaLabel: string;
+  onChange: (tabId: TTabId) => void;
+  className?: string;
 }) {
+  const tabIds = useMemo(() => tabs.filter((tab) => !tab.disabled).map((tab) => tab.id), [tabs]);
+
+  function focusTab(tabId: TTabId) {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const nextTabButton = document.getElementById(getMatrixTabId(groupId, tabId)) as HTMLButtonElement | null;
+      nextTabButton?.focus();
+    });
+  }
+
+  function moveToTab(direction: 1 | -1) {
+    if (!tabIds.length) {
+      return;
+    }
+
+    const currentIndex = Math.max(tabIds.indexOf(activeTabId), 0);
+    const nextIndex = (currentIndex + direction + tabIds.length) % tabIds.length;
+    const nextTabId = tabIds[nextIndex];
+    onChange(nextTabId);
+    focusTab(nextTabId);
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      event.preventDefault();
+      moveToTab(1);
+      return;
+    }
+
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveToTab(-1);
+      return;
+    }
+
+    if (event.key === "Home") {
+      event.preventDefault();
+      const firstTabId = tabIds[0];
+      if (!firstTabId) {
+        return;
+      }
+      onChange(firstTabId);
+      focusTab(firstTabId);
+      return;
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      const lastTabId = tabIds[tabIds.length - 1];
+      if (!lastTabId) {
+        return;
+      }
+      onChange(lastTabId);
+      focusTab(lastTabId);
+    }
+  }
+
   return (
-    <button
-      type="button"
-      className={`px-4 py-2 text-sm uppercase tracking-[0.18em] transition-colors ${active
-        ? "border theme-tab-active"
-        : "border border-transparent theme-tab-idle"}`}
-      onClick={onClick}
+    <div
+      role="tablist"
+      aria-label={ariaLabel}
+      className={`matrix-tablist ${className}`}
     >
-      {label}
-    </button>
+      {tabs.map((tab) => {
+        const isActive = tab.id === activeTabId;
+        const tabId = getMatrixTabId(groupId, tab.id);
+        const panelId = tab.panelId;
+
+        return (
+          <button
+            key={tab.id}
+            id={tabId}
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            aria-controls={panelId}
+            aria-disabled={tab.disabled ? true : undefined}
+            tabIndex={isActive ? 0 : -1}
+            disabled={tab.disabled}
+            className={`matrix-tab px-4 py-2 text-sm uppercase tracking-[0.18em] transition-colors ${isActive
+              ? "border theme-tab-active"
+              : "border border-transparent theme-tab-idle"}`}
+            onClick={() => onChange(tab.id)}
+            onKeyDown={handleKeyDown}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
