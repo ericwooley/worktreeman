@@ -40,7 +40,7 @@ import {
   WORKTREE_ENVIRONMENT_TAB_LABEL,
   WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL,
 } from "./worktree-environment-content";
-import { getAiResolveButtonState } from "./git-status-actions";
+import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
 import { GitPullRequestPanel } from "./git-pull-request-panel";
 
 const ProjectManagementPanel = lazy(async () => {
@@ -747,11 +747,15 @@ export function WorktreeDetail({
     : mergeIntoWorktreeStatus?.hasConflicts
       ? mergeIntoWorktreeStatus.conflicts
       : [];
+  const resolvableConflictCount = getResolvableConflictCount({
+    workingTreeConflicts: workingTreeConflictCount,
+    mergeIntoWorktreeConflicts: mergeIntoWorktreeStatus?.conflicts.length ?? 0,
+  });
   const aiResolveButtonState = getAiResolveButtonState({
     hasWorktreeBranch: Boolean(worktree?.branch),
     gitComparisonLoading,
     mergeConflictAiRunning,
-    workingTreeConflicts: workingTreeConflictCount,
+    resolvableConflicts: resolvableConflictCount,
   });
   const canMergeBaseIntoWorktree = mergeActionState.canMerge;
   const canMergeWorktreeIntoBase = mergeIntoBaseActionState.canMerge;
@@ -1094,7 +1098,7 @@ export function WorktreeDetail({
       return;
     }
 
-    if ((gitComparison.workingTreeSummary.conflictedFiles ?? gitComparison.workingTreeConflicts.length ?? 0) === 0) {
+    if (resolvableConflictCount === 0) {
       return;
     }
 
