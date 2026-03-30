@@ -316,6 +316,7 @@ test("startServer closes managed AI command processes during shutdown", async ()
     await startAiCommandProcess({
       processName,
       command: "node -e \"setInterval(() => {}, 1000)\"",
+      input: "",
       worktreePath: path.join(repo.repoRoot, "main"),
       env: process.env,
       outFile,
