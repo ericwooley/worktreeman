@@ -321,6 +321,7 @@ async function createApiTestRepo(): Promise<Awaited<ReturnType<typeof findRepoCo
   const nextContents = updateAiCommandInConfigContents(currentContents, {
     smart: "printf %s $WTM_AI_INPUT",
     simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+    autoStartRuntime: false,
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
 
@@ -1339,6 +1340,7 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
     const nextContents = updateAiCommandInConfigContents(currentContents, {
       smart: "node -e \"console.log('resolved by ai')\" $WTM_AI_INPUT",
       simple: "node -e \"console.log('resolved by ai')\" $WTM_AI_INPUT",
+      autoStartRuntime: false,
     });
     await fs.writeFile(repo.configPath, nextContents, "utf8");
 
@@ -2377,6 +2379,7 @@ test("creating a project-management document auto-generates a short summary with
     smart: "printf %s $WTM_AI_INPUT",
     simple:
       "node -e \"const fs = require('node:fs'); fs.writeFileSync('summary-prompt.txt', process.argv[1]); console.log('Generated UI summary.');\" $WTM_AI_INPUT",
+    autoStartRuntime: false,
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
   const server = await startApiServer(repo);

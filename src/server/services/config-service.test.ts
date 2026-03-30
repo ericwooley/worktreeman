@@ -107,6 +107,7 @@ test("updateAiCommandInConfigContents preserves schema header and upserts aiComm
     {
       smart: "opencode run $WTM_AI_INPUT",
       simple: "opencode run --model gpt-5-mini $WTM_AI_INPUT",
+      autoStartRuntime: false,
     },
   );
 

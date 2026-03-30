@@ -109,6 +109,7 @@ function createConfig(commandName: string, command: string): WorktreeManagerConf
     aiCommands: {
       smart: "printf %s $WTM_AI_INPUT",
       simple: "printf %s $WTM_AI_INPUT",
+      autoStartRuntime: false,
     },
     startupCommands: [],
     backgroundCommands: {
