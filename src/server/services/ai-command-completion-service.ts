@@ -1,46 +1,8 @@
 import type { AiCommandConfig, AiCommandId } from "../../shared/types.js";
 import { autoCommitGitChanges } from "./git-service.js";
 import { addProjectManagementComment, getProjectManagementDocument, updateProjectManagementDocument } from "./project-management-service.js";
+import { buildWorktreeAiCompletedComment } from "./project-management-comment-formatters.js";
 import { logServerEvent } from "../utils/server-logger.js";
-
-function formatLogSnippet(value: string, maxLength = 280): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, maxLength)}...`;
-}
-
-function buildWorktreeAiComment(details: {
-  branch: string;
-  commandId: AiCommandId;
-  requestSummary?: string | null;
-  stdout: string;
-  stderr: string;
-}) {
-  const lines = [
-    `AI worktree run completed for \`${details.branch}\`.`,
-    "",
-    `- Command: ${details.commandId}`,
-  ];
-
-  if (details.requestSummary?.trim()) {
-    lines.push(`- Request: ${formatLogSnippet(details.requestSummary, 280)}`);
-  }
-
-  const stdoutSnippet = formatLogSnippet(details.stdout, 280);
-  if (stdoutSnippet) {
-    lines.push(`- Stdout: ${stdoutSnippet}`);
-  }
-
-  const stderrSnippet = formatLogSnippet(details.stderr, 280);
-  if (stderrSnippet) {
-    lines.push(`- Stderr: ${stderrSnippet}`);
-  }
-
-  return lines.join("\n");
-}
 
 export async function completeAiCommandRun(options: {
   repoRoot: string;
@@ -105,7 +67,7 @@ export async function completeAiCommandRun(options: {
 
   try {
     await addProjectManagementComment(options.repoRoot, options.commentDocumentId, {
-      body: buildWorktreeAiComment({
+      body: buildWorktreeAiCompletedComment({
         branch: options.branch,
         commandId: options.commandId,
         requestSummary: options.commentRequestSummary,

@@ -427,7 +427,10 @@ export function GitPullRequestPanel({
                       {comment.authorEmail ? <span>{comment.authorEmail}</span> : null}
                       <span>{new Date(comment.createdAt).toLocaleString()}</span>
                     </div>
-                    <p className="mt-3 whitespace-pre-wrap text-sm theme-text">{comment.body}</p>
+                    <div
+                      className="pm-markdown mt-3 text-sm theme-text"
+                      dangerouslySetInnerHTML={{ __html: marked.parse(comment.body) }}
+                    />
                   </div>
                 )) : (
                   <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">

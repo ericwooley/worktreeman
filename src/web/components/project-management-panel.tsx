@@ -1400,7 +1400,10 @@ export function ProjectManagementPanel({
                                 <p className="text-xs theme-text-muted">{comment.authorEmail}</p>
                                 <p className="text-xs theme-text-soft">{new Date(comment.createdAt).toLocaleString()}</p>
                               </div>
-                              <p className="mt-2 whitespace-pre-wrap text-sm theme-text">{comment.body}</p>
+                              <div
+                                className="pm-markdown mt-2 text-sm theme-text"
+                                dangerouslySetInnerHTML={{ __html: marked.parse(comment.body) }}
+                              />
                             </div>
                           )) : (
                             <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
