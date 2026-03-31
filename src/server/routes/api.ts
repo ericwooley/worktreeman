@@ -98,6 +98,7 @@ import {
   type AiCommandProcessDescription,
 } from "../services/ai-command-process-service.js";
 import { enqueueProjectManagementAiJob } from "../services/ai-command-job-manager-service.js";
+import { completeAiCommandRun } from "../services/ai-command-completion-service.js";
 import { disconnectTmuxClient, ensureRuntimeTerminalSession, ensureTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
 import {
   addProjectManagementComment,
@@ -142,22 +143,9 @@ interface ApiRouterOptions {
     }) => Promise<AiCommandProcessDescription>;
     getProcess: (processName: string) => Promise<AiCommandProcessDescription | null>;
     deleteProcess: (processName: string) => Promise<void>;
-    readProcessLogs: (processInfo: AiCommandProcessDescription | null) => Promise<{ stdout: string; stderr: string }>;
-    isProcessActive: (status: string | undefined) => boolean;
+      readProcessLogs: (processInfo: AiCommandProcessDescription | null) => Promise<{ stdout: string; stderr: string }>;
+      isProcessActive: (status: string | undefined) => boolean;
   };
-  onEnqueueProjectManagementAiJob?: (payload: {
-    branch: string;
-    documentId: string;
-    commandId: AiCommandId;
-    origin?: AiCommandOrigin | null;
-    input: string;
-    renderedCommand: string;
-    worktreePath: string;
-    env: Record<string, string>;
-  }, context: {
-    notifyStarted: (job: AiCommandJob) => void;
-    started: (job: AiCommandJob) => Promise<AiCommandJob>;
-  }) => Promise<void>;
 }
 
 interface RunProjectManagementDocumentAiRequest {
@@ -815,36 +803,6 @@ function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
   };
 }
 
-function buildWorktreeAiComment(details: {
-  branch: string;
-  commandId: AiCommandId;
-  requestSummary?: string | null;
-  stdout: string;
-  stderr: string;
-}) {
-  const lines = [
-    `AI worktree run completed for \`${details.branch}\`.`,
-    "",
-    `- Command: ${details.commandId}`,
-  ];
-
-  if (details.requestSummary?.trim()) {
-    lines.push(`- Request: ${formatLogSnippet(details.requestSummary, 280)}`);
-  }
-
-  const stdoutSnippet = formatLogSnippet(details.stdout, 280);
-  if (stdoutSnippet) {
-    lines.push(`- Stdout: ${stdoutSnippet}`);
-  }
-
-  const stderrSnippet = formatLogSnippet(details.stderr, 280);
-  if (stderrSnippet) {
-    lines.push(`- Stderr: ${stderrSnippet}`);
-  }
-
-  return lines.join("\n");
-}
-
 function buildProjectManagementSummaryPrompt(options: {
   branch: string;
   document: ProjectManagementDocumentResponse["document"];
@@ -996,9 +954,17 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
   };
 }
 
+function isAiCommandLogFinalizing(entry: AiCommandLogEntry): boolean {
+  return entry.status === "running" && typeof entry.completedAt === "string";
+}
+
+function isAiCommandLogActivelyRunning(entry: AiCommandLogEntry): boolean {
+  return entry.status === "running" && !isAiCommandLogFinalizing(entry);
+}
+
 function toHistoricalAiCommandLogSummaries(entries: AiCommandLogEntry[]): AiCommandLogSummary[] {
   return entries
-    .filter((entry) => entry.status !== "running")
+    .filter((entry) => entry.status !== "running" || isAiCommandLogFinalizing(entry))
     .map(toAiCommandLogSummary);
 }
 
@@ -1047,6 +1013,7 @@ async function reconcileAiCommandLogEntry(options: {
   entry: AiCommandLogEntry;
   repoRoot: string;
   aiProcesses: NonNullable<ApiRouterOptions["aiProcesses"]>;
+  reconcileJobs?: boolean;
 }): Promise<AiCommandLogEntry> {
   if (options.entry.status !== "running") {
     return options.entry;
@@ -1057,27 +1024,40 @@ async function reconcileAiCommandLogEntry(options: {
       readProcessLogs: options.aiProcesses.readProcessLogs,
       isProcessActive: options.aiProcesses.isProcessActive,
     },
+    reconcile: options.reconcileJobs ?? true,
   });
   return await readAiCommandLogEntry(options.repoRoot, options.entry.fileName);
 }
 
 export function createApiRouter(options: ApiRouterOptions): express.Router {
   const router = express.Router();
-  const aiProcesses = options.aiProcesses ?? {
+  const defaultAiProcesses = {
     startProcess: startAiCommandProcess,
     getProcess: getAiCommandProcess,
     deleteProcess: deleteAiCommandProcess,
     readProcessLogs: readAiCommandProcessLogs,
     isProcessActive: isAiCommandProcessActive,
   };
+  const aiProcesses = options.aiProcesses
+    ? options.aiProcesses
+    : process.env.WTM_SERVER_ROLE === "worker"
+      ? defaultAiProcesses
+      : {
+          ...defaultAiProcesses,
+          getProcess: async () => null,
+          readProcessLogs: async () => ({ stdout: "", stderr: "" }),
+          isProcessActive: () => false,
+        };
   const aiProcessPollIntervalMs = options.aiProcessPollIntervalMs ?? 250;
   const aiLogStreamPollIntervalMs = options.aiLogStreamPollIntervalMs ?? 500;
+  const shouldReconcileAiJobs = process.env.WTM_SERVER_ROLE === "worker";
   const aiJobReadOptions = {
     aiProcesses: {
       getProcess: aiProcesses.getProcess,
       readProcessLogs: aiProcesses.readProcessLogs,
       isProcessActive: aiProcesses.isProcessActive,
     },
+    reconcile: shouldReconcileAiJobs,
   };
 
   const loadCurrentConfig = () => loadConfig({
@@ -1369,69 +1349,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     },
     onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId || details.autoCommitDirtyWorktree
       ? async ({ stdout, stderr }) => {
-        if (details.applyDocumentUpdateToDocumentId) {
-          const nextMarkdown = stdout.trim();
-          if (!nextMarkdown) {
-            throw new Error("AI command finished without returning updated markdown.");
-          }
-
-          const currentDocument = await getProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId);
-          await updateProjectManagementDocument(options.repoRoot, details.applyDocumentUpdateToDocumentId, {
-            title: currentDocument.document.title,
-            summary: currentDocument.document.summary,
-            markdown: nextMarkdown,
-            tags: currentDocument.document.tags,
-            dependencies: currentDocument.document.dependencies,
-            status: currentDocument.document.status,
-            assignee: currentDocument.document.assignee,
-            archived: currentDocument.document.archived,
-          });
-        }
-
-        if (details.autoCommitDirtyWorktree) {
-          const autoCommit = await autoCommitGitChanges({
-            repoRoot: options.repoRoot,
-            branch: details.branch,
-            aiCommands: details.aiCommands,
-            env: details.env,
-          }).catch((error) => {
-            const message = error instanceof Error ? error.message : String(error);
-            if (/has no local changes to commit\.$/.test(message)) {
-              return null;
-            }
-
-            throw error;
-          });
-
-          if (autoCommit) {
-            logServerEvent("ai-command", "auto-commit-created", {
-              branch: details.branch,
-              commandId: autoCommit.commandId,
-              commitSha: autoCommit.commitSha,
-              message: autoCommit.message,
-            });
-          }
-        }
-
-        if (details.commentDocumentId) {
-          try {
-            await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
-              body: buildWorktreeAiComment({
-                branch: details.branch,
-                commandId: details.commandId,
-                requestSummary: details.commentRequestSummary,
-                stdout,
-                stderr,
-              }),
-            });
-          } catch (error) {
-            logServerEvent("project-management-comment", "failed", {
-              branch: details.branch,
-              documentId: details.commentDocumentId,
-              error: error instanceof Error ? error.message : String(error),
-            }, "error");
-          }
-        }
+        await completeAiCommandRun({
+          repoRoot: options.repoRoot,
+          branch: details.branch,
+          commandId: details.commandId,
+          aiCommands: details.aiCommands,
+          env: details.env,
+          stdout,
+          stderr,
+          applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId,
+          commentDocumentId: details.commentDocumentId,
+          commentRequestSummary: details.commentRequestSummary,
+          autoCommitDirtyWorktree: details.autoCommitDirtyWorktree,
+        });
       }
       : undefined,
   });
@@ -1440,45 +1370,32 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     branch: string;
     documentId: string;
     commandId: AiCommandId;
+    aiCommands: AiCommandConfig;
     origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
+    applyDocumentUpdateToDocumentId?: string | null;
+    commentDocumentId?: string | null;
+    commentRequestSummary?: string | null;
+    autoCommitDirtyWorktree?: boolean;
   }) => enqueueProjectManagementAiJob({
     repoRoot: options.repoRoot,
     payload: {
       branch: details.branch,
       commandId: details.commandId,
+      aiCommands: details.aiCommands,
       origin: details.origin ?? null,
       worktreePath: details.worktreePath,
       input: details.input,
       renderedCommand: details.renderedCommand,
       env: Object.fromEntries(Object.entries(details.env).filter(([, value]) => typeof value === "string")) as Record<string, string>,
       documentId: details.documentId,
-    },
-    onProcessProjectManagementAiJob: options.onEnqueueProjectManagementAiJob
-      ? async (payload, context) => options.onEnqueueProjectManagementAiJob?.(payload, {
-        notifyStarted: context.notifyStarted,
-        started: context.started,
-      })
-      : async (payload, context) => {
-      const config = await loadCurrentConfig();
-      const jobRun = await startAiProcessJob({
-        branch: payload.branch,
-        documentId: payload.documentId,
-        commandId: payload.commandId,
-        aiCommands: config.aiCommands,
-        origin: payload.origin ?? null,
-        input: payload.input,
-        renderedCommand: payload.renderedCommand,
-        worktreePath: payload.worktreePath,
-        env: payload.env,
-        applyDocumentUpdateToDocumentId: payload.documentId,
-        autoCommitDirtyWorktree: true,
-      });
-      context.notifyStarted(await jobRun.started);
-      await jobRun.completed;
+      applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId ?? null,
+      commentDocumentId: details.commentDocumentId ?? null,
+      commentRequestSummary: details.commentRequestSummary ?? null,
+      autoCommitDirtyWorktree: details.autoCommitDirtyWorktree ?? false,
     },
   });
 
@@ -1855,7 +1772,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       );
       const payload: AiCommandLogsResponse = {
         logs: toHistoricalAiCommandLogSummaries(entries),
-        runningJobs: entries.filter((entry) => entry.status === "running").map(toRunningAiCommandJob),
+        runningJobs: entries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
       };
       res.json(payload);
     } catch (error) {
@@ -2572,7 +2489,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
-      const jobRun = await startAiProcessJob({
+      const job = await enqueueProjectManagementDocumentAiJob({
         branch,
         documentId,
         commandId,
@@ -2586,7 +2503,6 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         commentRequestSummary: requestedChange,
         autoCommitDirtyWorktree: true,
       });
-      const job = await jobRun.started;
       scheduleRuntimeStopAfterAiJob({
         branch,
         jobId: job.jobId,
@@ -2926,11 +2842,16 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           branch: runDetails.branch,
           documentId: explicitDocumentId,
           commandId: runDetails.commandId,
+          aiCommands: runDetails.aiCommands,
           origin: runDetails.origin,
           input: runDetails.input,
           renderedCommand: runDetails.renderedCommand,
           worktreePath: runDetails.worktreePath,
           env: runDetails.env,
+          applyDocumentUpdateToDocumentId: runDetails.applyDocumentUpdateToDocumentId,
+          commentDocumentId: runDetails.commentDocumentId,
+          commentRequestSummary: runDetails.commentRequestSummary,
+          autoCommitDirtyWorktree: runDetails.autoCommitDirtyWorktree,
         })
         : await (await startAiProcessJob(runDetails)).started;
       scheduleRuntimeStopAfterAiJob({
@@ -2971,7 +2892,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           repoRoot: options.repoRoot,
           aiProcesses,
         })),
-      )).find((entry) => entry.branch === req.params.branch && entry.status === "running") ?? null;
+      )).find((entry) => entry.branch === req.params.branch && isAiCommandLogActivelyRunning(entry)) ?? null;
 
       const job = inMemoryJob?.status === "running"
         ? inMemoryJob

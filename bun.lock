@@ -7,6 +7,7 @@
       "dependencies": {
         "@automerge/automerge": "^3.2.4",
         "@electric-sql/pglite": "^0.4.1",
+        "@electric-sql/pglite-socket": "^0.1.2",
         "@git-diff-view/core": "^0.1.2",
         "@git-diff-view/react": "^0.1.2",
         "@gitgraph/react": "^1.6.0",
@@ -22,6 +23,7 @@
         "monaco-editor": "^0.55.1",
         "node-pty": "^1.0.0",
         "open": "^10.1.0",
+        "pg": "^8.20.0",
         "pg-boss": "^12.14.0",
         "pm2": "^6.0.14",
         "react": "^18.3.1",
@@ -32,6 +34,7 @@
         "@types/express": "^5.0.1",
         "@types/js-yaml": "^4.0.9",
         "@types/node": "^22.13.10",
+        "@types/pg": "^8.20.0",
         "@types/react": "^18.3.18",
         "@types/react-dom": "^18.3.5",
         "@types/supertest": "^7.2.0",
@@ -96,6 +99,8 @@
     "@babel/types": ["@babel/types@7.29.0", "", { "dependencies": { "@babel/helper-string-parser": "7.27.1", "@babel/helper-validator-identifier": "7.28.5" } }, "sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A=="],
 
     "@electric-sql/pglite": ["@electric-sql/pglite@0.4.1", "", {}, "sha512-mZ9NzzUSYPOCnxHH1oAHPRzoMFJHY472raDKwXl/+6oPbpdJ7g8LsCN4FSaIIfkiCKHhb3iF/Zqo3NYxaIhU7Q=="],
+
+    "@electric-sql/pglite-socket": ["@electric-sql/pglite-socket@0.1.2", "", { "peerDependencies": { "@electric-sql/pglite": "0.4.2" }, "bin": { "pglite-server": "dist/scripts/server.js" } }, "sha512-Hz+IIentlbz9Zpln7Ft0iTDtbLvIfmmwIIC0CCU6ViklsDzbOIZV9xqcbvME21O3pqjjDNhERc57ynRCdshkZA=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.27.4", "", { "os": "aix", "cpu": "ppc64" }, "sha512-cQPwL2mp2nSmHHJlCyoXgHGhbEPMrEEU5xhkcy3Hs/O7nGZqEpZ2sUtLaL9MORLtDfRvVl2/3PAuEkYZH0Ty8Q=="],
 
@@ -320,6 +325,8 @@
     "@types/methods": ["@types/methods@1.1.4", "", {}, "sha512-ymXWVrDiCxTBE3+RIrrP533E70eA+9qu7zdWoHuOmGujkYtzf4HQF96b8nwHLqhuf4ykX61IGRIB38CC6/sImQ=="],
 
     "@types/node": ["@types/node@22.19.15", "", { "dependencies": { "undici-types": "6.21.0" } }, "sha512-F0R/h2+dsy5wJAUe3tAU6oqa2qbWY5TpNfL/RGmo1y38hiyO1w3x2jPtt76wmuaJI4DQnOBu21cNXQ2STIUUWg=="],
+
+    "@types/pg": ["@types/pg@8.20.0", "", { "dependencies": { "@types/node": "*", "pg-protocol": "*", "pg-types": "^2.2.0" } }, "sha512-bEPFOaMAHTEP1EzpvHTbmwR8UsFyHSKsRisLIHVMXnpNefSbGA1bD6CVy+qKjGSqmZqNqBDV2azOBo8TgkcVow=="],
 
     "@types/prop-types": ["@types/prop-types@15.7.15", "", {}, "sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw=="],
 

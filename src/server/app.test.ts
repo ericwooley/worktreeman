@@ -6,9 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { startServer } from "./app.js";
+import { configureDatabaseConnection } from "./services/database-connection-service.js";
+import { startDatabaseSocketServer, stopDatabaseSocketServer } from "./services/database-socket-service.js";
 import { initRepository } from "./services/init-service.js";
 import { createOperationalStateStore, stopOperationalStateStore } from "./services/operational-state-service.js";
-import { getAiCommandProcess, getAiCommandProcessName, startAiCommandProcess } from "./services/ai-command-process-service.js";
+import { deleteAiCommandProcess, getAiCommandProcess, getAiCommandProcessName, startAiCommandProcess } from "./services/ai-command-process-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "./services/repository-layout-service.js";
 import { findRepoContext } from "./utils/paths.js";
 
@@ -23,6 +25,17 @@ async function createTestRepo() {
     rootDir,
     repo: await findRepoContext(rootDir),
   };
+}
+
+async function withSocketDatabase<T>(repoRoot: string, run: () => Promise<T>): Promise<T> {
+  const database = await startDatabaseSocketServer(repoRoot);
+  configureDatabaseConnection(database.connectionString);
+  try {
+    return await run();
+  } finally {
+    configureDatabaseConnection(null);
+    await stopDatabaseSocketServer(repoRoot);
+  }
 }
 
 async function listenOnEphemeralPort() {
@@ -240,24 +253,29 @@ test("startServer serves favicon from configured repository file", async () => {
 
 test("startServer clears persisted shutdown status from a previous server run", async () => {
   const { rootDir, repo } = await createTestRepo();
-  const operationalState = await createOperationalStateStore(repo.repoRoot);
   let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
 
   try {
-    await operationalState.beginShutdown("[shutdown] Closing worktreeman server...");
-    await operationalState.completeShutdown("[shutdown] Shutdown complete.");
-    await stopOperationalStateStore(repo.repoRoot);
+    await withSocketDatabase(repo.repoRoot, async () => {
+      const operationalState = await createOperationalStateStore(repo.repoRoot);
+      await operationalState.beginShutdown("[shutdown] Closing worktreeman server...");
+      await operationalState.completeShutdown("[shutdown] Shutdown complete.");
+      await stopOperationalStateStore(repo.repoRoot);
 
-    startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
+      startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
 
-    const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
-    const status = await restartedOperationalState.getShutdownStatus();
+      const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
+      const status = await restartedOperationalState.getShutdownStatus();
 
-    assert.deepEqual(status, {
-      active: false,
-      completed: false,
-      failed: false,
-      logs: [],
+      assert.deepEqual(status, {
+        active: false,
+        completed: false,
+        failed: false,
+        logs: [],
+      });
+
+      await startedServer?.close();
+      startedServer = undefined;
     });
   } finally {
     await startedServer?.close();
@@ -268,36 +286,40 @@ test("startServer clears persisted shutdown status from a previous server run", 
 
 test("startServer reconciles interrupted running AI jobs on startup", async () => {
   const { rootDir, repo } = await createTestRepo();
-  const operationalState = await createOperationalStateStore(repo.repoRoot);
   let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
 
   try {
-    await operationalState.setAiCommandJob({
-      jobId: "interrupted-job",
-      fileName: "interrupted-job.json",
-      branch: "main",
-      commandId: "smart",
-      command: "printf %s 'resume'",
-      input: "resume",
-      status: "running",
-      startedAt: new Date(Date.now() - 60_000).toISOString(),
-      stdout: "partial output",
-      stderr: "",
-      outputEvents: [],
-      pid: 9999,
-      exitCode: null,
-      processName: "wtm:ai:missing-restart-process",
+    await withSocketDatabase(repo.repoRoot, async () => {
+      const operationalState = await createOperationalStateStore(repo.repoRoot);
+      await operationalState.setAiCommandJob({
+        jobId: "interrupted-job",
+        fileName: "interrupted-job.json",
+        branch: "main",
+        commandId: "smart",
+        command: "printf %s 'resume'",
+        input: "resume",
+        status: "running",
+        startedAt: new Date(Date.now() - 60_000).toISOString(),
+        stdout: "partial output",
+        stderr: "",
+        outputEvents: [],
+        pid: 9999,
+        exitCode: null,
+        processName: "wtm:ai:missing-restart-process",
+      });
+      await stopOperationalStateStore(repo.repoRoot);
+
+      startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
+
+      const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
+      const reconciledJob = await restartedOperationalState.getAiCommandJob("main");
+      assert.equal(reconciledJob?.status, "running");
+      assert.equal(reconciledJob?.stdout, "partial output");
+      assert.equal(reconciledJob?.processName, "wtm:ai:missing-restart-process");
+
+      await startedServer?.close();
+      startedServer = undefined;
     });
-    await stopOperationalStateStore(repo.repoRoot);
-
-    startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
-
-    const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
-    const reconciledJob = await restartedOperationalState.getAiCommandJob("main");
-    assert.equal(reconciledJob?.status, "failed");
-    assert.match(reconciledJob?.error ?? "", /no longer available/);
-    assert.equal(reconciledJob?.stdout, "partial output");
-    assert.equal(typeof reconciledJob?.completedAt, "string");
   } finally {
     await startedServer?.close();
     await stopOperationalStateStore(repo.repoRoot);
@@ -305,7 +327,7 @@ test("startServer reconciles interrupted running AI jobs on startup", async () =
   }
 });
 
-test("startServer closes managed AI command processes during shutdown", async () => {
+test("startServer shutdown leaves standalone AI command processes untouched", async () => {
   const { rootDir, repo } = await createTestRepo();
   let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
   const processName = getAiCommandProcessName(`shutdown-${Date.now()}`);
@@ -324,8 +346,9 @@ test("startServer closes managed AI command processes during shutdown", async ()
     startedServer = undefined;
 
     const processInfo = await getAiCommandProcess(processName);
-    assert.equal(processInfo, null);
+    assert.notEqual(processInfo, null);
   } finally {
+    await deleteAiCommandProcess(processName).catch(() => undefined);
     await startedServer?.close();
     await stopOperationalStateStore(repo.repoRoot);
     await fs.rm(rootDir, { recursive: true, force: true });

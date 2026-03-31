@@ -7,9 +7,6 @@ import express from "express";
 import open from "open";
 import { DEFAULT_WORKTREEMAN_MAIN_BRANCH } from "../shared/constants.js";
 import { createApiRouter } from "./routes/api.js";
-import { stopAllAiCommandJobManagers } from "./services/ai-command-job-manager-service.js";
-import { reconcileInterruptedAiCommandJobs } from "./services/ai-command-service.js";
-import { stopAllAiCommandProcesses } from "./services/ai-command-process-service.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
@@ -40,7 +37,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   });
   const operationalState = await createOperationalStateStore(options.repo.repoRoot);
   await operationalState.resetShutdownStatus();
-  await reconcileInterruptedAiCommandJobs(options.repo.repoRoot);
   const app = express();
   const server = http.createServer(app);
   let terminalService: WebSocketServer | undefined;
@@ -258,14 +254,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
         logInfo("[shutdown] Closing Vite dev server...");
         await vite.close();
       }
-
-      logInfo("[shutdown] Stopping AI command processes...");
-      await stopAllAiCommandProcesses();
-      await reconcileInterruptedAiCommandJobs(options.repo.repoRoot);
-
-      logInfo("[shutdown] Stopping AI job managers...");
-      await stopAllAiCommandJobManagers();
-
       await operationalState.completeShutdown("[shutdown] Shutdown complete.");
       process.stdout.write("[shutdown] Shutdown complete.\n");
     } catch (error) {
@@ -302,9 +290,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       process.stdout.write("[startup] Closing Vite dev server after failed startup...\n");
       await vite.close();
     }
-
-    await stopAllAiCommandProcesses().catch(() => undefined);
-    await stopAllAiCommandJobManagers().catch(() => undefined);
     await stopAllOperationalStateStores().catch(() => undefined);
   };
 

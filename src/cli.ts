@@ -21,9 +21,11 @@ import {
   DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
 } from "./shared/constants.js";
 import { findRepoContext } from "./server/utils/paths.js";
-import { startServer } from "./server/app.js";
 import { initRepository } from "./server/services/init-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees, resolveCloneRootDir } from "./server/services/repository-layout-service.js";
+import { configureDatabaseConnection } from "./server/services/database-connection-service.js";
+import { startDatabaseSocketServer, stopDatabaseSocketServer } from "./server/services/database-socket-service.js";
+import { startManagedRuntimeProcess, type ManagedRuntimeProcess } from "./server/services/process-supervisor-service.js";
 
 const normalizedArgv = normalizeArgv(process.argv.slice(2));
 
@@ -80,25 +82,43 @@ const startCommand = command({
   },
   handler: async ({ cwd, port, host, dangerouslyExposeToNetwork, open, noOpen }) => {
     const repo = await findRepoContext(cwd);
-    let server: Awaited<ReturnType<typeof startServer>>;
+    let serverProcess: ManagedRuntimeProcess | null = null;
+    let workerProcess: ManagedRuntimeProcess | null = null;
+    let databaseConnectionString: string | null = null;
 
     try {
-      server = await startServer({
-        repo,
+      const database = await startDatabaseSocketServer(repo.repoRoot);
+      databaseConnectionString = database.connectionString;
+      configureDatabaseConnection(databaseConnectionString);
+
+      workerProcess = startManagedRuntimeProcess({
+        role: "worker",
+        cwd,
+        databaseUrl: databaseConnectionString,
+      });
+      await workerProcess.ready;
+
+      serverProcess = startManagedRuntimeProcess({
+        role: "server",
+        cwd,
+        databaseUrl: databaseConnectionString,
         port,
         host,
         dangerouslyExposeToNetwork,
         openBrowser: noOpen ? false : open,
       });
+      const serverReady = await serverProcess.ready;
+      process.stdout.write(`worktreeman running at ${serverReady.url}\n`);
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      await Promise.allSettled([
+        serverProcess?.stop() ?? Promise.resolve(),
+        workerProcess?.stop() ?? Promise.resolve(),
+        stopDatabaseSocketServer(repo.repoRoot),
+      ]);
       process.exit(1);
       return;
     }
-
-    process.stdout.write(
-      `worktreeman running at ${server.url}\n`,
-    );
 
     let shuttingDown = false;
     const cleanupListeners = () => {
@@ -119,7 +139,12 @@ const startCommand = command({
       process.stdout.write(`${reason}\n`);
 
       try {
-        await server.close();
+        await Promise.allSettled([
+          serverProcess?.stop() ?? Promise.resolve(),
+          workerProcess?.stop() ?? Promise.resolve(),
+        ]);
+        configureDatabaseConnection(null);
+        await stopDatabaseSocketServer(repo.repoRoot);
         cleanupListeners();
         process.exit(exitCode);
       } catch (error) {

@@ -79,6 +79,37 @@ function toAiCommandLogEntry(job: AiCommandJob): AiCommandLogEntry {
   };
 }
 
+function createAiCommandJobRecord(options: {
+  branch: string;
+  documentId?: string | null;
+  commandId: AiCommandId;
+  origin?: AiCommandOrigin | null;
+  input: string;
+  command: string;
+  worktreePath: string;
+}): AiCommandJob {
+  const startedAt = new Date().toISOString();
+  return {
+    jobId: randomUUID(),
+    fileName: buildAiCommandLogFileName(options.branch, new Date(startedAt)),
+    branch: options.branch,
+    documentId: options.documentId ?? null,
+    commandId: options.commandId,
+    origin: options.origin ?? null,
+    command: options.command,
+    input: options.input,
+    status: "running",
+    startedAt,
+    stdout: "",
+    stderr: "",
+    outputEvents: [],
+    pid: null,
+    exitCode: null,
+    processName: null,
+    logPath: options.worktreePath,
+  };
+}
+
 function createOutputEvent(
   runId: string,
   entry: number,
@@ -211,13 +242,17 @@ async function reconcileAiCommandJob(
     ),
   };
 
-  const settledJob: AiCommandJob = resolvedExitCode === 0
-    ? {
-        ...baseJob,
-        status: "completed",
-        error: null,
-      }
-    : {
+  if (resolvedExitCode === 0) {
+    const nextJob: AiCommandJob = {
+      ...baseJob,
+      status: "running",
+      error: null,
+    };
+    await persistJob(nextJob);
+    return cloneAiCommandJob(nextJob);
+  }
+
+  const settledJob: AiCommandJob = {
         ...baseJob,
         status: "failed",
         stderr: `${baseJob.stderr}${job.error ?? (processInfo
@@ -246,22 +281,64 @@ async function emitAiCommandJobUpdate(repoRoot: string, branch: string) {
   aiCommandJobEmitter.emit(getAiCommandEventKey(repoRoot, branch), cloneAiCommandJob(job));
 }
 
+export async function persistAiCommandJobSnapshot(repoRoot: string, job: AiCommandJob): Promise<void> {
+  const store = await createOperationalStateStore(repoRoot);
+  await store.setAiCommandJob(job);
+  await store.upsertAiCommandLogEntry(toAiCommandLogEntry(job));
+  await store.syncAiCommandOutputEvents(job.jobId, job.fileName, job.branch, job.outputEvents);
+  await emitAiCommandJobUpdate(repoRoot, job.branch);
+}
+
+export async function beginAiCommandJob(options: {
+  repoRoot: string;
+  branch: string;
+  documentId?: string | null;
+  commandId: AiCommandId;
+  origin?: AiCommandOrigin | null;
+  input: string;
+  command: string;
+  worktreePath: string;
+}): Promise<AiCommandJob> {
+  const store = await createOperationalStateStore(options.repoRoot);
+  const job = createAiCommandJobRecord(options);
+  const claimed = await store.claimRunningAiCommandJob(job);
+  if (!claimed) {
+    throw new Error(`AI command already running for ${options.branch}.`);
+  }
+
+  await store.upsertAiCommandLogEntry(toAiCommandLogEntry(job));
+  await emitAiCommandJobUpdate(options.repoRoot, options.branch);
+  return cloneAiCommandJob(job)!;
+}
+
 export async function getAiCommandJob(
   repoRoot: string,
   branch: string,
-  options?: { aiProcesses?: AiCommandProcessAdapter },
+  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean },
 ): Promise<AiCommandJob | null> {
   const store = await createOperationalStateStore(repoRoot);
-  return await reconcileAiCommandJob(repoRoot, await store.getAiCommandJob(branch), options?.aiProcesses);
+  const job = await store.getAiCommandJob(branch);
+  if (options?.reconcile === false) {
+    return cloneAiCommandJob(job);
+  }
+
+  return await reconcileAiCommandJob(repoRoot, job, options?.aiProcesses);
 }
 
 export async function listAiCommandJobs(
   repoRoot: string,
-  options?: { aiProcesses?: AiCommandProcessAdapter },
+  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean },
 ): Promise<AiCommandJob[]> {
   const store = await createOperationalStateStore(repoRoot);
+  const persistedJobs = await store.listAiCommandJobs();
+  if (options?.reconcile === false) {
+    return persistedJobs
+      .map((job) => cloneAiCommandJob(job))
+      .filter((job): job is AiCommandJob => job !== null);
+  }
+
   const jobs = await Promise.all(
-    (await store.listAiCommandJobs()).map((job) => reconcileAiCommandJob(repoRoot, job, options?.aiProcesses)),
+    persistedJobs.map((job) => reconcileAiCommandJob(repoRoot, job, options?.aiProcesses)),
   );
   return jobs
     .map((job) => cloneAiCommandJob(job))
@@ -378,10 +455,7 @@ export async function failAiCommandJob(options: {
       ?? appendOutputEvent(currentJob.jobId, currentJob.outputEvents, "stderr", options.error),
     error: options.error,
   };
-  await store.setAiCommandJob(nextJob);
-  await store.upsertAiCommandLogEntry(toAiCommandLogEntry(nextJob));
-  await store.syncAiCommandOutputEvents(nextJob.jobId, nextJob.fileName, nextJob.branch, nextJob.outputEvents);
-  await emitAiCommandJobUpdate(options.repoRoot, options.branch);
+  await persistAiCommandJobSnapshot(options.repoRoot, nextJob);
   return cloneAiCommandJob(nextJob);
 }
 
@@ -390,15 +464,10 @@ export interface StartedAiCommandJob {
   completed: Promise<AiCommandJob>;
 }
 
-export async function startAiCommandJob(options: {
-  branch: string;
-  documentId?: string | null;
-  commandId: AiCommandId;
-  origin?: AiCommandOrigin | null;
-  input: string;
-  command: string;
+interface RunAiCommandJobOptions {
   repoRoot: string;
-  worktreePath: string;
+  branch: string;
+  currentJob: AiCommandJob;
   execute: (payload: {
     jobId: string;
     fileName: string;
@@ -418,38 +487,12 @@ export async function startAiCommandJob(options: {
     stdout: string;
     stderr: string;
   }) => Promise<void>;
-}): Promise<StartedAiCommandJob> {
+}
+
+async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<StartedAiCommandJob> {
   const store = await createOperationalStateStore(options.repoRoot);
-
-  const jobId = randomUUID();
-  const startedAt = new Date().toISOString();
-  const fileName = buildAiCommandLogFileName(options.branch, new Date(startedAt));
-  const job: AiCommandJob = {
-    jobId,
-    fileName,
-    branch: options.branch,
-    documentId: options.documentId ?? null,
-    commandId: options.commandId,
-    origin: options.origin ?? null,
-    command: options.command,
-    input: options.input,
-    status: "running",
-    startedAt,
-    stdout: "",
-    stderr: "",
-    outputEvents: [],
-    pid: null,
-    exitCode: null,
-    processName: null,
-    logPath: options.worktreePath,
-  };
-
-  const claimed = await store.claimRunningAiCommandJob(job);
-  if (!claimed) {
-    throw new Error(`AI command already running for ${options.branch}.`);
-  }
-
-  let currentJob = job;
+  let currentJob = cloneAiCommandJob(options.currentJob)!;
+  const { jobId, fileName } = currentJob;
   let settleStartup: (() => void) | null = null;
   const startupObserved = new Promise<void>((resolve) => {
     settleStartup = resolve;
@@ -461,19 +504,19 @@ export async function startAiCommandJob(options: {
   };
   const runJob = async () => {
     const executionStartedAt = Date.now();
-    logServerEvent("ai-command", "job-started", {
-      repoRoot: options.repoRoot,
-      branch: options.branch,
-      jobId,
-      commandId: options.commandId,
-      origin: options.origin?.kind ?? null,
-      worktreePath: options.worktreePath,
-    });
+      logServerEvent("ai-command", "job-started", {
+        repoRoot: options.repoRoot,
+        branch: options.branch,
+        jobId,
+        commandId: currentJob.commandId,
+        origin: currentJob.origin?.kind ?? null,
+        worktreePath: currentJob.logPath ?? null,
+      });
     try {
       const hooks = {
         onSpawn: async ({ pid, processName }: { pid?: number | null; processName?: string | null }) => {
           const nextJob: AiCommandJob = {
-            ...(currentJob ?? job),
+            ...currentJob,
             pid: pid ?? null,
             processName: processName ?? null,
           };
@@ -489,23 +532,23 @@ export async function startAiCommandJob(options: {
         },
         onStdout: async (chunk: string) => {
           const nextJob: AiCommandJob = {
-            ...(currentJob ?? job),
-            stdout: `${(currentJob ?? job).stdout}${chunk}`,
-            outputEvents: appendOutputEvent(jobId, (currentJob ?? job).outputEvents, "stdout", chunk),
+            ...currentJob,
+            stdout: `${currentJob.stdout}${chunk}`,
+            outputEvents: appendOutputEvent(jobId, currentJob.outputEvents, "stdout", chunk),
           };
           await persistSnapshot(nextJob);
         },
         onStderr: async (chunk: string) => {
           const nextJob: AiCommandJob = {
-            ...(currentJob ?? job),
-            stderr: `${(currentJob ?? job).stderr}${chunk}`,
-            outputEvents: appendOutputEvent(jobId, (currentJob ?? job).outputEvents, "stderr", chunk),
+            ...currentJob,
+            stderr: `${currentJob.stderr}${chunk}`,
+            outputEvents: appendOutputEvent(jobId, currentJob.outputEvents, "stderr", chunk),
           };
           await persistSnapshot(nextJob);
         },
         onExit: async ({ exitCode }: { exitCode?: number | null }) => {
           const nextJob: AiCommandJob = {
-            ...(currentJob ?? job),
+            ...currentJob,
             exitCode: exitCode ?? null,
           };
           await persistSnapshot(nextJob);
@@ -521,9 +564,9 @@ export async function startAiCommandJob(options: {
         jobId,
         fileName,
         branch: options.branch,
-        input: options.input,
-        command: options.command,
-        worktreePath: options.worktreePath,
+        input: currentJob.input,
+        command: currentJob.command,
+        worktreePath: currentJob.logPath ?? options.currentJob.logPath ?? options.branch,
         hooks,
       });
       const storedJob = await store.getAiCommandJob(options.branch);
@@ -557,7 +600,7 @@ export async function startAiCommandJob(options: {
         repoRoot: options.repoRoot,
         branch: options.branch,
         jobId,
-        commandId: options.commandId,
+        commandId: currentJob.commandId,
         duration: formatDurationMs(Date.now() - executionStartedAt),
         exitCode: currentJob.exitCode ?? null,
       });
@@ -591,7 +634,7 @@ export async function startAiCommandJob(options: {
         repoRoot: options.repoRoot,
         branch: options.branch,
         jobId,
-        commandId: options.commandId,
+        commandId: currentJob.commandId,
         duration: formatDurationMs(Date.now() - executionStartedAt),
         exitCode: currentJob.exitCode ?? null,
         error: errorMessage,
@@ -602,16 +645,11 @@ export async function startAiCommandJob(options: {
   };
   const persistJobSafely = async (nextJob: AiCommandJob) => {
     try {
-      await store.setAiCommandJob(nextJob);
-      await store.upsertAiCommandLogEntry(toAiCommandLogEntry(nextJob));
-      await store.syncAiCommandOutputEvents(nextJob.jobId, nextJob.fileName, nextJob.branch, nextJob.outputEvents);
-      await emitAiCommandJobUpdate(options.repoRoot, options.branch);
+      await persistAiCommandJobSnapshot(options.repoRoot, nextJob);
     } catch {
       // Ignore persistence failures after startup so background cleanup does not crash the process.
     }
   };
-  await store.upsertAiCommandLogEntry(toAiCommandLogEntry(currentJob));
-  await emitAiCommandJobUpdate(options.repoRoot, options.branch);
 
   const persistSnapshot = async (overrides?: Partial<AiCommandJob>, error?: unknown) => {
     const nextJob = {
@@ -646,4 +684,58 @@ export async function startAiCommandJob(options: {
     started: Promise.resolve(cloneAiCommandJob(currentJob)!),
     completed,
   };
+}
+
+export async function continueAiCommandJob(options: {
+  repoRoot: string;
+  branch: string;
+  jobId: string;
+  execute: RunAiCommandJobOptions["execute"];
+  onComplete?: RunAiCommandJobOptions["onComplete"];
+}): Promise<StartedAiCommandJob> {
+  const store = await createOperationalStateStore(options.repoRoot);
+  const currentJob = await store.getAiCommandJob(options.branch);
+  if (!currentJob || currentJob.jobId !== options.jobId) {
+    throw new Error(`AI command job ${options.jobId} was not found for ${options.branch}.`);
+  }
+
+  return await runAiCommandJob({
+    repoRoot: options.repoRoot,
+    branch: options.branch,
+    currentJob,
+    execute: options.execute,
+    onComplete: options.onComplete,
+  });
+}
+
+export async function startAiCommandJob(options: {
+  branch: string;
+  documentId?: string | null;
+  commandId: AiCommandId;
+  origin?: AiCommandOrigin | null;
+  input: string;
+  command: string;
+  repoRoot: string;
+  worktreePath: string;
+  execute: RunAiCommandJobOptions["execute"];
+  onComplete?: RunAiCommandJobOptions["onComplete"];
+}): Promise<StartedAiCommandJob> {
+  const currentJob = await beginAiCommandJob({
+    repoRoot: options.repoRoot,
+    branch: options.branch,
+    documentId: options.documentId ?? null,
+    commandId: options.commandId,
+    origin: options.origin ?? null,
+    input: options.input,
+    command: options.command,
+    worktreePath: options.worktreePath,
+  });
+
+  return await runAiCommandJob({
+    repoRoot: options.repoRoot,
+    branch: options.branch,
+    currentJob,
+    execute: options.execute,
+    onComplete: options.onComplete,
+  });
 }

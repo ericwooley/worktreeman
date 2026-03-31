@@ -19,7 +19,7 @@ import { runCommand } from "../utils/process.js";
 import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
 import { startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
-import { stopAiCommandJobManager, stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
+import { startProjectManagementAiWorker, stopAiCommandJobManager, stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
@@ -29,19 +29,6 @@ import type { AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputE
 
 type RouterOptions = Parameters<typeof createApiRouter>[0];
 type InjectedAiProcesses = NonNullable<RouterOptions["aiProcesses"]>;
-type StartAiQueueJob = (payload: {
-  branch: string;
-  documentId: string;
-  commandId: "smart" | "simple";
-  origin?: AiCommandOrigin | null;
-  input: string;
-  renderedCommand: string;
-  worktreePath: string;
-  env: Record<string, string>;
-}, context: {
-  notifyStarted: (job: AiCommandJob) => void;
-  started: (job: AiCommandJob) => Promise<AiCommandJob>;
-}) => Promise<void>;
 
 interface FakeAiProcessSnapshot {
   status: string | null;
@@ -212,7 +199,7 @@ async function writeAiLogFixture(options: {
   pid?: number | null;
   stdout?: string;
   stderr?: string;
-  events?: Array<{ id: string; source: "stdout" | "stderr"; text: string; timestamp: string }>;
+  events?: AiCommandOutputEvent[];
   completedAt?: string | null;
   exitCode?: number | null;
   error?: unknown;
@@ -399,10 +386,9 @@ async function createApiTestRepo(): Promise<Awaited<ReturnType<typeof findRepoCo
 
 async function startApiServer(
   repo: Awaited<ReturnType<typeof findRepoContext>>,
-  overrides?: Partial<Pick<RouterOptions, "aiProcesses" | "aiProcessPollIntervalMs" | "aiLogStreamPollIntervalMs">> & {
-    onEnqueueProjectManagementAiJob?: StartAiQueueJob;
-  },
+  overrides?: Partial<Pick<RouterOptions, "aiProcesses" | "aiProcessPollIntervalMs" | "aiLogStreamPollIntervalMs">>,
 ) {
+  const worker = await startProjectManagementAiWorker({ repoRoot: repo.repoRoot });
   const app = express();
   app.use(express.json());
   const operationalState = await createOperationalStateStore(repo.repoRoot);
@@ -414,7 +400,6 @@ async function startApiServer(
     configFile: repo.configFile,
     configWorktreePath: repo.configWorktreePath,
     operationalState,
-    onEnqueueProjectManagementAiJob: overrides?.onEnqueueProjectManagementAiJob,
     ...(overrides ?? {}),
   }));
 
@@ -494,6 +479,7 @@ async function startApiServer(
     fetch: apiFetch,
     url: ensureLiveBaseUrl,
     close: async () => {
+      await worker.close();
       await stopAiCommandJobManager(repo.repoRoot);
       await stopOperationalStateStore(repo.repoRoot);
 
@@ -1107,6 +1093,7 @@ test("worktree AI run auto-commits leftover dirty files when it completes", { co
   });
 
   try {
+    await runCommand("git", ["commit", "--allow-empty", "-m", "initial"], { cwd: feature.worktreePath });
     await fs.writeFile(path.join(feature.worktreePath, "leftover.txt"), "left behind\n", "utf8");
 
     const response = await server.fetch(`/api/worktrees/feature-ai-auto-commit/ai-command/run`, {
@@ -1159,6 +1146,7 @@ test("worktree AI run does not create an extra commit when the worktree stays cl
   });
 
   try {
+    await runCommand("git", ["commit", "--allow-empty", "-m", "initial"], { cwd: feature.worktreePath });
     const beforeHead = await runCommand("git", ["rev-parse", "HEAD"], { cwd: feature.worktreePath });
 
     const response = await server.fetch(`/api/worktrees/feature-ai-auto-commit-clean/ai-command/run`, {

@@ -1,6 +1,3 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { PGlite } from "@electric-sql/pglite";
 import type {
   AiCommandJob,
   AiCommandLogEntry,
@@ -11,6 +8,12 @@ import type {
   ShutdownStatus,
   WorktreeRuntime,
 } from "../../shared/types.js";
+import {
+  closeAllManagedDatabaseClients,
+  closeManagedDatabaseClient,
+  getManagedDatabaseClient,
+  type ManagedDatabaseClient,
+} from "./database-client-service.js";
 
 const DEFAULT_SHUTDOWN_STATUS: ShutdownStatus = {
   active: false,
@@ -20,7 +23,7 @@ const DEFAULT_SHUTDOWN_STATUS: ShutdownStatus = {
 };
 
 interface ManagedOperationalStateStore {
-  db: PGlite;
+  db: ManagedDatabaseClient;
   readyPromise: Promise<void>;
 }
 
@@ -62,10 +65,6 @@ interface AiCommandOutputRow {
 }
 
 const managedStores = new Map<string, ManagedOperationalStateStore>();
-
-function resolveOperationalStateDbPath(repoRoot: string) {
-  return path.join(repoRoot, ".logs", "operations", "pgdata");
-}
 
 function cloneRuntime(runtime: WorktreeRuntime | null): WorktreeRuntime | null {
   if (!runtime) {
@@ -307,9 +306,7 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
     return existing;
   }
 
-  const dbPath = resolveOperationalStateDbPath(repoRoot);
-  await fs.mkdir(path.dirname(dbPath), { recursive: true });
-  const db = await PGlite.create(dbPath);
+  const db = await getManagedDatabaseClient(repoRoot, "operations");
   const readyPromise = (async () => {
     await db.exec(`
       create table if not exists runtime_state (
@@ -393,7 +390,7 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
     return managed;
   } catch (error) {
     managedStores.delete(repoRoot);
-    await db.close().catch(() => undefined);
+    await closeManagedDatabaseClient(repoRoot, "operations").catch(() => undefined);
     throw error;
   }
 }
@@ -900,7 +897,7 @@ export async function stopOperationalStateStore(repoRoot: string) {
 
   managedStores.delete(repoRoot);
   await managed.readyPromise.catch(() => undefined);
-  await managed.db.close().catch(() => undefined);
+  await closeManagedDatabaseClient(repoRoot, "operations").catch(() => undefined);
 }
 
 export async function stopAllOperationalStateStores() {
@@ -908,6 +905,6 @@ export async function stopAllOperationalStateStores() {
   managedStores.clear();
   await Promise.all(entries.map(async ([, managed]) => {
     await managed.readyPromise.catch(() => undefined);
-    await managed.db.close().catch(() => undefined);
   }));
+  await closeAllManagedDatabaseClients();
 }
