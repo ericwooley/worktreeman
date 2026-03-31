@@ -96,6 +96,11 @@ test("AI log detail renders a mixed output timeline instead of split stdout and 
   assert.doesNotMatch(markup, /Response stdout/);
   assert.doesNotMatch(markup, /Response stderr/);
   assert.doesNotMatch(markup, /pm-markdown text-sm theme-text/);
+  assert.match(markup, /theme-ai-output-entry/);
+  assert.match(markup, /theme-ai-output-entry-secondary/);
+  assert.doesNotMatch(markup, /theme-log-entry-error/);
+  assert.match(markup, />stderr</);
+  assert.doesNotMatch(markup, /theme-badge-warning[^>]*>stderr</);
 });
 
 test("AI log empty state keeps recent activity visible", () => {

@@ -853,6 +853,16 @@ body,
   color: var(--base08);
 }
 
+.theme-ai-output-entry {
+  border-color: rgb(var(--rgb-base0B) / 0.08);
+  color: var(--base05);
+}
+
+.theme-ai-output-entry-secondary {
+  border-color: rgb(var(--rgb-base0B) / 0.08);
+  color: rgb(var(--rgb-base05) / 0.78);
+}
+
 .theme-terminal-drawer {
   border-top-color: rgb(var(--rgb-base0E) / 0.32);
   background: rgb(var(--rgb-base01) / 0.96);
