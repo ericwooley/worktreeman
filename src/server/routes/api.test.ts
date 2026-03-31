@@ -494,6 +494,27 @@ async function startApiServer(
   };
 }
 
+async function startRunningAiJob(
+  server: Awaited<ReturnType<typeof startApiServer>>,
+  fakeAiProcesses: ReturnType<typeof createFakeAiProcesses>,
+  branch: string,
+) {
+  fakeAiProcesses.queueStartScript([
+    { status: "online", pid: 4123, stdout: "running", stderr: "" },
+  ]);
+
+  const response = await server.fetch(`/api/worktrees/${encodeURIComponent(branch)}/ai-command/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input: `run ai for ${branch}` }),
+  });
+
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { job: { branch: string; status: string } };
+  assert.equal(payload.job.branch, branch);
+  assert.equal(payload.job.status, "running");
+}
+
 test.afterEach(async () => {
   const repos = Array.from(testContextRepoRoots);
   const staleRepos = await Promise.all(repos.map(async (repoRoot) => {
@@ -774,6 +795,35 @@ test("DELETE /api/worktrees/:branch requires typing the worktree name when local
 
     assert.equal(confirmedResponse.status, 204);
     await waitForPathToDisappear(featureWorktree.worktreePath);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("DELETE /api/worktrees/:branch rejects deleting a worktree with a running AI job", async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+
+  try {
+    const server = await startApiServer(repo, {
+      aiProcesses: fakeAiProcesses.aiProcesses,
+      aiProcessPollIntervalMs: 10,
+    });
+
+    await startRunningAiJob(server, fakeAiProcesses, "feature-ai-log");
+
+    const response = await server.fetch("/api/worktrees/feature-ai-log", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      message: "Cancel the running AI job on feature-ai-log before deleting this worktree.",
+    });
 
     await server.close();
   } finally {
@@ -1406,6 +1456,76 @@ test("git compare merge can merge the selected base branch into a worktree branc
     assert.equal(comparisonPayload.mergeIntoCompareStatus.hasConflicts, false);
   } finally {
     await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare merge rejects when the compare worktree branch has a running AI job", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  await createWorktree(repo.repoRoot, config, { branch: "feature-merge-ai-lock" });
+
+  try {
+    const server = await startApiServer(repo, {
+      aiProcesses: fakeAiProcesses.aiProcesses,
+      aiProcessPollIntervalMs: 10,
+    });
+
+    await startRunningAiJob(server, fakeAiProcesses, "feature-merge-ai-lock");
+
+    const response = await server.fetch(`/api/git/compare/feature-merge-ai-lock/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "main" }),
+    });
+
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      message: "Cancel the running AI job on feature-merge-ai-lock before merging these branches.",
+    });
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare merge rejects when the target worktree branch has a running AI job", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  await createWorktree(repo.repoRoot, config, { branch: "feature-merge-target-ai-lock" });
+
+  try {
+    const server = await startApiServer(repo, {
+      aiProcesses: fakeAiProcesses.aiProcesses,
+      aiProcessPollIntervalMs: 10,
+    });
+
+    await startRunningAiJob(server, fakeAiProcesses, "feature-merge-target-ai-lock");
+
+    const response = await server.fetch(`/api/git/compare/main/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ baseBranch: "feature-merge-target-ai-lock" }),
+    });
+
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      message: "Cancel the running AI job on feature-merge-target-ai-lock before merging these branches.",
+    });
+
+    await server.close();
+  } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
 });

@@ -43,6 +43,7 @@ import {
 } from "./worktree-environment-content";
 import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
 import { GitPullRequestPanel } from "./git-pull-request-panel";
+import { getWorktreeDeleteAiDisabledReason, getWorktreeMergeAiDisabledReason } from "./worktree-action-guards";
 
 const ProjectManagementPanel = lazy(async () => {
   const module = await import("./project-management-panel");
@@ -598,8 +599,14 @@ export function WorktreeDetail({
   );
   const isBackgroundCommandsActive = isEnvironmentTabActive && environmentSubTab === "background";
   const isRunning = Boolean(worktree?.runtime);
+  const deleteAiDisabledReason = useMemo(
+    () => getWorktreeDeleteAiDisabledReason(projectManagementRunningAiJobs, worktree?.branch),
+    [projectManagementRunningAiJobs, worktree?.branch],
+  );
   const deleteDisabledReason = isBusy
     ? "A worktree action is already running."
+    : deleteAiDisabledReason
+      ? deleteAiDisabledReason
     : worktree?.deletion?.canDelete === false
       ? worktree.deletion.reason
       : null;
@@ -752,6 +759,10 @@ export function WorktreeDetail({
     () => getMergeIntoBaseActionState(worktree?.branch, gitComparison),
     [gitComparison, worktree?.branch],
   );
+  const mergeAiDisabledReason = useMemo(
+    () => getWorktreeMergeAiDisabledReason(projectManagementRunningAiJobs, [worktree?.branch, gitComparison?.baseBranch]),
+    [gitComparison?.baseBranch, projectManagementRunningAiJobs, worktree?.branch],
+  );
   const mergeIntoWorktreeStatus = gitComparison?.mergeIntoCompareStatus ?? gitComparison?.mergeStatus ?? null;
   const workingTreeConflictCount = gitComparison?.workingTreeSummary.conflictedFiles ?? gitComparison?.workingTreeConflicts.length ?? 0;
   const activeGitConflicts = gitComparison?.workingTreeConflicts.length
@@ -773,11 +784,15 @@ export function WorktreeDetail({
   const canMergeWorktreeIntoBase = mergeIntoBaseActionState.canMerge;
   const mergeButtonDisabledReason = gitComparisonLoading
     ? "Git comparison is updating."
+    : mergeAiDisabledReason
+      ? mergeAiDisabledReason
     : !canMergeBaseIntoWorktree
       ? mergeActionState.reason
       : null;
   const mergeIntoBaseButtonDisabledReason = gitComparisonLoading
     ? "Git comparison is updating."
+    : mergeAiDisabledReason
+      ? mergeAiDisabledReason
     : !canMergeWorktreeIntoBase
       ? mergeIntoBaseActionState.reason
       : null;

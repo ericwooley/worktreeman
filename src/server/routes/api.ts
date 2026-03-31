@@ -1065,6 +1065,42 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     return worktrees.find((entry) => entry.branch === branch);
   };
 
+  const getRunningAiJobForBranch = async (branch: string): Promise<AiCommandJob | null> => {
+    const job = await getAiCommandJob(options.repoRoot, branch, aiJobReadOptions);
+    return job?.status === "running" ? job : null;
+  };
+
+  const getDeleteAiLockReason = (branch: string) => `Cancel the running AI job on ${branch} before deleting this worktree.`;
+
+  const getMergeAiLockReason = (branch: string) => `Cancel the running AI job on ${branch} before merging these branches.`;
+
+  const buildDeletionState = async (worktree: WorktreeRecord) => {
+    const deletion = await getWorktreeDeletionState(options.repoRoot, worktree);
+    if (await getRunningAiJobForBranch(worktree.branch)) {
+      return {
+        ...deletion,
+        canDelete: false,
+        reason: getDeleteAiLockReason(worktree.branch),
+      };
+    }
+
+    return deletion;
+  };
+
+  const getMergeBlockedByAiReason = async (branches: Array<string | undefined>) => {
+    for (const branch of branches) {
+      if (!branch) {
+        continue;
+      }
+
+      if (await getRunningAiJobForBranch(branch)) {
+        return getMergeAiLockReason(branch);
+      }
+    }
+
+    return null;
+  };
+
   const createWorktreeRuntime = async (
     config: WorktreeManagerConfig,
     worktree: WorktreeRecord,
@@ -1404,7 +1440,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     const linkedWorktrees = attachWorktreeDocumentLinks(merged, links, documentsPayload.documents);
     return await Promise.all(linkedWorktrees.map(async (worktree) => ({
       ...worktree,
-      deletion: await getWorktreeDeletionState(options.repoRoot, worktree),
+      deletion: await buildDeletionState(worktree),
     })));
   };
 
@@ -1894,6 +1930,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       if (!compareBranch.trim()) {
         res.status(400).json({ message: "compareBranch is required" });
+        return;
+      }
+
+      const mergeBlockedByAiReason = await getMergeBlockedByAiReason([compareBranch, baseBranch]);
+      if (mergeBlockedByAiReason) {
+        res.status(409).json({ message: mergeBlockedByAiReason });
         return;
       }
 
@@ -3196,11 +3238,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         confirmWorktreeName: typeof req.body?.confirmWorktreeName === "string" ? req.body.confirmWorktreeName : undefined,
         deleteBranch: typeof req.body?.deleteBranch === "boolean" ? req.body.deleteBranch : true,
       };
-      const deletion = await getWorktreeDeletionState(options.repoRoot, worktree);
+      const deletion = await buildDeletionState(worktree);
       try {
         validateDeleteWorktreeRequest(worktree, deletion, request);
       } catch (error) {
-        res.status(400).json({
+        res.status(await getRunningAiJobForBranch(worktree.branch) ? 409 : 400).json({
           message: error instanceof Error ? error.message : "Invalid delete request.",
         });
         return;

@@ -21,6 +21,7 @@ import type { ProjectManagementDocumentFormViewMode } from "./project-management
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
+import { getWorktreeDeleteAiDisabledReason } from "./worktree-action-guards";
 import {
   buildAiJobNotification,
   requestBrowserNotificationPermission,
@@ -324,6 +325,16 @@ export function Dashboard() {
         ?? null;
     },
     [selectedBranch, visibleWorktrees],
+  );
+
+  const selectedDeleteAiDisabledReason = useMemo(
+    () => getWorktreeDeleteAiDisabledReason(runningAiCommandJobs, selected?.branch),
+    [runningAiCommandJobs, selected?.branch],
+  );
+
+  const deleteConfirmationAiDisabledReason = useMemo(
+    () => getWorktreeDeleteAiDisabledReason(runningAiCommandJobs, deleteConfirmation?.worktree.branch),
+    [deleteConfirmation?.worktree.branch, runningAiCommandJobs],
   );
 
   const worktreeOptions = useMemo<MatrixDropdownOption[]>(
@@ -728,7 +739,9 @@ export function Dashboard() {
   }, [aiCommandDrafts, saveAiCommandSettings]);
 
   const openDeleteConfirmation = useCallback((worktree: WorktreeRecord | null) => {
-    if (!worktree?.deletion?.canDelete) {
+    const deleteAiDisabledReason = getWorktreeDeleteAiDisabledReason(runningAiCommandJobs, worktree?.branch);
+    if (!worktree?.deletion?.canDelete || deleteAiDisabledReason) {
+      setDeleteConfirmationError(deleteAiDisabledReason ?? null);
       return;
     }
 
@@ -738,7 +751,7 @@ export function Dashboard() {
       deleteBranch: worktree.deletion?.deleteBranchByDefault ?? true,
       confirmWorktreeName: "",
     });
-  }, []);
+  }, [runningAiCommandJobs]);
 
   const confirmDelete = async () => {
     if (!deleteConfirmation) {
@@ -1042,9 +1055,10 @@ export function Dashboard() {
     if (selected) {
       const deleteDisabledReason = busyBranch === selected.branch
         ? "A worktree action is already running."
-        : selected.deletion?.canDelete === false
+        : selectedDeleteAiDisabledReason
+          ?? (selected.deletion?.canDelete === false
           ? selected.deletion.reason
-          : null;
+          : null);
       const deleteSubtitle = deleteDisabledReason
         ?? "Open a confirmation modal before deleting the worktree.";
 
@@ -1120,7 +1134,9 @@ export function Dashboard() {
     start,
     stop,
     syncEnv,
+    selectedDeleteAiDisabledReason,
     theme,
+    runningAiCommandJobs,
   ]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
@@ -1523,6 +1539,7 @@ export function Dashboard() {
                 className="matrix-button matrix-button-danger rounded-none px-3 py-2 text-sm"
                 disabled={
                   busyBranch === deleteConfirmation.worktree.branch
+                  || Boolean(deleteConfirmationAiDisabledReason)
                   || (
                     deleteConfirmation.worktree.deletion?.requiresConfirmation === true
                     && deleteConfirmation.confirmWorktreeName !== deleteConfirmation.worktree.branch
@@ -1552,6 +1569,12 @@ export function Dashboard() {
             {deleteConfirmationError ? (
               <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
                 {deleteConfirmationError}
+              </div>
+            ) : null}
+
+            {deleteConfirmationAiDisabledReason ? (
+              <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
+                {deleteConfirmationAiDisabledReason}
               </div>
             ) : null}
 
