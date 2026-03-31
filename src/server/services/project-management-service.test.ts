@@ -653,6 +653,32 @@ test("clearing the in-memory cache rebuilds state from git history", async () =>
   }
 });
 
+test("project-management history diffs are truncated to a bounded in-memory size", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Large Diff Document",
+      markdown: "# Large Diff Document\n",
+      tags: ["plan"],
+    });
+
+    const largeMarkdown = `# Large Diff Document\n\n${"A very large line of markdown content.\n".repeat(5000)}`;
+    await updateProjectManagementDocument(repoRoot, created.document.id, {
+      title: created.document.title,
+      markdown: largeMarkdown,
+      tags: created.document.tags,
+    });
+
+    const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
+    const latestDiff = history.history.at(-1)?.diff ?? "";
+    assert.match(latestDiff, /Diff truncated because it exceeded the in-memory history limit\./);
+    assert.equal(latestDiff.length <= 20_128, true);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
 test("concurrent appends succeed via update-ref retry and preserve all documents", async () => {
   const repoRoot = await createTestRepo();
 
