@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Dummy dashboard install screenshot</title>
+  <desc id="desc">Placeholder screenshot path for the worktreeman PWA dashboard install flow.</desc>
+  <rect width="1440" height="900" fill="#071a0b"/>
+  <rect x="72" y="72" width="1296" height="756" fill="#020703" stroke="#4aff7a" stroke-width="4"/>
+  <text x="120" y="160" fill="#4aff7a" font-family="JetBrains Mono, monospace" font-size="42">worktreeman</text>
+  <text x="120" y="230" fill="#d7ffd7" font-family="JetBrains Mono, monospace" font-size="24">Replace this dummy screenshot with the real dashboard install capture.</text>
+  <rect x="120" y="300" width="420" height="180" fill="#09280f" stroke="#7fe19e" stroke-width="2"/>
+  <rect x="576" y="300" width="672" height="180" fill="#09280f" stroke="#7fe19e" stroke-width="2"/>
+  <rect x="120" y="520" width="1128" height="220" fill="#09280f" stroke="#7fe19e" stroke-width="2"/>
+  <text x="150" y="370" fill="#ecffec" font-family="JetBrains Mono, monospace" font-size="28">Install card</text>
+  <text x="606" y="370" fill="#ecffec" font-family="JetBrains Mono, monospace" font-size="28">Header controls</text>
+  <text x="150" y="600" fill="#ecffec" font-family="JetBrains Mono, monospace" font-size="28">Dashboard body placeholder</text>
+</svg>

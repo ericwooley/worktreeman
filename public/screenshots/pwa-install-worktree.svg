@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1600" viewBox="0 0 900 1600" role="img" aria-labelledby="title desc">
+  <title id="title">Dummy worktree screenshot</title>
+  <desc id="desc">Placeholder screenshot path for the worktreeman PWA worktree view.</desc>
+  <rect width="900" height="1600" fill="#071a0b"/>
+  <rect x="48" y="48" width="804" height="1504" fill="#020703" stroke="#4aff7a" stroke-width="4"/>
+  <text x="96" y="132" fill="#4aff7a" font-family="JetBrains Mono, monospace" font-size="34">worktreeman worktree view</text>
+  <text x="96" y="188" fill="#d7ffd7" font-family="JetBrains Mono, monospace" font-size="20">Replace this dummy screenshot with a real mobile-style install capture.</text>
+  <rect x="96" y="260" width="708" height="180" fill="#09280f" stroke="#7fe19e" stroke-width="2"/>
+  <rect x="96" y="480" width="708" height="360" fill="#09280f" stroke="#7fe19e" stroke-width="2"/>
+  <rect x="96" y="880" width="708" height="520" fill="#09280f" stroke="#7fe19e" stroke-width="2"/>
+  <text x="126" y="340" fill="#ecffec" font-family="JetBrains Mono, monospace" font-size="24">Install prompt placeholder</text>
+  <text x="126" y="560" fill="#ecffec" font-family="JetBrains Mono, monospace" font-size="24">Worktree controls placeholder</text>
+  <text x="126" y="960" fill="#ecffec" font-family="JetBrains Mono, monospace" font-size="24">Terminal and details placeholder</text>
+</svg>

@@ -13,6 +13,7 @@ import {
 import { useDashboardState } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
+import { PwaInstallCard } from "./pwa-install-card";
 import { useTheme } from "./theme-provider";
 import { WorktreeDetail, type WorktreeEnvironmentSubTab, type WorktreeGitSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
@@ -22,6 +23,7 @@ import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
 import { getWorktreeDeleteAiDisabledReason } from "./worktree-action-guards";
+import { isPwaInstalled, type BeforeInstallPromptEvent, type PwaInstallStatus } from "../lib/pwa";
 import {
   buildAiJobNotification,
   requestBrowserNotificationPermission,
@@ -242,6 +244,8 @@ export function Dashboard() {
 
     return normalizeTerminalShortcut(window.localStorage.getItem(TERMINAL_SHORTCUT_STORAGE_KEY));
   });
+  const [pwaInstallStatus, setPwaInstallStatus] = useState<PwaInstallStatus>("manual");
+  const [pwaPromptEvent, setPwaPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
 
   const openCommandPalette = useCallback((scope: CommandPaletteScope = "main", initialQuery = "") => {
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
@@ -391,6 +395,77 @@ export function Dashboard() {
       normalizeTerminalShortcut(terminalShortcut),
     );
   }, [terminalShortcut]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const updateInstalledState = () => {
+      if (isPwaInstalled({
+        matchMedia: window.matchMedia.bind(window),
+        navigator: window.navigator,
+      })) {
+        setPwaPromptEvent(null);
+        setPwaInstallStatus("installed");
+        return true;
+      }
+
+      return false;
+    };
+
+    if (!updateInstalledState()) {
+      setPwaInstallStatus("manual");
+    }
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      const promptEvent = event as BeforeInstallPromptEvent;
+      promptEvent.preventDefault();
+      setPwaPromptEvent(promptEvent);
+      setPwaInstallStatus("available");
+    };
+
+    const handleAppInstalled = () => {
+      setPwaPromptEvent(null);
+      setPwaInstallStatus("installed");
+    };
+
+    const standaloneMediaQuery = window.matchMedia("(display-mode: standalone)");
+    const handleStandaloneChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        setPwaPromptEvent(null);
+        setPwaInstallStatus("installed");
+      }
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt as EventListener);
+    window.addEventListener("appinstalled", handleAppInstalled);
+    standaloneMediaQuery.addEventListener("change", handleStandaloneChange);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt as EventListener);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+      standaloneMediaQuery.removeEventListener("change", handleStandaloneChange);
+    };
+  }, []);
+
+  const handleInstallPwa = useCallback(async () => {
+    if (!pwaPromptEvent) {
+      return;
+    }
+
+    setPwaInstallStatus("installing");
+
+    try {
+      await pwaPromptEvent.prompt();
+      const choice = await pwaPromptEvent.userChoice;
+
+      setPwaPromptEvent(null);
+      setPwaInstallStatus(choice.outcome === "accepted" ? "installed" : "manual");
+    } catch {
+      setPwaInstallStatus("manual");
+    }
+  }, [pwaPromptEvent]);
 
   useEffect(() => {
     if (commandPaletteOpen && commandPaletteScope === "theme-select") {
@@ -1350,6 +1425,7 @@ export function Dashboard() {
                   <span className="theme-text-accent-soft font-mono text-sm">magic</span>
                 </button>
               </div>
+              <PwaInstallCard status={pwaInstallStatus} onInstall={() => void handleInstallPwa()} />
               <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
                 <MatrixBadge tone="neutral">Command palette</MatrixBadge>
                 <span className="font-mono theme-text-strong">{formatShortcutLabel(commandPaletteShortcut)}</span>

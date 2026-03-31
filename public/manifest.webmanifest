@@ -1,0 +1,45 @@
+{
+  "name": "worktreeman",
+  "short_name": "worktreeman",
+  "description": "Local worktree orchestration with tmux-backed terminals, runtime controls, and project-management tooling.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#071a0b",
+  "theme_color": "#0f1720",
+  "orientation": "portrait-primary",
+  "categories": [
+    "developer",
+    "productivity"
+  ],
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo-light.png",
+      "sizes": "2048x2048",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/pwa-install-dashboard.svg",
+      "sizes": "1440x900",
+      "type": "image/svg+xml",
+      "form_factor": "wide",
+      "label": "Dummy dashboard install screenshot"
+    },
+    {
+      "src": "/screenshots/pwa-install-worktree.svg",
+      "sizes": "900x1600",
+      "type": "image/svg+xml",
+      "form_factor": "narrow",
+      "label": "Dummy worktree install screenshot"
+    }
+  ]
+}
