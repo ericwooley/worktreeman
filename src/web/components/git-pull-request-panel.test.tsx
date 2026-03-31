@@ -32,7 +32,7 @@ const pullRequestDocument: ProjectManagementDocument = {
   comments: [
     {
       id: "comment-1",
-      body: "Looks good. Please verify the final copy.",
+      body: "## Review note\n\nLooks good. Please verify the **final copy**.",
       createdAt: "2026-03-27T11:30:00.000Z",
       authorName: "Casey Reviewer",
       authorEmail: "casey@example.com",
@@ -106,7 +106,8 @@ test("pull request panel renders PR details, comments, and activity", () => {
   assert.match(markup, /feature\/pull-request-workspace → main/);
   assert.match(markup, /Ship the GitHub-style review tab\./);
   assert.match(markup, /Rendered from the pull request markdown document\./);
-  assert.match(markup, /Looks good\. Please verify the final copy\./);
+  assert.match(markup, /<h2>Review note<\/h2>/);
+  assert.match(markup, /Looks good\. Please verify the <strong>final copy<\/strong>\./);
   assert.match(markup, /Saved with your repo git user attribution\./);
   assert.match(markup, /Recent activity/);
   assert.match(markup, /Comment added/);

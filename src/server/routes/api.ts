@@ -104,6 +104,10 @@ import {
 } from "../services/ai-command-process-service.js";
 import { enqueueProjectManagementAiJob } from "../services/ai-command-job-manager-service.js";
 import { completeAiCommandRun } from "../services/ai-command-completion-service.js";
+import {
+  buildWorktreeAiStartedComment,
+  buildWorktreeMergeComment,
+} from "../services/project-management-comment-formatters.js";
 import { disconnectTmuxClient, ensureRuntimeTerminalSession, ensureTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName, listTmuxClients } from "../services/terminal-service.js";
 import {
   addProjectManagementComment,
@@ -1429,6 +1433,34 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     },
   });
 
+  const addWorktreeAiStartedComment = async (details: {
+    branch: string;
+    commandId: AiCommandId;
+    commentDocumentId?: string | null;
+    requestSummary?: string | null;
+  }) => {
+    if (!details.commentDocumentId) {
+      return;
+    }
+
+    try {
+      await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
+        body: buildWorktreeAiStartedComment({
+          branch: details.branch,
+          commandId: details.commandId,
+          requestSummary: details.requestSummary,
+        }),
+      });
+    } catch (error) {
+      logServerEvent("project-management-comment", "failed", {
+        branch: details.branch,
+        documentId: details.commentDocumentId,
+        stage: "ai-started",
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
+    }
+  };
+
   const resolveEnvSyncSourceRoot = async (_worktrees: Awaited<ReturnType<typeof listWorktrees>>) => options.configWorktreePath;
 
   const buildWorktreePayload = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
@@ -1939,7 +1971,29 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      const comparisonBeforeMerge: GitComparisonResponse = await getGitComparison(options.repoRoot, compareBranch, baseBranch);
       const comparison: GitComparisonResponse = await mergeGitBranch(options.repoRoot, compareBranch, baseBranch);
+
+      const linkedDocument = await getWorktreeDocumentLink(options.repoRoot, compareBranch);
+      if (linkedDocument?.documentId) {
+        try {
+          await addProjectManagementComment(options.repoRoot, linkedDocument.documentId, {
+            body: buildWorktreeMergeComment({
+              branch: comparison.compareBranch,
+              baseBranch: comparison.baseBranch,
+              commits: comparisonBeforeMerge.compareCommits,
+            }),
+          });
+        } catch (error) {
+          logServerEvent("project-management-comment", "failed", {
+            branch: compareBranch,
+            documentId: linkedDocument.documentId,
+            stage: "merge",
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }
+      }
+
       res.json(comparison);
     } catch (error) {
       next(error);
@@ -2573,6 +2627,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         commentRequestSummary: requestedChange,
         autoCommitDirtyWorktree: true,
       });
+      await addWorktreeAiStartedComment({
+        branch,
+        commandId,
+        commentDocumentId: documentId,
+        requestSummary: requestedChange,
+      });
       await moveProjectManagementDocumentTowardInProgress(options.repoRoot, documentId);
       scheduleRuntimeStopAfterAiJob({
         branch,
@@ -2925,6 +2985,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           autoCommitDirtyWorktree: runDetails.autoCommitDirtyWorktree,
         })
         : await (await startAiProcessJob(runDetails)).started;
+      await addWorktreeAiStartedComment({
+        branch: runDetails.branch,
+        commandId: runDetails.commandId,
+        commentDocumentId: runDetails.commentDocumentId,
+        requestSummary: runDetails.commentRequestSummary,
+      });
       scheduleRuntimeStopAfterAiJob({
         branch: worktree.branch,
         jobId: job.jobId,

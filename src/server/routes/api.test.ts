@@ -23,7 +23,7 @@ import { startProjectManagementAiWorker, stopAiCommandJobManager, stopAllAiComma
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
-import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
+import { getWorktreeDocumentLink, setWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { getTmuxSessionName } from "../../shared/tmux.js";
 import type { AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
 
@@ -1364,6 +1364,23 @@ test("git compare merge merges a feature branch into main", { concurrency: false
   const server = await startApiServer(repo);
 
   try {
+    const createDocumentResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Merge tracking doc",
+        markdown: "# Merge tracking\n",
+        tags: ["merge"],
+      }),
+    });
+    assert.equal(createDocumentResponse.status, 201);
+    const createDocumentPayload = await createDocumentResponse.json() as { document: { id: string } };
+    await setWorktreeDocumentLink(repo.repoRoot, {
+      branch: feature.branch,
+      worktreePath: feature.worktreePath,
+      documentId: createDocumentPayload.document.id,
+    });
+
     await fs.writeFile(path.join(feature.worktreePath, "merge.txt"), "hello merge\n", "utf8");
     await runCommand("git", ["add", "merge.txt"], { cwd: feature.worktreePath });
     await runCommand("git", ["commit", "-m", "add merge file"], {
@@ -1392,6 +1409,14 @@ test("git compare merge merges a feature branch into main", { concurrency: false
     await fs.access(path.join(mainPath, "merge.txt"));
     const { stdout } = await runCommand("git", ["log", "-1", "--format=%s"], { cwd: mainPath });
     assert.match(stdout.trim(), /Merge branch 'feature-merge'|add merge file/);
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, createDocumentPayload.document.id);
+    const latestComment = updatedDocument.document.comments.at(-1);
+    assert.ok(latestComment);
+    assert.match(latestComment.body, /## Worktree merged/);
+    assert.match(latestComment.body, /Merged `feature-merge` into `main`\./);
+    assert.match(latestComment.body, /### Merged commits \(1\)/);
+    assert.match(latestComment.body, /- `.+` add merge file — test \(\d{4}-\d{2}-\d{2}\)/);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -3489,13 +3514,22 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(updated.document.title, "Project Outline");
     assert.equal(updated.document.status, "in-progress");
     assert.equal(updated.document.markdown.includes("implemented"), false);
-    assert.equal(updated.document.comments.length >= 1, true);
+    assert.equal(updated.document.comments.length >= 2, true);
+    const startedComment = updated.document.comments.at(-2);
     const latestComment = updated.document.comments.at(-1);
+    assert.ok(startedComment);
     assert.ok(latestComment);
-    assert.match(latestComment.body, /AI worktree run completed/);
-    assert.match(latestComment.body, new RegExp(payload.job.branch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-    assert.match(latestComment.body, /Command: smart/);
-    assert.match(latestComment.body, /Stdout: planning... implemented/);
+    assert.match(startedComment.body, /## Worktree AI started/);
+    assert.equal(startedComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
+    assert.match(startedComment.body, /- Command: `smart`/);
+    assert.match(startedComment.body, /- Request: .*outline implementation/);
+    assert.match(latestComment.body, /## Worktree AI completed/);
+    assert.equal(latestComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
+    assert.match(latestComment.body, /- Command: `smart`/);
+    assert.match(latestComment.body, /### Output/);
+    assert.match(latestComment.body, /<details>/);
+    assert.match(latestComment.body, /<summary>Stdout<\/summary>/);
+    assert.match(latestComment.body, /> planning\.\.\. implemented/);
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, outline.id);
     assert.equal(history.history.length >= 2, true);
@@ -3699,15 +3733,21 @@ test("worktree AI can append pull request review comments with git origin metada
     await waitFor(async () => {
       const updated = await getProjectManagementDocument(repo.repoRoot, documentId);
       const latestComment = updated.document.comments.at(-1);
-      return Boolean(latestComment?.body.includes("AI worktree run completed"));
+      return Boolean(latestComment?.body.includes("## Worktree AI completed"));
     });
 
     const updated = await getProjectManagementDocument(repo.repoRoot, documentId);
+    const startedComment = updated.document.comments.at(-2);
     const latestComment = updated.document.comments.at(-1);
+    assert.ok(startedComment);
     assert.ok(latestComment);
-    assert.match(latestComment.body, /AI worktree run completed/);
-    assert.match(latestComment.body, /feature-ai-log/);
-    assert.match(latestComment.body, /Command: smart/);
+    assert.match(startedComment.body, /## Worktree AI started/);
+    assert.match(startedComment.body, /- Branch: `feature-ai-log`/);
+    assert.match(startedComment.body, /- Command: `smart`/);
+    assert.match(latestComment.body, /## Worktree AI completed/);
+    assert.match(latestComment.body, /- Branch: `feature-ai-log`/);
+    assert.match(latestComment.body, /- Command: `smart`/);
+    assert.match(latestComment.body, /<summary>Stdout<\/summary>/);
     assert.match(latestComment.body, /Looks ready to merge with one missing regression test\./);
 
     const logsResponse = await server.fetch(`/api/ai/logs`);

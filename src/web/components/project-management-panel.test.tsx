@@ -434,7 +434,7 @@ test("document view renders summary, comments, and comment attribution", () => {
         summary: "Track prerequisite document work.",
         comments: [{
           id: "comment-1",
-          body: "Need a final QA pass",
+          body: "## Review note\n\nNeed a **final QA pass**",
           createdAt: "2026-03-25T11:30:00.000Z",
           authorName: "Casey Reviewer",
           authorEmail: "casey@example.com",
@@ -475,7 +475,8 @@ test("document view renders summary, comments, and comment attribution", () => {
   assert.match(markup, /1 comment/);
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /casey@example.com/);
-  assert.match(markup, /Need a final QA pass/);
+  assert.match(markup, /<h2>Review note<\/h2>/);
+  assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
   assert.match(markup, /Saved with your repo git/);
 });
 
