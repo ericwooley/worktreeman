@@ -17,7 +17,12 @@ import {
   getProjectManagementDocumentRunDefaults,
   ProjectManagementPanel,
 } from "./project-management-panel";
-import { getAiOutputEvents } from "./project-management-ai-output-viewer";
+import {
+  formatAiOutputAge,
+  getAiOutputEvents,
+  getNextAiOutputScrollTop,
+  shouldStickAiOutputToBottom,
+} from "./project-management-ai-output-viewer";
 import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
@@ -732,6 +737,54 @@ test("getAiOutputEvents preserves ordered output events and falls back to stdout
       timestamp: "2026-03-26T10:00:03.000Z",
     },
   ]);
+});
+
+test("shouldStickAiOutputToBottom only follows when the viewport is near the bottom", () => {
+  assert.equal(shouldStickAiOutputToBottom({
+    scrollHeight: 500,
+    scrollTop: 300,
+    clientHeight: 200,
+  }), true);
+
+  assert.equal(shouldStickAiOutputToBottom({
+    scrollHeight: 500,
+    scrollTop: 260,
+    clientHeight: 200,
+  }), false);
+});
+
+test("getNextAiOutputScrollTop snaps to the bottom when auto-follow is enabled", () => {
+  assert.equal(getNextAiOutputScrollTop({
+    shouldStickToBottom: true,
+    previousScrollHeight: 400,
+    nextScrollHeight: 520,
+    currentScrollTop: 180,
+  }), 520);
+});
+
+test("getNextAiOutputScrollTop preserves relative position when auto-follow is disabled", () => {
+  assert.equal(getNextAiOutputScrollTop({
+    shouldStickToBottom: false,
+    previousScrollHeight: 400,
+    nextScrollHeight: 520,
+    currentScrollTop: 180,
+  }), 300);
+
+  assert.equal(getNextAiOutputScrollTop({
+    shouldStickToBottom: false,
+    previousScrollHeight: 0,
+    nextScrollHeight: 520,
+    currentScrollTop: 180,
+  }), 180);
+});
+
+test("formatAiOutputAge renders compact time-ago labels for the latest output", () => {
+  const now = Date.parse("2026-03-31T18:10:00.000Z");
+
+  assert.equal(formatAiOutputAge("2026-03-31T18:09:51.000Z", now), "9s ago");
+  assert.equal(formatAiOutputAge("2026-03-31T18:09:00.000Z", now), "1m ago");
+  assert.equal(formatAiOutputAge("2026-03-31T17:10:00.000Z", now), "1h ago");
+  assert.equal(formatAiOutputAge("2026-03-30T18:10:00.000Z", now), "1d ago");
 });
 
 test("getCompletedAiDocumentRefreshTarget prefers workspace refresh when available", () => {
