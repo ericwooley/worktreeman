@@ -35,6 +35,7 @@ import { loadConfig } from "./config-service.js";
 import { runCommand } from "../utils/process.js";
 
 const PROJECT_MANAGEMENT_MAX_APPEND_RETRIES = 5;
+const PROJECT_MANAGEMENT_MAX_HISTORY_DIFF_CHARS = 20_000;
 
 type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restore" | "comment";
 
@@ -567,6 +568,14 @@ function ensureProjectManagementDiff(entry: Pick<ProjectManagementHistoryEntry, 
     : "@@\n No diff available for this history entry.";
 }
 
+function clampProjectManagementDiff(diff: string): string {
+  if (diff.length <= PROJECT_MANAGEMENT_MAX_HISTORY_DIFF_CHARS) {
+    return diff;
+  }
+
+  return `${diff.slice(0, PROJECT_MANAGEMENT_MAX_HISTORY_DIFF_CHARS)}\n\n@@\n Diff truncated because it exceeded the in-memory history limit.`;
+}
+
 function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocument>): ProjectManagementDocument {
   const kind = normalizeDocumentKind(doc.kind);
   return {
@@ -658,10 +667,10 @@ function reduceBatchIntoCache(
       archived: materialized.archived,
       changeCount: entry.changes.length,
       action: entry.action,
-      diff: ensureProjectManagementDiff({
+      diff: clampProjectManagementDiff(ensureProjectManagementDiff({
         action: entry.action,
         diff: buildProjectManagementDiff(previousDocument, materialized),
-      }),
+      })),
     };
     history.push(historyEntry);
     cache.historyByDocumentId.set(entry.documentId, history);

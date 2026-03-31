@@ -846,10 +846,10 @@ export function WorktreeDetail({
     const query = backgroundFilter.toLowerCase();
     return lines.filter((line) => line.text.toLowerCase().includes(query));
   }, [backgroundFilter, backgroundLogs, selectedBackgroundCommand?.name]);
-  const refreshProjectManagementWorkspace = useCallback(async (options?: { silent?: boolean }) => {
+  const refreshProjectManagementWorkspace = useCallback(async (options?: { silent?: boolean; includeSelectedDocument?: boolean }) => {
     await onLoadProjectManagementDocuments(options);
     await onLoadProjectManagementUsers(options);
-    if (projectManagementSelectedDocumentId) {
+    if (options?.includeSelectedDocument !== false && projectManagementSelectedDocumentId) {
       await onLoadProjectManagementDocument(projectManagementSelectedDocumentId, options);
     }
   }, [onLoadProjectManagementDocument, onLoadProjectManagementDocuments, onLoadProjectManagementUsers, projectManagementSelectedDocumentId]);
@@ -931,7 +931,7 @@ export function WorktreeDetail({
     let cancelled = false;
 
     const loadWorkspace = async () => {
-      await refreshProjectManagementWorkspace({ silent: true });
+      await refreshProjectManagementWorkspace({ silent: true, includeSelectedDocument: false });
       if (cancelled) {
         return;
       }
