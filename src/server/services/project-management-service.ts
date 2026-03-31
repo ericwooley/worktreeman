@@ -1325,6 +1325,18 @@ export async function updateProjectManagementStatus(
   return getProjectManagementDocument(repoRoot, documentId);
 }
 
+export async function moveProjectManagementDocumentTowardInProgress(
+  repoRoot: string,
+  documentId: string,
+): Promise<ProjectManagementDocumentResponse> {
+  const currentDocument = await getProjectManagementDocument(repoRoot, documentId);
+  if (currentDocument.document.status !== "backlog" && currentDocument.document.status !== "todo") {
+    return currentDocument;
+  }
+
+  return updateProjectManagementStatus(repoRoot, documentId, "in-progress");
+}
+
 export async function addProjectManagementComment(
   repoRoot: string,
   documentId: string,

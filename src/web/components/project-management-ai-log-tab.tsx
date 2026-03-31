@@ -12,6 +12,7 @@ import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSp
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
+import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
 
 function getAiCommandLabel(commandId: "smart" | "simple") {
   return commandId === "simple" ? "Simple AI" : "Smart AI";
@@ -27,7 +28,7 @@ function formatSelectedLabel(logDetail: AiCommandLogEntry | null) {
 
 function getLiveDetailDescription(logDetail: AiCommandLogEntry | null) {
   if (!logDetail) {
-    return "Select an AI log to inspect mixed output, timing gaps, and any captured failure details.";
+    return "Select an AI log to inspect mixed output and any captured failure details.";
   }
 
   if (logDetail.status === "running") {
@@ -60,34 +61,6 @@ function formatTimestamp(value: string | null | undefined) {
   }
 
   return new Date(parsed).toLocaleString();
-}
-
-function formatElapsedSincePrevious(previousTimestamp: string, nextTimestamp: string) {
-  const previous = Date.parse(previousTimestamp);
-  const next = Date.parse(nextTimestamp);
-
-  if (Number.isNaN(previous) || Number.isNaN(next) || next <= previous) {
-    return null;
-  }
-
-  const deltaMs = next - previous;
-  const totalSeconds = Math.round(deltaMs / 1000);
-  if (totalSeconds < 60) {
-    return `+${Math.max(1, totalSeconds)} second${totalSeconds === 1 ? "" : "s"} since previous output`;
-  }
-
-  const totalMinutes = Math.round(deltaMs / 60000);
-  if (totalMinutes < 60) {
-    return `+${totalMinutes} minute${totalMinutes === 1 ? "" : "s"} since previous output`;
-  }
-
-  const totalHours = Math.floor(totalMinutes / 60);
-  const remainingMinutes = totalMinutes % 60;
-  if (!remainingMinutes) {
-    return `+${totalHours} hour${totalHours === 1 ? "" : "s"} since previous output`;
-  }
-
-  return `+${totalHours} hour${totalHours === 1 ? "" : "s"} ${remainingMinutes} minute${remainingMinutes === 1 ? "" : "s"} since previous output`;
 }
 
 function getOriginContextTitle(origin: AiCommandOrigin | null | undefined, branch: string) {
@@ -175,6 +148,29 @@ function getOutputEvents(logDetail: AiCommandLogEntry): AiCommandOutputEvent[] {
   }
 
   return fallbackEvents;
+}
+
+function toAiJob(logDetail: AiCommandLogEntry): AiCommandJob {
+  return {
+    jobId: logDetail.jobId,
+    fileName: logDetail.fileName,
+    branch: logDetail.branch,
+    documentId: logDetail.documentId,
+    commandId: logDetail.commandId,
+    command: logDetail.command,
+    input: logDetail.request,
+    status: logDetail.status,
+    startedAt: logDetail.timestamp,
+    completedAt: logDetail.completedAt,
+    stdout: logDetail.response.stdout,
+    stderr: logDetail.response.stderr,
+    outputEvents: getOutputEvents(logDetail),
+    pid: logDetail.pid,
+    exitCode: logDetail.exitCode,
+    processName: logDetail.processName,
+    error: logDetail.error?.message ?? null,
+    origin: logDetail.origin,
+  };
 }
 
 function getCandidateStartedAt(candidate: AiCommandJob | AiCommandLogSummary) {
@@ -461,26 +457,13 @@ export function ProjectManagementAiLogTab({
             </div>
           ) : logDetail ? (
             <div className="space-y-4">
-              <div className="border theme-border-subtle p-4 theme-surface-soft">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="matrix-kicker">AI log detail</p>
-                  <MatrixBadge tone={getStatusTone(logDetail.status)} compact>{logDetail.status}</MatrixBadge>
-                  <MatrixBadge tone="neutral" compact>{getAiCommandLabel(logDetail.commandId)}</MatrixBadge>
-                  <MatrixBadge tone="neutral" compact>{logDetail.fileName}</MatrixBadge>
-                  {logDetail.status === "running" ? <MatrixBadge tone="warning" compact>live</MatrixBadge> : null}
-                  {logDetail.status === "running" ? (
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-2 py-1 text-xs"
-                      onClick={() => void onCancelJob(logDetail.branch)}
-                    >
-                      Cancel job
-                    </button>
-                  ) : null}
-                </div>
-                <h3 className="mt-3 text-xl font-semibold theme-text-strong">{getOriginContextTitle(logDetail.origin, logDetail.branch)}</h3>
-                <p className="mt-2 text-sm theme-text-muted">{getLiveDetailDescription(logDetail)}</p>
-              </div>
+              <ProjectManagementAiOutputViewer
+                source="worktree"
+                job={toAiJob(logDetail)}
+                summary={getLiveDetailDescription(logDetail)}
+                expanded
+                onCancel={() => void onCancelJob(logDetail.branch)}
+              />
 
               <div className="theme-inline-panel p-3">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -511,46 +494,6 @@ export function ProjectManagementAiLogTab({
                 <MatrixDetailField label="Output updates" value={String(detailOutputEvents.length)} />
                 <MatrixDetailField label="Worktree path" value={logDetail.worktreePath} mono />
                 <MatrixDetailField label="Command" value={logDetail.command} mono />
-              </div>
-
-              <div className="border theme-border-subtle p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-semibold theme-text-strong">Mixed output timeline</p>
-                    <p className="mt-1 text-xs theme-text-muted">Stdout and stderr stay in one stream so pauses and warnings are easier to follow.</p>
-                  </div>
-                  <MatrixBadge tone={detailOutputEvents.some((event) => event.source === "stderr") ? "warning" : "neutral"} compact>
-                    {detailOutputEvents.length} update{detailOutputEvents.length === 1 ? "" : "s"}
-                  </MatrixBadge>
-                </div>
-                {detailOutputEvents.length ? (
-                  <div className="mt-4 space-y-3">
-                    {detailOutputEvents.map((event, index) => {
-                      const elapsedLabel = index > 0
-                        ? formatElapsedSincePrevious(detailOutputEvents[index - 1]!.timestamp, event.timestamp)
-                        : null;
-
-                      return (
-                        <div key={event.id} className="space-y-2">
-                          {elapsedLabel ? (
-                            <p className="theme-timestamp text-[11px] uppercase tracking-[0.14em]">{elapsedLabel}</p>
-                          ) : null}
-                          <div className={`border px-3 py-3 ${event.source === "stderr" ? "theme-log-entry-error" : "theme-log-entry"}`}>
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <MatrixBadge tone={event.source === "stderr" ? "warning" : "neutral"} compact>{event.source}</MatrixBadge>
-                              <span className="theme-timestamp text-xs">{formatTimestamp(event.timestamp)}</span>
-                            </div>
-                            <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs">{event.text}</pre>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="mt-4 matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
-                    No output has been captured for this run yet.
-                  </div>
-                )}
               </div>
 
               <MatrixAccordion summary={renderAccordionSummary("Request", "Prompt passed into the configured AI command.")} defaultOpen>
