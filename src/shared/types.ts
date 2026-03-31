@@ -517,7 +517,7 @@ export interface AiCommandJob {
   pid?: number | null;
   exitCode?: number | null;
   processName?: string | null;
-  logPath?: string | null;
+  worktreePath?: string | null;
   error?: string | null;
   origin?: AiCommandOrigin | null;
 }

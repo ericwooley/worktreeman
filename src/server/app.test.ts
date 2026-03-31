@@ -300,6 +300,7 @@ test("startServer reconciles interrupted running AI jobs on startup", async () =
         input: "resume",
         status: "running",
         startedAt: new Date(Date.now() - 60_000).toISOString(),
+        worktreePath: path.join(repo.repoRoot, "main"),
         stdout: "partial output",
         stderr: "",
         outputEvents: [],

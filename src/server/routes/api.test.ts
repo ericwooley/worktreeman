@@ -268,10 +268,10 @@ async function writeAiLogFixture(options: {
   await store.upsertAiCommandLogEntry(entry);
   await store.syncAiCommandOutputEvents(entry.jobId, entry.fileName, entry.branch, entry.response.events);
 
-  if (status === "running") {
-    await store.setAiCommandJob({
-      jobId,
-      fileName: options.fileName,
+    if (status === "running") {
+      await store.setAiCommandJob({
+        jobId,
+        fileName: options.fileName,
       branch: options.branch,
       documentId: null,
       commandId: options.commandId ?? "smart",
@@ -281,15 +281,15 @@ async function writeAiLogFixture(options: {
       startedAt: timestamp,
       stdout: options.stdout ?? "",
       stderr: options.stderr ?? "",
-      outputEvents: events,
-      pid: options.pid ?? null,
-      exitCode: options.exitCode ?? null,
-      processName: options.processName ?? null,
-      logPath: options.worktreePath,
-      error: null,
-      origin: options.origin ?? null,
-    });
-  }
+        outputEvents: events,
+        pid: options.pid ?? null,
+        exitCode: options.exitCode ?? null,
+        processName: options.processName ?? null,
+        worktreePath: options.worktreePath,
+        error: null,
+        origin: options.origin ?? null,
+      });
+    }
 
   return entry.fileName;
 }

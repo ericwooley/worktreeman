@@ -986,7 +986,7 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
     pid: entry.pid,
     exitCode: entry.exitCode,
     processName: entry.processName,
-    logPath: entry.worktreePath,
+    worktreePath: entry.worktreePath,
     error: entry.error?.message ?? null,
   };
 }

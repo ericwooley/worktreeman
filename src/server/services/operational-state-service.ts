@@ -87,7 +87,7 @@ function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null {
   return {
     ...job,
     completedAt: job.completedAt,
-    logPath: job.logPath,
+    worktreePath: job.worktreePath,
     error: job.error,
     outputEvents: job.outputEvents?.map((event) => ({ ...event })) ?? [],
     origin: job.origin

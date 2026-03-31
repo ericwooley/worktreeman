@@ -31,6 +31,7 @@ interface ManagedAiCommandJobQueue {
   boss: PgBoss;
   workerId: string | null;
   readyPromise: Promise<void>;
+  activeJobs: Set<Promise<void>>;
 }
 
 const managedQueues = new Map<string, ManagedAiCommandJobQueue>();
@@ -42,6 +43,22 @@ function summarizeQueuePayload(payload: ProjectManagementAiQueuePayload) {
     commandId: payload.commandId,
     origin: payload.origin?.kind ?? null,
     worktreePath: payload.worktreePath,
+  };
+}
+
+function describeError(error: unknown) {
+  if (error instanceof Error) {
+    const errorWithCause = error as Error & { cause?: unknown };
+    return {
+      error: error.message,
+      errorName: error.name,
+      stack: error.stack,
+      cause: errorWithCause.cause instanceof Error ? errorWithCause.cause.message : errorWithCause.cause,
+    };
+  }
+
+  return {
+    error: String(error),
   };
 }
 
@@ -166,6 +183,10 @@ async function ensureJobManager(repoRoot: string): Promise<ManagedAiCommandJobQu
       executeSql: (text, values) => db.executeSql(text, values),
     },
     schema: "pgboss",
+    // This worker instance only needs enqueue/dequeue semantics. Disable pg-boss
+    // supervision here to avoid its monitor loop crashing the worker process.
+    supervise: false,
+    schedule: false,
     createSchema: true,
     migrate: true,
   });
@@ -173,15 +194,22 @@ async function ensureJobManager(repoRoot: string): Promise<ManagedAiCommandJobQu
   const managed: ManagedAiCommandJobQueue = {
     boss,
     workerId: null,
+    activeJobs: new Set(),
     readyPromise: (async () => {
       boss.on("error", (error) => {
         logServerEvent("ai-job-queue", "pg-boss-error", {
           repoRoot,
-          error: error instanceof Error ? error.message : String(error),
+          ...describeError(error),
         }, "error");
       });
       await boss.start();
       await boss.createQueue(PROJECT_MANAGEMENT_AI_QUEUE);
+      logServerEvent("ai-job-queue", "manager-ready", {
+        repoRoot,
+        queue: PROJECT_MANAGEMENT_AI_QUEUE,
+        supervise: false,
+        schedule: false,
+      });
     })(),
   };
 
@@ -235,46 +263,75 @@ export async function enqueueProjectManagementAiJob(options: {
 
 export async function startProjectManagementAiWorker(options: { repoRoot: string }): Promise<{ close: () => Promise<void> }> {
   const manager = await ensureJobManager(options.repoRoot);
-  const workerId = await manager.boss.work<ProjectManagementAiQueuePayload>(
-    PROJECT_MANAGEMENT_AI_QUEUE,
-    { pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS },
-    async (jobs) => {
-      for (const job of jobs) {
-        const startedAt = Date.now();
-        logServerEvent("ai-job-queue", "dequeued", {
-          repoRoot: options.repoRoot,
-          queueJobId: job.id,
-          ...summarizeQueuePayload(job.data),
-        });
-        try {
-          await processProjectManagementJob(options.repoRoot, job.data);
-          logServerEvent("ai-job-queue", "completed", {
-            repoRoot: options.repoRoot,
-            queueJobId: job.id,
-            ...summarizeQueuePayload(job.data),
-            duration: formatDurationMs(Date.now() - startedAt),
-          });
-        } catch (error) {
-          logServerEvent("ai-job-queue", "failed", {
-            repoRoot: options.repoRoot,
-            queueJobId: job.id,
-            ...summarizeQueuePayload(job.data),
-            duration: formatDurationMs(Date.now() - startedAt),
-            error: error instanceof Error ? error.message : String(error),
-          }, "error");
-          throw error;
+  let workerId: string;
+
+  try {
+    workerId = await manager.boss.work<ProjectManagementAiQueuePayload>(
+      PROJECT_MANAGEMENT_AI_QUEUE,
+      { pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS },
+      async (jobs) => {
+        for (const job of jobs) {
+          const activeJob = (async () => {
+            const startedAt = Date.now();
+            logServerEvent("ai-job-queue", "dequeued", {
+              repoRoot: options.repoRoot,
+              queueJobId: job.id,
+              ...summarizeQueuePayload(job.data),
+            });
+            try {
+              await processProjectManagementJob(options.repoRoot, job.data);
+              logServerEvent("ai-job-queue", "completed", {
+                repoRoot: options.repoRoot,
+                queueJobId: job.id,
+                ...summarizeQueuePayload(job.data),
+                duration: formatDurationMs(Date.now() - startedAt),
+              });
+            } catch (error) {
+              logServerEvent("ai-job-queue", "failed", {
+                repoRoot: options.repoRoot,
+                queueJobId: job.id,
+                ...summarizeQueuePayload(job.data),
+                duration: formatDurationMs(Date.now() - startedAt),
+                ...describeError(error),
+              }, "error");
+              throw error;
+            }
+          })();
+          manager.activeJobs.add(activeJob);
+          try {
+            await activeJob;
+          } finally {
+            manager.activeJobs.delete(activeJob);
+          }
         }
-      }
-    },
-  );
+      },
+    );
+  } catch (error) {
+    logServerEvent("ai-job-queue", "worker-start-failed", {
+      repoRoot: options.repoRoot,
+      queue: PROJECT_MANAGEMENT_AI_QUEUE,
+      pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS,
+      ...describeError(error),
+    }, "error");
+    throw error;
+  }
 
   manager.workerId = workerId;
+  logServerEvent("ai-job-queue", "worker-ready", {
+    repoRoot: options.repoRoot,
+    queue: PROJECT_MANAGEMENT_AI_QUEUE,
+    workerId,
+    pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS,
+  });
 
   return {
     close: async () => {
       if (manager.workerId) {
         await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
         manager.workerId = null;
+      }
+      if (manager.activeJobs.size > 0) {
+        await Promise.allSettled(Array.from(manager.activeJobs));
       }
       await manager.boss.stop({ graceful: true, timeout: WORKER_STOP_TIMEOUT_MS }).catch(() => undefined);
     },

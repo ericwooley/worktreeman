@@ -43,7 +43,7 @@ function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null {
   return {
     ...job,
     completedAt: job.completedAt,
-    logPath: job.logPath,
+    worktreePath: job.worktreePath,
     error: job.error,
     outputEvents: job.outputEvents?.map((event) => ({ ...event })) ?? [],
   };
@@ -62,7 +62,7 @@ function toAiCommandLogEntry(job: AiCommandJob): AiCommandLogEntry {
     documentId: job.documentId ?? null,
     commandId: job.commandId,
     origin: job.origin ?? null,
-    worktreePath: job.logPath ?? job.branch,
+    worktreePath: job.worktreePath ?? job.branch,
     command: job.command,
     request: job.input,
     response: {
@@ -106,7 +106,7 @@ function createAiCommandJobRecord(options: {
     pid: null,
     exitCode: null,
     processName: null,
-    logPath: options.worktreePath,
+    worktreePath: options.worktreePath,
   };
 }
 
@@ -510,7 +510,7 @@ async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<Started
         jobId,
         commandId: currentJob.commandId,
         origin: currentJob.origin?.kind ?? null,
-        worktreePath: currentJob.logPath ?? null,
+        worktreePath: currentJob.worktreePath ?? null,
       });
     try {
       const hooks = {
@@ -566,7 +566,7 @@ async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<Started
         branch: options.branch,
         input: currentJob.input,
         command: currentJob.command,
-        worktreePath: currentJob.logPath ?? options.currentJob.logPath ?? options.branch,
+        worktreePath: currentJob.worktreePath ?? options.currentJob.worktreePath ?? options.branch,
         hooks,
       });
       const storedJob = await store.getAiCommandJob(options.branch);

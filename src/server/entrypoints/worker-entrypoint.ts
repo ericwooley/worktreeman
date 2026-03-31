@@ -1,8 +1,8 @@
 import process from "node:process";
 import { configureDatabaseConnection } from "../services/database-connection-service.js";
 import { startProjectManagementAiWorker } from "../services/ai-command-job-manager-service.js";
-import { stopAllAiCommandProcesses } from "../services/ai-command-process-service.js";
 import { stopAllOperationalStateStores } from "../services/operational-state-service.js";
+import { logServerEvent } from "../utils/server-logger.js";
 import { findRepoContext } from "../utils/paths.js";
 
 interface WorkerEntrypointArgs {
@@ -38,6 +38,24 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   configureDatabaseConnection(args.databaseUrl ?? process.env.WTM_DATABASE_URL ?? null);
   const repo = await findRepoContext(args.cwd);
+
+  const logFatal = (message: string, error: unknown) => {
+    logServerEvent("worker-entrypoint", message, {
+      repoRoot: repo.repoRoot,
+      error: error instanceof Error ? error.message : String(error),
+      errorName: error instanceof Error ? error.name : undefined,
+      stack: error instanceof Error ? error.stack : undefined,
+    }, "error");
+  };
+
+  process.on("uncaughtException", (error) => {
+    logFatal("uncaught-exception", error);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    logFatal("unhandled-rejection", reason);
+  });
+
   const worker = await startProjectManagementAiWorker({ repoRoot: repo.repoRoot });
   process.stdout.write(`${JSON.stringify({ type: "worker-ready", repoRoot: repo.repoRoot })}\n`);
 
@@ -49,7 +67,6 @@ async function main() {
 
     shuttingDown = true;
     await worker.close();
-    await stopAllAiCommandProcesses().catch(() => undefined);
     await stopAllOperationalStateStores().catch(() => undefined);
   };
 
@@ -65,6 +82,11 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  logServerEvent("worker-entrypoint", "startup-failed", {
+    error: error instanceof Error ? error.message : String(error),
+    errorName: error instanceof Error ? error.name : undefined,
+    stack: error instanceof Error ? error.stack : undefined,
+  }, "error");
+  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exit(1);
 });
