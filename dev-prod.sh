@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 
-WORKDIR=$1
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+DEFAULT_WORKDIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+WORKDIR=${1:-}
+
 npm pack
-VERSION=$(cat package.json | jq '.version' -r)
+VERSION=$(jq -r '.version' package.json)
 echo "Using version $VERSION"
-if [ -z $WORKDIR ]; then
-  WORKDIR=".."
-  echo "Defaulting to .. for work dir"
+
+if [ -z "$WORKDIR" ]; then
+  WORKDIR="$DEFAULT_WORKDIR"
+  echo "Defaulting to $WORKDIR for work dir"
 else
   echo "Starting With Dir $WORKDIR"
 fi
-npx -y worktreeman-$VERSION.tgz start --cwd $WORKDIR --host=auto
+
+npx -y worktreeman-"$VERSION".tgz start --cwd "$WORKDIR" --host=auto
