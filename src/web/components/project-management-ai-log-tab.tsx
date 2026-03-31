@@ -6,7 +6,6 @@ import type {
   AiCommandOrigin,
   AiCommandOutputEvent,
 } from "@shared/types";
-import { marked } from "marked";
 import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSpinner } from "./matrix-primitives";
 import { LoadingOverlay } from "./loading";
@@ -110,17 +109,6 @@ function getOriginDescription(origin: AiCommandOrigin | null | undefined) {
 
 function getEntryActionLabel(origin: AiCommandOrigin | null | undefined) {
   return origin ? "Open origin" : "Open run";
-}
-
-function renderMarkdownOutput(markdown: string, tone: "default" | "danger" = "default") {
-  return (
-    <div className="max-h-[24rem] overflow-auto border theme-border-subtle p-3">
-      <div
-        className={`pm-markdown text-sm ${tone === "danger" ? "theme-text-danger" : "theme-text"}`}
-        dangerouslySetInnerHTML={{ __html: marked.parse(markdown || "(empty)") }}
-      />
-    </div>
-  );
 }
 
 function getOutputEvents(logDetail: AiCommandLogEntry): AiCommandOutputEvent[] {
@@ -498,17 +486,6 @@ export function ProjectManagementAiLogTab({
 
               <MatrixAccordion summary={renderAccordionSummary("Request", "Prompt passed into the configured AI command.")} defaultOpen>
                 <pre className="overflow-x-auto whitespace-pre-wrap break-words border theme-border-subtle p-3 text-xs theme-text-muted">{logDetail.request}</pre>
-              </MatrixAccordion>
-
-              <MatrixAccordion
-                summary={renderAccordionSummary("Response stdout", "The AI command output captured from stdout.")}
-                defaultOpen
-              >
-                {renderMarkdownOutput(logDetail.response.stdout)}
-              </MatrixAccordion>
-
-              <MatrixAccordion summary={renderAccordionSummary("Response stderr", "The AI command output captured from stderr.")}>
-                {renderMarkdownOutput(logDetail.response.stderr, "danger")}
               </MatrixAccordion>
 
               {logDetail.error ? (

@@ -1839,7 +1839,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      let currentLog = await loadResolvedAiLog(fileName);
+      let currentLog = await readAiCommandLogEntry(options.repoRoot, fileName);
       let lastPayload = JSON.stringify(currentLog);
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -1860,7 +1860,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
         void runBackgroundTask(async () => {
           try {
-            currentLog = await loadResolvedAiLog(fileName);
+            currentLog = await readAiCommandLogEntry(options.repoRoot, fileName);
             const nextPayload = JSON.stringify(currentLog);
             if (nextPayload !== lastPayload) {
               lastPayload = nextPayload;

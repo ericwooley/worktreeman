@@ -48,7 +48,6 @@ import {
   getBackgroundCommandLogs as fetchBackgroundCommandLogs,
   getBackgroundCommands as fetchBackgroundCommands,
   getAiCommandSettings as fetchAiCommandSettings,
-  getAiCommandLog as fetchAiCommandLog,
   getAiCommandLogs as fetchAiCommandLogs,
   getGitComparison as fetchGitComparison,
   getState,
@@ -84,6 +83,7 @@ import {
 } from "../lib/project-management-status-update";
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 15000;
+const AI_COMMAND_LOG_SNAPSHOT_TIMEOUT_MS = 5000;
 
 function toAiCommandRequestPreview(request: string) {
   const normalized = request.replace(/\s+/g, " ").trim();
@@ -816,18 +816,45 @@ export function useDashboardState() {
         }
 
         try {
-          if (trackedAiCommandLogFileRef.current !== fileName) {
-            clearTrackedAiCommandLogSubscription();
-            trackedAiCommandLogFileRef.current = fileName;
-            aiCommandLogSubscriptionRef.current = subscribeToAiCommandLog(fileName, applyAiLogStreamEvent);
+          if (trackedAiCommandLogFileRef.current === fileName && aiCommandLogDetail?.fileName === fileName) {
+            setAiCommandLogsError(null);
+            setAiCommandLogsLastUpdatedAt(new Date().toISOString());
+            setError(null);
+            return aiCommandLogDetail;
           }
 
-          const payload = await fetchAiCommandLog(fileName);
-          setAiCommandLogDetail(payload.log);
+          clearTrackedAiCommandLogSubscription();
+          trackedAiCommandLogFileRef.current = fileName;
+
+          const log = await new Promise<AiCommandLogEntry | null>((resolve, reject) => {
+            let settled = false;
+            const timeoutId = window.setTimeout(() => {
+              if (settled) {
+                return;
+              }
+
+              settled = true;
+              clearTrackedAiCommandLogSubscription();
+              reject(new Error(`Timed out waiting for the AI log stream for ${fileName}.`));
+            }, AI_COMMAND_LOG_SNAPSHOT_TIMEOUT_MS);
+
+            aiCommandLogSubscriptionRef.current = subscribeToAiCommandLog(fileName, (event) => {
+              applyAiLogStreamEvent(event);
+
+              if (settled) {
+                return;
+              }
+
+              settled = true;
+              window.clearTimeout(timeoutId);
+              resolve(event.log);
+            });
+          });
+
           setAiCommandLogsError(null);
           setAiCommandLogsLastUpdatedAt(new Date().toISOString());
           setError(null);
-          return payload.log;
+          return log;
         } catch (err) {
           const message = err instanceof Error ? err.message : "Failed to load AI log.";
           clearTrackedAiCommandLogSubscription();

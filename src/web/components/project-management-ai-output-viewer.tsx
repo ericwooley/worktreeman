@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import type { AiCommandId, AiCommandJob, AiCommandOutputEvent } from "@shared/types";
 
 import { MatrixBadge } from "./matrix-primitives";
@@ -16,22 +17,6 @@ function getAiJobTone(status: AiCommandJob["status"]) {
   }
 
   return "active" as const;
-}
-
-function getAiOutputText(job: AiCommandJob): string {
-  if (job.stdout && job.stderr) {
-    return `${job.stdout}\n\n--- stderr ---\n${job.stderr}`;
-  }
-
-  if (job.stdout) {
-    return job.stdout;
-  }
-
-  if (job.stderr) {
-    return job.stderr;
-  }
-
-  return job.status === "running" ? "Waiting for live output..." : "No output captured.";
 }
 
 export function getAiOutputEvents(job: AiCommandJob): AiCommandOutputEvent[] {
@@ -61,6 +46,50 @@ export function getAiOutputEvents(job: AiCommandJob): AiCommandOutputEvent[] {
   return fallbackEvents;
 }
 
+function formatOutputTimestamp(value: string) {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+
+  return new Date(parsed).toLocaleString();
+}
+
+function formatElapsedLabel(previousTimestamp: string | null, currentTimestamp: string) {
+  if (!previousTimestamp) {
+    return "start";
+  }
+
+  const previous = Date.parse(previousTimestamp);
+  const current = Date.parse(currentTimestamp);
+  if (Number.isNaN(previous) || Number.isNaN(current)) {
+    return "start";
+  }
+
+  const diffMs = Math.max(0, current - previous);
+  const diffSeconds = Math.floor(diffMs / 1000);
+  if (diffSeconds < 60) {
+    return `+${diffSeconds} ${diffSeconds === 1 ? "second" : "seconds"}`;
+  }
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) {
+    return `+${diffMinutes} ${diffMinutes === 1 ? "minute" : "minutes"}`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `+${diffHours} ${diffHours === 1 ? "hour" : "hours"}`;
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `+${diffDays} ${diffDays === 1 ? "day" : "days"}`;
+}
+
+function getEmptyOutputMessage(status: AiCommandJob["status"]) {
+  return status === "running" ? "Waiting for live output..." : "No output captured.";
+}
+
 interface ProjectManagementAiOutputViewerProps {
   source: "worktree" | "document";
   job: AiCommandJob;
@@ -78,24 +107,44 @@ export function ProjectManagementAiOutputViewer({
   onCancel,
   onOpenModal,
 }: ProjectManagementAiOutputViewerProps) {
+  const [showElapsedTime, setShowElapsedTime] = useState(false);
   const running = job.status === "running";
   const title = source === "worktree" ? "Worktree AI" : "Document AI";
-  const outputEvents = getAiOutputEvents(job);
+  const outputEvents = useMemo(() => getAiOutputEvents(job)
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      const leftTimestamp = Date.parse(left.event.timestamp);
+      const rightTimestamp = Date.parse(right.event.timestamp);
+
+      if (Number.isNaN(leftTimestamp) && Number.isNaN(rightTimestamp)) {
+        return left.index - right.index;
+      }
+
+      if (Number.isNaN(leftTimestamp)) {
+        return 1;
+      }
+
+      if (Number.isNaN(rightTimestamp)) {
+        return -1;
+      }
+
+      return leftTimestamp - rightTimestamp || left.index - right.index;
+    })
+    .map(({ event }) => event), [job]);
   const description = source === "worktree"
     ? running
-      ? `Streaming mixed stdout and stderr from ${job.branch} while the worktree run is active.`
+      ? `Streaming the combined AI log from ${job.branch} while the worktree run is active.`
       : summary ?? `Captured output from ${job.branch}.`
     : running
-      ? `Streaming mixed stdout and stderr while the saved document updates in ${job.branch}.`
+      ? `Streaming the combined AI log while the saved document updates in ${job.branch}.`
       : summary ?? `Captured output from ${job.branch}.`;
   const supplementalSummary = summary && summary !== description ? summary : null;
 
   return (
-    <div className={`pm-ai-output-shell border theme-border-subtle ${running ? "pm-ai-output-shell-running" : ""} ${expanded ? "p-5" : "p-4"}`}>
+    <div className={`border theme-border-subtle theme-surface-soft ${expanded ? "p-5" : "p-4"}`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`pm-ai-live-orb ${running ? "pm-ai-live-orb-running" : ""}`} aria-hidden="true" />
             <p className="matrix-kicker">{title}</p>
             <MatrixBadge tone={getAiJobTone(job.status)} compact>{running ? "live" : job.status}</MatrixBadge>
             <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
@@ -130,32 +179,53 @@ export function ProjectManagementAiOutputViewer({
         </div>
       </div>
 
-      {running ? (
-        <div className="pm-ai-output-activity mt-4" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-          <span />
+      <div className="mt-4 border theme-scroll-panel">
+        <div className="flex flex-col gap-3 border-b theme-border-subtle px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold theme-text-strong">Mixed output timeline</p>
+            <p className="mt-1 text-xs theme-text-muted">Combined stdout and stderr in arrival order.</p>
+          </div>
+          <label className="flex items-center gap-2 text-xs theme-text-muted">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 rounded-none border theme-border-subtle bg-transparent"
+              checked={showElapsedTime}
+              onChange={(event) => setShowElapsedTime(event.currentTarget.checked)}
+            />
+            Show elapsed time
+          </label>
         </div>
-      ) : null}
 
-      {outputEvents.length ? (
-        <div className={`mt-4 space-y-3 overflow-auto ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
-          {outputEvents.map((event) => (
-            <div key={event.id} className={`border px-3 py-3 ${event.source === "stderr" ? "theme-log-entry-error" : "theme-log-entry"}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <MatrixBadge tone={event.source === "stderr" ? "warning" : "neutral"} compact>{event.source}</MatrixBadge>
-              </div>
-              <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-6">{event.text}</pre>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <pre className={`pm-ai-output-pre mt-4 overflow-auto px-4 py-4 font-mono text-xs leading-6 ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
-          {getAiOutputText(job)}
-        </pre>
-      )}
+        {outputEvents.length ? (
+          <div className={`overflow-auto ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
+            {outputEvents.map((event, index) => {
+              const absoluteTimestamp = formatOutputTimestamp(event.timestamp);
+              const timestampLabel = showElapsedTime
+                ? formatElapsedLabel(index > 0 ? outputEvents[index - 1]?.timestamp ?? null : null, event.timestamp)
+                : absoluteTimestamp;
+
+              return (
+                <div
+                  key={event.id}
+                  className={`grid gap-3 border-b px-3 py-3 last:border-b-0 md:grid-cols-[11rem_minmax(0,1fr)] ${event.source === "stderr" ? "theme-log-entry-error" : "theme-log-entry"}`}
+                >
+                  <div className="flex items-center gap-2 md:block">
+                    <span className="font-mono text-xs theme-timestamp" title={absoluteTimestamp}>{timestampLabel}</span>
+                    <div className="md:mt-2">
+                      <MatrixBadge tone={event.source === "stderr" ? "warning" : "neutral"} compact>{event.source}</MatrixBadge>
+                    </div>
+                  </div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-6">{event.text}</pre>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className={`px-3 py-4 text-sm theme-empty-note ${expanded ? "min-h-[12rem]" : ""}`}>
+            {getEmptyOutputMessage(job.status)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

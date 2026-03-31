@@ -500,78 +500,6 @@ body,
   box-shadow: 0 0 20px rgb(var(--rgb-base0D) / 0.12);
 }
 
-.pm-ai-output-shell {
-  position: relative;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at top left, rgb(var(--rgb-base0D) / 0.16), transparent 32%),
-    linear-gradient(180deg, rgb(var(--rgb-base02) / 0.92), rgb(var(--rgb-base00) / 0.82));
-}
-
-.pm-ai-output-shell-running::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent 0%, rgb(var(--rgb-base0D) / 0.08) 35%, transparent 70%);
-  transform: translateX(-100%);
-  animation: pm-ai-scan 2.4s linear infinite;
-  pointer-events: none;
-}
-
-.pm-ai-live-orb {
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 999px;
-  background: rgb(var(--rgb-base04) / 0.55);
-  box-shadow: 0 0 0 1px rgb(var(--rgb-base04) / 0.18);
-}
-
-.pm-ai-live-orb-running {
-  background: var(--base0D);
-  box-shadow:
-    0 0 0 4px rgb(var(--rgb-base0D) / 0.12),
-    0 0 18px rgb(var(--rgb-base0D) / 0.42);
-  animation: pm-ai-orb-pulse 1.3s ease-in-out infinite;
-}
-
-.pm-ai-output-activity {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
-.pm-ai-output-activity span {
-  height: 0.35rem;
-  background: linear-gradient(90deg, rgb(var(--rgb-base0D) / 0.18), rgb(var(--rgb-base0C) / 0.72), rgb(var(--rgb-base0D) / 0.18));
-  transform-origin: center;
-  animation: pm-ai-eq 1.1s ease-in-out infinite;
-}
-
-.pm-ai-output-activity span:nth-child(2) {
-  animation-delay: 0.12s;
-}
-
-.pm-ai-output-activity span:nth-child(3) {
-  animation-delay: 0.24s;
-}
-
-.pm-ai-output-activity span:nth-child(4) {
-  animation-delay: 0.36s;
-}
-
-.pm-ai-output-activity span:nth-child(5) {
-  animation-delay: 0.48s;
-}
-
-.pm-ai-output-pre {
-  border: 1px solid rgb(var(--rgb-base0D) / 0.16);
-  background:
-    linear-gradient(180deg, rgb(var(--rgb-base00) / 0.68), rgb(var(--rgb-base00) / 0.86)),
-    rgb(var(--rgb-base00) / 0.86);
-  color: var(--base06);
-  box-shadow: inset 0 1px 0 rgb(var(--rgb-base07) / 0.04);
-}
-
 @keyframes pm-ai-pulse {
   0%,
   100% {
@@ -596,40 +524,6 @@ body,
 
   to {
     transform: rotate(360deg);
-  }
-}
-
-@keyframes pm-ai-scan {
-  from {
-    transform: translateX(-100%);
-  }
-
-  to {
-    transform: translateX(100%);
-  }
-}
-
-@keyframes pm-ai-orb-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-
-  50% {
-    transform: scale(1.14);
-  }
-}
-
-@keyframes pm-ai-eq {
-  0%,
-  100% {
-    transform: scaleY(0.55);
-    opacity: 0.5;
-  }
-
-  50% {
-    transform: scaleY(1.8);
-    opacity: 1;
   }
 }
 

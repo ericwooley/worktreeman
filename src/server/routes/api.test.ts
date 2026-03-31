@@ -2346,9 +2346,8 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
   }
 });
 
-test("AI log detail stream emits live updates and completion for running logs", { concurrency: false }, async () => {
+test("AI log detail stream replays persisted logs and follows durable updates", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
-  const fakeAiProcesses = createFakeAiProcesses();
   const origin: AiCommandOrigin = {
     kind: "worktree-environment",
     label: "Worktree environment",
@@ -2359,12 +2358,6 @@ test("AI log detail stream emits live updates and completion for running logs", 
       environmentSubTab: "terminal",
     },
   };
-  fakeAiProcesses.setManualProcess("wtm:ai:stream-log", {
-    status: "online",
-    pid: 9001,
-    stdout: "first line\n",
-    stderr: "",
-  });
   await writeAiLogFixture({
     repoRoot: repo.repoRoot,
     fileName: "stream-log.json",
@@ -2374,14 +2367,54 @@ test("AI log detail stream emits live updates and completion for running logs", 
     command: "printf %s 'stream me'",
     request: "stream me",
     processName: "wtm:ai:stream-log",
+    pid: 9001,
+    stdout: "first line\n",
+    events: [
+      {
+        id: "event-1",
+        source: "stdout",
+        text: "first line\n",
+        timestamp: "2026-03-27T10:00:00.000Z",
+      },
+    ],
   });
-  const server = await startApiServer(repo, {
-    aiProcesses: fakeAiProcesses.aiProcesses,
-    aiLogStreamPollIntervalMs: 20,
-  });
+  const server = await startApiServer(repo);
 
   try {
     const sse = await openSse(`${await server.url()}/api/ai/logs/${encodeURIComponent("stream-log.json")}/stream`);
+
+    async function waitForMatchingLogUpdate(predicate: (log: {
+      status: string;
+      exitCode?: number | null;
+      completedAt?: string;
+      origin?: AiCommandOrigin | null;
+      response: {
+        stdout: string;
+        stderr?: string;
+        events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+      };
+    }) => boolean) {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const event = await sse.nextEvent();
+        const log = event.log as {
+          status: string;
+          exitCode?: number | null;
+          completedAt?: string;
+          origin?: AiCommandOrigin | null;
+          response: {
+            stdout: string;
+            stderr?: string;
+            events?: Array<{ source: "stdout" | "stderr"; text: string }>;
+          };
+        };
+
+        if (predicate(log)) {
+          return { event, log };
+        }
+      }
+
+      assert.fail("Did not receive the expected AI log stream update.");
+    }
 
     const snapshot = await sse.nextEvent();
     const snapshotLog = snapshot.log as {
@@ -2402,23 +2435,46 @@ test("AI log detail stream emits live updates and completion for running logs", 
       { source: "stdout", text: "first line\n" },
     ]);
 
-    fakeAiProcesses.updateManualProcess("wtm:ai:stream-log", {
+    await writeAiLogFixture({
+      repoRoot: repo.repoRoot,
+      fileName: "stream-log.json",
+      branch: "feature-ai-log",
+      origin,
+      worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+      command: "printf %s 'stream me'",
+      request: "stream me",
+      processName: "wtm:ai:stream-log",
+      pid: 9001,
       stdout: "first line\nsecond line\n",
       stderr: "warn\n",
+      events: [
+        {
+          id: "event-1",
+          source: "stdout",
+          text: "first line\n",
+          timestamp: "2026-03-27T10:00:00.000Z",
+        },
+        {
+          id: "event-2",
+          source: "stdout",
+          text: "second line\n",
+          timestamp: "2026-03-27T10:00:05.000Z",
+        },
+        {
+          id: "event-3",
+          source: "stderr",
+          text: "warn\n",
+          timestamp: "2026-03-27T10:01:00.000Z",
+        },
+      ],
     });
-    const reconcileRunningResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent("stream-log.json")}`);
-    assert.equal(reconcileRunningResponse.status, 200);
 
-    const runningUpdate = await sse.nextEvent();
-    const runningLog = runningUpdate.log as {
-      status: string;
-      origin?: AiCommandOrigin | null;
-      response: {
-        stdout: string;
-        stderr: string;
-        events?: Array<{ source: "stdout" | "stderr"; text: string }>;
-      };
-    };
+    const { event: runningUpdate, log: runningLog } = await waitForMatchingLogUpdate(
+      (log) => log.status === "running"
+        && log.response.stdout === "first line\nsecond line\n"
+        && log.response.stderr === "warn\n"
+        && log.response.events?.length === 3,
+    );
     assert.equal(runningUpdate.type, "update");
     assert.equal(runningLog.status, "running");
     assert.deepEqual(runningLog.origin, origin);
@@ -2430,25 +2486,45 @@ test("AI log detail stream emits live updates and completion for running logs", 
       { source: "stderr", text: "warn\n" },
     ]);
 
-    fakeAiProcesses.updateManualProcess("wtm:ai:stream-log", {
-      status: "stopped",
+    await writeAiLogFixture({
+      repoRoot: repo.repoRoot,
+      fileName: "stream-log.json",
+      branch: "feature-ai-log",
+      origin,
+      worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+      command: "printf %s 'stream me'",
+      request: "stream me",
+      processName: "wtm:ai:stream-log",
+      pid: 9001,
+      stdout: "first line\nsecond line\n",
+      stderr: "warn\n",
       exitCode: 0,
+      completedAt: "2026-03-27T10:01:30.000Z",
+      events: [
+        {
+          id: "event-1",
+          source: "stdout",
+          text: "first line\n",
+          timestamp: "2026-03-27T10:00:00.000Z",
+        },
+        {
+          id: "event-2",
+          source: "stdout",
+          text: "second line\n",
+          timestamp: "2026-03-27T10:00:05.000Z",
+        },
+        {
+          id: "event-3",
+          source: "stderr",
+          text: "warn\n",
+          timestamp: "2026-03-27T10:01:00.000Z",
+        },
+      ],
     });
-    const reconcileCompletedResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent("stream-log.json")}`);
-    assert.equal(reconcileCompletedResponse.status, 200);
 
-    const completedUpdate = await sse.nextEvent();
-    const completedLog = completedUpdate.log as {
-      status: string;
-      exitCode?: number | null;
-      completedAt?: string;
-      origin?: AiCommandOrigin | null;
-      response: {
-        stdout: string;
-        stderr: string;
-        events?: Array<{ source: "stdout" | "stderr"; text: string }>;
-      };
-    };
+    const { event: completedUpdate, log: completedLog } = await waitForMatchingLogUpdate(
+      (log) => log.status === "completed" && log.exitCode === 0,
+    );
     assert.equal(completedUpdate.type, "update");
     assert.equal(completedLog.status, "completed");
     assert.equal(completedLog.exitCode, 0);

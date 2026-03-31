@@ -3,7 +3,6 @@ import type {
   AppendProjectManagementBatchRequest,
   ApiStateResponse,
   ApiStateStreamEvent,
-  AiCommandLogResponse,
   AiCommandLogStreamEvent,
   AiCommandLogsResponse,
   AiCommandSettingsResponse,
@@ -189,10 +188,6 @@ export function subscribeToAiCommandJob(
 
 export function getAiCommandLogs(): Promise<AiCommandLogsResponse> {
   return request<AiCommandLogsResponse>("/api/ai/logs");
-}
-
-export function getAiCommandLog(fileName: string): Promise<AiCommandLogResponse> {
-  return request<AiCommandLogResponse>(`/api/ai/logs/${encodeURIComponent(fileName)}`);
 }
 
 export function subscribeToAiCommandLog(
