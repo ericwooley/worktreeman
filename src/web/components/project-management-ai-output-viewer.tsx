@@ -180,7 +180,7 @@ export function ProjectManagementAiOutputViewer({
       </div>
 
       <div className="mt-4 border theme-scroll-panel">
-        <div className="flex flex-col gap-3 border-b theme-border-subtle px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 border-b theme-border-subtle px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-semibold theme-text-strong">Mixed output timeline</p>
             <p className="mt-1 text-xs theme-text-muted">Combined stdout and stderr in arrival order.</p>
@@ -203,19 +203,22 @@ export function ProjectManagementAiOutputViewer({
               const timestampLabel = showElapsedTime
                 ? formatElapsedLabel(index > 0 ? outputEvents[index - 1]?.timestamp ?? null : null, event.timestamp)
                 : absoluteTimestamp;
+              const eventToneClass = event.source === "stderr"
+                ? "theme-ai-output-entry-secondary"
+                : "theme-ai-output-entry";
 
               return (
                 <div
                   key={event.id}
-                  className={`grid gap-3 border-b px-3 py-3 last:border-b-0 md:grid-cols-[11rem_minmax(0,1fr)] ${event.source === "stderr" ? "theme-log-entry-error" : "theme-log-entry"}`}
+                  className={`grid gap-x-3 gap-y-1.5 border-b px-3 py-2.5 last:border-b-0 md:grid-cols-[10rem_minmax(0,1fr)] ${eventToneClass}`}
                 >
                   <div className="flex items-center gap-2 md:block">
                     <span className="font-mono text-xs theme-timestamp" title={absoluteTimestamp}>{timestampLabel}</span>
-                    <div className="md:mt-2">
-                      <MatrixBadge tone={event.source === "stderr" ? "warning" : "neutral"} compact>{event.source}</MatrixBadge>
+                    <div className="md:mt-1.5">
+                      <MatrixBadge tone="neutral" compact>{event.source}</MatrixBadge>
                     </div>
                   </div>
-                  <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-6">{event.text}</pre>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-xs leading-5">{event.text}</pre>
                 </div>
               );
             })}
