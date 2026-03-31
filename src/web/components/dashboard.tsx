@@ -1469,6 +1469,9 @@ export function Dashboard() {
                 input: payload.input,
                 commandId: payload.commandId,
                 origin: payload.origin,
+                worktreeStrategy: payload.worktreeStrategy,
+                targetBranch: payload.targetBranch,
+                worktreeName: payload.worktreeName,
               }).then((result) => {
                 if (!result) {
                   return null;

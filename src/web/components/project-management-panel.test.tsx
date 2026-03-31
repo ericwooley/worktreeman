@@ -12,7 +12,11 @@ import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementDocumentForm } from "./project-management-document-form";
 import { sortProjectManagementDocuments } from "./project-management-document-browser";
-import { getCompletedAiDocumentRefreshTarget, ProjectManagementPanel } from "./project-management-panel";
+import {
+  getCompletedAiDocumentRefreshTarget,
+  getProjectManagementDocumentRunDefaults,
+  ProjectManagementPanel,
+} from "./project-management-panel";
 import { getAiOutputEvents } from "./project-management-ai-output-viewer";
 
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
@@ -575,6 +579,32 @@ test("document worktree run in the selected branch shows running state and contr
   assert.match(markup, /Document worktree AI run in progress/);
   assert.match(markup, /Cancel worktree AI/);
   assert.match(markup, /Streaming mixed stdout and stderr from pm-doc-1-dependencies while the worktree run is active\./);
+});
+
+test("getProjectManagementDocumentRunDefaults prefers continuing the selected linked worktree", () => {
+  const defaults = getProjectManagementDocumentRunDefaults({
+    document: sampleDocument,
+    linkedWorktrees: sampleWorktrees,
+    selectedWorktreeBranch: "feature/doc-1-runtime",
+  });
+
+  assert.equal(defaults.currentLinkedWorktree?.branch, "feature/doc-1-runtime");
+  assert.equal(defaults.canContinueCurrent, true);
+  assert.equal(defaults.defaultStrategy, "continue-current");
+  assert.equal(defaults.generatedWorktreeName, "pm-doc-1-dependencies");
+});
+
+test("getProjectManagementDocumentRunDefaults falls back to a new worktree when the selected branch is unrelated", () => {
+  const defaults = getProjectManagementDocumentRunDefaults({
+    document: sampleDocument,
+    linkedWorktrees: sampleWorktrees,
+    selectedWorktreeBranch: "feature/unrelated",
+  });
+
+  assert.equal(defaults.currentLinkedWorktree, null);
+  assert.equal(defaults.canContinueCurrent, false);
+  assert.equal(defaults.defaultStrategy, "new");
+  assert.equal(defaults.generatedWorktreeName, "pm-doc-1-dependencies");
 });
 
 test("running document edit view shows ordered mixed AI output in the editor area", () => {
