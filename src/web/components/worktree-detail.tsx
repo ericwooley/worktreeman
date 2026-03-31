@@ -480,6 +480,9 @@ interface WorktreeDetailProps {
     input?: string;
     commandId: AiCommandId;
     origin?: AiCommandOrigin | null;
+    worktreeStrategy?: "new" | "continue-current";
+    targetBranch?: string;
+    worktreeName?: string;
   }) => Promise<RunAiCommandResponse | null>;
   onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;

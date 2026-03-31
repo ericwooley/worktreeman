@@ -16,6 +16,7 @@ import type {
   WorktreeRecord,
 } from "@shared/types";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
+import { createProjectManagementDocumentWorktreeBranch } from "@shared/project-management-worktree";
 import { marked } from "marked";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import {
@@ -174,6 +175,23 @@ export function getCompletedAiDocumentRefreshTarget(options: {
   return hasWorkspaceRefresh ? "workspace" : "document";
 }
 
+export function getProjectManagementDocumentRunDefaults(options: {
+  document: ProjectManagementDocument | null;
+  linkedWorktrees: WorktreeRecord[];
+  selectedWorktreeBranch: string | null;
+}) {
+  const currentLinkedWorktree = options.selectedWorktreeBranch
+    ? options.linkedWorktrees.find((entry) => entry.branch === options.selectedWorktreeBranch) ?? null
+    : null;
+
+  return {
+    currentLinkedWorktree,
+    canContinueCurrent: Boolean(currentLinkedWorktree),
+    defaultStrategy: currentLinkedWorktree ? "continue-current" as const : "new" as const,
+    generatedWorktreeName: options.document ? createProjectManagementDocumentWorktreeBranch(options.document) : "",
+  };
+}
+
 export function ProjectManagementPanel({
   documents,
   worktrees,
@@ -228,6 +246,7 @@ export function ProjectManagementPanel({
   // Track whether the user is actively editing to prevent poll-driven field resets
   const isEditingRef = useRef(false);
   const aiRequestModalOpenRef = useRef(false);
+  const documentWorktreeModalOpenRef = useRef(false);
   const prevDocumentIdRef = useRef<string | null>(null);
   const setIsEditing = useCallback((editing: boolean) => {
     isEditingRef.current = editing;
@@ -255,12 +274,37 @@ export function ProjectManagementPanel({
   const [selectedAiCommandId, setSelectedAiCommandId] = useState<AiCommandId>("simple");
   const [documentRunSummary, setDocumentRunSummary] = useState<string | null>(null);
   const [documentRunFailureToast, setDocumentRunFailureToast] = useState<string | null>(null);
+  const [documentWorktreeModalOpenState, setDocumentWorktreeModalOpenState] = useState(false);
+  const setDocumentWorktreeModalOpen = useCallback((open: boolean) => {
+    documentWorktreeModalOpenRef.current = open;
+    setDocumentWorktreeModalOpenState(open);
+  }, []);
+  const [documentWorktreeInstructions, setDocumentWorktreeInstructions] = useState("");
+  const [documentWorktreeStrategy, setDocumentWorktreeStrategy] = useState<"new" | "continue-current">("new");
+  const [documentWorktreeName, setDocumentWorktreeName] = useState("");
+  const documentWorktreeModalOpen = documentWorktreeModalOpenState;
   const aiRunning = aiJob?.status === "running";
   const documentRunInProgress = documentRunJob?.status === "running";
   const documentRunTargetsSelectedDocument = Boolean(document && documentRunJob?.documentId === document.id);
   const documentRunTargetsSelectedWorktree = Boolean(selectedWorktreeBranch && documentRunJob?.branch === selectedWorktreeBranch);
   const activeDocumentRunInSelectedWorktree = documentRunInProgress && documentRunTargetsSelectedDocument && documentRunTargetsSelectedWorktree;
   const activeDocumentRunForSelectedDocument = documentRunInProgress && documentRunTargetsSelectedDocument;
+  const linkedWorktrees = useMemo(
+    () => document
+      ? worktrees.filter((entry) => entry.linkedDocument?.id === document.id)
+      : [],
+    [document, worktrees],
+  );
+  const {
+    currentLinkedWorktree,
+    canContinueCurrent,
+    defaultStrategy: defaultDocumentWorktreeStrategy,
+    generatedWorktreeName,
+  } = useMemo(() => getProjectManagementDocumentRunDefaults({
+    document,
+    linkedWorktrees,
+    selectedWorktreeBranch,
+  }), [document, linkedWorktrees, selectedWorktreeBranch]);
   const documentBrowser = useProjectManagementDocumentBrowserState(documents, statuses, {
     selectedDocumentId,
   });
@@ -303,7 +347,7 @@ export function ProjectManagementPanel({
 
     // If this is a poll refresh (same document) and the user is actively editing
     // or has the AI request modal open, do not overwrite their in-progress changes.
-    if (!documentSwitched && (isEditingRef.current || aiRequestModalOpenRef.current)) {
+    if (!documentSwitched && (isEditingRef.current || aiRequestModalOpenRef.current || documentWorktreeModalOpenRef.current)) {
       return;
     }
 
@@ -321,7 +365,20 @@ export function ProjectManagementPanel({
     setCommentDraft("");
     setSelectedAiCommandId("simple");
     setDocumentRunFailureToast(null);
+    setDocumentWorktreeModalOpen(false);
+    setDocumentWorktreeInstructions("");
+    setDocumentWorktreeStrategy(currentLinkedWorktree ? "continue-current" : "new");
+    setDocumentWorktreeName(document ? createProjectManagementDocumentWorktreeBranch(document) : "");
   }, [document]);
+
+  useEffect(() => {
+    if (!document || documentWorktreeModalOpen) {
+      return;
+    }
+
+    setDocumentWorktreeStrategy(defaultDocumentWorktreeStrategy);
+    setDocumentWorktreeName(generatedWorktreeName);
+  }, [defaultDocumentWorktreeStrategy, document?.id, documentWorktreeModalOpen, generatedWorktreeName]);
 
   useEffect(() => {
     if (!aiJob) {
@@ -640,12 +697,6 @@ export function ProjectManagementPanel({
     () => dependencySelection.map((dependencyId) => dependencyDocumentMap.get(dependencyId)).filter((entry): entry is ProjectManagementDocumentSummary => Boolean(entry)),
     [dependencyDocumentMap, dependencySelection],
   );
-  const linkedWorktrees = useMemo(
-    () => document
-      ? worktrees.filter((entry) => entry.linkedDocument?.id === document.id)
-      : [],
-    [document, worktrees],
-  );
   const metadataControlsDisabled = !document || saving || aiRunning;
   const assigneeActionDisabled = !document || saving || aiRunning || editAssignee === document.assignee;
 
@@ -718,6 +769,31 @@ export function ProjectManagementPanel({
     return true;
   }
 
+  function openDocumentWorktreeModal() {
+    if (!document) {
+      setDocumentRunFailureToast("Select a document before starting work.");
+      return;
+    }
+
+    if (!isAiCommandReady(aiCommands, "smart")) {
+      setDocumentRunFailureToast("Configure Smart AI with $WTM_AI_INPUT in settings first.");
+      return;
+    }
+
+    if (activeDocumentRunForSelectedDocument) {
+      setDocumentRunFailureToast(documentRunJob?.branch
+        ? `This document already has a worktree AI run in ${documentRunJob.branch}.`
+        : "This document already has a worktree AI run in progress.");
+      return;
+    }
+
+    setDocumentRunFailureToast(null);
+    setDocumentWorktreeInstructions("");
+    setDocumentWorktreeStrategy(defaultDocumentWorktreeStrategy);
+    setDocumentWorktreeName(generatedWorktreeName);
+    setDocumentWorktreeModalOpen(true);
+  }
+
   async function handleRunDocumentWork() {
     if (!document) {
       setDocumentRunFailureToast("Select a document before starting work.");
@@ -736,18 +812,35 @@ export function ProjectManagementPanel({
       return false;
     }
 
+    if (documentWorktreeStrategy === "continue-current" && !currentLinkedWorktree) {
+      setDocumentRunFailureToast("Select a linked worktree to continue, or start a new one.");
+      return false;
+    }
+
+    const requestedWorktreeName = documentWorktreeName.trim();
+    if (documentWorktreeStrategy === "new" && !requestedWorktreeName) {
+      setDocumentRunFailureToast("Name the new worktree before starting work.");
+      return false;
+    }
+
     setDocumentRunSummary(null);
     setDocumentRunFailureToast(null);
+    setDocumentWorktreeModalOpen(false);
 
     const result = await onRunDocumentAi({
       documentId: document.id,
       commandId: "smart",
+      input: documentWorktreeInstructions.trim() || undefined,
+      worktreeStrategy: documentWorktreeStrategy,
+      targetBranch: documentWorktreeStrategy === "continue-current" ? currentLinkedWorktree?.branch : undefined,
+      worktreeName: documentWorktreeStrategy === "new" ? requestedWorktreeName : undefined,
     });
     if (!result) {
       setDocumentRunFailureToast("Smart AI request failed. Check the AI command output for details.");
       return false;
     }
 
+    setDocumentWorktreeInstructions("");
     setDocumentRunSummary(`Smart AI started in ${result.job.branch}. This worktree is now selected, its runtime is running, and live output is streaming in the work panel on the right.`);
     return true;
   }
@@ -1058,7 +1151,7 @@ export function ProjectManagementPanel({
                         <button
                           type="button"
                           className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${activeDocumentRunInSelectedWorktree ? "pm-ai-button-running" : ""}`}
-                          onClick={() => void handleRunDocumentWork()}
+                          onClick={openDocumentWorktreeModal}
                           title={activeDocumentRunInSelectedWorktree ? "Worktree AI is running" : "Start worktree AI"}
                           disabled={!document || activeDocumentRunForSelectedDocument}
                         >
@@ -1612,6 +1705,127 @@ export function ProjectManagementPanel({
                 />
               </label>
             </div>
+          </form>
+        </MatrixModal>
+      ) : null}
+
+      {documentWorktreeModalOpen && document && documentViewMode === "document" ? (
+        <MatrixModal
+          kicker="Worktree AI"
+          title={<>Start work for `{document.title}`</>}
+          description="Add any extra instructions, then choose whether to continue in the current linked worktree or start a new one for this document."
+          closeLabel="Close worktree AI setup"
+          maxWidthClass="max-w-3xl"
+          onClose={() => setDocumentWorktreeModalOpen(false)}
+          footer={(
+            <button
+              type="submit"
+              form="pm-document-worktree-form"
+              className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+              disabled={activeDocumentRunForSelectedDocument}
+            >
+              {activeDocumentRunForSelectedDocument ? "Worktree AI running..." : "Start Worktree AI"}
+            </button>
+          )}
+        >
+          <form
+            id="pm-document-worktree-form"
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleRunDocumentWork();
+            }}
+          >
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="space-y-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Run in</span>
+                <label className="flex items-start gap-3 border theme-border-subtle px-3 py-3">
+                  <input
+                    type="radio"
+                    name="pm-document-worktree-strategy"
+                    value="continue-current"
+                    checked={documentWorktreeStrategy === "continue-current"}
+                    disabled={!canContinueCurrent}
+                    onChange={() => setDocumentWorktreeStrategy("continue-current")}
+                  />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-semibold theme-text-strong">Continue current worktree</span>
+                    <span className="block text-xs theme-text-muted">
+                      {currentLinkedWorktree
+                        ? `Keep working in ${currentLinkedWorktree.branch}.`
+                        : "Select one of this document's linked worktrees to continue here."}
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 border theme-border-subtle px-3 py-3">
+                  <input
+                    type="radio"
+                    name="pm-document-worktree-strategy"
+                    value="new"
+                    checked={documentWorktreeStrategy === "new"}
+                    onChange={() => setDocumentWorktreeStrategy("new")}
+                  />
+                  <span className="space-y-1">
+                    <span className="block text-sm font-semibold theme-text-strong">Start a new worktree</span>
+                    <span className="block text-xs theme-text-muted">Create a separate worktree for this run.</span>
+                  </span>
+                </label>
+              </div>
+
+              <label className="block space-y-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Worktree name</span>
+                <input
+                  value={documentWorktreeStrategy === "continue-current" ? currentLinkedWorktree?.branch ?? generatedWorktreeName : documentWorktreeName}
+                  onChange={(event) => setDocumentWorktreeName(event.target.value)}
+                  placeholder="pm-doc-1-project-outline"
+                  disabled={documentWorktreeStrategy === "continue-current"}
+                  className="matrix-input w-full rounded-none px-3 py-2 text-sm outline-none"
+                />
+                <p className="text-xs theme-text-muted">
+                  {documentWorktreeStrategy === "continue-current"
+                    ? "The current worktree name is fixed while you continue in that branch."
+                    : "This becomes the branch and worktree name base for the new run."}
+                </p>
+              </label>
+            </div>
+
+            <div className="border theme-border-subtle px-3 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Linked worktrees</p>
+              <div className="mt-3 space-y-2">
+                {linkedWorktrees.length ? linkedWorktrees.map((entry) => {
+                  const isSelectedLinkedWorktree = currentLinkedWorktree?.branch === entry.branch;
+
+                  return (
+                    <div key={entry.branch} className="flex flex-wrap items-center justify-between gap-2 border theme-border-subtle px-3 py-2 text-sm">
+                      <div className="min-w-0">
+                        <p className="font-mono theme-text-strong">{entry.branch}</p>
+                        <p className="mt-1 text-xs theme-text-muted">{entry.runtime ? "Runtime active" : "Runtime idle"}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isSelectedLinkedWorktree ? <MatrixBadge tone="warning" compact>current</MatrixBadge> : null}
+                        {selectedWorktreeBranch === entry.branch ? <MatrixBadge tone="active" compact>selected</MatrixBadge> : null}
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
+                    No linked worktrees yet. Start a new worktree to create one for this document.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <label className="block space-y-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Additional instructions</span>
+              <textarea
+                value={documentWorktreeInstructions}
+                onChange={(event) => setDocumentWorktreeInstructions(event.target.value)}
+                placeholder="Example: continue the current implementation, keep the existing approach, and focus on finishing the modal and tests first."
+                rows={8}
+                autoFocus
+                className="matrix-input min-h-[12rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+              />
+            </label>
           </form>
         </MatrixModal>
       ) : null}

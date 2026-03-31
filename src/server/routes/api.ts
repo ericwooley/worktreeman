@@ -53,6 +53,11 @@ import type {
 } from "../../shared/types.js";
 import { DEFAULT_PROJECT_MANAGEMENT_BRANCH } from "../../shared/constants.js";
 import {
+  createProjectManagementDocumentWorktreeBranch,
+  createProjectManagementDocumentWorktreeBranchCandidate,
+  normalizeProjectManagementDocumentWorktreeName,
+} from "../../shared/project-management-worktree.js";
+import {
   getBackgroundCommandLogs,
   getBackgroundCommandEntries,
   listBackgroundCommands,
@@ -153,6 +158,9 @@ interface RunProjectManagementDocumentAiRequest {
   input?: unknown;
   commandId?: unknown;
   origin?: unknown;
+  worktreeStrategy?: unknown;
+  targetBranch?: unknown;
+  worktreeName?: unknown;
 }
 
 const CONFIG_COMMIT_ENV = {
@@ -551,23 +559,6 @@ function buildProjectManagementAiPrompt(options: {
   ].join("\n");
 }
 
-function createProjectManagementDocumentWorktreeBranch(document: ProjectManagementDocumentResponse["document"]) {
-  const branch = sanitizeBranchName(`pm-${document.id}-${document.title}`).slice(0, 72);
-  return branch || `pm-${sanitizeBranchName(document.id) || "document"}`;
-}
-
-function createProjectManagementDocumentWorktreeBranchCandidate(baseBranch: string, runNumber: number) {
-  if (runNumber <= 1) {
-    return baseBranch;
-  }
-
-  const suffix = `-${runNumber}`;
-  const truncatedBase = baseBranch
-    .slice(0, Math.max(1, 72 - suffix.length))
-    .replace(/-+$/g, "");
-  return `${truncatedBase || "pm-document"}${suffix}`;
-}
-
 async function branchRefExists(repoRoot: string, branch: string): Promise<boolean> {
   const { stdout } = await runCommand("git", ["branch", "--list", "--format=%(refname:short)", "--", branch], {
     cwd: repoRoot,
@@ -591,8 +582,10 @@ async function resolveProjectManagementDocumentWorktreeBranch(options: {
   repoRoot: string;
   baseDir: string;
   document: ProjectManagementDocumentResponse["document"];
+  preferredName?: string | null;
 }) {
-  const baseBranch = createProjectManagementDocumentWorktreeBranch(options.document);
+  const baseBranch = normalizeProjectManagementDocumentWorktreeName(options.preferredName)
+    ?? createProjectManagementDocumentWorktreeBranch(options.document);
   const existingWorktrees = await listWorktrees(options.repoRoot);
   const existingBranches = new Set(existingWorktrees.map((entry) => entry.branch));
   const existingPaths = new Set(existingWorktrees.map((entry) => path.resolve(entry.worktreePath)));
@@ -2384,14 +2377,47 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const body = req.body as RunProjectManagementDocumentAiRequest | undefined;
       const requestedChange = typeof body?.input === "string" ? body.input : null;
       const requestedOrigin = parseAiCommandOrigin(body?.origin);
+      const requestedWorktreeStrategy = body?.worktreeStrategy === "continue-current"
+        ? "continue-current"
+        : "new";
+      const requestedTargetBranch = typeof body?.targetBranch === "string" && body.targetBranch.trim()
+        ? body.targetBranch.trim()
+        : null;
+      const requestedWorktreeName = typeof body?.worktreeName === "string" && body.worktreeName.trim()
+        ? body.worktreeName.trim()
+        : null;
       const documentPayload = await getProjectManagementDocument(options.repoRoot, documentId);
       const documentsPayload = await listProjectManagementDocuments(options.repoRoot);
 
-      branch = await resolveProjectManagementDocumentWorktreeBranch({
-        repoRoot: options.repoRoot,
-        baseDir: path.resolve(options.repoRoot, config.worktrees.baseDir),
-        document: documentPayload.document,
-      });
+      if (requestedWorktreeStrategy === "continue-current") {
+        if (!requestedTargetBranch) {
+          res.status(400).json({ message: "A linked worktree branch is required to continue current work." });
+          return;
+        }
+
+        const requestedLink = await getWorktreeDocumentLink(options.repoRoot, requestedTargetBranch);
+        if (!requestedLink || requestedLink.documentId !== documentId) {
+          res.status(404).json({ message: `No linked worktree ${requestedTargetBranch} exists for document ${documentId}.` });
+          return;
+        }
+
+        const existingWorktree = await findWorktree(requestedTargetBranch);
+        if (!existingWorktree) {
+          res.status(404).json({ message: `Unknown worktree ${requestedTargetBranch}` });
+          return;
+        }
+
+        branch = existingWorktree.branch;
+        worktreePath = existingWorktree.worktreePath;
+      } else {
+        branch = await resolveProjectManagementDocumentWorktreeBranch({
+          repoRoot: options.repoRoot,
+          baseDir: path.resolve(options.repoRoot, config.worktrees.baseDir),
+          document: documentPayload.document,
+          preferredName: requestedWorktreeName,
+        });
+      }
+
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
       const defaultOrigin = createProjectManagementDocumentOrigin({
         branch,
@@ -2487,6 +2513,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         environmentContext,
         document: documentPayload.document,
         relatedDocuments: documentsPayload.documents,
+        requestedChange: requestedChange ?? undefined,
       });
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 

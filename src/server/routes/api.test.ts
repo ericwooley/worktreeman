@@ -3532,7 +3532,95 @@ test("worktree AI can append pull request review comments with git origin metada
   }
 });
 
-test("project-management document AI uses a suffixed branch when rerunning the same document", { concurrency: false }, async () => {
+test("project-management document AI continues the selected linked worktree when requested", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "stopped", pid: 8101, stdout: "existing branch run\n", stderr: "", exitCode: 0 },
+    { status: "stopped", pid: 8102, stdout: "continued branch run\n", stderr: "", exitCode: 0 },
+  ]);
+
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const firstResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(firstResponse.status, 200);
+    const firstPayload = await firstResponse.json() as {
+      job: { branch: string; status: string };
+    };
+    assert.equal(firstPayload.job.status, "running");
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.some((entry) => entry.branch === firstPayload.job.branch && entry.status === "completed");
+    });
+
+    const secondResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        worktreeStrategy: "continue-current",
+        targetBranch: firstPayload.job.branch,
+        input: "continue the existing worktree",
+      }),
+    });
+    assert.equal(secondResponse.status, 200);
+    const secondPayload = await secondResponse.json() as {
+      job: { branch: string; status: string };
+    };
+    assert.equal(secondPayload.job.status, "running");
+    assert.equal(secondPayload.job.branch, firstPayload.job.branch);
+
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.filter((entry) => entry.branch === firstPayload.job.branch && entry.status === "completed").length >= 2;
+    });
+
+    const link = await getWorktreeDocumentLink(repo.repoRoot, firstPayload.job.branch);
+    assert.equal(link?.documentId, outline.id);
+
+    const stateResponse = await server.fetch(`/api/state`);
+    assert.equal(stateResponse.status, 200);
+    const statePayload = await stateResponse.json() as {
+      worktrees: Array<{ branch: string }>;
+    };
+    assert.equal(statePayload.worktrees.filter((entry) => entry.branch === firstPayload.job.branch).length, 1);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management document AI uses a suffixed branch when explicitly starting a new worktree again", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -3580,7 +3668,9 @@ test("project-management document AI uses a suffixed branch when rerunning the s
     const secondResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        worktreeStrategy: "new",
+      }),
     });
     assert.equal(secondResponse.status, 200);
     const secondPayload = await secondResponse.json() as {

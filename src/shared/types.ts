@@ -463,6 +463,9 @@ export interface RunProjectManagementDocumentAiRequest {
   input?: string;
   commandId?: AiCommandId;
   origin?: AiCommandOrigin | null;
+  worktreeStrategy?: "new" | "continue-current";
+  targetBranch?: string;
+  worktreeName?: string;
 }
 
 export type AiCommandOriginTab = "environment" | "git" | "project-management";

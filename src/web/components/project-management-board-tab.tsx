@@ -4,6 +4,7 @@ import type {
   AiCommandOrigin,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
+  RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
 } from "@shared/types";
 import { MatrixDropdown } from "./matrix-dropdown";
@@ -31,10 +32,8 @@ interface ProjectManagementBoardTabProps {
   }) => Promise<boolean>;
   onRunDocumentAi: (payload: {
     documentId: string;
-    input?: string;
     commandId: "smart" | "simple";
-    origin?: AiCommandOrigin | null;
-  }) => Promise<RunAiCommandResponse | null>;
+  } & RunProjectManagementDocumentAiRequest) => Promise<RunAiCommandResponse | null>;
 }
 
 export function ProjectManagementBoardTab({
