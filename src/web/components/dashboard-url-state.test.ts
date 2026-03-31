@@ -13,6 +13,7 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
     gitView: "graph",
     gitPullRequestDocumentId: null,
     isTerminalVisible: false,
+    systemSubTab: "performance",
     projectManagementSubTab: "board",
     projectManagementSelectedDocumentId: null,
     projectManagementDocumentViewMode: "document",
@@ -30,6 +31,7 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
     gitView: "graph",
     gitPullRequestDocumentId: null,
     isTerminalVisible: true,
+    systemSubTab: "performance",
     projectManagementSubTab: "board",
     projectManagementSelectedDocumentId: null,
     projectManagementDocumentViewMode: "document",
@@ -51,6 +53,7 @@ test("readDashboardUrlState reads nested environment and project management stat
       gitView: "diff",
       gitPullRequestDocumentId: "doc-pr-7",
       isTerminalVisible: false,
+      systemSubTab: "performance",
       projectManagementSubTab: "document",
       projectManagementSelectedDocumentId: "doc-7",
       projectManagementDocumentViewMode: "edit",
@@ -73,6 +76,7 @@ test("readDashboardUrlState reads the top-level AI tab and active-worktrees sub 
       gitView: "graph",
       gitPullRequestDocumentId: null,
       isTerminalVisible: false,
+      systemSubTab: "performance",
       projectManagementSubTab: "history",
       projectManagementSelectedDocumentId: "doc-9",
       projectManagementDocumentViewMode: "edit",
@@ -99,6 +103,7 @@ test("readDashboardUrlState reads project management editor tab params", () => {
       gitView: "graph",
       gitPullRequestDocumentId: null,
       isTerminalVisible: false,
+      systemSubTab: "performance",
       projectManagementSubTab: "document",
       projectManagementSelectedDocumentId: "doc-7",
       projectManagementDocumentViewMode: "edit",
@@ -106,4 +111,24 @@ test("readDashboardUrlState reads project management editor tab params", () => {
       projectManagementCreateFormTab: "preview",
     },
   );
+});
+
+test("readDashboardUrlState reads the top-level System tab and jobs sub tab", () => {
+  assert.deepEqual(readDashboardUrlState("?tab=system&systemTab=jobs"), {
+    selectedBranch: null,
+    activeTab: "system",
+    aiActivitySubTab: "log",
+    selectedAiLogJobId: null,
+    environmentSubTab: "terminal",
+    gitSubTab: "pull-request",
+    gitView: "graph",
+    gitPullRequestDocumentId: null,
+    isTerminalVisible: false,
+    systemSubTab: "jobs",
+    projectManagementSubTab: "board",
+    projectManagementSelectedDocumentId: null,
+    projectManagementDocumentViewMode: "document",
+    projectManagementEditFormTab: "write",
+    projectManagementCreateFormTab: "write",
+  });
 });

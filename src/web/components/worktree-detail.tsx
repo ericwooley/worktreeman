@@ -19,6 +19,8 @@ import type {
   ProjectManagementUsersResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
+  SystemStatusResponse,
+  SystemSubTab,
   UpdateProjectManagementUsersRequest,
   WorktreeRecord,
 } from "@shared/types";
@@ -55,6 +57,11 @@ const ProjectManagementAiTab = lazy(async () => {
   return { default: module.ProjectManagementAiTab };
 });
 
+const SystemTab = lazy(async () => {
+  const module = await import("./system-tab");
+  return { default: module.SystemTab };
+});
+
 function getCssVariable(name: string, fallback: string): string {
   if (typeof window === "undefined") {
     return fallback;
@@ -67,6 +74,7 @@ function getCssVariable(name: string, fallback: string): string {
 const GIT_COMPARISON_POLL_INTERVAL_MS = 3000;
 const PROJECT_MANAGEMENT_POLL_INTERVAL_MS = 5000;
 const AI_LOG_POLL_INTERVAL_MS = 3000;
+const SYSTEM_STATUS_POLL_INTERVAL_MS = 3000;
 const DIFF_RENDER_MAX_CHARS = 350_000;
 const DIFF_RENDER_MAX_LINES = 8_000;
 const DIFF_RENDER_MAX_FILES = 80;
@@ -357,8 +365,8 @@ interface WorktreeDetailProps {
   runningCount: number;
   selectedStatusLabel: string;
   onSelectWorktree: (value: string) => void;
-  activeTab: "environment" | "git" | "merge" | "project-management" | "ai-log";
-  onTabChange: (tab: "environment" | "git" | "merge" | "project-management" | "ai-log") => void;
+  activeTab: "environment" | "git" | "merge" | "project-management" | "system" | "ai-log";
+  onTabChange: (tab: "environment" | "git" | "merge" | "project-management" | "system" | "ai-log") => void;
   environmentSubTab: WorktreeEnvironmentSubTab;
   onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
   gitSubTab: WorktreeGitSubTab;
@@ -419,6 +427,11 @@ interface WorktreeDetailProps {
   projectManagementAiLogsLastUpdatedAt: string | null;
   projectManagementRunningAiJobs: AiCommandJob[];
   projectManagementAiActiveSubTab: AiActivitySubTab;
+  systemStatus: SystemStatusResponse | null;
+  systemLoading: boolean;
+  systemError: string | null;
+  systemLastUpdatedAt: string | null;
+  systemSubTab: SystemSubTab;
   projectManagementAiCommands: AiCommandConfig | null;
   projectManagementAiJob: AiCommandJob | null;
   projectManagementDocumentAiJob: AiCommandJob | null;
@@ -432,6 +445,8 @@ interface WorktreeDetailProps {
   onLoadProjectManagementAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementAiLog: (jobId: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onProjectManagementAiSubTabChange: (tab: AiActivitySubTab) => void;
+  onSystemSubTabChange: (tab: SystemSubTab) => void;
+  onLoadSystemStatus: (options?: { silent?: boolean }) => Promise<SystemStatusResponse | null>;
   onCreateProjectManagementDocument: (payload: {
     title: string;
     summary?: string;
@@ -561,6 +576,11 @@ export function WorktreeDetail({
   projectManagementAiLogsLastUpdatedAt,
   projectManagementRunningAiJobs,
   projectManagementAiActiveSubTab,
+  systemStatus,
+  systemLoading,
+  systemError,
+  systemLastUpdatedAt,
+  systemSubTab,
   projectManagementAiCommands,
   projectManagementAiJob,
   projectManagementDocumentAiJob,
@@ -574,6 +594,8 @@ export function WorktreeDetail({
   onLoadProjectManagementAiLogs,
   onLoadProjectManagementAiLog,
   onProjectManagementAiSubTabChange,
+  onSystemSubTabChange,
+  onLoadSystemStatus,
   onCreateProjectManagementDocument,
   onUpdateProjectManagementDocument,
   onUpdateProjectManagementDependencies,
@@ -591,6 +613,7 @@ export function WorktreeDetail({
   const isAiLogTabActive = activeTab === "ai-log";
   const isGitTabActive = activeTab === "git";
   const isMergeTabActive = activeTab === "merge";
+  const isSystemTabActive = activeTab === "system";
   const pullRequestDocuments = useMemo(
     () => projectManagementDocuments.filter((entry) => entry.kind === "pull-request"),
     [projectManagementDocuments],
@@ -856,6 +879,9 @@ export function WorktreeDetail({
   const refreshAiLogs = useCallback(async (options?: { silent?: boolean }) => {
     await onLoadProjectManagementAiLogs(options);
   }, [onLoadProjectManagementAiLogs]);
+  const refreshSystemStatus = useCallback(async (options?: { silent?: boolean }) => {
+    await onLoadSystemStatus(options);
+  }, [onLoadSystemStatus]);
 
   useEffect(() => {
     if (!selectedBackgroundCommandName && backgroundCommands[0]) {
@@ -998,6 +1024,44 @@ export function WorktreeDetail({
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
   }, [activeTab, refreshAiLogs]);
+
+  useEffect(() => {
+    if (activeTab !== "system") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSystemState = async () => {
+      await refreshSystemStatus({ silent: true });
+      if (cancelled) {
+        return;
+      }
+    };
+
+    const pollController = startSequentialPoll(loadSystemState, {
+      intervalMs: SYSTEM_STATUS_POLL_INTERVAL_MS,
+      runImmediately: document.visibilityState === "visible",
+    });
+
+    const handleVisibilityRefresh = () => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+
+      pollController.trigger();
+    };
+
+    window.addEventListener("focus", handleVisibilityRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
+
+    return () => {
+      cancelled = true;
+      pollController.stop();
+      window.removeEventListener("focus", handleVisibilityRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
+    };
+  }, [activeTab, refreshSystemStatus]);
 
   useEffect(() => {
     if (!isBackgroundCommandsActive || !worktree?.branch) {
@@ -1666,6 +1730,7 @@ export function WorktreeDetail({
             { id: "git", label: "GIT" },
             { id: "merge", label: "MERGE" },
             { id: "project-management", label: "Project management" },
+            { id: "system", label: "System" },
             { id: "ai-log", label: "AI" },
           ]}
         />
@@ -1990,6 +2055,26 @@ export function WorktreeDetail({
               onCancelAiCommand={onCancelProjectManagementAiCommand}
               onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false })}
             />
+          </Suspense>
+        ) : isSystemTabActive ? (
+          <Suspense
+            fallback={(
+              <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                Loading system status...
+              </div>
+            )}
+          >
+            <div className="mt-4">
+              <SystemTab
+                activeSubTab={systemSubTab}
+                status={systemStatus}
+                loading={systemLoading}
+                error={systemError}
+                lastUpdatedAt={systemLastUpdatedAt}
+                onSubTabChange={onSystemSubTabChange}
+                onRetry={() => void refreshSystemStatus({ silent: false })}
+              />
+            </div>
           </Suspense>
         ) : isAiLogTabActive ? (
           <Suspense

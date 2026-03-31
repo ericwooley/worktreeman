@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Editor from "@monaco-editor/react";
 import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "@shared/constants";
-import type { AiCommandConfig, AiCommandId, WorktreeRecord } from "@shared/types";
+import type { AiCommandConfig, AiCommandId, SystemSubTab, WorktreeRecord } from "@shared/types";
 import {
   CommandPalette,
   DEFAULT_COMMAND_PALETTE_SHORTCUT,
@@ -133,6 +133,10 @@ export function Dashboard() {
     aiCommandLogsError,
     aiCommandLogsLastUpdatedAt,
     runningAiCommandJobs,
+    systemStatus,
+    systemLoading,
+    systemError,
+    systemLastUpdatedAt,
     projectManagement,
     projectManagementUsers,
     projectManagementDocument,
@@ -163,6 +167,7 @@ export function Dashboard() {
     loadAiCommandSettings,
     loadAiCommandLog,
     loadAiCommandLogs,
+    loadSystemStatus,
     loadGitComparison,
     mergeGitBranch,
     mergeBaseBranchIntoWorktree,
@@ -188,6 +193,7 @@ export function Dashboard() {
   const [selectedAiLogJobId, setSelectedAiLogJobId] = useState<string | null>(initialUrlState.selectedAiLogJobId);
   const [environmentSubTab, setEnvironmentSubTab] = useState<WorktreeEnvironmentSubTab>(initialUrlState.environmentSubTab);
   const [gitSubTab, setGitSubTab] = useState<WorktreeGitSubTab>("pull-request");
+  const [systemSubTab, setSystemSubTab] = useState<SystemSubTab>(initialUrlState.systemSubTab);
   const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
     initialUrlState.projectManagementSubTab,
   );
@@ -523,6 +529,12 @@ export function Dashboard() {
       params.delete("pmCreateTab");
     }
 
+    if (activeTab === "system") {
+      params.set("systemTab", systemSubTab);
+    } else {
+      params.delete("systemTab");
+    }
+
     if (activeTab === "ai-log") {
       params.set("aiTab", aiActivitySubTab);
       if (selectedAiLogJobId) {
@@ -571,6 +583,7 @@ export function Dashboard() {
     projectManagementSelectedDocumentId,
     projectManagementSubTab,
     selectedBranch,
+    systemSubTab,
   ]);
 
   useEffect(() => {
@@ -585,6 +598,7 @@ export function Dashboard() {
       setGitView(nextUrlState.gitView);
       setGitPullRequestDocumentId(nextUrlState.gitPullRequestDocumentId);
       setIsTerminalVisible(nextUrlState.isTerminalVisible);
+      setSystemSubTab(nextUrlState.systemSubTab);
       setProjectManagementSubTab(nextUrlState.projectManagementSubTab);
       setProjectManagementSelectedDocumentId(nextUrlState.projectManagementSelectedDocumentId);
       setProjectManagementDocumentViewMode(nextUrlState.projectManagementDocumentViewMode);
@@ -802,6 +816,11 @@ export function Dashboard() {
     }
   }, []);
 
+  const navigateToSystemSubTab = useCallback((tab: SystemSubTab) => {
+    navigateToTab("system");
+    setSystemSubTab(tab);
+  }, []);
+
   const handleProjectManagementSubTabChange = useCallback((tab: ProjectManagementSubTab) => {
     setProjectManagementSubTab(tab);
     if (tab !== "document") {
@@ -872,6 +891,39 @@ export function Dashboard() {
         badgeLabel: activeTab === "merge" ? "Active" : undefined,
         badgeTone: "active",
         action: () => navigateToGitSubTab("pull-request"),
+      },
+      {
+        id: "nav-system",
+        code: "ns",
+        title: "Open System tab",
+        subtitle: "Inspect host performance and durable pg-boss job activity.",
+        group: "Navigation",
+        keywords: ["system", "performance", "jobs", "pgboss", "queue"],
+        badgeLabel: activeTab === "system" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToTab("system"),
+      },
+      {
+        id: "nav-system-performance",
+        code: "nsp",
+        title: "Open System performance",
+        subtitle: "Review host load, memory, uptime, and worktree counts.",
+        group: "Navigation",
+        keywords: ["system", "performance", "htop", "cpu", "memory", "uptime"],
+        badgeLabel: activeTab === "system" && systemSubTab === "performance" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToSystemSubTab("performance"),
+      },
+      {
+        id: "nav-system-jobs",
+        code: "nsj",
+        title: "Open System jobs",
+        subtitle: "Inspect recent pg-boss jobs, states, timings, and payload context.",
+        group: "Navigation",
+        keywords: ["system", "jobs", "pgboss", "queue", "worker"],
+        badgeLabel: activeTab === "system" && systemSubTab === "jobs" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToSystemSubTab("jobs"),
       },
       {
         id: "nav-project-management",
@@ -1123,6 +1175,7 @@ export function Dashboard() {
     navigateToGitSubTab,
     navigateToEnvironmentSubTab,
     navigateToProjectManagementSubTab,
+    navigateToSystemSubTab,
     openAiSettings,
     openDeleteConfirmation,
     openConfigEditor,
@@ -1134,6 +1187,7 @@ export function Dashboard() {
     start,
     stop,
     syncEnv,
+    systemSubTab,
     selectedDeleteAiDisabledReason,
     theme,
     runningAiCommandJobs,
@@ -1439,8 +1493,14 @@ export function Dashboard() {
             projectManagementAiLogsLastUpdatedAt={aiCommandLogsLastUpdatedAt}
             projectManagementRunningAiJobs={runningAiCommandJobs}
             projectManagementAiActiveSubTab={aiActivitySubTab}
+            systemStatus={systemStatus}
+            systemLoading={systemLoading}
+            systemError={systemError}
+            systemLastUpdatedAt={systemLastUpdatedAt}
+            systemSubTab={systemSubTab}
             onProjectManagementSubTabChange={handleProjectManagementSubTabChange}
             onProjectManagementAiSubTabChange={setAiActivitySubTab}
+            onSystemSubTabChange={setSystemSubTab}
             onProjectManagementDocumentViewModeChange={setProjectManagementDocumentViewMode}
             onProjectManagementEditFormTabChange={setProjectManagementEditFormTab}
             onProjectManagementCreateFormTabChange={setProjectManagementCreateFormTab}
@@ -1449,6 +1509,7 @@ export function Dashboard() {
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
             onLoadProjectManagementAiLogs={loadAiCommandLogs}
             onLoadProjectManagementAiLog={handleLoadProjectManagementAiLog}
+            onLoadSystemStatus={loadSystemStatus}
             onCreateProjectManagementDocument={createProjectManagementDocument}
             onUpdateProjectManagementDocument={updateProjectManagementDocument}
             onUpdateProjectManagementDependencies={async (documentId, dependencyIds) => {

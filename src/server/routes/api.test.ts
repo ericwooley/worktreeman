@@ -17,6 +17,7 @@ import { loadConfig, readConfigContents, serializeConfigContents, updateAiComman
 import { findRepoContext, findWorktreePathForRef } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
+import { closeManagedDatabaseClient, getManagedDatabaseClient } from "../services/database-client-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
 import { getAiCommandJob, startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
 import { startProjectManagementAiWorker, stopAiCommandJobManager, stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
@@ -25,7 +26,7 @@ import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
 import { getWorktreeDocumentLink, setWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { getTmuxSessionName } from "../../shared/tmux.js";
-import type { AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
+import type { AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent, SystemStatusResponse } from "../../shared/types.js";
 
 type RouterOptions = Parameters<typeof createApiRouter>[0];
 type InjectedAiProcesses = NonNullable<RouterOptions["aiProcesses"]>;
@@ -711,6 +712,152 @@ test("GET /api/state includes deletion metadata for protected worktrees", async 
 
     await server.close();
   } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/system returns host metrics and recent pg-boss jobs", async () => {
+  const repo = await createApiTestRepo();
+  const app = express();
+  app.use(express.json());
+
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+  testContextRepoRoots.add(repo.repoRoot);
+  app.use("/api", createApiRouter({
+    repoRoot: repo.repoRoot,
+    configPath: repo.configPath,
+    configSourceRef: repo.configSourceRef,
+    configFile: repo.configFile,
+    configWorktreePath: repo.configWorktreePath,
+    operationalState,
+  }));
+
+  const database = await getManagedDatabaseClient(repo.repoRoot, "jobs");
+
+  try {
+    await database.exec(`
+      create schema if not exists pgboss;
+      create table if not exists pgboss.job (
+        id text primary key,
+        name text not null,
+        state text not null,
+        priority integer,
+        retry_limit integer,
+        retry_count integer,
+        retry_delay integer,
+        retry_delay_max integer,
+        retry_backoff boolean,
+        expire_seconds integer,
+        deletion_seconds integer,
+        policy text,
+        singleton_key text,
+        singleton_on text,
+        dead_letter text,
+        start_after text,
+        created_on text not null,
+        started_on text,
+        completed_on text,
+        keep_until text,
+        heartbeat_on text,
+        heartbeat_seconds integer,
+        data text,
+        output text
+      );
+    `);
+
+    await database.query(
+      `
+        insert into pgboss.job (
+          id,
+          name,
+          state,
+          priority,
+          retry_limit,
+          retry_count,
+          retry_delay,
+          retry_delay_max,
+          retry_backoff,
+          expire_seconds,
+          deletion_seconds,
+          policy,
+          singleton_key,
+          singleton_on,
+          dead_letter,
+          start_after,
+          created_on,
+          started_on,
+          completed_on,
+          keep_until,
+          heartbeat_on,
+          heartbeat_seconds,
+          data,
+          output
+        ) values (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+          $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+        )
+      `,
+      [
+        "job-system-active",
+        "project-management-ai-update",
+        "active",
+        3,
+        1,
+        0,
+        30,
+        120,
+        true,
+        600,
+        3600,
+        "standard",
+        null,
+        null,
+        null,
+        "2026-03-31T11:59:00.000Z",
+        "2026-03-31T11:59:00.000Z",
+        "2026-03-31T11:59:10.000Z",
+        null,
+        "2026-04-01T11:59:00.000Z",
+        "2026-03-31T11:59:30.000Z",
+        30,
+        JSON.stringify({
+          branch: "feature/system-tab",
+          documentId: "doc-12",
+          commandId: "smart",
+          worktreePath: "/repo/.worktrees/feature-system-tab",
+          renderedCommand: "runner --prompt \"Add the System tab\"",
+          input: "Add the System tab and summarize queue activity.",
+          autoCommitDirtyWorktree: true,
+          origin: {
+            kind: "project-management-document-run",
+            label: "Project document #12",
+          },
+        }),
+        JSON.stringify({ ok: true }),
+      ],
+    );
+
+    const response = await request(app).get("/api/system");
+    assert.equal(response.status, 200);
+
+    const payload = response.body as SystemStatusResponse;
+    assert.equal(typeof payload.capturedAt, "string");
+    assert.equal(payload.performance.worktrees.total >= 2, true);
+    assert.equal(payload.performance.worktrees.runtimeCount, 0);
+    assert.equal(payload.jobs.available, true);
+    assert.equal(payload.jobs.total, 1);
+    assert.equal(payload.jobs.countsByState.active, 1);
+    assert.equal(payload.jobs.items[0]?.id, "job-system-active");
+    assert.equal(payload.jobs.items[0]?.queue, "project-management-ai-update");
+    assert.equal(payload.jobs.items[0]?.state, "active");
+    assert.equal(payload.jobs.items[0]?.hasOutput, true);
+    assert.equal(payload.jobs.items[0]?.payloadSummary.branch, "feature/system-tab");
+    assert.equal(payload.jobs.items[0]?.payloadSummary.documentId, "doc-12");
+    assert.equal(payload.jobs.items[0]?.payloadSummary.commandId, "smart");
+    assert.equal(payload.jobs.items[0]?.payloadSummary.originLabel, "Project document #12");
+  } finally {
+    await closeManagedDatabaseClient(repo.repoRoot, "jobs").catch(() => undefined);
+    await stopOperationalStateStore(repo.repoRoot).catch(() => undefined);
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
 });

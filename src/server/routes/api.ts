@@ -41,6 +41,7 @@ import type {
   ReconnectTerminalResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
+  SystemStatusResponse,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementStatusRequest,
   TmuxClientInfo,
@@ -130,6 +131,7 @@ import {
   setWorktreeDocumentLink,
 } from "../services/worktree-link-service.js";
 import { createOperationalStateStore, type OperationalStateStore } from "../services/operational-state-service.js";
+import { getSystemStatus } from "../services/system-status-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
@@ -1612,6 +1614,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         clearInterval(keepAlive);
         res.end();
       });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/system", async (_req, res, next) => {
+    try {
+      const payload: SystemStatusResponse = await getSystemStatus(options.repoRoot);
+      res.json(payload);
     } catch (error) {
       next(error);
     }

@@ -30,6 +30,7 @@ import type {
   RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
   ShutdownStatus,
+  SystemStatusResponse,
   TmuxClientInfo,
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
@@ -188,6 +189,10 @@ export function subscribeToAiCommandJob(
 
 export function getAiCommandLogs(): Promise<AiCommandLogsResponse> {
   return request<AiCommandLogsResponse>("/api/ai/logs");
+}
+
+export function getSystemStatus(): Promise<SystemStatusResponse> {
+  return request<SystemStatusResponse>("/api/system");
 }
 
 export function subscribeToAiCommandLog(

@@ -1,9 +1,10 @@
+import type { SystemSubTab } from "@shared/types";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import type { WorktreeEnvironmentSubTab, WorktreeGitSubTab } from "./worktree-detail";
 
-export type DashboardActiveTab = "environment" | "git" | "merge" | "project-management" | "ai-log";
+export type DashboardActiveTab = "environment" | "git" | "merge" | "project-management" | "system" | "ai-log";
 
 export interface DashboardUrlState {
   selectedBranch: string | null;
@@ -15,6 +16,7 @@ export interface DashboardUrlState {
   gitView: "diff" | "graph";
   gitPullRequestDocumentId: string | null;
   isTerminalVisible: boolean;
+  systemSubTab: SystemSubTab;
   projectManagementSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
@@ -52,6 +54,10 @@ export function parseAiActivitySubTab(value: string | null): AiActivitySubTab {
   return value === "active-worktrees" ? "active-worktrees" : "log";
 }
 
+export function parseSystemSubTab(value: string | null): SystemSubTab {
+  return value === "jobs" ? "jobs" : "performance";
+}
+
 export function readDashboardUrlState(search: string = typeof window === "undefined" ? "" : window.location.search): DashboardUrlState {
   const params = new URLSearchParams(search);
   const tab = params.get("tab");
@@ -59,6 +65,8 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
     ? "git"
     : tab === "merge"
       ? "merge"
+      : tab === "system"
+        ? "system"
       : tab === "ai-log"
         ? "ai-log"
       : tab === "project-management"
@@ -79,6 +87,7 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
     gitView: params.get("git") === "diff" ? "diff" : "graph",
     gitPullRequestDocumentId: params.get("gitPr"),
     isTerminalVisible: params.get("terminal") === "open",
+    systemSubTab: parseSystemSubTab(params.get("systemTab")),
     projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),
     projectManagementSelectedDocumentId: params.get("pmDoc"),
     projectManagementDocumentViewMode: parseProjectManagementDocumentViewMode(params.get("pmView")),

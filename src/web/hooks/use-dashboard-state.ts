@@ -27,6 +27,7 @@ import type {
   RunAiCommandResponse,
   RunProjectManagementDocumentAiRequest,
   ShutdownStatus,
+  SystemStatusResponse,
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
@@ -50,6 +51,7 @@ import {
   getAiCommandSettings as fetchAiCommandSettings,
   getAiCommandLogs as fetchAiCommandLogs,
   getGitComparison as fetchGitComparison,
+  getSystemStatus as fetchSystemStatus,
   getState,
   subscribeToState,
   cancelAiCommand as cancelAiCommandRequest,
@@ -152,6 +154,10 @@ export function useDashboardState() {
   const [aiCommandLogsError, setAiCommandLogsError] = useState<string | null>(null);
   const [aiCommandLogsLastUpdatedAt, setAiCommandLogsLastUpdatedAt] = useState<string | null>(null);
   const [runningAiCommandJobs, setRunningAiCommandJobs] = useState<AiCommandJob[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatusResponse | null>(null);
+  const [systemLoading, setSystemLoading] = useState(false);
+  const [systemError, setSystemError] = useState<string | null>(null);
+  const [systemLastUpdatedAt, setSystemLastUpdatedAt] = useState<string | null>(null);
   const [projectManagement, setProjectManagement] = useState<ProjectManagementListResponse | null>(null);
   const [projectManagementUsers, setProjectManagementUsers] = useState<ProjectManagementUsersResponse | null>(null);
   const [projectManagementDocument, setProjectManagementDocument] = useState<ProjectManagementDocument | null>(null);
@@ -773,6 +779,30 @@ export function useDashboardState() {
           }
         }
       },
+      async loadSystemStatus(options?: { silent?: boolean }) {
+        if (!options?.silent) {
+          setSystemLoading(true);
+        }
+
+        try {
+          const payload = await fetchSystemStatus();
+          setSystemStatus(payload);
+          setSystemError(null);
+          setSystemLastUpdatedAt(new Date().toISOString());
+          setError(null);
+          return payload;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to load system status.";
+          setSystemStatus(null);
+          setSystemError(message);
+          setError(message);
+          return null;
+        } finally {
+          if (!options?.silent) {
+            setSystemLoading(false);
+          }
+        }
+      },
       loadAiCommandLog,
       async runAiCommand(branch: string, payload: RunAiCommandRequest) {
         try {
@@ -1047,6 +1077,10 @@ export function useDashboardState() {
     aiCommandLogsError,
     aiCommandLogsLastUpdatedAt,
     runningAiCommandJobs,
+    systemStatus,
+    systemLoading,
+    systemError,
+    systemLastUpdatedAt,
     projectManagement,
     projectManagementUsers,
     projectManagementDocument,

@@ -289,6 +289,91 @@ export interface ShutdownStatus {
   logs: ShutdownLogEntry[];
 }
 
+export type SystemSubTab = "performance" | "jobs";
+
+export interface SystemPerformanceSnapshot {
+  hostname: string;
+  platform: string;
+  arch: string;
+  nodeVersion: string;
+  uptimeSeconds: number;
+  cpu: {
+    coreCount: number;
+    model: string;
+    speedMhz: number | null;
+    loadAverage: [number, number, number];
+    loadAveragePerCore: [number, number, number];
+  };
+  memory: {
+    totalBytes: number;
+    freeBytes: number;
+    usedBytes: number;
+    usageRatio: number;
+  };
+  worktrees: {
+    total: number;
+    runtimeCount: number;
+    linkedDocumentCount: number;
+  };
+}
+
+export interface SystemJobPayloadSummary {
+  branch: string | null;
+  documentId: string | null;
+  commandId: AiCommandId | null;
+  worktreePath: string | null;
+  originKind: string | null;
+  originLabel: string | null;
+  renderedCommandPreview: string | null;
+  inputPreview: string | null;
+  applyDocumentUpdateToDocumentId: string | null;
+  commentDocumentId: string | null;
+  commentRequestSummaryPreview: string | null;
+  autoCommitDirtyWorktree: boolean;
+}
+
+export interface SystemJobRecord {
+  id: string;
+  queue: string;
+  state: string;
+  priority: number;
+  retryLimit: number;
+  retryCount: number;
+  retryDelay: number | null;
+  retryDelayMax: number | null;
+  retryBackoff: boolean;
+  expireSeconds: number | null;
+  deletionSeconds: number | null;
+  policy: string | null;
+  singletonKey: string | null;
+  singletonOn: string | null;
+  deadLetter: string | null;
+  startAfter: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  keepUntil: string | null;
+  heartbeatAt: string | null;
+  heartbeatSeconds: number | null;
+  runtimeSeconds: number | null;
+  hasOutput: boolean;
+  payloadSummary: SystemJobPayloadSummary;
+}
+
+export interface SystemJobsSnapshot {
+  available: boolean;
+  unavailableReason: string | null;
+  total: number;
+  countsByState: Record<string, number>;
+  items: SystemJobRecord[];
+}
+
+export interface SystemStatusResponse {
+  capturedAt: string;
+  performance: SystemPerformanceSnapshot;
+  jobs: SystemJobsSnapshot;
+}
+
 export type ProjectManagementDocumentKind = "document" | "pull-request";
 
 export type ProjectManagementPullRequestState = "open" | "closed" | "merged";
