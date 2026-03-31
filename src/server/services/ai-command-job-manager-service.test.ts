@@ -14,6 +14,7 @@ import { configureDatabaseConnection } from "./database-connection-service.js";
 import { startDatabaseSocketServer, stopDatabaseSocketServer } from "./database-socket-service.js";
 import { getAiCommandJob } from "./ai-command-service.js";
 import { stopOperationalStateStore } from "./operational-state-service.js";
+import { getAiCommandProcessName } from "./ai-command-process-service.js";
 
 async function waitFor<T>(callback: () => Promise<T | null | undefined> | T | null | undefined, timeoutMs = 15000, intervalMs = 50): Promise<T> {
   const startedAt = Date.now();
@@ -175,6 +176,69 @@ test("worker entrypoint shutdown drains active AI job without killing its child 
     if (databaseStarted) {
       await stopDatabaseSocketServer(repoRoot).catch(() => undefined);
     }
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("queued project-management AI jobs stay running before the worker spawns the process", async () => {
+  configureDatabaseConnection(null);
+
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-worker-"));
+
+  try {
+    await createBareRepoLayout({ rootDir });
+    await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+    await initRepository(rootDir, { baseDir: ".", runtimePorts: [], force: false });
+    const repo = await findRepoContext(rootDir);
+
+    const origin = {
+      kind: "project-management-document-run",
+      label: "Project management document run",
+      location: {
+        tab: "project-management",
+        projectManagementSubTab: "document",
+        documentId: "doc-123",
+        projectManagementDocumentViewMode: "document",
+      },
+    } as const;
+
+    const queuedJob = await enqueueProjectManagementAiJob({
+      repoRoot: repo.repoRoot,
+      payload: {
+        branch: "main",
+        commandId: "smart",
+        worktreePath: path.join(repo.repoRoot, "main"),
+        input: "draft the next steps",
+        renderedCommand: "printf %s 'waiting for worker'",
+        env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+        aiCommands: {
+          smart: "smart",
+          simple: "simple",
+          autoStartRuntime: false,
+        },
+        documentId: "doc-123",
+        origin,
+      },
+    });
+
+    assert.equal(queuedJob.status, "running");
+    assert.equal(queuedJob.processName, getAiCommandProcessName(queuedJob.jobId));
+    assert.equal(queuedJob.origin?.kind, "project-management-document-run");
+    assert.equal(queuedJob.documentId, "doc-123");
+
+    const reconciledJob = await getAiCommandJob(repo.repoRoot, "main");
+    assert.ok(reconciledJob);
+    assert.equal(reconciledJob.jobId, queuedJob.jobId);
+    assert.equal(reconciledJob.status, "running");
+    assert.equal(reconciledJob.processName, getAiCommandProcessName(queuedJob.jobId));
+    assert.equal(reconciledJob.pid, null);
+    assert.equal(reconciledJob.error ?? null, null);
+    assert.equal(reconciledJob.origin?.kind, "project-management-document-run");
+    assert.equal(reconciledJob.origin?.location.documentId, "doc-123");
+    assert.equal(reconciledJob.documentId, "doc-123");
+  } finally {
+    await stopAiCommandJobManager(rootDir).catch(() => undefined);
+    await stopOperationalStateStore(rootDir).catch(() => undefined);
     await fs.rm(rootDir, { recursive: true, force: true });
   }
 });

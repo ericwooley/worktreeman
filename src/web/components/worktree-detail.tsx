@@ -413,7 +413,7 @@ interface WorktreeDetailProps {
   projectManagementSaving: boolean;
   projectManagementAiLogs: AiCommandLogSummary[];
   projectManagementAiLogDetail: AiCommandLogEntry | null;
-  projectManagementSelectedAiLogFile: string | null;
+  projectManagementSelectedAiLogJobId: string | null;
   projectManagementAiLogsLoading: boolean;
   projectManagementAiLogsError: string | null;
   projectManagementAiLogsLastUpdatedAt: string | null;
@@ -430,7 +430,7 @@ interface WorktreeDetailProps {
   onLoadProjectManagementUsers: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onLoadProjectManagementAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
-  onLoadProjectManagementAiLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
+  onLoadProjectManagementAiLog: (jobId: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onProjectManagementAiSubTabChange: (tab: AiActivitySubTab) => void;
   onCreateProjectManagementDocument: (payload: {
     title: string;
@@ -555,7 +555,7 @@ export function WorktreeDetail({
   projectManagementSaving,
   projectManagementAiLogs,
   projectManagementAiLogDetail,
-  projectManagementSelectedAiLogFile,
+  projectManagementSelectedAiLogJobId,
   projectManagementAiLogsLoading,
   projectManagementAiLogsError,
   projectManagementAiLogsLastUpdatedAt,
@@ -2004,7 +2004,7 @@ export function WorktreeDetail({
                 activeSubTab={projectManagementAiActiveSubTab}
                 logs={projectManagementAiLogs}
                 logDetail={projectManagementAiLogDetail}
-                selectedLogFile={projectManagementSelectedAiLogFile}
+                selectedLogJobId={projectManagementSelectedAiLogJobId}
                 loading={projectManagementAiLogsLoading}
                 error={projectManagementAiLogsError}
                 lastUpdatedAt={projectManagementAiLogsLastUpdatedAt}

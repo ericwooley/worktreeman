@@ -9,7 +9,7 @@ import type {
 export const AI_COMMAND_LOG_SNAPSHOT_TIMEOUT_MS = 5000;
 
 type SubscribeToAiCommandLog = (
-  fileName: string,
+  jobId: string,
   onEvent: (event: AiCommandLogStreamEvent) => void,
 ) => () => void;
 
@@ -17,7 +17,7 @@ type SetTimeoutFn = (callback: () => void, timeoutMs: number) => number;
 type ClearTimeoutFn = (timeoutId: number) => void;
 
 type PendingLoad = {
-  fileName: string;
+  jobId: string;
   promise: Promise<AiCommandLogEntry | null>;
   reject: (reason?: unknown) => void;
   timeoutId: number;
@@ -47,7 +47,7 @@ export function createAiCommandLogStreamController({
   setTimeoutFn = (callback, timeoutMsValue) => window.setTimeout(callback, timeoutMsValue),
   clearTimeoutFn = (timeoutId) => window.clearTimeout(timeoutId),
 }: AiCommandLogStreamControllerOptions) {
-  let trackedFileName: string | null = null;
+  let trackedJobId: string | null = null;
   let unsubscribe: (() => void) | null = null;
   let pendingLoad: PendingLoad | null = null;
 
@@ -65,24 +65,24 @@ export function createAiCommandLogStreamController({
   const clear = (reason: unknown = new AiCommandLogLoadCancelledError()) => {
     unsubscribe?.();
     unsubscribe = null;
-    trackedFileName = null;
+    trackedJobId = null;
     clearPendingLoad(reason);
   };
 
-  const load = (fileName: string) => {
-    if (trackedFileName === fileName) {
+  const load = (jobId: string) => {
+    if (trackedJobId === jobId) {
       const currentDetail = getCurrentDetail();
-      if (currentDetail?.fileName === fileName) {
+      if (currentDetail?.jobId === jobId) {
         return Promise.resolve(currentDetail);
       }
 
-      if (pendingLoad?.fileName === fileName) {
+      if (pendingLoad?.jobId === jobId) {
         return pendingLoad.promise;
       }
     }
 
     clear();
-    trackedFileName = fileName;
+    trackedJobId = jobId;
 
     let resolvePendingLoad!: (value: AiCommandLogEntry | null) => void;
     let rejectPendingLoad!: (reason?: unknown) => void;
@@ -92,27 +92,27 @@ export function createAiCommandLogStreamController({
     });
 
     const timeoutId = setTimeoutFn(() => {
-      if (!pendingLoad || pendingLoad.fileName !== fileName) {
+      if (!pendingLoad || pendingLoad.jobId !== jobId) {
         return;
       }
 
       unsubscribe?.();
       unsubscribe = null;
-      trackedFileName = null;
-      clearPendingLoad(new Error(`Timed out waiting for the AI log stream for ${fileName}.`));
+      trackedJobId = null;
+      clearPendingLoad(new Error(`Timed out waiting for the AI log stream for ${jobId}.`));
     }, timeoutMs);
 
     pendingLoad = {
-      fileName,
+      jobId,
       reject: rejectPendingLoad,
       timeoutId,
       promise,
     };
 
-    unsubscribe = subscribe(fileName, (event) => {
+    unsubscribe = subscribe(jobId, (event) => {
       applyEvent(event);
 
-      if (!pendingLoad || pendingLoad.fileName !== fileName) {
+      if (!pendingLoad || pendingLoad.jobId !== jobId) {
         return;
       }
 
@@ -128,7 +128,7 @@ export function createAiCommandLogStreamController({
   return {
     clear,
     load,
-    getTrackedFileName: () => trackedFileName,
+    getTrackedJobId: () => trackedJobId,
   };
 }
 
@@ -168,7 +168,7 @@ export function useAiCommandLogStream({
     detailRef.current = log;
     setAiCommandLogDetail(log);
     setAiCommandLogs((current) => {
-      const next = current.filter((entry) => entry.fileName !== log.fileName);
+      const next = current.filter((entry) => entry.jobId !== log.jobId);
       if (log.status !== "running") {
         next.unshift(toSummary(log));
       }
@@ -176,7 +176,7 @@ export function useAiCommandLogStream({
     });
 
     setRunningAiCommandJobs((current) => {
-      const next = current.filter((entry) => entry.fileName !== log.fileName && entry.branch !== log.branch);
+      const next = current.filter((entry) => entry.jobId !== log.jobId);
       if (log.status === "running") {
         next.unshift({
           jobId: log.jobId,
@@ -227,13 +227,13 @@ export function useAiCommandLogStream({
     };
   }, []);
 
-  const loadAiCommandLog = useCallback(async (fileName: string, options?: { silent?: boolean }) => {
+  const loadAiCommandLog = useCallback(async (jobId: string, options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setAiCommandLogsLoading(true);
     }
 
     try {
-      const log = await controllerRef.current!.load(fileName);
+      const log = await controllerRef.current!.load(jobId);
       setAiCommandLogsError(null);
       setAiCommandLogsLastUpdatedAt(new Date().toISOString());
       setError(null);
@@ -257,12 +257,12 @@ export function useAiCommandLogStream({
     }
   }, [setAiCommandLogDetail, setAiCommandLogsError, setAiCommandLogsLastUpdatedAt, setAiCommandLogsLoading, setError]);
 
-  const getTrackedAiCommandLogFileName = useCallback(() => controllerRef.current?.getTrackedFileName() ?? null, []);
+  const getTrackedAiCommandLogJobId = useCallback(() => controllerRef.current?.getTrackedJobId() ?? null, []);
 
   return {
     applyAiLogStreamEvent,
     clearTrackedAiCommandLogSubscription,
-    getTrackedAiCommandLogFileName,
+    getTrackedAiCommandLogJobId,
     loadAiCommandLog,
   };
 }

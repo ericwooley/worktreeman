@@ -6,10 +6,10 @@ import {
   createAiCommandLogStreamController,
 } from "./useAiCommandLogStream";
 
-function createLog(fileName: string, timestamp = "2026-03-31T12:00:00.000Z"): AiCommandLogEntry {
+function createLog(jobId: string, timestamp = "2026-03-31T12:00:00.000Z"): AiCommandLogEntry {
   return {
-    jobId: `${fileName}-job`,
-    fileName,
+    jobId,
+    fileName: `${jobId}.json`,
     timestamp,
     branch: "feature-ai-log",
     documentId: null,
@@ -39,12 +39,12 @@ test("AI log stream controller reuses the same subscription while the initial sn
   let currentDetail: AiCommandLogEntry | null = null;
 
   const controller = createAiCommandLogStreamController({
-    subscribe(fileName, onEvent) {
+    subscribe(jobId, onEvent) {
       subscribeCalls += 1;
-      listeners.set(fileName, onEvent);
+      listeners.set(jobId, onEvent);
       return () => {
         unsubscribeCalls += 1;
-        listeners.delete(fileName);
+        listeners.delete(jobId);
       };
     },
     applyEvent(event) {
@@ -55,23 +55,23 @@ test("AI log stream controller reuses the same subscription while the initial sn
     clearTimeoutFn: () => undefined,
   });
 
-  const firstLoad = controller.load("log-1.json");
-  const secondLoad = controller.load("log-1.json");
+  const firstLoad = controller.load("job-1");
+  const secondLoad = controller.load("job-1");
 
   assert.equal(subscribeCalls, 1);
   assert.strictEqual(firstLoad, secondLoad);
 
-  listeners.get("log-1.json")?.({
+  listeners.get("job-1")?.({
     type: "snapshot",
-    log: createLog("log-1.json"),
+    log: createLog("job-1"),
   });
 
   const [firstResult, secondResult] = await Promise.all([firstLoad, secondLoad]);
-  assert.equal(firstResult?.fileName, "log-1.json");
-  assert.equal(secondResult?.fileName, "log-1.json");
+  assert.equal(firstResult?.jobId, "job-1");
+  assert.equal(secondResult?.jobId, "job-1");
 
-  const thirdResult = await controller.load("log-1.json");
-  assert.equal(thirdResult?.fileName, "log-1.json");
+  const thirdResult = await controller.load("job-1");
+  assert.equal(thirdResult?.jobId, "job-1");
   assert.equal(subscribeCalls, 1);
   assert.equal(unsubscribeCalls, 0);
 });
@@ -82,11 +82,11 @@ test("AI log stream controller cancels the previous pending load when switching 
   let currentDetail: AiCommandLogEntry | null = null;
 
   const controller = createAiCommandLogStreamController({
-    subscribe(fileName, onEvent) {
-      listeners.set(fileName, onEvent);
+    subscribe(jobId, onEvent) {
+      listeners.set(jobId, onEvent);
       return () => {
         unsubscribeCalls += 1;
-        listeners.delete(fileName);
+        listeners.delete(jobId);
       };
     },
     applyEvent(event) {
@@ -97,20 +97,20 @@ test("AI log stream controller cancels the previous pending load when switching 
     clearTimeoutFn: () => undefined,
   });
 
-  const firstLoad = controller.load("log-1.json");
-  const secondLoad = controller.load("log-2.json");
+  const firstLoad = controller.load("job-1");
+  const secondLoad = controller.load("job-2");
 
   await assert.rejects(firstLoad, AiCommandLogLoadCancelledError);
   assert.equal(unsubscribeCalls, 1);
 
-  listeners.get("log-2.json")?.({
+  listeners.get("job-2")?.({
     type: "snapshot",
-    log: createLog("log-2.json"),
+    log: createLog("job-2"),
   });
 
   const secondResult = await secondLoad;
-  assert.equal(secondResult?.fileName, "log-2.json");
-  assert.equal(controller.getTrackedFileName(), "log-2.json");
+  assert.equal(secondResult?.jobId, "job-2");
+  assert.equal(controller.getTrackedJobId(), "job-2");
 });
 
 test("AI log stream controller times out and clears the tracked file when the snapshot never arrives", async () => {
@@ -132,12 +132,12 @@ test("AI log stream controller times out and clears the tracked file when the sn
     clearTimeoutFn: () => undefined,
   });
 
-  const pendingLoad = controller.load("log-1.json");
+  const pendingLoad = controller.load("job-1");
   const triggerTimeout: () => void = timeoutCallback ?? (() => {
     throw new Error("Expected timeout callback to be registered.");
   });
   triggerTimeout();
 
   await assert.rejects(pendingLoad, /Timed out waiting for the AI log stream/);
-  assert.equal(controller.getTrackedFileName(), null);
+  assert.equal(controller.getTrackedJobId(), null);
 });

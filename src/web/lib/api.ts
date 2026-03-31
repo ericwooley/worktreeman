@@ -191,11 +191,11 @@ export function getAiCommandLogs(): Promise<AiCommandLogsResponse> {
 }
 
 export function subscribeToAiCommandLog(
-  fileName: string,
+  jobId: string,
   onEvent: (event: AiCommandLogStreamEvent) => void,
 ): () => void {
   let closed = false;
-  const source = new EventSource(`/api/ai/logs/${encodeURIComponent(fileName)}/stream`);
+  const source = new EventSource(`/api/ai/logs/${encodeURIComponent(jobId)}/stream`);
 
   source.onmessage = (event) => {
     onEvent(JSON.parse(event.data) as AiCommandLogStreamEvent);

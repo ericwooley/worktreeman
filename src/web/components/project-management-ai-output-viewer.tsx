@@ -27,7 +27,7 @@ export function getAiOutputEvents(job: AiCommandJob): AiCommandOutputEvent[] {
   const fallbackEvents: AiCommandOutputEvent[] = [];
   if (job.stdout) {
     fallbackEvents.push({
-      id: `${job.fileName}:stdout`,
+      id: `${job.jobId}:stdout`,
       source: "stdout",
       text: job.stdout,
       timestamp: job.startedAt,
@@ -36,7 +36,7 @@ export function getAiOutputEvents(job: AiCommandJob): AiCommandOutputEvent[] {
 
   if (job.stderr) {
     fallbackEvents.push({
-      id: `${job.fileName}:stderr`,
+      id: `${job.jobId}:stderr`,
       source: "stderr",
       text: job.stderr,
       timestamp: job.completedAt ?? job.startedAt,

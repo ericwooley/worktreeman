@@ -991,14 +991,14 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
   };
 }
 
-async function readAiCommandLogEntry(repoRoot: string, fileName: string): Promise<AiCommandLogEntry> {
+async function readAiCommandLogEntryByJobId(repoRoot: string, jobId: string): Promise<AiCommandLogEntry> {
   const store = await createOperationalStateStore(repoRoot);
-  const entry = await store.getAiCommandLogEntry(fileName);
+  const entry = await store.getAiCommandLogEntryByJobId(jobId);
   if (entry) {
     return entry;
   }
 
-  const error = new Error(`Unknown AI log ${fileName}`) as NodeJS.ErrnoException;
+  const error = new Error(`Unknown AI log ${jobId}`) as NodeJS.ErrnoException;
   error.code = "ENOENT";
   throw error;
 }
@@ -1020,7 +1020,7 @@ async function reconcileAiCommandLogEntry(options: {
     },
     reconcile: options.reconcileJobs ?? true,
   });
-  return await readAiCommandLogEntry(options.repoRoot, options.entry.fileName);
+  return await readAiCommandLogEntryByJobId(options.repoRoot, options.entry.jobId);
 }
 
 export function createApiRouter(options: ApiRouterOptions): express.Router {
@@ -1248,12 +1248,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     });
   };
 
-  const loadResolvedAiLog = async (fileName: string) => {
-    const entry = await readAiCommandLogEntry(options.repoRoot, fileName);
+  const loadResolvedAiLog = async (jobId: string) => {
+    const entry = await readAiCommandLogEntryByJobId(options.repoRoot, jobId);
     return reconcileAiCommandLogEntry({
       entry,
       repoRoot: options.repoRoot,
       aiProcesses,
+      reconcileJobs: shouldReconcileAiJobs,
     });
   };
 
@@ -1798,6 +1799,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           entry,
           repoRoot: options.repoRoot,
           aiProcesses,
+          reconcileJobs: shouldReconcileAiJobs,
         })),
       );
       const payload: AiCommandLogsResponse = {
@@ -1810,36 +1812,36 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     }
   });
 
-  router.get("/ai/logs/:fileName", async (req, res, next) => {
+  router.get("/ai/logs/:jobId", async (req, res, next) => {
     try {
-      const fileName = path.basename(decodeURIComponent(req.params.fileName));
-      if (!fileName.endsWith(".json")) {
-        res.status(400).json({ message: "AI log file must be a JSON file." });
+      const jobId = decodeURIComponent(req.params.jobId || "").trim();
+      if (!jobId) {
+        res.status(400).json({ message: "AI log job id is required." });
         return;
       }
 
-      const log = await loadResolvedAiLog(fileName);
+      const log = await loadResolvedAiLog(jobId);
       const response: AiCommandLogResponse = { log };
       res.json(response);
     } catch (error) {
       const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
       if (code === "ENOENT") {
-        res.status(404).json({ message: `Unknown AI log ${req.params.fileName}` });
+        res.status(404).json({ message: `Unknown AI log ${req.params.jobId}` });
         return;
       }
       next(error);
     }
   });
 
-  router.get("/ai/logs/:fileName/stream", async (req, res, next) => {
+  router.get("/ai/logs/:jobId/stream", async (req, res, next) => {
     try {
-      const fileName = path.basename(decodeURIComponent(req.params.fileName));
-      if (!fileName.endsWith(".json")) {
-        res.status(400).json({ message: "AI log file must be a JSON file." });
+      const jobId = decodeURIComponent(req.params.jobId || "").trim();
+      if (!jobId) {
+        res.status(400).json({ message: "AI log job id is required." });
         return;
       }
 
-      let currentLog = await readAiCommandLogEntry(options.repoRoot, fileName);
+      let currentLog = await readAiCommandLogEntryByJobId(options.repoRoot, jobId);
       let lastPayload = JSON.stringify(currentLog);
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -1854,13 +1856,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       writeEvent("snapshot", currentLog);
       const unsubscribe = await options.operationalState.subscribeToAiCommandLogNotifications((notification) => {
-        if (notification.fileName !== fileName) {
+        if (notification.jobId !== jobId) {
           return;
         }
 
         void runBackgroundTask(async () => {
           try {
-            currentLog = await readAiCommandLogEntry(options.repoRoot, fileName);
+            currentLog = await readAiCommandLogEntryByJobId(options.repoRoot, jobId);
             const nextPayload = JSON.stringify(currentLog);
             if (nextPayload !== lastPayload) {
               lastPayload = nextPayload;
@@ -1880,7 +1882,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           }
         }, (error) => {
           logServerEvent("ai-log-stream", "listen-failed", {
-            fileName,
+            jobId,
             error: error instanceof Error ? error.message : String(error),
           }, "error");
         });
@@ -1898,7 +1900,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     } catch (error) {
       const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
       if (code === "ENOENT") {
-        res.status(404).json({ message: `Unknown AI log ${req.params.fileName}` });
+        res.status(404).json({ message: `Unknown AI log ${req.params.jobId}` });
         return;
       }
       next(error);
@@ -2962,6 +2964,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           entry,
           repoRoot: options.repoRoot,
           aiProcesses,
+          reconcileJobs: shouldReconcileAiJobs,
         })),
       )).find((entry) => entry.branch === req.params.branch && isAiCommandLogActivelyRunning(entry)) ?? null;
 
@@ -3054,7 +3057,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
                 }
 
                 if (persistedLog) {
-                  const nextLog = await loadResolvedAiLog(persistedLog.fileName);
+                  const nextLog = await loadResolvedAiLog(persistedLog.jobId);
                   resolve(toRunningAiCommandJob(nextLog));
                   return;
                 }
@@ -3075,7 +3078,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const finalJob = failedJob ?? settledJob;
       try {
-        const resolvedLog = await readAiCommandLogEntry(options.repoRoot, finalJob.fileName);
+        const resolvedLog = await readAiCommandLogEntryByJobId(options.repoRoot, finalJob.jobId);
         const hasCancellationEvent = resolvedLog.response.events?.some(
           (event) => event.source === "stderr" && /Cancellation requested by the user/.test(event.text),
         ) ?? false;

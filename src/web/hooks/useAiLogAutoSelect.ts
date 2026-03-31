@@ -2,33 +2,33 @@ import { useEffect, useRef } from "react";
 
 type UseAiLogAutoSelectOptions = {
   loading: boolean;
-  selectedFileName: string | null;
-  primaryCandidateFileName: string | null;
-  onSelectLog: (fileName: string, options?: { silent?: boolean }) => Promise<unknown>;
+  selectedJobId: string | null;
+  primaryCandidateJobId: string | null;
+  onSelectLog: (jobId: string, options?: { silent?: boolean }) => Promise<unknown>;
 };
 
 type ShouldAutoSelectAiLogOptions = {
   loading: boolean;
-  selectedFileName: string | null;
-  primaryCandidateFileName: string | null;
-  lastAutoSelectedFileName: string | null;
+  selectedJobId: string | null;
+  primaryCandidateJobId: string | null;
+  lastAutoSelectedJobId: string | null;
 };
 
 export function shouldAutoSelectAiLog({
   loading,
-  selectedFileName,
-  primaryCandidateFileName,
-  lastAutoSelectedFileName,
+  selectedJobId,
+  primaryCandidateJobId,
+  lastAutoSelectedJobId,
 }: ShouldAutoSelectAiLogOptions) {
-  if (loading || !primaryCandidateFileName) {
+  if (loading || !primaryCandidateJobId) {
     return false;
   }
 
-  if (selectedFileName) {
+  if (selectedJobId) {
     return false;
   }
 
-  if (lastAutoSelectedFileName === primaryCandidateFileName) {
+  if (lastAutoSelectedJobId === primaryCandidateJobId) {
     return false;
   }
 
@@ -37,30 +37,30 @@ export function shouldAutoSelectAiLog({
 
 export function useAiLogAutoSelect({
   loading,
-  selectedFileName,
-  primaryCandidateFileName,
+  selectedJobId,
+  primaryCandidateJobId,
   onSelectLog,
 }: UseAiLogAutoSelectOptions) {
-  const autoSelectedFileRef = useRef<string | null>(null);
+  const autoSelectedJobRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (selectedFileName) {
-      autoSelectedFileRef.current = selectedFileName;
+    if (selectedJobId) {
+      autoSelectedJobRef.current = selectedJobId;
     }
-  }, [selectedFileName]);
+  }, [selectedJobId]);
 
   useEffect(() => {
-    const nextFileName = primaryCandidateFileName;
-    if (!nextFileName || !shouldAutoSelectAiLog({
+    const nextJobId = primaryCandidateJobId;
+    if (!nextJobId || !shouldAutoSelectAiLog({
       loading,
-      selectedFileName,
-      primaryCandidateFileName: nextFileName,
-      lastAutoSelectedFileName: autoSelectedFileRef.current,
+      selectedJobId,
+      primaryCandidateJobId: nextJobId,
+      lastAutoSelectedJobId: autoSelectedJobRef.current,
     })) {
       return;
     }
 
-    autoSelectedFileRef.current = nextFileName;
-    void onSelectLog(nextFileName, { silent: true });
-  }, [loading, onSelectLog, primaryCandidateFileName, selectedFileName]);
+    autoSelectedJobRef.current = nextJobId;
+    void onSelectLog(nextJobId, { silent: true });
+  }, [loading, onSelectLog, primaryCandidateJobId, selectedJobId]);
 }

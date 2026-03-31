@@ -18,7 +18,7 @@ import { findRepoContext, findWorktreePathForRef } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
-import { startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
+import { getAiCommandJob, startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
 import { startProjectManagementAiWorker, stopAiCommandJobManager, stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { startServer } from "../app.js";
@@ -1093,11 +1093,11 @@ test("AI command runs persist durable log entries without config-worktree file l
     const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
-      logs: Array<{ fileName: string; branch: string }>;
+      logs: Array<{ jobId: string; fileName: string; branch: string }>;
     };
     assert.equal(logsPayload.logs.length > 0, true);
 
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].jobId)}`);
     assert.equal(detailResponse.status, 200);
     const detailPayload = await detailResponse.json() as {
       log: {
@@ -1768,6 +1768,7 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
       logs: Array<{
+        jobId: string;
         fileName: string;
         branch: string;
         status: string;
@@ -1787,7 +1788,7 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
     assert.equal(conflictLog.origin?.location.branch, "feature-ai-resolve-merge");
     assert.equal(conflictLog.origin?.location.gitBaseBranch, "main");
 
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(conflictLog.fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(conflictLog.jobId)}`);
     assert.equal(detailResponse.status, 200);
     const detailPayload = await detailResponse.json() as {
       log: {
@@ -2290,6 +2291,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
         origin?: AiCommandOrigin | null;
       }>;
       runningJobs: Array<{
+        jobId: string;
         fileName: string;
         branch: string;
         status: string;
@@ -2303,14 +2305,15 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(listPayload.runningJobs[0].fileName, "running-log.json");
     assert.equal(listPayload.runningJobs[0].branch, "feature-ai-log");
     assert.equal(listPayload.runningJobs[0].status, "running");
-    assert.equal(listPayload.runningJobs[0].pid, 7331);
+    assert.equal(listPayload.runningJobs[0].pid ?? null, null);
     assert.deepEqual(listPayload.runningJobs[0].origin, origin);
 
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(listPayload.runningJobs[0].fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(listPayload.runningJobs[0].jobId)}`);
     assert.equal(detailResponse.status, 200);
 
     const detailPayload = await detailResponse.json() as {
       log: {
+        jobId: string;
         fileName: string;
         branch: string;
         status: string;
@@ -2325,21 +2328,16 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
       };
     };
 
+    assert.equal(detailPayload.log.jobId, listPayload.runningJobs[0].jobId);
     assert.equal(detailPayload.log.fileName, listPayload.runningJobs[0].fileName);
     assert.equal(detailPayload.log.branch, "feature-ai-log");
     assert.equal(detailPayload.log.status, "running");
-    assert.equal(detailPayload.log.pid, 7331);
+    assert.equal(detailPayload.log.pid ?? null, null);
     assert.deepEqual(detailPayload.log.origin, origin);
     assert.equal(detailPayload.log.request, "summarize the work");
-    assert.equal(detailPayload.log.response.stdout, "live stdout\n");
-    assert.equal(detailPayload.log.response.stderr, "live stderr\n");
-    assert.deepEqual(
-      detailPayload.log.response.events?.map((event) => ({ source: event.source, text: event.text })),
-      [
-        { source: "stdout", text: "live stdout\n" },
-        { source: "stderr", text: "live stderr\n" },
-      ],
-    );
+    assert.equal(detailPayload.log.response.stdout, "");
+    assert.equal(detailPayload.log.response.stderr, "");
+    assert.deepEqual(detailPayload.log.response.events ?? [], []);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -2381,7 +2379,7 @@ test("AI log detail stream replays persisted logs and follows durable updates", 
   const server = await startApiServer(repo);
 
   try {
-    const sse = await openSse(`${await server.url()}/api/ai/logs/${encodeURIComponent("stream-log.json")}/stream`);
+    const sse = await openSse(`${await server.url()}/api/ai/logs/${encodeURIComponent("job-stream-log.json")}/stream`);
 
     async function waitForMatchingLogUpdate(predicate: (log: {
       status: string;
@@ -2907,10 +2905,10 @@ test("project-management AI document updates ignore stderr while logs retain it"
     const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
-      logs: Array<{ fileName: string }>;
+      logs: Array<{ jobId: string; fileName: string }>;
     };
 
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(logsPayload.logs[0].jobId)}`);
     assert.equal(detailResponse.status, 200);
     const detailPayload = await detailResponse.json() as {
       log: {
@@ -2936,15 +2934,18 @@ test("project-management AI document updates ignore stderr while logs retain it"
 
 test("project-management AI document update failures settle the job without taking down the server", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
-  const fakeAiProcesses = createFakeAiProcesses();
-  fakeAiProcesses.queueStartScript([
-    { status: "online", pid: 5014, stdout: "", stderr: "" },
-    { status: "stopped", pid: 5014, stdout: "", stderr: "", exitCode: 0 },
-  ]);
-  const server = await startApiServer(repo, {
-    aiProcesses: fakeAiProcesses.aiProcesses,
-    aiProcessPollIntervalMs: 10,
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
   });
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "node -e \"\" $WTM_AI_INPUT",
+    simple: "node -e \"\" $WTM_AI_INPUT",
+    autoStartRuntime: false,
+  });
+  await fs.writeFile(repo.configPath, nextContents, "utf8");
+  const server = await startApiServer(repo, { aiProcessPollIntervalMs: 10 });
 
   try {
     const documentsResponse = await server.fetch(`/api/project-management/documents`);
@@ -2969,6 +2970,7 @@ test("project-management AI document update failures settle the job without taki
 
     const runPayload = await runResponse.json() as {
       job: {
+        jobId: string;
         fileName: string;
         status: string;
       };
@@ -2976,18 +2978,26 @@ test("project-management AI document update failures settle the job without taki
     assert.equal(runPayload.job.status, "running");
 
     await waitFor(async () => {
-      const logsResponse = await server.fetch(`/api/ai/logs`);
-      const logsPayload = await logsResponse.json() as {
-        runningJobs: Array<unknown>;
-        logs: Array<{ fileName: string; status: string }>;
+      const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(runPayload.job.jobId)}`);
+      if (detailResponse.status !== 200) {
+        return false;
+      }
+
+      const detailPayload = await detailResponse.json() as {
+        log: {
+          status: string;
+          error: { message: string } | null;
+        };
       };
-      return logsPayload.runningJobs.length === 0 && logsPayload.logs.some((entry) => entry.fileName === runPayload.job.fileName && entry.status === "failed");
+
+      return detailPayload.log.status === "failed"
+        && detailPayload.log.error?.message === "AI command finished without returning updated markdown.";
     });
 
     const unchanged = await getProjectManagementDocument(repo.repoRoot, outline.id);
     assert.equal(unchanged.document.markdown, original.document.markdown);
 
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(runPayload.job.fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(runPayload.job.jobId)}`);
     assert.equal(detailResponse.status, 200);
     const detailPayload = await detailResponse.json() as {
       log: {
@@ -3987,12 +3997,12 @@ test("AI cancel route deletes the running process and returns the settled failed
     const logsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(logsResponse.status, 200);
     const logsPayload = await logsResponse.json() as {
-      logs: Array<{ fileName: string; branch: string }>;
+      logs: Array<{ jobId: string; fileName: string; branch: string }>;
     };
     const canceledLog = logsPayload.logs.find((entry) => entry.branch === "feature-ai-cancel");
     assert.ok(canceledLog);
 
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(canceledLog.fileName)}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(canceledLog.jobId)}`);
     assert.equal(detailResponse.status, 200);
     const detailPayload = await detailResponse.json() as {
       log: {
@@ -4012,7 +4022,7 @@ test("AI cancel route deletes the running process and returns the settled failed
   }
 });
 
-test("AI cancel route returns 409 when the running job has no process name", { concurrency: false }, async () => {
+test("AI cancel route can cancel a running job before the process spawns", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
     path: repo.configPath,
@@ -4036,10 +4046,26 @@ test("AI cancel route returns 409 when the running job has no process name", { c
     const cancelResponse = await server.fetch(`/api/worktrees/feature-ai-no-process/ai-command/cancel`, {
       method: "POST",
     });
-    assert.equal(cancelResponse.status, 409);
+    assert.equal(cancelResponse.status, 200);
 
-    const payload = await cancelResponse.json() as { message: string };
-    assert.equal(payload.message, "Running AI command for feature-ai-no-process cannot be cancelled yet.");
+    const payload = await cancelResponse.json() as {
+      job: {
+        status: string;
+        processName?: string | null;
+        pid?: number | null;
+        error?: string | null;
+      };
+    };
+    assert.equal(payload.job.status, "failed");
+    assert.equal(payload.job.processName?.startsWith("wtm:ai:"), true);
+    assert.equal(payload.job.pid ?? null, null);
+    assert.match(payload.job.error ?? "", /Cancellation requested by the user/);
+
+    const runningJob = await getAiCommandJob(repo.repoRoot, "feature-ai-no-process", { reconcile: false });
+    assert.ok(runningJob);
+    assert.equal(runningJob.processName?.startsWith("wtm:ai:"), true);
+    assert.equal(runningJob.pid ?? null, null);
+    assert.equal(runningJob.status, "failed");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

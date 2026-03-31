@@ -18,6 +18,7 @@ import {
   ProjectManagementPanel,
 } from "./project-management-panel";
 import { getAiOutputEvents } from "./project-management-ai-output-viewer";
+import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
   {
@@ -578,7 +579,7 @@ test("document worktree run in the selected branch shows running state and contr
   assert.match(markup, /Start Worktree AI \(running\)/);
   assert.match(markup, /Document worktree AI run in progress/);
   assert.match(markup, /Cancel worktree AI/);
-  assert.match(markup, /Streaming mixed stdout and stderr from pm-doc-1-dependencies while the worktree run is active\./);
+  assert.match(markup, /Streaming the combined AI log from pm-doc-1-dependencies while the worktree run is active\./);
 });
 
 test("getProjectManagementDocumentRunDefaults prefers continuing the selected linked worktree", () => {
@@ -630,12 +631,65 @@ test("running document edit view shows ordered mixed AI output in the editor are
 
   assert.match(markup, /Document editing locked while AI updates the saved document/);
   assert.match(markup, /Document AI is working/);
-  assert.match(markup, /Streaming mixed stdout and stderr while the saved document updates in pm-doc-1-dependencies\./);
+  assert.match(markup, /Streaming the combined AI log while the saved document updates in pm-doc-1-dependencies\./);
   assert.match(markup, />stdout</);
   assert.match(markup, />stderr</);
   assert.match(markup, /Planning edits/);
   assert.match(markup, /Warning: lint still running/);
   assert.match(markup, /Cancel AI/);
+});
+
+test("AI stream viewer prefers persisted log output over an empty fallback job", () => {
+  const fallbackJob = createAiJob({
+    status: "failed",
+    stdout: "",
+    stderr: "",
+    outputEvents: [],
+  });
+  const markup = renderToStaticMarkup(
+    <ProjectManagementAiStreamViewer
+      source="worktree"
+      jobId={fallbackJob.jobId}
+      summary="Captured output from pm-doc-1-dependencies."
+      fallbackJob={fallbackJob}
+      initialLogDetail={{
+        jobId: fallbackJob.jobId,
+        fileName: fallbackJob.fileName,
+        timestamp: fallbackJob.startedAt,
+        completedAt: "2026-03-26T10:05:10.000Z",
+        branch: fallbackJob.branch,
+        documentId: fallbackJob.documentId ?? null,
+        commandId: fallbackJob.commandId,
+        worktreePath: "/repo/.worktrees/pm-doc-1-dependencies",
+        command: fallbackJob.command,
+        request: fallbackJob.input,
+        response: {
+          stdout: "",
+          stderr: "AI process exited with code 1.",
+          events: [
+            {
+              id: "event-1",
+              source: "stderr",
+              text: "AI process exited with code 1.",
+              timestamp: "2026-03-26T10:05:10.000Z",
+            },
+          ],
+        },
+        status: "failed",
+        pid: 7331,
+        exitCode: 1,
+        processName: "wtm:ai:job-1",
+        error: { message: "AI process exited with code 1." },
+        origin: null,
+      }}
+      onCancel={() => undefined}
+    />,
+  );
+
+  assert.match(markup, /Worktree AI output/);
+  assert.match(markup, /AI process exited with code 1\./);
+  assert.match(markup, />stderr</);
+  assert.doesNotMatch(markup, /Waiting for live output\.\.\./);
 });
 
 test("getAiOutputEvents preserves ordered output events and falls back to stdout stderr blocks", () => {
@@ -665,13 +719,13 @@ test("getAiOutputEvents preserves ordered output events and falls back to stdout
   }));
   assert.deepEqual(fallbackEvents, [
     {
-      id: "job-1.log:stdout",
+      id: "job-1:stdout",
       source: "stdout",
       text: "Only stdout",
       timestamp: "2026-03-26T10:00:00.000Z",
     },
     {
-      id: "job-1.log:stderr",
+      id: "job-1:stderr",
       source: "stderr",
       text: "Only stderr",
       timestamp: "2026-03-26T10:00:03.000Z",

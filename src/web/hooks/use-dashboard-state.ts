@@ -268,7 +268,7 @@ export function useDashboardState() {
   const {
     applyAiLogStreamEvent,
     clearTrackedAiCommandLogSubscription,
-    getTrackedAiCommandLogFileName,
+    getTrackedAiCommandLogJobId,
     loadAiCommandLog,
   } = useAiCommandLogStream({
     subscribe: subscribeToAiCommandLog,
@@ -747,10 +747,10 @@ export function useDashboardState() {
           const payload = await fetchAiCommandLogs();
           setAiCommandLogs(payload.logs);
           setRunningAiCommandJobs(payload.runningJobs);
-          const trackedAiCommandLogFileName = getTrackedAiCommandLogFileName();
-          if (trackedAiCommandLogFileName) {
-            const selectedStillExists = payload.logs.some((entry) => entry.fileName === trackedAiCommandLogFileName)
-              || payload.runningJobs.some((entry) => entry.fileName === trackedAiCommandLogFileName);
+          const trackedAiCommandLogJobId = getTrackedAiCommandLogJobId();
+          if (trackedAiCommandLogJobId) {
+            const selectedStillExists = payload.logs.some((entry) => entry.jobId === trackedAiCommandLogJobId)
+              || payload.runningJobs.some((entry) => entry.jobId === trackedAiCommandLogJobId);
             if (!selectedStillExists) {
               clearTrackedAiCommandLogSubscription();
               setAiCommandLogDetail(null);
@@ -1018,7 +1018,7 @@ export function useDashboardState() {
         }
       },
     }),
-    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogFileName, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, refresh, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, refresh, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {

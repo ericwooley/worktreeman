@@ -5,7 +5,7 @@ import { ProjectManagementAiLogTab } from "./project-management-ai-log-tab";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { CardLoadingBadge } from "./loading";
-import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
+import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 
 export type AiActivitySubTab = "log" | "active-worktrees";
 
@@ -48,13 +48,13 @@ interface ProjectManagementAiTabProps {
   activeSubTab: AiActivitySubTab;
   logs: AiCommandLogSummary[];
   logDetail: AiCommandLogEntry | null;
-  selectedLogFile?: string | null;
+  selectedLogJobId?: string | null;
   loading: boolean;
   error?: string | null;
   lastUpdatedAt?: string | null;
   runningJobs: AiCommandJob[];
   onSubTabChange: (tab: AiActivitySubTab) => void;
-  onSelectLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
+  onSelectLog: (jobId: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCancelJob: (branch: string) => Promise<AiCommandJob | null>;
   onOpenOrigin: (origin: AiCommandOrigin) => void | Promise<void>;
   onRetry?: () => void | Promise<void>;
@@ -64,7 +64,7 @@ export function ProjectManagementAiTab({
   activeSubTab,
   logs,
   logDetail,
-  selectedLogFile = null,
+  selectedLogJobId = null,
   loading,
   error = null,
   lastUpdatedAt = null,
@@ -202,10 +202,11 @@ export function ProjectManagementAiTab({
             <div className="border theme-border-subtle p-4">
               {selectedRunningJob ? (
                 <div className="space-y-4">
-                  <ProjectManagementAiOutputViewer
+                  <ProjectManagementAiStreamViewer
                     source="worktree"
-                    job={selectedRunningJob}
+                    jobId={selectedRunningJob.jobId}
                     summary={`AI has been running in ${selectedRunningJob.branch} for ${formatRuntimeDuration(selectedRunningJob.startedAt, now)}.`}
+                    fallbackJob={selectedRunningJob}
                     expanded
                     onCancel={() => void onCancelJob(selectedRunningJob.branch)}
                   />
@@ -255,7 +256,7 @@ export function ProjectManagementAiTab({
           <ProjectManagementAiLogTab
             logs={logs}
             logDetail={logDetail}
-            selectedFileName={selectedLogFile}
+            selectedJobId={selectedLogJobId}
             loading={loading}
             error={error}
             lastUpdatedAt={lastUpdatedAt}

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AiCommandId, AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
 import { createOperationalStateStore } from "./operational-state-service.js";
 import {
+  getAiCommandProcessName,
   getAiCommandProcess,
   isAiCommandProcessActive,
   readAiCommandProcessLogs,
@@ -89,8 +90,9 @@ function createAiCommandJobRecord(options: {
   worktreePath: string;
 }): AiCommandJob {
   const startedAt = new Date().toISOString();
+  const jobId = randomUUID();
   return {
-    jobId: randomUUID(),
+    jobId,
     fileName: buildAiCommandLogFileName(options.branch, new Date(startedAt)),
     branch: options.branch,
     documentId: options.documentId ?? null,
@@ -105,9 +107,18 @@ function createAiCommandJobRecord(options: {
     outputEvents: [],
     pid: null,
     exitCode: null,
-    processName: null,
+    processName: getAiCommandProcessName(jobId),
     worktreePath: options.worktreePath,
   };
+}
+
+function hasObservedAiCommandProcess(job: AiCommandJob): boolean {
+  return job.pid != null
+    || job.exitCode != null
+    || typeof job.completedAt === "string"
+    || Boolean(job.stdout)
+    || Boolean(job.stderr)
+    || (job.outputEvents?.length ?? 0) > 0;
 }
 
 function createOutputEvent(
@@ -161,6 +172,8 @@ async function reconcileAiCommandJob(
     return cloneAiCommandJob(job);
   }
 
+  let currentJob = cloneAiCommandJob(job)!;
+
   const store = await createOperationalStateStore(repoRoot);
   const persistJob = async (nextJob: AiCommandJob) => {
     await store.setAiCommandJob(nextJob);
@@ -168,51 +181,50 @@ async function reconcileAiCommandJob(
     await store.syncAiCommandOutputEvents(nextJob.jobId, nextJob.fileName, nextJob.branch, nextJob.outputEvents);
   };
 
-  if (!job.processName) {
-    const startedAtMs = Date.parse(job.startedAt);
-    if (Number.isFinite(startedAtMs) && Date.now() - startedAtMs < AI_COMMAND_PROCESS_METADATA_GRACE_MS) {
-      return cloneAiCommandJob(job);
-    }
-
-    const error = "AI process metadata was missing while the job was still marked running.";
-    const failedJob: AiCommandJob = {
-      ...job,
-      status: "failed",
-      completedAt: job.completedAt ?? new Date().toISOString(),
-      stderr: `${job.stderr}${error}`,
-      outputEvents: appendOutputEvent(job.jobId, job.outputEvents, "stderr", error),
-      error,
+  if (!currentJob.processName) {
+    const nextJob: AiCommandJob = {
+      ...currentJob,
+      processName: getAiCommandProcessName(currentJob.jobId),
     };
-    await persistJob(failedJob);
-    return cloneAiCommandJob(failedJob);
+    currentJob = nextJob;
+    await persistJob(nextJob);
   }
 
-  const processInfo = await aiProcesses.getProcess(job.processName);
+  const processName = currentJob.processName;
+  if (!processName) {
+    return cloneAiCommandJob(currentJob);
+  }
+
+  const processInfo = await aiProcesses.getProcess(processName);
+  if (!processInfo && !hasObservedAiCommandProcess(currentJob)) {
+    return cloneAiCommandJob(currentJob);
+  }
+
   if (processInfo && aiProcesses.isProcessActive(processInfo.status)) {
     const logs = await aiProcesses.readProcessLogs(processInfo);
-    const stdoutDelta = resolveAppendedChunk(job.stdout, logs.stdout);
-    const stderrDelta = resolveAppendedChunk(job.stderr, logs.stderr);
-    const nextPid = processInfo.pid ?? job.pid ?? null;
+    const stdoutDelta = resolveAppendedChunk(currentJob.stdout, logs.stdout);
+    const stderrDelta = resolveAppendedChunk(currentJob.stderr, logs.stderr);
+    const nextPid = processInfo.pid ?? currentJob.pid ?? null;
     const nextJob: AiCommandJob = {
-      ...job,
+      ...currentJob,
       stdout: logs.stdout,
       stderr: logs.stderr,
       pid: nextPid,
       outputEvents: appendOutputEvent(
-        job.jobId,
-        appendOutputEvent(job.jobId, job.outputEvents, "stdout", stdoutDelta),
+        currentJob.jobId,
+        appendOutputEvent(currentJob.jobId, currentJob.outputEvents, "stdout", stdoutDelta),
         "stderr",
         stderrDelta,
       ),
     };
 
-    const hasChanged = nextJob.stdout !== job.stdout
-      || nextJob.stderr !== job.stderr
-      || nextJob.pid !== (job.pid ?? null)
-      || (nextJob.outputEvents?.length ?? 0) !== (job.outputEvents?.length ?? 0);
+    const hasChanged = nextJob.stdout !== currentJob.stdout
+      || nextJob.stderr !== currentJob.stderr
+      || nextJob.pid !== (currentJob.pid ?? null)
+      || (nextJob.outputEvents?.length ?? 0) !== (currentJob.outputEvents?.length ?? 0);
 
     if (!hasChanged) {
-      return cloneAiCommandJob(job);
+      return cloneAiCommandJob(currentJob);
     }
 
     await persistJob(nextJob);
@@ -220,32 +232,32 @@ async function reconcileAiCommandJob(
   }
 
   const logs = await aiProcesses.readProcessLogs(processInfo);
-  const resolvedExitCode = processInfo?.exitCode ?? job.exitCode ?? null;
-  const completedAt = job.completedAt ?? new Date().toISOString();
+  const resolvedExitCode = processInfo?.exitCode ?? currentJob.exitCode ?? null;
+  const completedAt = currentJob.completedAt ?? new Date().toISOString();
   const baseJob: AiCommandJob = {
-    ...job,
+    ...currentJob,
     completedAt,
-    stdout: logs.stdout || job.stdout,
-    stderr: logs.stderr || job.stderr,
-    pid: processInfo?.pid ?? job.pid ?? null,
+    stdout: logs.stdout || currentJob.stdout,
+    stderr: logs.stderr || currentJob.stderr,
+    pid: processInfo?.pid ?? currentJob.pid ?? null,
     exitCode: resolvedExitCode,
     outputEvents: appendOutputEvent(
-      job.jobId,
+      currentJob.jobId,
       appendOutputEvent(
-        job.jobId,
-        job.outputEvents,
+        currentJob.jobId,
+        currentJob.outputEvents,
         "stdout",
-        resolveAppendedChunk(job.stdout, logs.stdout || job.stdout),
+        resolveAppendedChunk(currentJob.stdout, logs.stdout || currentJob.stdout),
       ),
       "stderr",
-      resolveAppendedChunk(job.stderr, logs.stderr || job.stderr),
+      resolveAppendedChunk(currentJob.stderr, logs.stderr || currentJob.stderr),
     ),
   };
 
   if (resolvedExitCode === 0) {
     const nextJob: AiCommandJob = {
       ...baseJob,
-      status: "running",
+      status: "completed",
       error: null,
     };
     await persistJob(nextJob);
@@ -255,18 +267,18 @@ async function reconcileAiCommandJob(
   const settledJob: AiCommandJob = {
         ...baseJob,
         status: "failed",
-        stderr: `${baseJob.stderr}${job.error ?? (processInfo
+        stderr: `${baseJob.stderr}${currentJob.error ?? (processInfo
           ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
           : "AI process was no longer available. The server may have restarted or the process may have crashed.")}`,
         outputEvents: appendOutputEvent(
-          job.jobId,
+          currentJob.jobId,
           baseJob.outputEvents,
           "stderr",
-          job.error ?? (processInfo
+          currentJob.error ?? (processInfo
             ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
             : "AI process was no longer available. The server may have restarted or the process may have crashed."),
         ),
-        error: job.error ?? (processInfo
+        error: currentJob.error ?? (processInfo
           ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
           : "AI process was no longer available. The server may have restarted or the process may have crashed."),
       };

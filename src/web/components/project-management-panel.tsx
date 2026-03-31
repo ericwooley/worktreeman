@@ -34,7 +34,7 @@ import { MatrixBadge, MatrixModal, MatrixSkeletonCard, MatrixSpinner, MatrixTabs
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
-import { getAiOutputEvents, ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
+import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 
 const ProjectManagementBoardTab = lazy(async () => {
   const module = await import("./project-management-board-tab");
@@ -1277,10 +1277,11 @@ export function ProjectManagementPanel({
 
                 {inlineSelectedAiOutput ? (
                   <div className="mt-3">
-                    <ProjectManagementAiOutputViewer
+                    <ProjectManagementAiStreamViewer
                       source={inlineSelectedAiOutput.source}
-                      job={inlineSelectedAiOutput.job}
+                      jobId={inlineSelectedAiOutput.job.jobId}
                       summary={inlineSelectedAiOutput.summary}
+                      fallbackJob={inlineSelectedAiOutput.job}
                       onCancel={() => void handleCancelSelectedDocumentAiOutput()}
                       onOpenModal={() => setAiOutputModalOpen(true)}
                     />
@@ -1314,13 +1315,14 @@ export function ProjectManagementPanel({
                       onSubmit={handleSaveDocument}
                       onEditingStateChange={setIsEditing}
                        editorBlockedState={aiRunning && selectedDocumentAiOutput?.source === "document" ? (
-                         <ProjectManagementAiOutputViewer
-                           source="document"
-                           job={selectedDocumentAiOutput.job}
-                           summary={selectedDocumentAiOutput.summary}
-                           expanded
-                           onCancel={() => void onCancelAiCommand()}
-                         />
+                          <ProjectManagementAiStreamViewer
+                            source="document"
+                            jobId={selectedDocumentAiOutput.job.jobId}
+                            summary={selectedDocumentAiOutput.summary}
+                            fallbackJob={selectedDocumentAiOutput.job}
+                            expanded
+                            onCancel={() => void onCancelAiCommand()}
+                          />
                        ) : undefined}
                      />
                    </div>
@@ -1839,10 +1841,11 @@ export function ProjectManagementPanel({
           maxWidthClass="max-w-6xl"
           onClose={() => setAiOutputModalOpen(false)}
         >
-          <ProjectManagementAiOutputViewer
+          <ProjectManagementAiStreamViewer
             source={selectedDocumentAiOutput.source}
-            job={selectedDocumentAiOutput.job}
+            jobId={selectedDocumentAiOutput.job.jobId}
             summary={selectedDocumentAiOutput.summary}
+            fallbackJob={selectedDocumentAiOutput.job}
             expanded
             onCancel={() => void handleCancelSelectedDocumentAiOutput()}
           />

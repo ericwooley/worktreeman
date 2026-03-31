@@ -771,7 +771,7 @@ export class OperationalStateStore {
     }
   }
 
-  async getAiCommandLogEntry(fileName: string): Promise<AiCommandLogEntry | null> {
+  async getAiCommandLogEntryByJobId(jobId: string): Promise<AiCommandLogEntry | null> {
     const managed = await ensureManagedStore(this.repoRoot);
     const result = await managed.db.query<AiCommandLogRow>(
       `
@@ -795,9 +795,9 @@ export class OperationalStateStore {
           completed_at,
           error_json
         from ai_run_logs
-        where file_name = $1
+        where job_id = $1
       `,
-      [fileName],
+      [jobId],
     );
     const row = result.rows[0];
     if (!row) {

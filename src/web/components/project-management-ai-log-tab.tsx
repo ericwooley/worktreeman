@@ -11,6 +11,7 @@ import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSp
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
 import { useAiLogAutoSelect } from "../hooks/useAiLogAutoSelect";
+import { toAiCommandJobFromLog } from "../lib/ai-command-log";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
 
@@ -120,7 +121,7 @@ function getOutputEvents(logDetail: AiCommandLogEntry): AiCommandOutputEvent[] {
   const fallbackEvents: AiCommandOutputEvent[] = [];
   if (logDetail.response.stdout) {
     fallbackEvents.push({
-      id: `${logDetail.fileName}:stdout`,
+      id: `${logDetail.jobId}:stdout`,
       source: "stdout",
       text: logDetail.response.stdout,
       timestamp: logDetail.timestamp,
@@ -129,7 +130,7 @@ function getOutputEvents(logDetail: AiCommandLogEntry): AiCommandOutputEvent[] {
 
   if (logDetail.response.stderr) {
     fallbackEvents.push({
-      id: `${logDetail.fileName}:stderr`,
+      id: `${logDetail.jobId}:stderr`,
       source: "stderr",
       text: logDetail.response.stderr,
       timestamp: logDetail.completedAt ?? logDetail.timestamp,
@@ -139,29 +140,6 @@ function getOutputEvents(logDetail: AiCommandLogEntry): AiCommandOutputEvent[] {
   return fallbackEvents;
 }
 
-function toAiJob(logDetail: AiCommandLogEntry): AiCommandJob {
-  return {
-    jobId: logDetail.jobId,
-    fileName: logDetail.fileName,
-    branch: logDetail.branch,
-    documentId: logDetail.documentId,
-    commandId: logDetail.commandId,
-    command: logDetail.command,
-    input: logDetail.request,
-    status: logDetail.status,
-    startedAt: logDetail.timestamp,
-    completedAt: logDetail.completedAt,
-    stdout: logDetail.response.stdout,
-    stderr: logDetail.response.stderr,
-    outputEvents: getOutputEvents(logDetail),
-    pid: logDetail.pid,
-    exitCode: logDetail.exitCode,
-    processName: logDetail.processName,
-    error: logDetail.error?.message ?? null,
-    origin: logDetail.origin,
-  };
-}
-
 function getCandidateStartedAt(candidate: AiCommandJob | AiCommandLogSummary) {
   return "startedAt" in candidate ? candidate.startedAt : candidate.timestamp;
 }
@@ -169,12 +147,12 @@ function getCandidateStartedAt(candidate: AiCommandJob | AiCommandLogSummary) {
 interface ProjectManagementAiLogTabProps {
   logs: AiCommandLogSummary[];
   logDetail: AiCommandLogEntry | null;
-  selectedFileName?: string | null;
+  selectedJobId?: string | null;
   loading: boolean;
   error?: string | null;
   lastUpdatedAt?: string | null;
   runningJobs: AiCommandJob[];
-  onSelectLog: (fileName: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
+  onSelectLog: (jobId: string, options?: { silent?: boolean }) => Promise<AiCommandLogEntry | null>;
   onCancelJob: (branch: string) => Promise<AiCommandJob | null>;
   onOpenOrigin: (origin: AiCommandOrigin) => void | Promise<void>;
   onRetry?: () => void | Promise<void>;
@@ -183,7 +161,7 @@ interface ProjectManagementAiLogTabProps {
 export function ProjectManagementAiLogTab({
   logs,
   logDetail,
-  selectedFileName = null,
+  selectedJobId = null,
   loading,
   error = null,
   lastUpdatedAt = null,
@@ -194,12 +172,12 @@ export function ProjectManagementAiLogTab({
   onRetry,
 }: ProjectManagementAiLogTabProps) {
   const refreshStatusLabel = formatAutoRefreshStatus(lastUpdatedAt);
-  const { loadingId: loadingFileName, startLoading, stopLoading } = useItemLoading();
+  const { loadingId: loadingJobId, startLoading, stopLoading } = useItemLoading();
 
-  async function handleSelectLog(fileName: string, options?: { silent?: boolean }) {
-    startLoading(fileName);
+  async function handleSelectLog(jobId: string, options?: { silent?: boolean }) {
+    startLoading(jobId);
     try {
-      await onSelectLog(fileName, options);
+      await onSelectLog(jobId, options);
     } finally {
       stopLoading();
     }
@@ -211,16 +189,16 @@ export function ProjectManagementAiLogTab({
       return historicalLogs;
     }
 
-    const runningFileNames = new Set(runningJobs.map((job) => job.fileName));
-    return historicalLogs.filter((log) => !runningFileNames.has(log.fileName));
+    const runningJobIds = new Set(runningJobs.map((job) => job.jobId));
+    return historicalLogs.filter((log) => !runningJobIds.has(log.jobId));
   }, [logs, runningJobs]);
 
   const primaryCandidate = runningJobs[0] ?? visibleLogs[0] ?? null;
 
   useAiLogAutoSelect({
     loading,
-    selectedFileName: selectedFileName ?? logDetail?.fileName ?? null,
-    primaryCandidateFileName: primaryCandidate?.fileName ?? null,
+    selectedJobId: selectedJobId ?? logDetail?.jobId ?? null,
+    primaryCandidateJobId: primaryCandidate?.jobId ?? null,
     onSelectLog,
   });
 
@@ -245,7 +223,7 @@ export function ProjectManagementAiLogTab({
         <div className="grid gap-3 md:grid-cols-3">
           <MatrixMetric label="Running jobs" value={String(runningJobs.length)} />
           <MatrixMetric label="Saved logs" value={String(visibleLogs.length)} />
-          <MatrixMetric label="Selected log" value={loadingFileName ? "Loading…" : formatSelectedLabel(logDetail)} />
+          <MatrixMetric label="Selected log" value={loadingJobId ? "Loading…" : formatSelectedLabel(logDetail)} />
         </div>
 
       <div className="flex items-start justify-between gap-3 border theme-border-subtle p-4">
@@ -299,7 +277,7 @@ export function ProjectManagementAiLogTab({
                 <MatrixCard
                   as="div"
                   key={job.jobId}
-                  selected={loadingFileName === job.fileName || (!loadingFileName && logDetail?.fileName === job.fileName)}
+                  selected={loadingJobId === job.jobId || (!loadingJobId && logDetail?.jobId === job.jobId)}
                   interactive
                   className="p-3"
                 >
@@ -309,7 +287,7 @@ export function ProjectManagementAiLogTab({
                       <button
                         type="button"
                         className="min-w-0 text-left theme-text-strong"
-                        onClick={() => void handleSelectLog(job.fileName, { silent: true })}
+                          onClick={() => void handleSelectLog(job.jobId, { silent: true })}
                       >
                         {getOriginContextTitle(job.origin, job.branch)}
                       </button>
@@ -323,7 +301,7 @@ export function ProjectManagementAiLogTab({
                       <>
                         <MatrixBadge tone="neutral" compact>{getAiCommandLabel(job.commandId)}</MatrixBadge>
                         <MatrixBadge tone={getStatusTone(job.status)} compact>{job.status}</MatrixBadge>
-                        {loadingFileName === job.fileName ? <MatrixSpinner label="Loading log…" /> : null}
+                        {loadingJobId === job.jobId ? <MatrixSpinner label="Loading log…" /> : null}
                       </>
                     )}
                     actions={(
@@ -368,21 +346,21 @@ export function ProjectManagementAiLogTab({
             <div className="mt-3 max-h-[32rem] space-y-2 overflow-y-auto pr-1">
               {visibleLogs.length ? visibleLogs.map((log) => (
                 <button
-                  key={log.fileName}
+                  key={log.jobId}
                   type="button"
                   className="w-full text-left"
-                  disabled={loadingFileName !== null}
-                  aria-busy={loadingFileName === log.fileName}
-                  onClick={() => void handleSelectLog(log.fileName, { silent: true })}
+                  disabled={loadingJobId !== null}
+                  aria-busy={loadingJobId === log.jobId}
+                  onClick={() => void handleSelectLog(log.jobId, { silent: true })}
                 >
                   <MatrixCard
                     as="div"
-                    selected={loadingFileName === log.fileName || (!loadingFileName && logDetail?.fileName === log.fileName)}
+                    selected={loadingJobId === log.jobId || (!loadingJobId && logDetail?.jobId === log.jobId)}
                     interactive
-                    className={`p-3 ${loadingFileName === log.fileName ? "matrix-card-loading" : ""}`}
+                    className={`p-3 ${loadingJobId === log.jobId ? "matrix-card-loading" : ""}`}
                   >
                     <LoadingOverlay
-                      visible={loadingFileName === log.fileName}
+                      visible={loadingJobId === log.jobId}
                       label={`Loading log ${log.fileName}…`}
                     />
                     <MatrixCardHeader
@@ -397,7 +375,7 @@ export function ProjectManagementAiLogTab({
                         <>
                           <MatrixBadge tone="neutral" compact>{getAiCommandLabel(log.commandId)}</MatrixBadge>
                           <MatrixBadge tone={getStatusTone(log.status)} compact>{log.status}</MatrixBadge>
-                          {loadingFileName === log.fileName ? <MatrixSpinner label="Loading log…" /> : null}
+                          {loadingJobId === log.jobId ? <MatrixSpinner label="Loading log…" /> : null}
                         </>
                       )}
                     />
@@ -417,7 +395,7 @@ export function ProjectManagementAiLogTab({
         </div>
 
         <div className="border theme-border-subtle p-4">
-          {loadingFileName ? (
+          {loadingJobId ? (
             <div className="space-y-4">
               <div className="border theme-border-subtle p-4 theme-surface-soft">
                 <div className="flex flex-wrap items-center gap-2">
@@ -442,7 +420,13 @@ export function ProjectManagementAiLogTab({
             <div className="space-y-4">
               <ProjectManagementAiOutputViewer
                 source="worktree"
-                job={toAiJob(logDetail)}
+                job={toAiCommandJobFromLog({
+                  ...logDetail,
+                  response: {
+                    ...logDetail.response,
+                    events: getOutputEvents(logDetail),
+                  },
+                })}
                 summary={getLiveDetailDescription(logDetail)}
                 expanded
                 onCancel={() => void onCancelJob(logDetail.branch)}
@@ -519,10 +503,10 @@ export function ProjectManagementAiLogTab({
                           <button
                             type="button"
                             className="matrix-button rounded-none px-3 py-2 text-sm"
-                            disabled={loadingFileName !== null}
-                            onClick={() => void handleSelectLog(primaryCandidate.fileName, { silent: true })}
+                            disabled={loadingJobId !== null}
+                            onClick={() => void handleSelectLog(primaryCandidate.jobId, { silent: true })}
                           >
-                            {loadingFileName === primaryCandidate.fileName ? (
+                            {loadingJobId === primaryCandidate.jobId ? (
                               <span className="flex items-center gap-2">
                                 <span className="matrix-spinner-sm" aria-hidden="true" />
                                 Opening…
@@ -548,20 +532,20 @@ export function ProjectManagementAiLogTab({
                   <div className="mt-4 space-y-2">
                     {recentEntries.map((entry) => (
                       <button
-                        key={entry.fileName}
+                        key={entry.jobId}
                         type="button"
                         className="w-full text-left"
-                        disabled={loadingFileName !== null}
-                        aria-busy={loadingFileName === entry.fileName}
-                        onClick={() => void handleSelectLog(entry.fileName, { silent: true })}
+                        disabled={loadingJobId !== null}
+                        aria-busy={loadingJobId === entry.jobId}
+                        onClick={() => void handleSelectLog(entry.jobId, { silent: true })}
                       >
                         <MatrixCard
                           as="div"
                           interactive
-                          className={`p-3 ${loadingFileName === entry.fileName ? "matrix-card-loading" : ""}`}
+                          className={`p-3 ${loadingJobId === entry.jobId ? "matrix-card-loading" : ""}`}
                         >
                           <LoadingOverlay
-                            visible={loadingFileName === entry.fileName}
+                            visible={loadingJobId === entry.jobId}
                             label={`Loading log ${entry.fileName}…`}
                           />
                           <MatrixCardHeader
@@ -575,7 +559,7 @@ export function ProjectManagementAiLogTab({
                             badges={(
                               <>
                                 <MatrixBadge tone={getStatusTone(entry.status)} compact>{entry.status}</MatrixBadge>
-                                {loadingFileName === entry.fileName ? <MatrixSpinner label="Loading log…" /> : null}
+                                {loadingJobId === entry.jobId ? <MatrixSpinner label="Loading log…" /> : null}
                               </>
                             )}
                           />
