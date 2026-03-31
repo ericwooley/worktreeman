@@ -135,6 +135,8 @@ export interface WorktreeLinkedDocumentSummary {
   number: number;
   title: string;
   summary: string;
+  kind: ProjectManagementDocumentKind;
+  pullRequest: ProjectManagementPullRequest | null;
   status: string;
   archived: boolean;
 }
@@ -287,11 +289,24 @@ export interface ShutdownStatus {
   logs: ShutdownLogEntry[];
 }
 
+export type ProjectManagementDocumentKind = "document" | "pull-request";
+
+export type ProjectManagementPullRequestState = "open" | "closed" | "merged";
+
+export interface ProjectManagementPullRequest {
+  baseBranch: string;
+  compareBranch: string;
+  state: ProjectManagementPullRequestState;
+  draft: boolean;
+}
+
 export interface ProjectManagementDocumentSummary {
   id: string;
   number: number;
   title: string;
   summary: string;
+  kind: ProjectManagementDocumentKind;
+  pullRequest: ProjectManagementPullRequest | null;
   tags: string[];
   dependencies: string[];
   status: string;
@@ -385,6 +400,8 @@ export interface CreateProjectManagementDocumentRequest {
   title: string;
   summary?: string;
   markdown: string;
+  kind?: ProjectManagementDocumentKind;
+  pullRequest?: ProjectManagementPullRequest | null;
   tags: string[];
   dependencies?: string[];
   status?: string;
@@ -395,6 +412,8 @@ export interface UpdateProjectManagementDocumentRequest {
   title: string;
   summary?: string;
   markdown: string;
+  kind?: ProjectManagementDocumentKind;
+  pullRequest?: ProjectManagementPullRequest | null;
   tags: string[];
   dependencies?: string[];
   status?: string;
@@ -407,6 +426,8 @@ export interface ProjectManagementBatchUpdateEntry {
   title: string;
   summary?: string;
   markdown: string;
+  kind?: ProjectManagementDocumentKind;
+  pullRequest?: ProjectManagementPullRequest | null;
   tags: string[];
   dependencies?: string[];
   status?: string;
@@ -454,7 +475,8 @@ export type AiCommandOriginKind =
   | "worktree-environment"
   | "project-management-document"
   | "project-management-document-run"
-  | "git-conflict-resolution";
+  | "git-conflict-resolution"
+  | "git-pull-request-review";
 
 export interface AiCommandOriginLocation {
   tab: AiCommandOriginTab;
