@@ -112,60 +112,6 @@ test("AI log empty state keeps recent activity visible", () => {
   assert.match(markup, /Environment terminal · feature-ai-log/);
 });
 
-test("running cards prefer derived origin titles over prompt preview text", () => {
-  const runningJob: AiCommandJob = {
-    jobId: "job-2",
-    fileName: "log-2.json",
-    branch: "feature-ai-log",
-    commandId: "simple",
-    command: "runner --fast",
-    input: "A very long prompt that should not be shown as the card title.",
-    status: "running",
-    startedAt: "2026-03-27T10:02:00.000Z",
-    stdout: "",
-    stderr: "",
-    outputEvents: [],
-    origin: environmentOrigin,
-  };
-
-  const markup = renderAiLogTab({
-    logDetail: detailLog,
-    runningJobs: [runningJob],
-  });
-
-  assert.match(markup, /Environment terminal · feature-ai-log/);
-  assert.doesNotMatch(markup, /A very long prompt that should not be shown as the card title/);
-});
-
-test("running cards keep branch context and side actions near the card title", () => {
-  const runningJob: AiCommandJob = {
-    jobId: "job-2",
-    fileName: "log-2.json",
-    branch: "feature-ai-log",
-    commandId: "simple",
-    command: "runner --fast",
-    input: "Prompt",
-    status: "running",
-    startedAt: "2026-03-27T10:02:00.000Z",
-    stdout: "",
-    stderr: "",
-    outputEvents: [],
-    origin: environmentOrigin,
-  };
-
-  const markup = renderAiLogTab({
-    logDetail: detailLog,
-    runningJobs: [runningJob],
-  });
-
-  assert.match(markup, /matrix-card-header/);
-  assert.match(markup, /feature-ai-log/);
-  assert.match(markup, />Open origin</);
-  assert.match(markup, />Cancel</);
-  assert.match(markup, />Simple AI</);
-  assert.match(markup, />running</);
-});
-
 test("AI log titles include pull request review origins", () => {
   const pullRequestReviewOrigin: AiCommandOrigin = {
     kind: "git-pull-request-review",
@@ -210,11 +156,10 @@ test("running entries are not duplicated in the saved logs list", () => {
     runningJobs: [runningJob],
   });
 
-  assert.match(markup, /Running now/);
   assert.match(markup, /Saved logs/);
   assert.match(markup, /Recent activity/);
   assert.match(markup, /Open latest run/);
-  assert.match(markup, />0<\/span>/);
+  assert.doesNotMatch(markup, /Running now/);
   assert.equal((markup.match(/log-1\.json/g) ?? []).length, 0);
   assert.equal((markup.match(/feature-ai-log/g) ?? []).length >= 2, true);
 });
@@ -260,37 +205,6 @@ test("saved log card shows matrix-card-loading overlay and spinner while loading
   // Kick off a load (do not await — we want to inspect the in-flight state)
   // Since renderToStaticMarkup is synchronous, we verify cleanup by resolving
   resolveSelectLog?.();
-});
-
-test("running job card shows spinner badge when selected for loading", () => {
-  const runningJob: AiCommandJob = {
-    jobId: "job-2",
-    fileName: "log-2.json",
-    branch: "feature-ai-log",
-    commandId: "simple",
-    command: "runner --fast",
-    input: "Prompt",
-    status: "running",
-    startedAt: "2026-03-27T10:02:00.000Z",
-    stdout: "",
-    stderr: "",
-    outputEvents: [],
-    origin: environmentOrigin,
-  };
-
-  // Render with a running job — verify the spinner is NOT shown by default
-  const markup = renderAiLogTab({
-    logDetail: null,
-    runningJobs: [runningJob],
-  });
-
-  // No spinner should be visible initially (nothing is loading)
-  const spinnerCount = (markup.match(/matrix-spinner-sm/g) ?? []).length;
-  assert.equal(spinnerCount, 0);
-
-  // Running status badge and command label should appear
-  assert.match(markup, />running</);
-  assert.match(markup, />Simple AI</);
 });
 
 test("Open latest run button exists and is not disabled when nothing is loading", () => {

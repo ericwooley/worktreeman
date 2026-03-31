@@ -1,7 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AiCommandId, AiCommandJob, AiCommandOutputEvent } from "@shared/types";
 
 import { MatrixBadge } from "./matrix-primitives";
+
+const AI_OUTPUT_FOLLOW_THRESHOLD_PX = 12;
 
 function getAiCommandLabel(commandId: AiCommandId): string {
   return commandId === "simple" ? "Simple AI" : "Smart AI";
@@ -90,6 +92,31 @@ function getEmptyOutputMessage(status: AiCommandJob["status"]) {
   return status === "running" ? "Waiting for live output..." : "No output captured.";
 }
 
+export function shouldStickAiOutputToBottom(metrics: {
+  scrollHeight: number;
+  scrollTop: number;
+  clientHeight: number;
+}, threshold = AI_OUTPUT_FOLLOW_THRESHOLD_PX) {
+  return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight <= threshold;
+}
+
+export function getNextAiOutputScrollTop(options: {
+  shouldStickToBottom: boolean;
+  previousScrollHeight: number;
+  nextScrollHeight: number;
+  currentScrollTop: number;
+}) {
+  if (options.shouldStickToBottom) {
+    return options.nextScrollHeight;
+  }
+
+  if (options.previousScrollHeight > 0 && options.nextScrollHeight > options.previousScrollHeight) {
+    return options.currentScrollTop + (options.nextScrollHeight - options.previousScrollHeight);
+  }
+
+  return options.currentScrollTop;
+}
+
 interface ProjectManagementAiOutputViewerProps {
   source: "worktree" | "document";
   job: AiCommandJob;
@@ -108,6 +135,10 @@ export function ProjectManagementAiOutputViewer({
   onOpenModal,
 }: ProjectManagementAiOutputViewerProps) {
   const [showElapsedTime, setShowElapsedTime] = useState(false);
+  const outputViewportRef = useRef<HTMLDivElement | null>(null);
+  const previousScrollHeightRef = useRef(0);
+  const shouldStickToBottomRef = useRef(true);
+  const lastLoadedJobIdRef = useRef<string | null>(null);
   const running = job.status === "running";
   const title = source === "worktree" ? "Worktree AI" : "Document AI";
   const outputEvents = useMemo(() => getAiOutputEvents(job)
@@ -139,6 +170,49 @@ export function ProjectManagementAiOutputViewer({
       ? `Streaming the combined AI log while the saved document updates in ${job.branch}.`
       : summary ?? `Captured output from ${job.branch}.`;
   const supplementalSummary = summary && summary !== description ? summary : null;
+
+  useEffect(() => {
+    const viewport = outputViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    if (lastLoadedJobIdRef.current !== job.jobId) {
+      viewport.scrollTop = viewport.scrollHeight;
+      previousScrollHeightRef.current = viewport.scrollHeight;
+      shouldStickToBottomRef.current = true;
+      lastLoadedJobIdRef.current = job.jobId;
+    }
+  }, [job.jobId]);
+
+  useEffect(() => {
+    const viewport = outputViewportRef.current;
+    if (!viewport || !outputEvents.length) {
+      return;
+    }
+
+    const nextScrollHeight = viewport.scrollHeight;
+    viewport.scrollTop = getNextAiOutputScrollTop({
+      shouldStickToBottom: shouldStickToBottomRef.current,
+      previousScrollHeight: previousScrollHeightRef.current,
+      nextScrollHeight,
+      currentScrollTop: viewport.scrollTop,
+    });
+    previousScrollHeightRef.current = nextScrollHeight;
+  }, [outputEvents]);
+
+  const handleOutputScroll = () => {
+    const viewport = outputViewportRef.current;
+    if (!viewport) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = shouldStickAiOutputToBottom({
+      scrollHeight: viewport.scrollHeight,
+      scrollTop: viewport.scrollTop,
+      clientHeight: viewport.clientHeight,
+    });
+  };
 
   return (
     <div className={`border theme-border-subtle theme-surface-soft ${expanded ? "p-5" : "p-4"}`}>
@@ -197,7 +271,11 @@ export function ProjectManagementAiOutputViewer({
         </div>
 
         {outputEvents.length ? (
-          <div className={`overflow-auto ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}>
+          <div
+            ref={outputViewportRef}
+            className={`overflow-auto ${expanded ? "max-h-[65vh]" : "max-h-[24rem]"}`}
+            onScroll={handleOutputScroll}
+          >
             {outputEvents.map((event, index) => {
               const absoluteTimestamp = formatOutputTimestamp(event.timestamp);
               const timestampLabel = showElapsedTime
