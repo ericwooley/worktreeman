@@ -1129,6 +1129,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       worktreePath: worktree.worktreePath,
       runtime,
     });
+    emitStateRefresh();
     logServerEvent("runtime", "start-completed", {
       branch: worktree.branch,
       worktreePath: worktree.worktreePath,
@@ -1183,6 +1184,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     }
 
     await options.operationalState.deleteRuntime(branch);
+    emitStateRefresh();
 
     if (stopError) {
       logServerEvent("runtime", "stop-failed", {
@@ -1495,43 +1497,25 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     })));
   };
 
-  router.get("/state", async (_req, res, next) => {
-    try {
-      const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      const payload: ApiStateResponse = {
-        repoRoot: options.repoRoot,
-        configPath: options.configPath,
-        configFile: options.configFile,
-        configSourceRef: options.configSourceRef,
-        configWorktreePath: options.configWorktreePath,
-        config,
-        worktrees: await buildWorktreePayload(worktrees),
-      };
-      res.json(payload);
-    } catch (error) {
-      next(error);
-    }
-  });
+  const loadState = async (): Promise<ApiStateResponse> => {
+    const config = await loadCurrentConfig();
+    const worktrees = await listWorktrees(options.repoRoot);
+    return {
+      repoRoot: options.repoRoot,
+      configPath: options.configPath,
+      configFile: options.configFile,
+      configSourceRef: options.configSourceRef,
+      configWorktreePath: options.configWorktreePath,
+      config,
+      worktrees: await buildWorktreePayload(worktrees),
+    };
+  };
 
   router.get("/state/stream", async (req, res, next) => {
-    const loadState = async (): Promise<ApiStateResponse> => {
-      const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      return {
-        repoRoot: options.repoRoot,
-        configPath: options.configPath,
-        configFile: options.configFile,
-        configSourceRef: options.configSourceRef,
-        configWorktreePath: options.configWorktreePath,
-        config,
-        worktrees: await buildWorktreePayload(worktrees),
-      };
-    };
-
     try {
       let currentState = await loadState();
       let lastPayload = JSON.stringify(currentState);
+      let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -1545,34 +1529,37 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       writeEvent("snapshot", currentState);
 
-      let polling = false;
-      const interval = setInterval(() => {
-        if (polling) {
+      const rebuildAndEmit = () => {
+        if (rebuilding) {
           return;
         }
 
-        polling = true;
-        runBackgroundTask(async () => {
+        rebuilding = true;
+        void runBackgroundTask(async () => {
           const nextState = await loadState();
-            currentState = nextState;
-            const nextPayload = JSON.stringify(nextState);
-            if (nextPayload !== lastPayload) {
-              lastPayload = nextPayload;
-              writeEvent("update", nextState);
-            }
-          }, (error) => {
-            logServerEvent("state-stream", "poll-failed", {
+          currentState = nextState;
+          const nextPayload = JSON.stringify(nextState);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            writeEvent("update", nextState);
+          }
+        }, (error) => {
+            logServerEvent("state-stream", "rebuild-failed", {
               error: error instanceof Error ? error.message : String(error),
             }, "error");
           }).finally(() => {
-            polling = false;
+            rebuilding = false;
           });
-      }, aiLogStreamPollIntervalMs);
+      };
+
+      const unsubscribe = subscribeToStateRefresh(rebuildAndEmit);
+      const interval = setInterval(rebuildAndEmit, stateStreamFullRefreshIntervalMs);
       const keepAlive = setInterval(() => {
         res.write(`: keep-alive\n\n`);
       }, 15000);
 
       req.on("close", () => {
+        unsubscribe();
         clearInterval(interval);
         clearInterval(keepAlive);
         res.end();
@@ -1686,6 +1673,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         editable: true,
       };
 
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -1731,6 +1719,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         aiCommands,
       };
 
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -1786,6 +1775,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         options.repoRoot,
         nextConfig.projectManagement.users,
       );
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -2357,6 +2347,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         }
       }
 
+      emitStateRefresh();
       res.status(201).json(payload);
     } catch (error) {
       next(error);
@@ -2394,6 +2385,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           archived: typeof body.archived === "boolean" ? body.archived : undefined,
         },
       );
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -2430,6 +2422,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           archived: typeof entry.archived === "boolean" ? entry.archived : undefined,
         })),
       });
+      emitStateRefresh();
       res.status(201).json(payload);
     } catch (error) {
       next(error);
@@ -2444,6 +2437,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         decodeURIComponent(req.params.id),
         Array.isArray(body?.dependencyIds) ? body.dependencyIds.map((entry) => String(entry)) : [],
       );
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -2463,6 +2457,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         decodeURIComponent(req.params.id),
         body.status,
       );
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -2482,6 +2477,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         decodeURIComponent(req.params.id),
         { body: body.body },
       );
+      emitStateRefresh();
       res.status(201).json(payload);
     } catch (error) {
       next(error);
@@ -2671,6 +2667,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       stopAutoStartedRuntimeOnError = false;
 
       const payload: RunAiCommandResponse = { job, runtime };
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       if (stopAutoStartedRuntimeOnError && branch) {
@@ -2742,10 +2739,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       if (sourceRoot) {
         const result = await syncEnvFiles(sourceRoot, worktree.worktreePath);
+        emitStateRefresh();
         res.status(201).json(result);
         return;
       }
 
+      emitStateRefresh();
       res.status(201).json({ copiedFiles: [] });
     } catch (error) {
       next(error);
@@ -2787,6 +2786,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const result = await syncEnvFiles(sourceRoot, worktree.worktreePath);
+      emitStateRefresh();
       res.json(result);
     } catch (error) {
       next(error);
@@ -3028,6 +3028,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       stopAutoStartedRuntimeOnError = false;
 
       const payload: RunAiCommandResponse = { job, runtime };
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       if (stopAutoStartedRuntimeOnError && branch) {
@@ -3206,6 +3207,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const payload: RunAiCommandResponse = { job: finalJob };
+      emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -3351,6 +3353,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       if (request.deleteBranch) {
         await deleteBranch(options.repoRoot, worktree.branch);
       }
+      emitStateRefresh();
       res.status(204).send();
     } catch (error) {
       next(error);

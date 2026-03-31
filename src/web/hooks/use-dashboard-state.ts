@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   AddProjectManagementCommentRequest,
   AiCommandLogEntry,
@@ -52,7 +52,6 @@ import {
   getAiCommandLogs as fetchAiCommandLogs,
   getGitComparison as fetchGitComparison,
   getSystemStatus as fetchSystemStatus,
-  getState,
   subscribeToState,
   cancelAiCommand as cancelAiCommandRequest,
   commitGitChanges as commitGitChangesRequest,
@@ -86,6 +85,10 @@ import {
 import { useAiCommandLogStream } from "./useAiCommandLogStream";
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 15000;
+
+type DashboardStateValue = ReturnType<typeof useDashboardStateInternal>;
+
+const DashboardStateContext = createContext<DashboardStateValue | null>(null);
 
 function toAiCommandRequestPreview(request: string) {
   const normalized = request.replace(/\s+/g, " ").trim();
@@ -127,7 +130,7 @@ export type CommitChangesPayload = {
   message?: string;
 };
 
-export function useDashboardState() {
+function useDashboardStateInternal() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
   const [stateStreamConnected, setStateStreamConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,30 +174,6 @@ export function useDashboardState() {
   const trackedAiCommandBranchRef = useRef<string | null>(null);
   const trackedProjectManagementDocumentAiBranchRef = useRef<string | null>(null);
 
-  const refresh = useCallback(async (options?: { silent?: boolean }) => {
-    if (!options?.silent) {
-      setLoading(true);
-    }
-
-    try {
-      const payload = await getState();
-      setState(payload);
-      setError(null);
-      setHasLoadedInitialState(true);
-      setLoading(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load state.");
-    } finally {
-      if (!options?.silent && hasLoadedInitialState) {
-        setLoading(false);
-      }
-    }
-  }, [hasLoadedInitialState]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
   useEffect(() => subscribeToState(
     (event: ApiStateStreamEvent) => {
       setState(event.state);
@@ -203,7 +182,12 @@ export function useDashboardState() {
       setStateStreamConnected(true);
       setError(null);
     },
-    setStateStreamConnected,
+    (connected) => {
+      setStateStreamConnected(connected);
+      if (!connected) {
+        setLoading(true);
+      }
+    },
   ), []);
 
   useEffect(() => subscribeToShutdownStatus(setShutdownStatus), []);
@@ -215,11 +199,15 @@ export function useDashboardState() {
       }
 
       if (!stateStreamConnected) {
-        pollController.trigger();
+        setLoading(true);
       }
     };
 
-    const pollController = startSequentialPoll(() => refresh({ silent: true }), {
+    const pollController = startSequentialPoll(() => {
+      if (!stateStreamConnected) {
+        setLoading(true);
+      }
+    }, {
       intervalMs: DASHBOARD_REFRESH_INTERVAL_MS,
     });
 
@@ -238,7 +226,7 @@ export function useDashboardState() {
       window.removeEventListener("focus", refreshIfVisible);
       document.removeEventListener("visibilitychange", refreshIfVisible);
     };
-  }, [busyBranch, refresh, stateStreamConnected]);
+  }, [busyBranch, stateStreamConnected]);
 
   const appendBackgroundLogs = useCallback((event: BackgroundCommandLogStreamEvent) => {
     setBackgroundLogs((current) => {
@@ -1048,7 +1036,7 @@ export function useDashboardState() {
         }
       },
     }),
-    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, refresh, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {
@@ -1091,7 +1079,20 @@ export function useDashboardState() {
     projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,
-    refresh,
     ...actions,
   };
+}
+
+export function DashboardStateProvider({ children }: { children: ReactNode }) {
+  const value = useDashboardStateInternal();
+  return createElement(DashboardStateContext.Provider, { value }, children);
+}
+
+export function useDashboardState() {
+  const value = useContext(DashboardStateContext);
+  if (!value) {
+    throw new Error("useDashboardState must be used within DashboardStateProvider.");
+  }
+
+  return value;
 }
