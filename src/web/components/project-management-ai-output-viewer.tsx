@@ -88,6 +88,31 @@ function formatElapsedLabel(previousTimestamp: string | null, currentTimestamp: 
   return `+${diffDays} ${diffDays === 1 ? "day" : "days"}`;
 }
 
+export function formatAiOutputAge(timestamp: string, now = Date.now()) {
+  const parsed = Date.parse(timestamp);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+
+  const diffSeconds = Math.max(0, Math.floor((now - parsed) / 1000));
+  if (diffSeconds < 60) {
+    return `${diffSeconds}s ago`;
+  }
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
 function getEmptyOutputMessage(status: AiCommandJob["status"]) {
   return status === "running" ? "Waiting for live output..." : "No output captured.";
 }
@@ -135,6 +160,7 @@ export function ProjectManagementAiOutputViewer({
   onOpenModal,
 }: ProjectManagementAiOutputViewerProps) {
   const [showElapsedTime, setShowElapsedTime] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const outputViewportRef = useRef<HTMLDivElement | null>(null);
   const previousScrollHeightRef = useRef(0);
   const shouldStickToBottomRef = useRef(true);
@@ -199,6 +225,21 @@ export function ProjectManagementAiOutputViewer({
       currentScrollTop: viewport.scrollTop,
     });
     previousScrollHeightRef.current = nextScrollHeight;
+  }, [outputEvents]);
+
+  useEffect(() => {
+    if (!outputEvents.length) {
+      return;
+    }
+
+    setNow(Date.now());
+    const interval = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
   }, [outputEvents]);
 
   const handleOutputScroll = () => {
@@ -281,6 +322,8 @@ export function ProjectManagementAiOutputViewer({
               const timestampLabel = showElapsedTime
                 ? formatElapsedLabel(index > 0 ? outputEvents[index - 1]?.timestamp ?? null : null, event.timestamp)
                 : absoluteTimestamp;
+              const isLatestEvent = index === outputEvents.length - 1;
+              const latestEventAge = isLatestEvent ? formatAiOutputAge(event.timestamp, now) : null;
               const eventToneClass = event.source === "stderr"
                 ? "theme-ai-output-entry-secondary"
                 : "theme-ai-output-entry";
@@ -291,7 +334,10 @@ export function ProjectManagementAiOutputViewer({
                   className={`grid gap-x-3 gap-y-1.5 border-b px-3 py-2.5 last:border-b-0 md:grid-cols-[10rem_minmax(0,1fr)] ${eventToneClass}`}
                 >
                   <div className="flex items-center gap-2 md:block">
-                    <span className="font-mono text-xs theme-timestamp" title={absoluteTimestamp}>{timestampLabel}</span>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 md:block">
+                      <span className="font-mono text-xs theme-timestamp" title={absoluteTimestamp}>{timestampLabel}</span>
+                      {latestEventAge ? <span className="text-[11px] theme-text-soft">{latestEventAge}</span> : null}
+                    </div>
                     <div className="md:mt-1.5">
                       <MatrixBadge tone="neutral" compact>{event.source}</MatrixBadge>
                     </div>

@@ -18,6 +18,7 @@ import {
   ProjectManagementPanel,
 } from "./project-management-panel";
 import {
+  formatAiOutputAge,
   getAiOutputEvents,
   getNextAiOutputScrollTop,
   shouldStickAiOutputToBottom,
@@ -775,6 +776,15 @@ test("getNextAiOutputScrollTop preserves relative position when auto-follow is d
     nextScrollHeight: 520,
     currentScrollTop: 180,
   }), 180);
+});
+
+test("formatAiOutputAge renders compact time-ago labels for the latest output", () => {
+  const now = Date.parse("2026-03-31T18:10:00.000Z");
+
+  assert.equal(formatAiOutputAge("2026-03-31T18:09:51.000Z", now), "9s ago");
+  assert.equal(formatAiOutputAge("2026-03-31T18:09:00.000Z", now), "1m ago");
+  assert.equal(formatAiOutputAge("2026-03-31T17:10:00.000Z", now), "1h ago");
+  assert.equal(formatAiOutputAge("2026-03-30T18:10:00.000Z", now), "1d ago");
 });
 
 test("getCompletedAiDocumentRefreshTarget prefers workspace refresh when available", () => {
