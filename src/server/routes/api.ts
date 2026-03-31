@@ -145,6 +145,7 @@ interface ApiRouterOptions {
   operationalState: OperationalStateStore;
   aiProcessPollIntervalMs?: number;
   aiLogStreamPollIntervalMs?: number;
+  stateStreamFullRefreshIntervalMs?: number;
   aiProcesses?: {
     startProcess: (options: {
       processName: string;
@@ -1031,6 +1032,7 @@ async function reconcileAiCommandLogEntry(options: {
 
 export function createApiRouter(options: ApiRouterOptions): express.Router {
   const router = express.Router();
+  const stateListeners = new Set<() => void>();
   const defaultAiProcesses = {
     startProcess: startAiCommandProcess,
     getProcess: getAiCommandProcess,
@@ -1050,6 +1052,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         };
   const aiProcessPollIntervalMs = options.aiProcessPollIntervalMs ?? 250;
   const aiLogStreamPollIntervalMs = options.aiLogStreamPollIntervalMs ?? 500;
+  const stateStreamFullRefreshIntervalMs = options.stateStreamFullRefreshIntervalMs ?? 120_000;
   const shouldReconcileAiJobs = process.env.WTM_SERVER_ROLE === "worker";
   const aiJobReadOptions = {
     aiProcesses: {
@@ -1221,6 +1224,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         error: error instanceof Error ? error.message : String(error),
       }, "error");
     });
+  };
+
+  const emitStateRefresh = () => {
+    for (const listener of stateListeners) {
+      listener();
+    }
+  };
+
+  const subscribeToStateRefresh = (listener: () => void) => {
+    stateListeners.add(listener);
+    return () => {
+      stateListeners.delete(listener);
+    };
   };
 
   const commitConfigEdit = async (message: string) => {
