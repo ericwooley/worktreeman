@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import type {
   AiCommandJob,
   AiCommandLogEntry,
@@ -10,6 +10,7 @@ import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
 import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSpinner } from "./matrix-primitives";
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
+import { useAiLogAutoSelect } from "../hooks/useAiLogAutoSelect";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
 
@@ -168,6 +169,7 @@ function getCandidateStartedAt(candidate: AiCommandJob | AiCommandLogSummary) {
 interface ProjectManagementAiLogTabProps {
   logs: AiCommandLogSummary[];
   logDetail: AiCommandLogEntry | null;
+  selectedFileName?: string | null;
   loading: boolean;
   error?: string | null;
   lastUpdatedAt?: string | null;
@@ -181,6 +183,7 @@ interface ProjectManagementAiLogTabProps {
 export function ProjectManagementAiLogTab({
   logs,
   logDetail,
+  selectedFileName = null,
   loading,
   error = null,
   lastUpdatedAt = null,
@@ -190,7 +193,6 @@ export function ProjectManagementAiLogTab({
   onOpenOrigin,
   onRetry,
 }: ProjectManagementAiLogTabProps) {
-  const autoSelectedFileRef = useRef<string | null>(null);
   const refreshStatusLabel = formatAutoRefreshStatus(lastUpdatedAt);
   const { loadingId: loadingFileName, startLoading, stopLoading } = useItemLoading();
 
@@ -215,19 +217,12 @@ export function ProjectManagementAiLogTab({
 
   const primaryCandidate = runningJobs[0] ?? visibleLogs[0] ?? null;
 
-  useEffect(() => {
-    if (loading || logDetail || !primaryCandidate) {
-      return;
-    }
-
-    if (autoSelectedFileRef.current === primaryCandidate.fileName) {
-      return;
-    }
-
-    autoSelectedFileRef.current = primaryCandidate.fileName;
-    // Use the raw onSelectLog for silent auto-selection — no loading indicator needed
-    void onSelectLog(primaryCandidate.fileName, { silent: true });
-  }, [loading, logDetail, onSelectLog, primaryCandidate]);
+  useAiLogAutoSelect({
+    loading,
+    selectedFileName: selectedFileName ?? logDetail?.fileName ?? null,
+    primaryCandidateFileName: primaryCandidate?.fileName ?? null,
+    onSelectLog,
+  });
 
   const detailOutputEvents = useMemo(
     () => (logDetail ? getOutputEvents(logDetail) : []),

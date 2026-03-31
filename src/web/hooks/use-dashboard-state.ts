@@ -81,9 +81,9 @@ import {
   buildProjectManagementStatusFallbackPayload,
   shouldFallbackProjectManagementStatusUpdate,
 } from "../lib/project-management-status-update";
+import { useAiCommandLogStream } from "./useAiCommandLogStream";
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 15000;
-const AI_COMMAND_LOG_SNAPSHOT_TIMEOUT_MS = 5000;
 
 function toAiCommandRequestPreview(request: string) {
   const normalized = request.replace(/\s+/g, " ").trim();
@@ -162,10 +162,8 @@ export function useDashboardState() {
   const [projectManagementSaving, setProjectManagementSaving] = useState(false);
   const aiCommandSubscriptionRef = useRef<(() => void) | null>(null);
   const projectManagementDocumentAiSubscriptionRef = useRef<(() => void) | null>(null);
-  const aiCommandLogSubscriptionRef = useRef<(() => void) | null>(null);
   const trackedAiCommandBranchRef = useRef<string | null>(null);
   const trackedProjectManagementDocumentAiBranchRef = useRef<string | null>(null);
-  const trackedAiCommandLogFileRef = useRef<string | null>(null);
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -267,58 +265,22 @@ export function useDashboardState() {
     setBackgroundLogs(null);
   }, []);
 
-  const clearTrackedAiCommandLogSubscription = useCallback(() => {
-    aiCommandLogSubscriptionRef.current?.();
-    aiCommandLogSubscriptionRef.current = null;
-    trackedAiCommandLogFileRef.current = null;
-  }, []);
-
-  const applyAiLogStreamEvent = useCallback((event: AiCommandLogStreamEvent) => {
-    if (!event.log) {
-      setAiCommandLogDetail(null);
-      return;
-    }
-
-    const log = event.log;
-
-    setAiCommandLogDetail(log);
-    setAiCommandLogs((current) => {
-      const next = current.filter((entry) => entry.fileName !== log.fileName);
-      if (log.status !== "running") {
-        next.unshift(toAiCommandLogSummary(log));
-      }
-      return next.sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp));
-    });
-
-    setRunningAiCommandJobs((current) => {
-      const next = current.filter((entry) => entry.fileName !== log.fileName && entry.branch !== log.branch);
-      if (log.status === "running") {
-        next.unshift({
-          jobId: log.jobId,
-          fileName: log.fileName,
-          branch: log.branch,
-          documentId: log.documentId ?? null,
-          commandId: log.commandId,
-          origin: log.origin ?? null,
-          command: log.command,
-          input: log.request,
-          status: log.status,
-          startedAt: log.timestamp,
-          completedAt: log.completedAt,
-          stdout: log.response.stdout,
-          stderr: log.response.stderr,
-          outputEvents: log.response.events?.map((event) => ({ ...event })) ?? [],
-          pid: log.pid ?? null,
-          exitCode: log.exitCode ?? null,
-          processName: log.processName ?? null,
-          error: log.error?.message ?? null,
-        });
-      }
-      return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
-    });
-    setAiCommandLogsError(null);
-    setAiCommandLogsLastUpdatedAt(new Date().toISOString());
-  }, []);
+  const {
+    applyAiLogStreamEvent,
+    clearTrackedAiCommandLogSubscription,
+    getTrackedAiCommandLogFileName,
+    loadAiCommandLog,
+  } = useAiCommandLogStream({
+    subscribe: subscribeToAiCommandLog,
+    toSummary: toAiCommandLogSummary,
+    setAiCommandLogDetail,
+    setAiCommandLogs,
+    setRunningAiCommandJobs,
+    setAiCommandLogsLoading,
+    setAiCommandLogsError,
+    setAiCommandLogsLastUpdatedAt,
+    setError,
+  });
 
   const upsertRunningAiJob = useCallback((job: AiCommandJob | null) => {
     if (!job) {
@@ -785,9 +747,10 @@ export function useDashboardState() {
           const payload = await fetchAiCommandLogs();
           setAiCommandLogs(payload.logs);
           setRunningAiCommandJobs(payload.runningJobs);
-          if (trackedAiCommandLogFileRef.current) {
-            const selectedStillExists = payload.logs.some((entry) => entry.fileName === trackedAiCommandLogFileRef.current)
-              || payload.runningJobs.some((entry) => entry.fileName === trackedAiCommandLogFileRef.current);
+          const trackedAiCommandLogFileName = getTrackedAiCommandLogFileName();
+          if (trackedAiCommandLogFileName) {
+            const selectedStillExists = payload.logs.some((entry) => entry.fileName === trackedAiCommandLogFileName)
+              || payload.runningJobs.some((entry) => entry.fileName === trackedAiCommandLogFileName);
             if (!selectedStillExists) {
               clearTrackedAiCommandLogSubscription();
               setAiCommandLogDetail(null);
@@ -810,64 +773,7 @@ export function useDashboardState() {
           }
         }
       },
-      async loadAiCommandLog(fileName: string, options?: { silent?: boolean }) {
-        if (!options?.silent) {
-          setAiCommandLogsLoading(true);
-        }
-
-        try {
-          if (trackedAiCommandLogFileRef.current === fileName && aiCommandLogDetail?.fileName === fileName) {
-            setAiCommandLogsError(null);
-            setAiCommandLogsLastUpdatedAt(new Date().toISOString());
-            setError(null);
-            return aiCommandLogDetail;
-          }
-
-          clearTrackedAiCommandLogSubscription();
-          trackedAiCommandLogFileRef.current = fileName;
-
-          const log = await new Promise<AiCommandLogEntry | null>((resolve, reject) => {
-            let settled = false;
-            const timeoutId = window.setTimeout(() => {
-              if (settled) {
-                return;
-              }
-
-              settled = true;
-              clearTrackedAiCommandLogSubscription();
-              reject(new Error(`Timed out waiting for the AI log stream for ${fileName}.`));
-            }, AI_COMMAND_LOG_SNAPSHOT_TIMEOUT_MS);
-
-            aiCommandLogSubscriptionRef.current = subscribeToAiCommandLog(fileName, (event) => {
-              applyAiLogStreamEvent(event);
-
-              if (settled) {
-                return;
-              }
-
-              settled = true;
-              window.clearTimeout(timeoutId);
-              resolve(event.log);
-            });
-          });
-
-          setAiCommandLogsError(null);
-          setAiCommandLogsLastUpdatedAt(new Date().toISOString());
-          setError(null);
-          return log;
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "Failed to load AI log.";
-          clearTrackedAiCommandLogSubscription();
-          setAiCommandLogDetail(null);
-          setAiCommandLogsError(message);
-          setError(message);
-          return null;
-        } finally {
-          if (!options?.silent) {
-            setAiCommandLogsLoading(false);
-          }
-        }
-      },
+      loadAiCommandLog,
       async runAiCommand(branch: string, payload: RunAiCommandRequest) {
         try {
           trackAiCommandJob(branch);
@@ -1112,7 +1018,7 @@ export function useDashboardState() {
         }
       },
     }),
-    [appendBackgroundLogs, applyAiLogStreamEvent, clearTrackedAiCommandLogSubscription, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, refresh, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogFileName, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, refresh, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {

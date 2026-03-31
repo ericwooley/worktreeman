@@ -48,6 +48,7 @@ interface ProjectManagementAiTabProps {
   activeSubTab: AiActivitySubTab;
   logs: AiCommandLogSummary[];
   logDetail: AiCommandLogEntry | null;
+  selectedLogFile?: string | null;
   loading: boolean;
   error?: string | null;
   lastUpdatedAt?: string | null;
@@ -63,6 +64,7 @@ export function ProjectManagementAiTab({
   activeSubTab,
   logs,
   logDetail,
+  selectedLogFile = null,
   loading,
   error = null,
   lastUpdatedAt = null,
@@ -253,6 +255,7 @@ export function ProjectManagementAiTab({
           <ProjectManagementAiLogTab
             logs={logs}
             logDetail={logDetail}
+            selectedFileName={selectedLogFile}
             loading={loading}
             error={error}
             lastUpdatedAt={lastUpdatedAt}

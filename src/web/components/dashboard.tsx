@@ -1433,6 +1433,7 @@ export function Dashboard() {
             projectManagementSaving={projectManagementSaving}
             projectManagementAiLogs={aiCommandLogs}
             projectManagementAiLogDetail={aiCommandLogDetail}
+            projectManagementSelectedAiLogFile={selectedAiLogFile}
             projectManagementAiLogsLoading={aiCommandLogsLoading}
             projectManagementAiLogsError={aiCommandLogsError}
             projectManagementAiLogsLastUpdatedAt={aiCommandLogsLastUpdatedAt}

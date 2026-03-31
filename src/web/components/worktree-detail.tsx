@@ -413,6 +413,7 @@ interface WorktreeDetailProps {
   projectManagementSaving: boolean;
   projectManagementAiLogs: AiCommandLogSummary[];
   projectManagementAiLogDetail: AiCommandLogEntry | null;
+  projectManagementSelectedAiLogFile: string | null;
   projectManagementAiLogsLoading: boolean;
   projectManagementAiLogsError: string | null;
   projectManagementAiLogsLastUpdatedAt: string | null;
@@ -554,6 +555,7 @@ export function WorktreeDetail({
   projectManagementSaving,
   projectManagementAiLogs,
   projectManagementAiLogDetail,
+  projectManagementSelectedAiLogFile,
   projectManagementAiLogsLoading,
   projectManagementAiLogsError,
   projectManagementAiLogsLastUpdatedAt,
@@ -853,10 +855,7 @@ export function WorktreeDetail({
   }, [onLoadProjectManagementDocument, onLoadProjectManagementDocuments, onLoadProjectManagementUsers, projectManagementSelectedDocumentId]);
   const refreshAiLogs = useCallback(async (options?: { silent?: boolean }) => {
     await onLoadProjectManagementAiLogs(options);
-    if (projectManagementAiLogDetail?.fileName) {
-      await onLoadProjectManagementAiLog(projectManagementAiLogDetail.fileName, options);
-    }
-  }, [onLoadProjectManagementAiLog, onLoadProjectManagementAiLogs, projectManagementAiLogDetail?.fileName]);
+  }, [onLoadProjectManagementAiLogs]);
 
   useEffect(() => {
     if (!selectedBackgroundCommandName && backgroundCommands[0]) {
@@ -2005,6 +2004,7 @@ export function WorktreeDetail({
                 activeSubTab={projectManagementAiActiveSubTab}
                 logs={projectManagementAiLogs}
                 logDetail={projectManagementAiLogDetail}
+                selectedLogFile={projectManagementSelectedAiLogFile}
                 loading={projectManagementAiLogsLoading}
                 error={projectManagementAiLogsError}
                 lastUpdatedAt={projectManagementAiLogsLastUpdatedAt}
