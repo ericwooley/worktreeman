@@ -83,7 +83,7 @@ import {
   removeWorktree,
   validateDeleteWorktreeRequest,
 } from "../services/git-service.js";
-import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
+import { buildRuntimeProcessEnv, buildWorktreeProcessEnv, createRuntime, runStartupCommands } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import {
   loadConfig,
@@ -2596,8 +2596,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const worktreesBefore = await listWorktrees(options.repoRoot);
       let worktree = worktreesBefore.find((entry) => entry.branch === branch) ?? null;
+      let createdWorktreeForAiRun = false;
       if (!worktree) {
         worktree = await createWorktree(options.repoRoot, config, { branch });
+        createdWorktreeForAiRun = true;
         const sourceRoot = await resolveEnvSyncSourceRoot(await listWorktrees(options.repoRoot));
         if (sourceRoot) {
           await syncEnvFiles(sourceRoot, worktree.worktreePath);
@@ -2617,6 +2619,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const existingRuntime = await options.operationalState.getRuntime(branch);
+      if (!existingRuntime && createdWorktreeForAiRun) {
+        await runStartupCommands(
+          config.startupCommands,
+          worktreePath,
+          buildWorktreeProcessEnv(config, branch, worktreePath),
+        );
+      }
       const runtime = existingRuntime ?? (config.aiCommands.autoStartRuntime ? await ensureWorktreeRuntime(config, worktree) : undefined);
       stopAutoStartedRuntimeOnError = !existingRuntime && runtime != null;
       const backgroundCommands = await listBackgroundCommands(config, branch, worktreePath, runtime);

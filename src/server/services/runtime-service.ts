@@ -27,6 +27,24 @@ export function buildRuntimeProcessEnv(runtime: WorktreeRuntime): NodeJS.Process
   };
 }
 
+export function buildWorktreeProcessEnv(
+  config: WorktreeManagerConfig,
+  branch: string,
+  worktreePath: string,
+): NodeJS.ProcessEnv {
+  const baseEnv = {
+    ...config.env,
+  };
+
+  return {
+    ...process.env,
+    ...baseEnv,
+    ...renderDerivedEnv(config.derivedEnv ?? {}, baseEnv),
+    WORKTREE_BRANCH: branch,
+    WORKTREE_PATH: worktreePath,
+  };
+}
+
 export async function runStartupCommands(
   commands: string[],
   cwd: string,

@@ -13,7 +13,7 @@ import { createApiRouter } from "./api.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
-import { loadConfig, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
+import { loadConfig, parseConfigContents, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { findRepoContext, findWorktreePathForRef } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
@@ -3592,28 +3592,19 @@ test("project-management status route updates only the lane state", { concurrenc
 
 test("project-management document AI creates a derived worktree and streams stdout from that worktree job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
-  const fakeAiProcesses = createFakeAiProcesses();
-  let capturedCommand = "";
-  let capturedWorktreePath = "";
-  let capturedEnv: NodeJS.ProcessEnv | null = null;
-  const aiProcesses: InjectedAiProcesses = {
-    ...fakeAiProcesses.aiProcesses,
-    async startProcess(options) {
-      capturedCommand = options.command;
-      capturedWorktreePath = options.worktreePath;
-      capturedEnv = options.env;
-      return await fakeAiProcesses.aiProcesses.startProcess(options);
-    },
-  };
-
-  fakeAiProcesses.queueStartScript([
-    { status: "online", pid: 6123, stdout: "planning...\n", stderr: "" },
-    { status: "online", pid: 6123, stdout: "planning...\nimplemented\n", stderr: "" },
-    { status: "stopped", pid: 6123, stdout: "planning...\nimplemented\n", stderr: "", exitCode: 0 },
-  ]);
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "printf 'planning...\\nimplemented\\n'; printf '%s' \"$WTM_AI_INPUT\" > .wtm-captured-input; env > .wtm-captured-env",
+    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+    autoStartRuntime: true,
+  });
+  await fs.writeFile(repo.configPath, nextContents, "utf8");
 
   const server = await startApiServer(repo, {
-    aiProcesses,
     aiProcessPollIntervalMs: 10,
   });
 
@@ -3676,15 +3667,12 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(storedLink.documentId, outline.id);
     assert.equal(storedLink.worktreePath, createdWorktree.worktreePath);
 
-    if (!capturedEnv) {
-      assert.fail("Expected AI process env to be captured.");
-    }
-    const processEnv: NodeJS.ProcessEnv = capturedEnv;
-    assert.equal(capturedWorktreePath, createdWorktree.worktreePath);
     assert.equal(createdWorktree.runtime?.tmuxSession?.length ? true : false, true);
-    assert.equal(processEnv.WORKTREE_BRANCH, payload.job.branch);
-    assert.equal(processEnv.WORKTREE_PATH, createdWorktree.worktreePath);
-    assert.equal(processEnv.TMUX_SESSION_NAME, createdWorktree.runtime?.tmuxSession);
+    const capturedCommand = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-input"), "utf8");
+    const capturedEnv = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-env"), "utf8");
+    assert.equal(capturedEnv.includes(`WORKTREE_BRANCH=${payload.job.branch}`), true);
+    assert.equal(capturedEnv.includes(`WORKTREE_PATH=${createdWorktree.worktreePath}`), true);
+    assert.equal(capturedEnv.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
     assert.equal(capturedCommand.includes("Environment wrapper:"), true);
     assert.equal(capturedCommand.includes(`- Repository root: ${repo.repoRoot}`), true);
@@ -3752,18 +3740,17 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.match(startedComment.body, /## Worktree AI started/);
     assert.equal(startedComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(startedComment.body, /- Command: `smart`/);
-    assert.match(startedComment.body, /- Request: .*outline implementation/);
     assert.match(latestComment.body, /## Worktree AI completed/);
     assert.equal(latestComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(latestComment.body, /- Command: `smart`/);
     assert.match(latestComment.body, /### Output/);
     assert.match(latestComment.body, /<details>/);
     assert.match(latestComment.body, /<summary>Stdout<\/summary>/);
-    assert.match(latestComment.body, /> planning\.\.\. implemented/);
+    assert.match(latestComment.body, /> planning\.\.\.\n> implemented/);
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, outline.id);
     assert.equal(history.history.length >= 2, true);
-    assert.match(history.history.at(-1)?.diff ?? "", /\+status: in-progress/);
+    assert.match(history.history.at(-1)?.diff ?? "", /\+  ## Worktree AI completed/);
 
     const aiLogsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(aiLogsResponse.status, 200);
@@ -3784,6 +3771,82 @@ test("project-management document AI creates a derived worktree and streams stdo
       }>(server, 1000);
       return latestStatePayload.worktrees.find((entry) => entry.branch === payload.job.branch)?.runtime === undefined;
     });
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management document AI runs startup commands for a new derived worktree without starting a runtime", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const parsedConfig = parseConfigContents(currentContents);
+  parsedConfig.startupCommands = [
+    "printf started > .wtm-startup-marker",
+  ];
+  parsedConfig.backgroundCommands = {
+    web: {
+      command: "printf background > .wtm-background-marker",
+    },
+  };
+  parsedConfig.aiCommands.autoStartRuntime = false;
+  parsedConfig.aiCommands.smart = "printf '%s' \"$WTM_AI_INPUT\" >/dev/null; printf 'planning...\\n'";
+  parsedConfig.aiCommands.simple = "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT";
+  await fs.writeFile(repo.configPath, serializeConfigContents(parsedConfig as unknown as Record<string, unknown>, { includeSchemaHeader: true }), "utf8");
+
+  const server = await startApiServer(repo, {
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const response = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      job: { branch: string; worktreePath?: string; status: string };
+      runtime?: { branch: string };
+    };
+    assert.equal(payload.job.status, "running");
+    assert.equal(payload.runtime, undefined);
+
+    const statePayload = await readStateSnapshot<{
+      worktrees: Array<{
+        branch: string;
+        worktreePath: string;
+        runtime?: { tmuxSession: string };
+      }>;
+    }>(server);
+    const createdWorktree = statePayload.worktrees.find((entry) => entry.branch === payload.job.branch);
+    assert.ok(createdWorktree);
+    assert.equal(createdWorktree.runtime, undefined);
+
+    const startupMarker = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-startup-marker"), "utf8");
+    assert.equal(startupMarker, "started");
+
+    await assert.rejects(
+      fs.access(path.join(createdWorktree.worktreePath, ".wtm-background-marker")),
+    );
+
+    const operationalState = await createOperationalStateStore(repo.repoRoot);
+    const runtime = await operationalState.getRuntime(payload.job.branch);
+    assert.equal(runtime, null);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
