@@ -1,7 +1,6 @@
 import type {
   AddProjectManagementCommentRequest,
   AppendProjectManagementBatchRequest,
-  ApiStateResponse,
   AiCommandLogResponse,
   ApiStateStreamEvent,
   AiCommandLogStreamEvent,
@@ -84,10 +83,6 @@ async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
-}
-
-export function getState(): Promise<ApiStateResponse> {
-  return request<ApiStateResponse>("/api/state");
 }
 
 export function subscribeToState(

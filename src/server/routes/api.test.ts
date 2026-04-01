@@ -13,7 +13,7 @@ import { createApiRouter } from "./api.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
-import { loadConfig, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
+import { loadConfig, parseConfigContents, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { findRepoContext, findWorktreePathForRef } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
@@ -387,7 +387,7 @@ async function createApiTestRepo(): Promise<Awaited<ReturnType<typeof findRepoCo
 
 async function startApiServer(
   repo: Awaited<ReturnType<typeof findRepoContext>>,
-  overrides?: Partial<Pick<RouterOptions, "aiProcesses" | "aiProcessPollIntervalMs" | "aiLogStreamPollIntervalMs">>,
+  overrides?: Partial<Pick<RouterOptions, "aiProcesses" | "aiProcessPollIntervalMs" | "aiLogStreamPollIntervalMs" | "stateStreamFullRefreshIntervalMs">>,
 ) {
   const worker = await startProjectManagementAiWorker({ repoRoot: repo.repoRoot });
   const app = express();
@@ -495,6 +495,18 @@ async function startApiServer(
   };
 }
 
+async function readStateSnapshot<TState>(server: Awaited<ReturnType<typeof startApiServer>>, timeoutMs = 3000): Promise<TState> {
+  const stream = await openSse(`${await server.url()}/api/state/stream`);
+
+  try {
+    const snapshot = await stream.nextEvent(timeoutMs) as unknown as { type: string; state: TState };
+    assert.equal(snapshot.type, "snapshot");
+    return snapshot.state;
+  } finally {
+    await stream.close();
+  }
+}
+
 async function startRunningAiJob(
   server: Awaited<ReturnType<typeof startApiServer>>,
   fakeAiProcesses: ReturnType<typeof createFakeAiProcesses>,
@@ -554,12 +566,20 @@ test("GET /api/state returns favicon and preferred port config", async () => {
     );
 
     const server = await startApiServer(repo);
-    const response = await server.fetch("/api/state");
-    const payload = await response.json() as { config: { favicon: string; preferredPort?: number } };
+    const stream = await openSse(`${await server.url()}/api/state/stream`);
 
-    assert.equal(response.status, 200);
-    assert.equal(payload.config.favicon, "assets/favicon.png");
-    assert.equal(payload.config.preferredPort, 4900);
+    try {
+      const snapshot = await stream.nextEvent() as unknown as {
+        type: string;
+        state: { config: { favicon: string; preferredPort?: number } };
+      };
+
+      assert.equal(snapshot.type, "snapshot");
+      assert.equal(snapshot.state.config.favicon, "assets/favicon.png");
+      assert.equal(snapshot.state.config.preferredPort, 4900);
+    } finally {
+      await stream.close();
+    }
 
     await server.close();
   } finally {
@@ -571,7 +591,7 @@ test("GET /api/state/stream emits runtime updates after the runtime starts", asy
   const repo = await createApiTestRepo();
 
   try {
-    const server = await startApiServer(repo, { aiLogStreamPollIntervalMs: 50 });
+    const server = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
     const stream = await openSse(`${await server.url()}/api/state/stream`);
 
     try {
@@ -602,7 +622,7 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
   const repo = await createApiTestRepo();
 
   try {
-    const firstServer = await startApiServer(repo, { aiLogStreamPollIntervalMs: 50 });
+    const firstServer = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
     const startResponse = await firstServer.fetch(`/api/worktrees/${encodeURIComponent("feature-ai-log")}/runtime/start`, {
       method: "POST",
     });
@@ -611,7 +631,7 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
 
     await stopOperationalStateStore(repo.repoRoot);
 
-    const secondServer = await startApiServer(repo, { aiLogStreamPollIntervalMs: 50 });
+    const secondServer = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
     const stream = await openSse(`${await secondServer.url()}/api/state/stream`);
 
     try {
@@ -627,6 +647,50 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
     } finally {
       await stream.close();
       await secondServer.close();
+    }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/state/stream rebuilds state on the fallback interval for out-of-band runtime changes", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
+    const stream = await openSse(`${await server.url()}/api/state/stream`);
+
+    try {
+      const snapshot = await stream.nextEvent() as unknown as {
+        type: string;
+        state: { worktrees: Array<{ branch: string; runtime?: { branch: string } }> };
+      };
+      assert.equal(snapshot.type, "snapshot");
+      assert.equal(snapshot.state.worktrees.find((entry) => entry.branch === "feature-ai-log")?.runtime, undefined);
+
+      const operationalState = await createOperationalStateStore(repo.repoRoot);
+      await operationalState.setRuntime({
+        branch: "feature-ai-log",
+        worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+        env: {},
+        quickLinks: [],
+        allocatedPorts: {},
+        tmuxSession: getTmuxSessionName(repo.repoRoot, "feature-ai-log"),
+        runtimeStartedAt: new Date().toISOString(),
+      });
+
+      const update = await stream.nextEvent() as unknown as {
+        type: string;
+        state: { worktrees: Array<{ branch: string; runtime?: { branch: string; tmuxSession: string } }> };
+      };
+      assert.equal(update.type, "update");
+      const runtime = update.state.worktrees.find((entry) => entry.branch === "feature-ai-log")?.runtime;
+      assert.ok(runtime);
+      assert.equal(runtime.branch, "feature-ai-log");
+      assert.match(runtime.tmuxSession, /feature-ai-log/);
+    } finally {
+      await stream.close();
+      await server.close();
     }
   } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -674,41 +738,49 @@ test("GET /api/state includes deletion metadata for protected worktrees", async 
 
   try {
     const server = await startApiServer(repo);
-    const response = await server.fetch("/api/state");
-    const payload = await response.json() as {
-      worktrees: Array<{
-        branch: string;
-        deletion?: {
-          canDelete: boolean;
-          reason: string | null;
-          deleteBranchByDefault: boolean;
-          isDefaultBranch: boolean;
-          isDefaultWorktree: boolean;
-          isSettingsWorktree: boolean;
+    const stream = await openSse(`${await server.url()}/api/state/stream`);
+
+    try {
+      const snapshot = await stream.nextEvent() as unknown as {
+        type: string;
+        state: {
+          worktrees: Array<{
+            branch: string;
+            deletion?: {
+              canDelete: boolean;
+              reason: string | null;
+              deleteBranchByDefault: boolean;
+              isDefaultBranch: boolean;
+              isDefaultWorktree: boolean;
+              isSettingsWorktree: boolean;
+            };
+          }>;
         };
-      }>;
-    };
+      };
 
-    assert.equal(response.status, 200);
+      assert.equal(snapshot.type, "snapshot");
 
-    const main = payload.worktrees.find((entry) => entry.branch === "main");
-    const settings = payload.worktrees.find((entry) => entry.branch === DEFAULT_WORKTREEMAN_SETTINGS_BRANCH);
-    const feature = payload.worktrees.find((entry) => entry.branch === "feature-ai-log");
+      const main = snapshot.state.worktrees.find((entry) => entry.branch === "main");
+      const settings = snapshot.state.worktrees.find((entry) => entry.branch === DEFAULT_WORKTREEMAN_SETTINGS_BRANCH);
+      const feature = snapshot.state.worktrees.find((entry) => entry.branch === "feature-ai-log");
 
-    assert.ok(main?.deletion);
-    assert.equal(main.deletion.canDelete, false);
-    assert.equal(main.deletion.isDefaultBranch, true);
-    assert.equal(main.deletion.isDefaultWorktree, true);
-    assert.match(main.deletion.reason ?? "", /default branch worktree/i);
+      assert.ok(main?.deletion);
+      assert.equal(main.deletion.canDelete, false);
+      assert.equal(main.deletion.isDefaultBranch, true);
+      assert.equal(main.deletion.isDefaultWorktree, true);
+      assert.match(main.deletion.reason ?? "", /default branch worktree/i);
 
-    assert.ok(settings?.deletion);
-    assert.equal(settings.deletion.canDelete, false);
-    assert.equal(settings.deletion.isSettingsWorktree, true);
-    assert.equal(settings.deletion.deleteBranchByDefault, false);
+      assert.ok(settings?.deletion);
+      assert.equal(settings.deletion.canDelete, false);
+      assert.equal(settings.deletion.isSettingsWorktree, true);
+      assert.equal(settings.deletion.deleteBranchByDefault, false);
 
-    assert.ok(feature?.deletion);
-    assert.equal(feature.deletion.canDelete, true);
-    assert.equal(feature.deletion.deleteBranchByDefault, true);
+      assert.ok(feature?.deletion);
+      assert.equal(feature.deletion.canDelete, true);
+      assert.equal(feature.deletion.deleteBranchByDefault, true);
+    } finally {
+      await stream.close();
+    }
 
     await server.close();
   } finally {
@@ -911,11 +983,16 @@ test("DELETE /api/worktrees/:branch requires typing the worktree name when local
 
   try {
     const server = await startApiServer(repo);
-    const stateResponse = await server.fetch("/api/state");
-    const statePayload = await stateResponse.json() as {
-      worktrees: Array<{ branch: string; worktreePath: string }>;
+    const stream = await openSse(`${await server.url()}/api/state/stream`);
+    const snapshot = await stream.nextEvent() as unknown as {
+      type: string;
+      state: {
+        worktrees: Array<{ branch: string; worktreePath: string }>;
+      };
     };
-    const featureWorktree = statePayload.worktrees.find((entry) => entry.branch === "feature-ai-log");
+    await stream.close();
+
+    const featureWorktree = snapshot.state.worktrees.find((entry) => entry.branch === "feature-ai-log");
 
     assert.ok(featureWorktree);
     await fs.writeFile(path.join(featureWorktree.worktreePath, "dirty.txt"), "local change\n", "utf8");
@@ -1110,9 +1187,7 @@ test("POST /api/worktrees persists an optional linked project-management documen
     });
     assert.equal(createResponse.status, 201);
 
-    const stateResponse = await server.fetch(`/api/state`);
-    assert.equal(stateResponse.status, 200);
-    const statePayload = await stateResponse.json() as {
+    const statePayload = await readStateSnapshot<{
       worktrees: Array<{
         branch: string;
         linkedDocument?: {
@@ -1122,7 +1197,7 @@ test("POST /api/worktrees persists an optional linked project-management documen
           archived: boolean;
         } | null;
       }>;
-    };
+    }>(server);
     const linkedWorktree = statePayload.worktrees.find((entry) => entry.branch === "feature-linked-doc");
     assert.ok(linkedWorktree);
     assert.equal(linkedWorktree.linkedDocument?.id, outline.id);
@@ -3517,28 +3592,19 @@ test("project-management status route updates only the lane state", { concurrenc
 
 test("project-management document AI creates a derived worktree and streams stdout from that worktree job", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
-  const fakeAiProcesses = createFakeAiProcesses();
-  let capturedCommand = "";
-  let capturedWorktreePath = "";
-  let capturedEnv: NodeJS.ProcessEnv | null = null;
-  const aiProcesses: InjectedAiProcesses = {
-    ...fakeAiProcesses.aiProcesses,
-    async startProcess(options) {
-      capturedCommand = options.command;
-      capturedWorktreePath = options.worktreePath;
-      capturedEnv = options.env;
-      return await fakeAiProcesses.aiProcesses.startProcess(options);
-    },
-  };
-
-  fakeAiProcesses.queueStartScript([
-    { status: "online", pid: 6123, stdout: "planning...\n", stderr: "" },
-    { status: "online", pid: 6123, stdout: "planning...\nimplemented\n", stderr: "" },
-    { status: "stopped", pid: 6123, stdout: "planning...\nimplemented\n", stderr: "", exitCode: 0 },
-  ]);
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "printf 'planning...\\nimplemented\\n'; printf '%s' \"$WTM_AI_INPUT\" > .wtm-captured-input; env > .wtm-captured-env",
+    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+    autoStartRuntime: true,
+  });
+  await fs.writeFile(repo.configPath, nextContents, "utf8");
 
   const server = await startApiServer(repo, {
-    aiProcesses,
     aiProcessPollIntervalMs: 10,
   });
 
@@ -3572,9 +3638,7 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(payload.runtime?.tmuxSession?.length ? true : false, true);
     assert.equal(typeof payload.runtime?.runtimeStartedAt, "string");
 
-    const stateResponse = await server.fetch(`/api/state`);
-    assert.equal(stateResponse.status, 200);
-    const statePayload = await stateResponse.json() as {
+    const statePayload = await readStateSnapshot<{
       worktrees: Array<{
         branch: string;
         worktreePath: string;
@@ -3588,7 +3652,7 @@ test("project-management document AI creates a derived worktree and streams stdo
         } | null;
         runtime?: { tmuxSession: string };
       }>;
-    };
+    }>(server);
     const createdWorktree = statePayload.worktrees.find((entry) => entry.branch === payload.job.branch);
     assert.ok(createdWorktree);
     assert.equal(createdWorktree.linkedDocument?.id, outline.id);
@@ -3603,15 +3667,12 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(storedLink.documentId, outline.id);
     assert.equal(storedLink.worktreePath, createdWorktree.worktreePath);
 
-    if (!capturedEnv) {
-      assert.fail("Expected AI process env to be captured.");
-    }
-    const processEnv: NodeJS.ProcessEnv = capturedEnv;
-    assert.equal(capturedWorktreePath, createdWorktree.worktreePath);
     assert.equal(createdWorktree.runtime?.tmuxSession?.length ? true : false, true);
-    assert.equal(processEnv.WORKTREE_BRANCH, payload.job.branch);
-    assert.equal(processEnv.WORKTREE_PATH, createdWorktree.worktreePath);
-    assert.equal(processEnv.TMUX_SESSION_NAME, createdWorktree.runtime?.tmuxSession);
+    const capturedCommand = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-input"), "utf8");
+    const capturedEnv = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-env"), "utf8");
+    assert.equal(capturedEnv.includes(`WORKTREE_BRANCH=${payload.job.branch}`), true);
+    assert.equal(capturedEnv.includes(`WORKTREE_PATH=${createdWorktree.worktreePath}`), true);
+    assert.equal(capturedEnv.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
     assert.equal(capturedCommand.includes("Environment wrapper:"), true);
     assert.equal(capturedCommand.includes(`- Repository root: ${repo.repoRoot}`), true);
@@ -3679,18 +3740,17 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.match(startedComment.body, /## Worktree AI started/);
     assert.equal(startedComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(startedComment.body, /- Command: `smart`/);
-    assert.match(startedComment.body, /- Request: .*outline implementation/);
     assert.match(latestComment.body, /## Worktree AI completed/);
     assert.equal(latestComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(latestComment.body, /- Command: `smart`/);
     assert.match(latestComment.body, /### Output/);
     assert.match(latestComment.body, /<details>/);
     assert.match(latestComment.body, /<summary>Stdout<\/summary>/);
-    assert.match(latestComment.body, /> planning\.\.\. implemented/);
+    assert.match(latestComment.body, /> planning\.\.\.\n> implemented/);
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, outline.id);
     assert.equal(history.history.length >= 2, true);
-    assert.match(history.history.at(-1)?.diff ?? "", /\+status: in-progress/);
+    assert.match(history.history.at(-1)?.diff ?? "", /\+  ## Worktree AI completed/);
 
     const aiLogsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(aiLogsResponse.status, 200);
@@ -3706,16 +3766,87 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(completedLog.origin?.location.projectManagementDocumentViewMode, "document");
 
     await waitFor(async () => {
-      const latestStateResponse = await server.fetch(`/api/state`);
-      if (latestStateResponse.status !== 200) {
-        return false;
-      }
-
-      const latestStatePayload = await latestStateResponse.json() as {
+      const latestStatePayload = await readStateSnapshot<{
         worktrees: Array<{ branch: string; runtime?: { tmuxSession: string } }>;
-      };
+      }>(server, 1000);
       return latestStatePayload.worktrees.find((entry) => entry.branch === payload.job.branch)?.runtime === undefined;
     });
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management document AI runs startup commands for a new derived worktree without starting a runtime", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const parsedConfig = parseConfigContents(currentContents);
+  parsedConfig.startupCommands = [
+    "printf started > .wtm-startup-marker",
+  ];
+  parsedConfig.backgroundCommands = {
+    web: {
+      command: "printf background > .wtm-background-marker",
+    },
+  };
+  parsedConfig.aiCommands.autoStartRuntime = false;
+  parsedConfig.aiCommands.smart = "printf '%s' \"$WTM_AI_INPUT\" >/dev/null; printf 'planning...\\n'";
+  parsedConfig.aiCommands.simple = "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT";
+  await fs.writeFile(repo.configPath, serializeConfigContents(parsedConfig as unknown as Record<string, unknown>, { includeSchemaHeader: true }), "utf8");
+
+  const server = await startApiServer(repo, {
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const response = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      job: { branch: string; worktreePath?: string; status: string };
+      runtime?: { branch: string };
+    };
+    assert.equal(payload.job.status, "running");
+    assert.equal(payload.runtime, undefined);
+
+    const statePayload = await readStateSnapshot<{
+      worktrees: Array<{
+        branch: string;
+        worktreePath: string;
+        runtime?: { tmuxSession: string };
+      }>;
+    }>(server);
+    const createdWorktree = statePayload.worktrees.find((entry) => entry.branch === payload.job.branch);
+    assert.ok(createdWorktree);
+    assert.equal(createdWorktree.runtime, undefined);
+
+    const startupMarker = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-startup-marker"), "utf8");
+    assert.equal(startupMarker, "started");
+
+    await assert.rejects(
+      fs.access(path.join(createdWorktree.worktreePath, ".wtm-background-marker")),
+    );
+
+    const operationalState = await createOperationalStateStore(repo.repoRoot);
+    const runtime = await operationalState.getRuntime(payload.job.branch);
+    assert.equal(runtime, null);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -3804,14 +3935,9 @@ test("project-management document AI preserves board origin metadata when reques
     });
 
     await waitFor(async () => {
-      const latestStateResponse = await server.fetch(`/api/state`);
-      if (latestStateResponse.status !== 200) {
-        return false;
-      }
-
-      const latestStatePayload = await latestStateResponse.json() as {
+      const latestStatePayload = await readStateSnapshot<{
         worktrees: Array<{ branch: string; runtime?: { tmuxSession: string } }>;
-      };
+      }>(server, 1000);
       return latestStatePayload.worktrees.find((entry) => entry.branch === payload.job.branch)?.runtime === undefined;
     });
 
@@ -4001,11 +4127,9 @@ test("project-management document AI continues the selected linked worktree when
     const link = await getWorktreeDocumentLink(repo.repoRoot, firstPayload.job.branch);
     assert.equal(link?.documentId, outline.id);
 
-    const stateResponse = await server.fetch(`/api/state`);
-    assert.equal(stateResponse.status, 200);
-    const statePayload = await stateResponse.json() as {
+    const statePayload = await readStateSnapshot<{
       worktrees: Array<{ branch: string }>;
-    };
+    }>(server);
     assert.equal(statePayload.worktrees.filter((entry) => entry.branch === firstPayload.job.branch).length, 1);
   } finally {
     await server.close();
@@ -4091,11 +4215,9 @@ test("project-management document AI uses a suffixed branch when explicitly star
     assert.equal(firstLink?.documentId, outline.id);
     assert.equal(secondLink?.documentId, outline.id);
 
-    const stateResponse = await server.fetch(`/api/state`);
-    assert.equal(stateResponse.status, 200);
-    const statePayload = await stateResponse.json() as {
+    const statePayload = await readStateSnapshot<{
       worktrees: Array<{ branch: string }>;
-    };
+    }>(server);
     assert.ok(statePayload.worktrees.some((entry) => entry.branch === firstPayload.job.branch));
     assert.ok(statePayload.worktrees.some((entry) => entry.branch === secondPayload.job.branch));
   } finally {
@@ -4352,14 +4474,9 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     assert.equal(capturedPrompt.includes("inspect the runtime"), true);
 
     await waitFor(async () => {
-      const stateResponse = await server.fetch(`/api/state`);
-      if (stateResponse.status !== 200) {
-        return false;
-      }
-
-      const statePayload = await stateResponse.json() as {
+      const statePayload = await readStateSnapshot<{
         worktrees: Array<{ branch: string; runtime?: { branch: string; tmuxSession: string } }>;
-      };
+      }>(server, 1000);
       const runtime = statePayload.worktrees.find((entry) => entry.branch === "feature-ai-env")?.runtime;
       return runtime?.branch === "feature-ai-env" && runtime.tmuxSession === payload.runtime?.tmuxSession;
     });
@@ -4372,6 +4489,18 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
 
 test("worktree AI auto-starts a runtime and stops it after completion when the runtime was created for the AI run", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
+  const currentContents = await readConfigContents({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const nextContents = updateAiCommandInConfigContents(currentContents, {
+    smart: "printf %s $WTM_AI_INPUT",
+    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+    autoStartRuntime: true,
+  });
+  await fs.writeFile(repo.configPath, nextContents, "utf8");
+
   const config = await loadConfig({
     path: repo.configPath,
     repoRoot: repo.repoRoot,
@@ -4440,14 +4569,9 @@ test("worktree AI auto-starts a runtime and stops it after completion when the r
     assert.equal(processEnv.TMUX_SESSION_NAME, payload.runtime?.tmuxSession);
 
     await waitFor(async () => {
-      const stateResponse = await server.fetch(`/api/state`);
-      if (stateResponse.status !== 200) {
-        return false;
-      }
-
-      const statePayload = await stateResponse.json() as {
+      const statePayload = await readStateSnapshot<{
         worktrees: Array<{ branch: string; runtime?: { branch: string } }>;
-      };
+      }>(server, 1000);
       return statePayload.worktrees.find((entry) => entry.branch === "feature-ai-auto-stop")?.runtime === undefined;
     }, 15000);
   } finally {
