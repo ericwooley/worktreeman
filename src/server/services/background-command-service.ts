@@ -1,11 +1,10 @@
 import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import pm2 from "pm2";
 import type { ProcessDescription, StartOptions } from "pm2";
+import { PM2_PROCESS_PREFIX, Pm2ProcessStatus, WORKTREEMAN_NAMESPACE } from "../../shared/constants.js";
 import type {
   BackgroundCommandConfigEntry,
   BackgroundCommandLogLine,
@@ -13,12 +12,14 @@ import type {
   BackgroundCommandLogStreamEvent,
   BackgroundCommandState,
   WorktreeManagerConfig,
+  WorktreeRecord,
   WorktreeRuntime,
 } from "../../shared/types.js";
+import type { WorktreeId } from "../../shared/worktree-id.js";
+import { createOperationalStateStore } from "./operational-state-service.js";
 import { buildRuntimeProcessEnv } from "./runtime-service.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 
-const PM2_NAMESPACE = "worktreeman";
 const LOG_LINES_LIMIT = 400;
 let streamedLogSequence = 0;
 
@@ -31,30 +32,24 @@ interface Pm2ProcessDescription {
   errLogPath?: string;
 }
 
-interface BackgroundCommandMetadata {
+interface BackgroundCommandTarget {
+  id: WorktreeId;
   branch: string;
-  commandName: string;
-  command: string;
   worktreePath: string;
-  runtimeEnv: Record<string, string>;
 }
 
-function getPm2CommandName(branch: string, commandName: string): string {
-  return `wtm:${branch}:${commandName}`;
+function getPm2CommandName(worktreeId: WorktreeId, commandName: string): string {
+  return `${PM2_PROCESS_PREFIX}${worktreeId}:${commandName}`;
 }
 
-function getPm2Namespace(branch: string): string {
-  return `${PM2_NAMESPACE}:${branch}`;
+function getPm2Namespace(worktreeId: WorktreeId): string {
+  return `${WORKTREEMAN_NAMESPACE}:${worktreeId}`;
 }
 
 export function getBackgroundCommandEntries(config: WorktreeManagerConfig): Record<string, BackgroundCommandConfigEntry> {
   return {
     ...(config.backgroundCommands ?? {}),
   };
-}
-
-function getPm2MetadataPath(processName: string): string {
-  return path.join(os.tmpdir(), `${processName.replace(/[^a-zA-Z0-9_.-]+/g, "_")}.json`);
 }
 
 function buildBackgroundEnv(config: WorktreeManagerConfig, runtime: WorktreeRuntime): Record<string, string> {
@@ -152,15 +147,15 @@ async function startPm2Process(options: StartOptions): Promise<void> {
 }
 
 function isRunningPm2Status(status: string | undefined): boolean {
-  return status === "online" || status === "launching";
+  return status === Pm2ProcessStatus.Online || status === Pm2ProcessStatus.Launching;
 }
 
 function normalizePm2Status(status: string | undefined): string {
-  if (status === "launching") {
-    return "online";
+  if (status === Pm2ProcessStatus.Launching) {
+    return Pm2ProcessStatus.Online;
   }
 
-  return status ?? "stopped";
+  return status ?? Pm2ProcessStatus.Stopped;
 }
 
 async function readLogLines(filePath: string | undefined, source: "stdout" | "stderr"): Promise<BackgroundCommandLogLine[]> {
@@ -186,40 +181,27 @@ async function readLogLines(filePath: string | undefined, source: "stdout" | "st
   }
 }
 
-async function writeMetadata(processName: string, metadata: BackgroundCommandMetadata): Promise<void> {
-  await fs.writeFile(getPm2MetadataPath(processName), JSON.stringify(metadata), "utf8");
-}
-
-async function readMetadata(processName: string): Promise<BackgroundCommandMetadata | null> {
-  try {
-    const raw = await fs.readFile(getPm2MetadataPath(processName), "utf8");
-    return JSON.parse(raw) as BackgroundCommandMetadata;
-  } catch {
-    return null;
-  }
-}
-
-async function deleteMetadata(processName: string): Promise<void> {
-  await fs.rm(getPm2MetadataPath(processName), { force: true });
-}
-
 export async function listBackgroundCommands(
   config: WorktreeManagerConfig,
-  branch: string,
-  worktreePath: string,
+  repoRoot: string,
+  worktree: BackgroundCommandTarget,
   runtime: WorktreeRuntime | undefined,
 ): Promise<BackgroundCommandState[]> {
   const processes = await listPm2Processes();
   const commandEntries = getBackgroundCommandEntries(config);
+  const operationalState = await createOperationalStateStore(repoRoot);
+  const metadataByProcessName = new Map(
+    (await operationalState.listBackgroundCommandMetadataByWorktreeId(worktree.id)).map((entry) => [entry.processName, entry]),
+  );
 
   return await Promise.all(Object.entries(commandEntries).map(async ([name, entry]) => {
-    const processName = getPm2CommandName(branch, name);
+    const processName = getPm2CommandName(worktree.id, name);
     const processInfo = processes.get(processName);
-    const metadata = processInfo ? null : await readMetadata(processName);
+    const metadata = metadataByProcessName.get(processName);
     const hasRuntime = Boolean(runtime);
     const inferredRunning = processInfo
       ? isRunningPm2Status(processInfo.status)
-      : Boolean(metadata && metadata.worktreePath === worktreePath);
+      : Boolean(metadata && metadata.worktreePath === worktree.worktreePath);
 
     return {
       name,
@@ -227,7 +209,7 @@ export async function listBackgroundCommands(
       processName,
       manager: "pm2",
       running: inferredRunning,
-      status: processInfo ? normalizePm2Status(processInfo.status) : inferredRunning ? "online" : "stopped",
+      status: processInfo ? normalizePm2Status(processInfo.status) : inferredRunning ? Pm2ProcessStatus.Online : Pm2ProcessStatus.Stopped,
       requiresRuntime: true,
       canStart: hasRuntime,
       note: !hasRuntime ? "Start the environment first so this command gets the configured runtime ports and env." : undefined,
@@ -239,8 +221,8 @@ export async function listBackgroundCommands(
 
 export async function startBackgroundCommand(options: {
   config: WorktreeManagerConfig;
-  branch: string;
-  worktreePath: string;
+  repoRoot: string;
+  worktree: BackgroundCommandTarget;
   runtime: WorktreeRuntime | undefined;
   commandName: string;
 }): Promise<void> {
@@ -250,8 +232,10 @@ export async function startBackgroundCommand(options: {
     throw new Error(`Unknown background command ${options.commandName}.`);
   }
 
-  const processName = getPm2CommandName(options.branch, options.commandName);
+  const processName = getPm2CommandName(options.worktree.id, options.commandName);
+  const operationalState = await createOperationalStateStore(options.repoRoot);
   await deletePm2Process(processName).catch(() => undefined);
+  await operationalState.deleteBackgroundCommandMetadata(processName);
 
   const runtime = options.runtime;
 
@@ -260,41 +244,43 @@ export async function startBackgroundCommand(options: {
   }
 
   const env = buildBackgroundEnv(options.config, runtime);
-  const metadata: BackgroundCommandMetadata = {
-    branch: options.branch,
+  await operationalState.setBackgroundCommandMetadata({
+    processName,
+    worktreeId: options.worktree.id,
+    branch: options.worktree.branch,
     commandName: options.commandName,
     command: entry.command,
-    worktreePath: options.worktreePath,
+    worktreePath: options.worktree.worktreePath,
     runtimeEnv: runtime.env,
-  };
-
-  await writeMetadata(processName, metadata);
+  });
 
   try {
     await startPm2Process({
       script: process.env.SHELL || "/usr/bin/bash",
       args: ["-lc", entry.command],
       interpreter: "none",
-      namespace: getPm2Namespace(options.branch),
+      namespace: getPm2Namespace(options.worktree.id),
       name: processName,
-      cwd: options.worktreePath,
+      cwd: options.worktree.worktreePath,
       time: true,
       env,
     });
     logServerEvent("background-command", "started", {
-      branch: options.branch,
+      worktreeId: options.worktree.id,
+      branch: options.worktree.branch,
       commandName: options.commandName,
       processName,
-      worktreePath: options.worktreePath,
+      worktreePath: options.worktree.worktreePath,
       duration: formatDurationMs(Date.now() - startedAt),
     });
   } catch (error) {
-    await deleteMetadata(processName);
+    await operationalState.deleteBackgroundCommandMetadata(processName);
     logServerEvent("background-command", "failed-to-start", {
-      branch: options.branch,
+      worktreeId: options.worktree.id,
+      branch: options.worktree.branch,
       commandName: options.commandName,
       processName,
-      worktreePath: options.worktreePath,
+      worktreePath: options.worktree.worktreePath,
       duration: formatDurationMs(Date.now() - startedAt),
       error: error instanceof Error ? error.message : String(error),
     }, "error");
@@ -304,8 +290,8 @@ export async function startBackgroundCommand(options: {
 
 export async function startConfiguredBackgroundCommands(options: {
   config: WorktreeManagerConfig;
-  branch: string;
-  worktreePath: string;
+  repoRoot: string;
+  worktree: BackgroundCommandTarget;
   runtime: WorktreeRuntime;
 }): Promise<void> {
   const entries = getBackgroundCommandEntries(options.config);
@@ -313,37 +299,39 @@ export async function startConfiguredBackgroundCommands(options: {
   for (const [commandName] of Object.entries(entries)) {
     await startBackgroundCommand({
       config: options.config,
-      branch: options.branch,
-      worktreePath: options.worktreePath,
+      repoRoot: options.repoRoot,
+      worktree: options.worktree,
       runtime: options.runtime,
       commandName,
     });
   }
 }
 
-export async function stopBackgroundCommand(branch: string, worktreePath: string, commandName: string): Promise<void> {
+export async function stopBackgroundCommand(repoRoot: string, worktree: BackgroundCommandTarget, commandName: string): Promise<void> {
   const startedAt = Date.now();
-  const processName = getPm2CommandName(branch, commandName);
-  const metadata = await readMetadata(processName);
-  if (metadata && metadata.worktreePath !== worktreePath) {
+  const processName = getPm2CommandName(worktree.id, commandName);
+  const operationalState = await createOperationalStateStore(repoRoot);
+  const metadata = await operationalState.getBackgroundCommandMetadata(processName);
+  if (metadata && metadata.worktreePath !== worktree.worktreePath) {
     return;
   }
 
   await deletePm2Process(processName).catch(() => undefined);
-  await deleteMetadata(processName);
+  await operationalState.deleteBackgroundCommandMetadata(processName);
   logServerEvent("background-command", "stopped", {
-    branch,
+    worktreeId: worktree.id,
+    branch: worktree.branch,
     commandName,
     processName,
-    worktreePath,
+    worktreePath: worktree.worktreePath,
     duration: formatDurationMs(Date.now() - startedAt),
   });
 }
 
 export async function restartBackgroundCommand(options: {
   config: WorktreeManagerConfig;
-  branch: string;
-  worktreePath: string;
+  repoRoot: string;
+  worktree: BackgroundCommandTarget;
   runtime: WorktreeRuntime | undefined;
   commandName: string;
 }): Promise<void> {
@@ -405,8 +393,7 @@ function spawnTailFollower(
 
 export async function getBackgroundCommandLogs(
   config: WorktreeManagerConfig,
-  branch: string,
-  worktreePath: string,
+  worktree: BackgroundCommandTarget,
   commandName: string,
 ): Promise<BackgroundCommandLogsResponse> {
   const entry = getBackgroundCommandEntries(config)[commandName];
@@ -415,8 +402,7 @@ export async function getBackgroundCommandLogs(
   }
 
   void entry;
-  const processName = getPm2CommandName(branch, commandName);
-  void worktreePath;
+  const processName = getPm2CommandName(worktree.id, commandName);
   const processInfo = (await listPm2Processes().catch(() => new Map<string, Pm2ProcessDescription>())).get(processName);
 
   return {
@@ -432,8 +418,7 @@ export async function getBackgroundCommandLogs(
 
 export async function streamBackgroundCommandLogs(options: {
   config: WorktreeManagerConfig;
-  branch: string;
-  worktreePath: string;
+  worktree: BackgroundCommandTarget;
   commandName: string;
   onEvent: (event: BackgroundCommandLogStreamEvent) => void;
   onError?: (message: string) => void;
@@ -444,7 +429,7 @@ export async function streamBackgroundCommandLogs(options: {
   }
 
   void entry;
-  const processName = getPm2CommandName(options.branch, options.commandName);
+  const processName = getPm2CommandName(options.worktree.id, options.commandName);
   const processInfo = (await listPm2Processes()).get(processName);
 
   if (!processInfo) {
@@ -473,39 +458,49 @@ export async function streamBackgroundCommandLogs(options: {
   };
 }
 
-export async function stopAllBackgroundCommands(branch: string, worktreePath: string): Promise<void> {
-  const processes = await listPm2Processes();
-  const branchPrefix = `wtm:${branch}:`;
+export async function stopAllBackgroundCommands(repoRoot: string, worktree: BackgroundCommandTarget): Promise<void> {
+  const operationalState = await createOperationalStateStore(repoRoot);
+  const processes = await listPm2Processes().catch(() => new Map<string, Pm2ProcessDescription>());
+  const processNames = new Set([
+    ...[...processes.keys()].filter((name) => name.startsWith(`${PM2_PROCESS_PREFIX}${worktree.id}:`)),
+    ...(await operationalState.listBackgroundCommandMetadataByWorktreeId(worktree.id)).map((entry) => entry.processName),
+  ]);
 
   await Promise.all(
-    [...processes.keys()]
-      .filter((name) => name.startsWith(branchPrefix))
+    [...processNames]
       .map(async (name) => {
-        const metadata = await readMetadata(name);
-        if (!metadata || metadata.branch !== branch || metadata.worktreePath !== worktreePath) {
+        const metadata = await operationalState.getBackgroundCommandMetadata(name);
+        if (metadata && metadata.worktreePath !== worktree.worktreePath) {
           return;
         }
 
         await deletePm2Process(name).catch(() => undefined);
-        await deleteMetadata(name);
+        await operationalState.deleteBackgroundCommandMetadata(name);
       }),
   );
 }
 
-export async function stopAllBackgroundCommandsForShutdown(worktreePath: string): Promise<void> {
+export async function stopAllBackgroundCommandsForShutdown(
+  repoRoot: string,
+  worktree: Pick<WorktreeRecord, "id" | "worktreePath">,
+): Promise<void> {
+  const operationalState = await createOperationalStateStore(repoRoot);
   const processes = await listPm2Processes().catch(() => new Map<string, Pm2ProcessDescription>());
+  const processNames = new Set([
+    ...[...processes.keys()].filter((name) => name.startsWith(`${PM2_PROCESS_PREFIX}${worktree.id}:`)),
+    ...(await operationalState.listBackgroundCommandMetadataByWorktreeId(worktree.id)).map((entry) => entry.processName),
+  ]);
 
   await Promise.all(
-    [...processes.keys()]
-      .filter((name) => name.startsWith("wtm:"))
+    [...processNames]
       .map(async (name) => {
-        const metadata = await readMetadata(name);
-        if (metadata?.worktreePath !== worktreePath) {
+        const metadata = await operationalState.getBackgroundCommandMetadata(name);
+        if (metadata?.worktreePath !== worktree.worktreePath) {
           return;
         }
 
         await deletePm2Process(name).catch(() => undefined);
-        await deleteMetadata(name);
+        await operationalState.deleteBackgroundCommandMetadata(name);
       }),
   );
 }

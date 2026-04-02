@@ -6,11 +6,14 @@ import {
   createAiCommandLogStreamController,
 } from "./useAiCommandLogStream";
 
+const WORKTREE_ID = "99999999999999999999999999999999" as AiCommandLogEntry["worktreeId"];
+
 function createLog(jobId: string, timestamp = "2026-03-31T12:00:00.000Z"): AiCommandLogEntry {
   return {
     jobId,
     fileName: `${jobId}.json`,
     timestamp,
+    worktreeId: WORKTREE_ID,
     branch: "feature-ai-log",
     documentId: null,
     commandId: "smart",

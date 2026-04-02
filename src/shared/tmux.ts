@@ -1,5 +1,8 @@
+import type { WorktreeId } from "./worktree-id.js";
+import { sanitizeSlug } from "./slug-utils.js";
+
 function sanitizeTmuxSegment(value: string, fallback: string): string {
-  const sanitized = value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  const sanitized = sanitizeSlug(value);
   return sanitized || fallback;
 }
 
@@ -21,6 +24,6 @@ export function getTmuxRepoName(repoRoot: string): string {
   return sanitizedParts.join("_") || "repo";
 }
 
-export function getTmuxSessionName(repoRoot: string, branch: string): string {
-  return `wt-${getTmuxRepoName(repoRoot)}-${sanitizeTmuxSegment(branch, "worktree")}`;
+export function getTmuxSessionName(repoRoot: string, id: WorktreeId): string {
+  return `wt-${getTmuxRepoName(repoRoot)}-${sanitizeTmuxSegment(id, "worktree")}`;
 }

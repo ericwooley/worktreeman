@@ -3,8 +3,11 @@ import test from "node:test";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
 import type { WorktreeRecord } from "@shared/types";
 
+const WORKTREE_ID_PREFIX = "222222222222222222222222222222";
+
 function createWorktree(branch: string): WorktreeRecord {
   return {
+    id: `${WORKTREE_ID_PREFIX}${branch === "main" ? "01" : branch === "wtm-settings" ? "02" : "03"}` as WorktreeRecord["id"],
     branch,
     worktreePath: `/tmp/${branch}`,
     isBare: false,

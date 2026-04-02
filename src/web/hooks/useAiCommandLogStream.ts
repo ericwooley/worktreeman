@@ -181,6 +181,7 @@ export function useAiCommandLogStream({
         next.unshift({
           jobId: log.jobId,
           fileName: log.fileName,
+          worktreeId: log.worktreeId,
           branch: log.branch,
           documentId: log.documentId ?? null,
           commandId: log.commandId,
@@ -197,6 +198,7 @@ export function useAiCommandLogStream({
           exitCode: log.exitCode ?? null,
           processName: log.processName ?? null,
           error: log.error?.message ?? null,
+          worktreePath: log.worktreePath,
         });
       }
       return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));

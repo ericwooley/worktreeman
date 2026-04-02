@@ -5,6 +5,8 @@ import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOri
 import { ProjectManagementAiLogTab } from "./project-management-ai-log-tab";
 import { MatrixSpinner } from "./matrix-primitives";
 
+const WORKTREE_ID = "44444444444444444444444444444444" as AiCommandLogEntry["worktreeId"];
+
 const environmentOrigin: AiCommandOrigin = {
   kind: "worktree-environment",
   label: "Worktree environment",
@@ -20,6 +22,7 @@ const summaryLog: AiCommandLogSummary = {
   jobId: "job-1",
   fileName: "log-1.json",
   timestamp: "2026-03-27T10:00:00.000Z",
+  worktreeId: WORKTREE_ID,
   branch: "feature-ai-log",
   commandId: "smart",
   worktreePath: "/repo/feature-ai-log",
@@ -34,6 +37,7 @@ const detailLog: AiCommandLogEntry = {
   fileName: "log-1.json",
   timestamp: "2026-03-27T10:00:00.000Z",
   completedAt: "2026-03-27T10:01:00.000Z",
+  worktreeId: WORKTREE_ID,
   branch: "feature-ai-log",
   commandId: "smart",
   worktreePath: "/repo/feature-ai-log",
@@ -138,6 +142,7 @@ test("running entries are not duplicated in the saved logs list", () => {
   const runningJob: AiCommandJob = {
     jobId: "job-1",
     fileName: "log-1.json",
+    worktreeId: WORKTREE_ID,
     branch: "feature-ai-log",
     commandId: "smart",
     command: "runner --prompt",

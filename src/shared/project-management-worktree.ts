@@ -1,10 +1,8 @@
+import { sanitizeSlug } from "./slug-utils.js";
+
 export interface ProjectManagementDocumentWorktreeIdentity {
   id: string;
   title: string;
-}
-
-export function sanitizeProjectManagementWorktreeBranch(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
 }
 
 export function normalizeProjectManagementDocumentWorktreeName(value: string | null | undefined): string | null {
@@ -12,7 +10,7 @@ export function normalizeProjectManagementDocumentWorktreeName(value: string | n
     return null;
   }
 
-  const normalized = sanitizeProjectManagementWorktreeBranch(value).slice(0, 72).replace(/-+$/g, "");
+  const normalized = sanitizeSlug(value).slice(0, 72).replace(/-+$/g, "");
   return normalized || null;
 }
 

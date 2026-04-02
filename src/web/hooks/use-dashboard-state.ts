@@ -100,6 +100,7 @@ function toAiCommandLogSummary(log: AiCommandLogEntry): AiCommandLogSummary {
     jobId: log.jobId,
     fileName: log.fileName,
     timestamp: log.timestamp,
+    worktreeId: log.worktreeId,
     branch: log.branch,
     documentId: log.documentId ?? null,
     commandId: log.commandId,

@@ -8,6 +8,9 @@ import type {
   ShutdownStatus,
   WorktreeRuntime,
 } from "../../shared/types.js";
+import { cloneAiCommandJob, parseAiCommandOrigin, toAiCommandLogError } from "../../shared/ai-command-utils.js";
+import type { WorktreeId } from "../../shared/worktree-id.js";
+import { isWorktreeId } from "../../shared/worktree-id.js";
 import {
   closeAllManagedDatabaseClients,
   closeManagedDatabaseClient,
@@ -29,6 +32,7 @@ interface ManagedOperationalStateStore {
 
 interface AiCommandLogNotification {
   fileName: string;
+  worktreeId: WorktreeId;
   branch: string;
   jobId: string;
   type: "run" | "output";
@@ -38,6 +42,7 @@ interface AiCommandLogRow {
   job_id: string;
   file_name: string;
   timestamp: string;
+  worktree_id: string;
   branch: string;
   document_id: string | null;
   command_id: string;
@@ -57,12 +62,58 @@ interface AiCommandLogRow {
 
 interface AiCommandOutputRow {
   job_id: string;
+  worktree_id: string;
   event_id: string;
   entry_number: number;
   source: "stdout" | "stderr";
   text: string;
   timestamp: string;
 }
+
+export interface WorktreeDocumentLinkRecord {
+  worktreeId: WorktreeId;
+  branch: string;
+  worktreePath: string;
+  documentId: string;
+  updatedAt: string;
+}
+
+interface WorktreeDocumentLinkRow {
+  worktree_id: string;
+  branch: string;
+  worktree_path: string;
+  document_id: string;
+  updated_at: string;
+}
+
+export interface BackgroundCommandMetadataRecord {
+  processName: string;
+  worktreeId: WorktreeId;
+  branch: string;
+  commandName: string;
+  command: string;
+  worktreePath: string;
+  runtimeEnv: Record<string, string>;
+  updatedAt: string;
+}
+
+interface BackgroundCommandMetadataRow {
+  process_name: string;
+  worktree_id: string;
+  branch: string;
+  command_name: string;
+  command_text: string;
+  worktree_path: string;
+  runtime_env_json: string;
+  updated_at: string;
+}
+
+const RUNTIME_STATE_TABLE = "runtime_state_v2";
+const AI_JOB_STATE_TABLE = "ai_job_state_v2";
+const AI_RUN_LOGS_TABLE = "ai_run_logs_v2";
+const AI_RUN_OUTPUT_TABLE = "ai_run_output_entries_v2";
+const WORKTREE_DOCUMENT_LINKS_TABLE = "worktree_document_links";
+const BACKGROUND_COMMAND_METADATA_TABLE = "background_command_metadata";
 
 const managedStores = new Map<string, ManagedOperationalStateStore>();
 
@@ -76,26 +127,6 @@ function cloneRuntime(runtime: WorktreeRuntime | null): WorktreeRuntime | null {
     env: { ...runtime.env },
     quickLinks: runtime.quickLinks.map((link) => ({ ...link })),
     allocatedPorts: { ...runtime.allocatedPorts },
-  };
-}
-
-function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null {
-  if (!job) {
-    return null;
-  }
-
-  return {
-    ...job,
-    completedAt: job.completedAt,
-    worktreePath: job.worktreePath,
-    error: job.error,
-    outputEvents: job.outputEvents?.map((event) => ({ ...event })) ?? [],
-    origin: job.origin
-      ? {
-          ...job.origin,
-          location: { ...job.origin.location },
-        }
-      : job.origin ?? null,
   };
 }
 
@@ -161,37 +192,52 @@ function parseAiCommandJob(value: unknown): AiCommandJob | null {
   return cloneAiCommandJob(value as AiCommandJob);
 }
 
-function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const origin = value as AiCommandOrigin;
-  if (typeof origin.kind !== "string" || typeof origin.label !== "string" || !origin.location || typeof origin.location !== "object") {
-    return null;
-  }
-
-  return cloneAiCommandOrigin(origin) ?? null;
+function parseWorktreeId(value: unknown): WorktreeId | null {
+  return typeof value === "string" && isWorktreeId(value) ? value : null;
 }
 
-function parseAiCommandLogError(value: unknown): AiCommandLogError | null {
-  if (!value) {
+function parseRuntimeEnv(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([key, entry]) => (
+      typeof entry === "string" ? [[key, entry]] : []
+    )),
+  );
+}
+
+function toWorktreeDocumentLinkRecord(row: WorktreeDocumentLinkRow): WorktreeDocumentLinkRecord | null {
+  const worktreeId = parseWorktreeId(row.worktree_id);
+  if (!worktreeId) {
     return null;
   }
 
-  if (typeof value === "string") {
-    return { message: value };
-  }
-
-  if (typeof value !== "object") {
-    return { message: String(value) };
-  }
-
-  const error = value as { name?: unknown; message?: unknown; stack?: unknown };
   return {
-    name: typeof error.name === "string" ? error.name : undefined,
-    message: typeof error.message === "string" ? error.message : String(value),
-    stack: typeof error.stack === "string" ? error.stack : undefined,
+    worktreeId,
+    branch: row.branch,
+    worktreePath: row.worktree_path,
+    documentId: row.document_id,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toBackgroundCommandMetadataRecord(row: BackgroundCommandMetadataRow): BackgroundCommandMetadataRecord | null {
+  const worktreeId = parseWorktreeId(row.worktree_id);
+  if (!worktreeId) {
+    return null;
+  }
+
+  return {
+    processName: row.process_name,
+    worktreeId,
+    branch: row.branch,
+    commandName: row.command_name,
+    command: row.command_text,
+    worktreePath: row.worktree_path,
+    runtimeEnv: parseRuntimeEnv(JSON.parse(row.runtime_env_json)),
+    updatedAt: row.updated_at,
   };
 }
 
@@ -223,10 +269,16 @@ function parseAiCommandOutputEvent(value: unknown, fallbackRunId: string, fallba
 }
 
 function toAiCommandLogEntry(row: AiCommandLogRow, events: AiCommandOutputEvent[]): AiCommandLogEntry {
+  const worktreeId = parseWorktreeId(row.worktree_id);
+  if (!worktreeId) {
+    throw new Error(`AI command log ${row.job_id} is missing a valid worktree id.`);
+  }
+
   return {
     jobId: row.job_id,
     fileName: row.file_name,
     timestamp: row.timestamp,
+    worktreeId,
     branch: row.branch,
     documentId: row.document_id,
     commandId: row.command_id === "simple" ? "simple" : "smart",
@@ -244,7 +296,7 @@ function toAiCommandLogEntry(row: AiCommandLogRow, events: AiCommandOutputEvent[
     exitCode: row.exit_code,
     processName: row.process_name,
     completedAt: row.completed_at ?? undefined,
-    error: row.error_json ? parseAiCommandLogError(JSON.parse(row.error_json)) : null,
+    error: row.error_json ? toAiCommandLogError(JSON.parse(row.error_json)) : null,
   };
 }
 
@@ -309,14 +361,14 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
   const db = await getManagedDatabaseClient(repoRoot, "operations");
   const readyPromise = (async () => {
     await db.exec(`
-      create table if not exists runtime_state (
-        branch text primary key,
+      create table if not exists ${RUNTIME_STATE_TABLE} (
+        worktree_id text primary key,
         snapshot_json text not null,
         updated_at timestamptz not null default now()
       );
 
-      create table if not exists ai_job_state (
-        branch text primary key,
+      create table if not exists ${AI_JOB_STATE_TABLE} (
+        worktree_id text primary key,
         job_id text not null,
         status text not null,
         snapshot_json text not null,
@@ -329,10 +381,11 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
         updated_at timestamptz not null default now()
       );
 
-      create table if not exists ai_run_logs (
+      create table if not exists ${AI_RUN_LOGS_TABLE} (
         job_id text primary key,
         file_name text not null unique,
         timestamp text not null,
+        worktree_id text not null,
         branch text not null,
         document_id text,
         command_id text not null,
@@ -351,12 +404,16 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
         updated_at timestamptz not null default now()
       );
 
-      create index if not exists ai_run_logs_branch_updated_idx
-        on ai_run_logs (branch, updated_at desc);
+      create index if not exists ai_run_logs_worktree_updated_idx
+        on ${AI_RUN_LOGS_TABLE} (worktree_id, updated_at desc);
 
-      create table if not exists ai_run_output_entries (
+      create index if not exists ai_run_logs_branch_updated_idx
+        on ${AI_RUN_LOGS_TABLE} (branch, updated_at desc);
+
+      create table if not exists ${AI_RUN_OUTPUT_TABLE} (
         job_id text not null,
         file_name text not null,
+        worktree_id text not null,
         branch text not null,
         entry_number integer not null,
         event_id text not null,
@@ -365,11 +422,36 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
         timestamp text not null,
         created_at timestamptz not null default now(),
         primary key (job_id, entry_number),
-        foreign key (job_id) references ai_run_logs (job_id) on delete cascade
+        foreign key (job_id) references ${AI_RUN_LOGS_TABLE} (job_id) on delete cascade
       );
 
       create index if not exists ai_run_output_entries_file_name_entry_idx
-        on ai_run_output_entries (file_name, entry_number asc);
+        on ${AI_RUN_OUTPUT_TABLE} (file_name, entry_number asc);
+
+      create table if not exists ${WORKTREE_DOCUMENT_LINKS_TABLE} (
+        worktree_id text primary key,
+        branch text not null,
+        worktree_path text not null,
+        document_id text not null,
+        updated_at timestamptz not null default now()
+      );
+
+      create index if not exists worktree_document_links_document_idx
+        on ${WORKTREE_DOCUMENT_LINKS_TABLE} (document_id, updated_at desc);
+
+      create table if not exists ${BACKGROUND_COMMAND_METADATA_TABLE} (
+        process_name text primary key,
+        worktree_id text not null,
+        branch text not null,
+        command_name text not null,
+        command_text text not null,
+        worktree_path text not null,
+        runtime_env_json text not null,
+        updated_at timestamptz not null default now()
+      );
+
+      create index if not exists background_command_metadata_worktree_idx
+        on ${BACKGROUND_COMMAND_METADATA_TABLE} (worktree_id, updated_at desc);
     `);
 
     await db.query(
@@ -465,10 +547,14 @@ export class OperationalStateStore {
   }
 
   async getRuntime(branch: string): Promise<WorktreeRuntime | null> {
+    return await this.getRuntimeById(branch as WorktreeId);
+  }
+
+  async getRuntimeById(worktreeId: WorktreeId): Promise<WorktreeRuntime | null> {
     return await querySnapshot(
       this.repoRoot,
-      `select snapshot_json from runtime_state where branch = $1`,
-      [branch],
+      `select snapshot_json from ${RUNTIME_STATE_TABLE} where worktree_id = $1`,
+      [worktreeId],
       parseRuntime,
     );
   }
@@ -477,43 +563,47 @@ export class OperationalStateStore {
     const managed = await ensureManagedStore(this.repoRoot);
     await managed.db.query(
       `
-        insert into runtime_state (branch, snapshot_json, updated_at)
+        insert into ${RUNTIME_STATE_TABLE} (worktree_id, snapshot_json, updated_at)
         values ($1, $2, now())
-        on conflict (branch) do update
+        on conflict (worktree_id) do update
         set snapshot_json = excluded.snapshot_json,
             updated_at = now()
       `,
-      [runtime.branch, JSON.stringify(cloneRuntime(runtime))],
+      [runtime.id, JSON.stringify(cloneRuntime(runtime))],
     );
   }
 
   async deleteRuntime(branch: string): Promise<WorktreeRuntime | null> {
-    const existing = await this.getRuntime(branch);
+    return await this.deleteRuntimeById(branch as WorktreeId);
+  }
+
+  async deleteRuntimeById(worktreeId: WorktreeId): Promise<WorktreeRuntime | null> {
+    const existing = await this.getRuntimeById(worktreeId);
     if (!existing) {
       return null;
     }
 
     const managed = await ensureManagedStore(this.repoRoot);
-    await managed.db.query(`delete from runtime_state where branch = $1`, [branch]);
+    await managed.db.query(`delete from ${RUNTIME_STATE_TABLE} where worktree_id = $1`, [worktreeId]);
     return existing;
   }
 
   async listRuntimes(): Promise<WorktreeRuntime[]> {
     const managed = await ensureManagedStore(this.repoRoot);
     const result = await managed.db.query<{ snapshot_json: string }>(
-      `select snapshot_json from runtime_state order by updated_at asc`,
+      `select snapshot_json from ${RUNTIME_STATE_TABLE} order by updated_at asc`,
     );
     return result.rows
       .map((row) => parseRuntime(JSON.parse(row.snapshot_json)))
       .filter((runtime): runtime is WorktreeRuntime => runtime !== null);
   }
 
-  async mergeInto<T extends { branch: string }>(worktrees: T[]): Promise<Array<T & { runtime?: WorktreeRuntime }>> {
+  async mergeInto<T extends { id: WorktreeId }>(worktrees: T[]): Promise<Array<T & { runtime?: WorktreeRuntime }>> {
     const runtimeEntries = await this.listRuntimes();
-    const runtimeByBranch = new Map(runtimeEntries.map((runtime) => [runtime.branch, runtime]));
+    const runtimeById = new Map(runtimeEntries.map((runtime) => [runtime.id, runtime]));
     return worktrees.map((worktree) => ({
       ...worktree,
-      runtime: runtimeByBranch.get(worktree.branch),
+      runtime: runtimeById.get(worktree.id),
     }));
   }
 
@@ -569,10 +659,14 @@ export class OperationalStateStore {
   }
 
   async getAiCommandJob(branch: string): Promise<AiCommandJob | null> {
+    return await this.getAiCommandJobById(branch as WorktreeId);
+  }
+
+  async getAiCommandJobById(worktreeId: WorktreeId): Promise<AiCommandJob | null> {
     return await querySnapshot(
       this.repoRoot,
-      `select snapshot_json from ai_job_state where branch = $1`,
-      [branch],
+      `select snapshot_json from ${AI_JOB_STATE_TABLE} where worktree_id = $1`,
+      [worktreeId],
       parseAiCommandJob,
     );
   }
@@ -580,7 +674,7 @@ export class OperationalStateStore {
   async listAiCommandJobs(): Promise<AiCommandJob[]> {
     const managed = await ensureManagedStore(this.repoRoot);
     const result = await managed.db.query<{ snapshot_json: string }>(
-      `select snapshot_json from ai_job_state order by updated_at desc`,
+      `select snapshot_json from ${AI_JOB_STATE_TABLE} order by updated_at desc`,
     );
     return result.rows
       .map((row) => parseAiCommandJob(JSON.parse(row.snapshot_json)))
@@ -591,17 +685,17 @@ export class OperationalStateStore {
     const managed = await ensureManagedStore(this.repoRoot);
     const result = await managed.db.query(
       `
-        insert into ai_job_state (branch, job_id, status, snapshot_json, updated_at)
+        insert into ${AI_JOB_STATE_TABLE} (worktree_id, job_id, status, snapshot_json, updated_at)
         values ($1, $2, $3, $4, now())
-        on conflict (branch) do update
+        on conflict (worktree_id) do update
         set job_id = excluded.job_id,
             status = excluded.status,
             snapshot_json = excluded.snapshot_json,
             updated_at = now()
-        where ai_job_state.status <> 'running'
-        returning branch
+        where ${AI_JOB_STATE_TABLE}.status <> 'running'
+        returning worktree_id
       `,
-      [job.branch, job.jobId, job.status, JSON.stringify(cloneAiCommandJob(job))],
+      [job.worktreeId, job.jobId, job.status, JSON.stringify(cloneAiCommandJob(job))],
     );
     return result.rows.length > 0;
   }
@@ -610,26 +704,36 @@ export class OperationalStateStore {
     const managed = await ensureManagedStore(this.repoRoot);
     await managed.db.query(
       `
-        insert into ai_job_state (branch, job_id, status, snapshot_json, updated_at)
+        insert into ${AI_JOB_STATE_TABLE} (worktree_id, job_id, status, snapshot_json, updated_at)
         values ($1, $2, $3, $4, now())
-        on conflict (branch) do update
+        on conflict (worktree_id) do update
         set job_id = excluded.job_id,
             status = excluded.status,
             snapshot_json = excluded.snapshot_json,
             updated_at = now()
       `,
-      [job.branch, job.jobId, job.status, JSON.stringify(cloneAiCommandJob(job))],
+      [job.worktreeId, job.jobId, job.status, JSON.stringify(cloneAiCommandJob(job))],
     );
   }
 
   async clearAiCommandJobs(branch?: string): Promise<void> {
-    const managed = await ensureManagedStore(this.repoRoot);
     if (branch) {
-      await managed.db.query(`delete from ai_job_state where branch = $1`, [branch]);
+      await this.clearAiCommandJobsById(branch as WorktreeId);
       return;
     }
 
-    await managed.db.query(`delete from ai_job_state`);
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(`delete from ${AI_JOB_STATE_TABLE}`);
+  }
+
+  async clearAiCommandJobsById(worktreeId?: WorktreeId): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    if (worktreeId) {
+      await managed.db.query(`delete from ${AI_JOB_STATE_TABLE} where worktree_id = $1`, [worktreeId]);
+      return;
+    }
+
+    await managed.db.query(`delete from ${AI_JOB_STATE_TABLE}`);
   }
 
   async upsertAiCommandLogEntry(entry: AiCommandLogEntry): Promise<void> {
@@ -641,10 +745,11 @@ export class OperationalStateStore {
 
     await managed.db.query(
       `
-        insert into ai_run_logs (
+        insert into ${AI_RUN_LOGS_TABLE} (
           job_id,
           file_name,
           timestamp,
+          worktree_id,
           branch,
           document_id,
           command_id,
@@ -664,11 +769,12 @@ export class OperationalStateStore {
         )
         values (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, now()
+          $11, $12, $13, $14, $15, $16, $17, $18, $19, now()
         )
         on conflict (job_id) do update
         set file_name = excluded.file_name,
             timestamp = excluded.timestamp,
+            worktree_id = excluded.worktree_id,
             branch = excluded.branch,
             document_id = excluded.document_id,
             command_id = excluded.command_id,
@@ -690,6 +796,7 @@ export class OperationalStateStore {
         nextEntry.jobId,
         nextEntry.fileName,
         nextEntry.timestamp,
+        nextEntry.worktreeId,
         nextEntry.branch,
         nextEntry.documentId ?? null,
         nextEntry.commandId,
@@ -710,20 +817,27 @@ export class OperationalStateStore {
 
     await notifyAiCommandLogUpdate(this.repoRoot, {
       fileName: nextEntry.fileName,
+      worktreeId: nextEntry.worktreeId,
       branch: nextEntry.branch,
       jobId: nextEntry.jobId,
       type: "run",
     });
   }
 
-  async syncAiCommandOutputEvents(jobId: string, fileName: string, branch: string, events: AiCommandOutputEvent[] | undefined): Promise<void> {
+  async syncAiCommandOutputEvents(
+    jobId: string,
+    fileName: string,
+    worktreeId: WorktreeId,
+    branch: string,
+    events: AiCommandOutputEvent[] | undefined,
+  ): Promise<void> {
     if (!events || events.length === 0) {
       return;
     }
 
-    const managed = await ensureManagedStore(this.repoRoot);
-    const maxResult = await managed.db.query<{ max_entry: number | null }>(
-      `select max(entry_number) as max_entry from ai_run_output_entries where job_id = $1`,
+      const managed = await ensureManagedStore(this.repoRoot);
+      const maxResult = await managed.db.query<{ max_entry: number | null }>(
+      `select max(entry_number) as max_entry from ${AI_RUN_OUTPUT_TABLE} where job_id = $1`,
       [jobId],
     );
     const maxEntry = maxResult.rows[0]?.max_entry ?? 0;
@@ -738,9 +852,10 @@ export class OperationalStateStore {
     for (const event of pendingEvents) {
       await managed.db.query(
         `
-          insert into ai_run_output_entries (
+          insert into ${AI_RUN_OUTPUT_TABLE} (
             job_id,
             file_name,
+            worktree_id,
             branch,
             entry_number,
             event_id,
@@ -748,11 +863,12 @@ export class OperationalStateStore {
             text,
             timestamp
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `,
         [
           jobId,
           fileName,
+          worktreeId,
           branch,
           event.entry,
           event.id,
@@ -764,6 +880,7 @@ export class OperationalStateStore {
 
       await notifyAiCommandLogUpdate(this.repoRoot, {
         fileName,
+        worktreeId,
         branch,
         jobId,
         type: "output",
@@ -779,6 +896,7 @@ export class OperationalStateStore {
           job_id,
           file_name,
           timestamp,
+          worktree_id,
           branch,
           document_id,
           command_id,
@@ -794,7 +912,7 @@ export class OperationalStateStore {
           process_name,
           completed_at,
           error_json
-        from ai_run_logs
+        from ${AI_RUN_LOGS_TABLE}
         where job_id = $1
       `,
       [jobId],
@@ -816,6 +934,7 @@ export class OperationalStateStore {
           job_id,
           file_name,
           timestamp,
+          worktree_id,
           branch,
           document_id,
           command_id,
@@ -831,7 +950,7 @@ export class OperationalStateStore {
           process_name,
           completed_at,
           error_json
-        from ai_run_logs
+        from ${AI_RUN_LOGS_TABLE}
         order by updated_at desc, file_name desc
       `,
     );
@@ -857,7 +976,12 @@ export class OperationalStateStore {
           return;
         }
 
-        if (typeof parsed.fileName !== "string" || typeof parsed.branch !== "string" || typeof parsed.jobId !== "string") {
+        if (
+          typeof parsed.fileName !== "string"
+          || typeof parsed.branch !== "string"
+          || typeof parsed.jobId !== "string"
+          || !isWorktreeId(parsed.worktreeId)
+        ) {
           return;
         }
 
@@ -875,6 +999,137 @@ export class OperationalStateStore {
       await unlisten();
     };
   }
+
+  async listWorktreeDocumentLinks(): Promise<WorktreeDocumentLinkRecord[]> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<WorktreeDocumentLinkRow>(
+      `
+        select worktree_id, branch, worktree_path, document_id, updated_at
+        from ${WORKTREE_DOCUMENT_LINKS_TABLE}
+        order by updated_at desc
+      `,
+    );
+    return result.rows
+      .map(toWorktreeDocumentLinkRecord)
+      .filter((entry): entry is WorktreeDocumentLinkRecord => entry !== null);
+  }
+
+  async getWorktreeDocumentLinkById(worktreeId: WorktreeId): Promise<WorktreeDocumentLinkRecord | null> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<WorktreeDocumentLinkRow>(
+      `
+        select worktree_id, branch, worktree_path, document_id, updated_at
+        from ${WORKTREE_DOCUMENT_LINKS_TABLE}
+        where worktree_id = $1
+      `,
+      [worktreeId],
+    );
+    return toWorktreeDocumentLinkRecord(result.rows[0] ?? null);
+  }
+
+  async setWorktreeDocumentLink(details: {
+    worktreeId: WorktreeId;
+    branch: string;
+    worktreePath: string;
+    documentId: string;
+  }): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(
+      `
+        insert into ${WORKTREE_DOCUMENT_LINKS_TABLE} (worktree_id, branch, worktree_path, document_id, updated_at)
+        values ($1, $2, $3, $4, now())
+        on conflict (worktree_id) do update
+        set branch = excluded.branch,
+            worktree_path = excluded.worktree_path,
+            document_id = excluded.document_id,
+            updated_at = now()
+      `,
+      [details.worktreeId, details.branch, details.worktreePath, details.documentId],
+    );
+  }
+
+  async clearWorktreeDocumentLinkById(worktreeId: WorktreeId): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(`delete from ${WORKTREE_DOCUMENT_LINKS_TABLE} where worktree_id = $1`, [worktreeId]);
+  }
+
+  async getBackgroundCommandMetadata(processName: string): Promise<BackgroundCommandMetadataRecord | null> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<BackgroundCommandMetadataRow>(
+      `
+        select process_name, worktree_id, branch, command_name, command_text, worktree_path, runtime_env_json, updated_at
+        from ${BACKGROUND_COMMAND_METADATA_TABLE}
+        where process_name = $1
+      `,
+      [processName],
+    );
+    return toBackgroundCommandMetadataRecord(result.rows[0] ?? null);
+  }
+
+  async listBackgroundCommandMetadataByWorktreeId(worktreeId: WorktreeId): Promise<BackgroundCommandMetadataRecord[]> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<BackgroundCommandMetadataRow>(
+      `
+        select process_name, worktree_id, branch, command_name, command_text, worktree_path, runtime_env_json, updated_at
+        from ${BACKGROUND_COMMAND_METADATA_TABLE}
+        where worktree_id = $1
+        order by updated_at desc
+      `,
+      [worktreeId],
+    );
+    return result.rows
+      .map(toBackgroundCommandMetadataRecord)
+      .filter((entry): entry is BackgroundCommandMetadataRecord => entry !== null);
+  }
+
+  async setBackgroundCommandMetadata(details: {
+    processName: string;
+    worktreeId: WorktreeId;
+    branch: string;
+    commandName: string;
+    command: string;
+    worktreePath: string;
+    runtimeEnv: Record<string, string>;
+  }): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(
+      `
+        insert into ${BACKGROUND_COMMAND_METADATA_TABLE} (
+          process_name,
+          worktree_id,
+          branch,
+          command_name,
+          command_text,
+          worktree_path,
+          runtime_env_json,
+          updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, now())
+        on conflict (process_name) do update
+        set worktree_id = excluded.worktree_id,
+            branch = excluded.branch,
+            command_name = excluded.command_name,
+            command_text = excluded.command_text,
+            worktree_path = excluded.worktree_path,
+            runtime_env_json = excluded.runtime_env_json,
+            updated_at = now()
+      `,
+      [
+        details.processName,
+        details.worktreeId,
+        details.branch,
+        details.commandName,
+        details.command,
+        details.worktreePath,
+        JSON.stringify(details.runtimeEnv),
+      ],
+    );
+  }
+
+  async deleteBackgroundCommandMetadata(processName: string): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(`delete from ${BACKGROUND_COMMAND_METADATA_TABLE} where process_name = $1`, [processName]);
+  }
 }
 
 export async function createOperationalStateStore(repoRoot: string): Promise<OperationalStateStore> {
@@ -885,6 +1140,10 @@ export async function createOperationalStateStore(repoRoot: string): Promise<Ope
 export async function clearAllOperationalAiJobs(branch?: string): Promise<void> {
   await Promise.all(Array.from(managedStores.keys()).map(async (repoRoot) => {
     const store = await createOperationalStateStore(repoRoot);
+    if (branch && isWorktreeId(branch)) {
+      await store.clearAiCommandJobsById(branch);
+      return;
+    }
     await store.clearAiCommandJobs(branch);
   }));
 }

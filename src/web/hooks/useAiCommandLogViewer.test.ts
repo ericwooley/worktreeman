@@ -4,11 +4,14 @@ import type { AiCommandLogEntry, AiCommandLogStreamEvent } from "@shared/types";
 
 import { createAiCommandLogViewerSubscriptionController } from "./useAiCommandLogViewer";
 
+const WORKTREE_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as AiCommandLogEntry["worktreeId"];
+
 function createLog(jobId: string): AiCommandLogEntry {
   return {
     jobId,
     fileName: `${jobId}.json`,
     timestamp: "2026-03-31T18:00:00.000Z",
+    worktreeId: WORKTREE_ID,
     branch: "feature-ai-log",
     documentId: null,
     commandId: "smart",

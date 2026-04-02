@@ -3,8 +3,11 @@ import test from "node:test";
 import type { WorktreeRecord } from "@shared/types";
 import { buildDeleteWorktreePayload, confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 
+const WORKTREE_ID = "11111111111111111111111111111111" as WorktreeRecord["id"];
+
 function createDeleteConfirmationState(overrides?: Partial<DeleteConfirmationState>): DeleteConfirmationState {
   const worktree: WorktreeRecord = {
+    id: WORKTREE_ID,
     branch: "feature-delete",
     worktreePath: "/tmp/feature-delete",
     isBare: false,

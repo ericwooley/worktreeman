@@ -7,10 +7,13 @@ import {
   shouldNotifyAiJobCompletion,
 } from "./browser-notifications";
 
+const WORKTREE_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as AiCommandJob["worktreeId"];
+
 function createAiJob(overrides: Partial<AiCommandJob> = {}): AiCommandJob {
   return {
     jobId: "job-1",
     fileName: "job-1.json",
+    worktreeId: WORKTREE_ID,
     branch: "feature/notifications",
     documentId: "doc-1",
     commandId: "smart",

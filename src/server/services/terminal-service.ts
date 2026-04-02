@@ -6,11 +6,14 @@ import { WebSocketServer } from "ws";
 import type WebSocket from "ws";
 import pty from "node-pty";
 import type { TerminalClientMessage, TerminalServerMessage, TmuxClientInfo, WorktreeRuntime } from "../../shared/types.js";
+import { quoteShellArg } from "../../shared/shell-utils.js";
 import { getTmuxSessionName as getSharedTmuxSessionName } from "../../shared/tmux.js";
+import { isWorktreeId, type WorktreeId } from "../../shared/worktree-id.js";
 import { runCommand } from "../utils/process.js";
 
 interface TerminalSessionTarget {
   repoRoot?: string;
+  id: WorktreeId;
   branch: string;
   worktreePath: string;
   runtime?: WorktreeRuntime;
@@ -18,19 +21,15 @@ interface TerminalSessionTarget {
 
 interface TerminalServiceOptions {
   server: HttpServer;
-  getTerminalTarget(branch: string): Promise<TerminalSessionTarget | undefined>;
+  getTerminalTarget(worktreeId: WorktreeId): Promise<TerminalSessionTarget | undefined>;
 }
 
 export function resolveTmuxSessionName(target: TerminalSessionTarget): string | null {
-  return target.runtime?.tmuxSession ?? (target.repoRoot ? getTmuxSessionName(target.repoRoot, target.branch) : null);
+  return target.runtime?.tmuxSession ?? (target.repoRoot ? getTmuxSessionName(target.repoRoot, target.id) : null);
 }
 
 function send(socket: WebSocket, message: TerminalServerMessage): void {
   socket.send(JSON.stringify(message));
-}
-
-function quoteShellArg(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function buildInteractiveShellCommand(shell: string): string {
@@ -49,6 +48,7 @@ async function hasTmuxSession(session: string, cwd: string): Promise<boolean> {
 async function setTmuxSessionEnvironment(runtime: WorktreeRuntime): Promise<void> {
   const sessionEnv = {
     ...runtime.env,
+    WORKTREE_ID: runtime.id,
     WORKTREE_BRANCH: runtime.branch,
     WORKTREE_PATH: runtime.worktreePath,
     TMUX_SESSION_NAME: runtime.tmuxSession,
@@ -109,9 +109,10 @@ export async function ensureTerminalSession(target: TerminalSessionTarget): Prom
   const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "bash");
   const tmuxSession = resolveTmuxSessionName(target);
   if (!tmuxSession) {
-    throw new Error(`Unable to determine tmux session for ${target.branch}.`);
+    throw new Error(`Unable to determine tmux session for worktree ${target.id}.`);
   }
   const runtime = target.runtime ?? {
+    id: target.id,
     branch: target.branch,
     worktreePath: target.worktreePath,
     env: {},
@@ -126,14 +127,15 @@ export async function ensureTerminalSession(target: TerminalSessionTarget): Prom
 export async function ensureRuntimeTerminalSession(runtime: WorktreeRuntime, repoRoot: string): Promise<void> {
   await ensureTerminalSession({
     repoRoot,
+    id: runtime.id,
     branch: runtime.branch,
     worktreePath: runtime.worktreePath,
     runtime,
   });
 }
 
-export function getTmuxSessionName(repoRoot: string, branch: string): string {
-  return getSharedTmuxSessionName(repoRoot, branch);
+export function getTmuxSessionName(repoRoot: string, worktreeId: WorktreeId): string {
+  return getSharedTmuxSessionName(repoRoot, worktreeId);
 }
 
 function parseTmuxTimestamp(value: string): string | undefined {
@@ -245,24 +247,30 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
 
   wss.on("connection", async (socket, request) => {
     const url = new URL(request.url ?? "", "http://localhost");
-    const branch = url.searchParams.get("branch");
+    const worktreeIdParam = url.searchParams.get("id");
 
-    if (!branch) {
-      send(socket, { type: "error", message: "Missing branch query parameter." });
+    if (!worktreeIdParam) {
+      send(socket, { type: "error", message: "Missing id query parameter." });
       socket.close();
       return;
     }
 
-    const target = await options.getTerminalTarget(branch);
+    if (!isWorktreeId(worktreeIdParam)) {
+      send(socket, { type: "error", message: `Invalid worktree id ${worktreeIdParam}.` });
+      socket.close();
+      return;
+    }
+
+    const target = await options.getTerminalTarget(worktreeIdParam);
     if (!target) {
-      send(socket, { type: "error", message: `Unknown worktree ${branch}.` });
+      send(socket, { type: "error", message: `Unknown worktree ${worktreeIdParam}.` });
       socket.close();
       return;
     }
 
     const tmuxSession = resolveTmuxSessionName(target);
     if (!tmuxSession) {
-      send(socket, { type: "error", message: `Unable to determine tmux session for ${target.branch}.` });
+      send(socket, { type: "error", message: `Unable to determine tmux session for worktree ${target.id}.` });
       socket.close();
       return;
     }
@@ -272,6 +280,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     const env = {
       ...process.env,
       ...(target.runtime?.env ?? {}),
+      WORKTREE_ID: target.id,
       WORKTREE_BRANCH: target.branch,
       WORKTREE_PATH: target.worktreePath,
       TMUX_SESSION_NAME: tmuxSession,
@@ -280,6 +289,7 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
     try {
       await ensureTerminalSession({
         repoRoot: target.repoRoot,
+        id: target.id,
         branch: target.branch,
         worktreePath: target.worktreePath,
         runtime: target.runtime,

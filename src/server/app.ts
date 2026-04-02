@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import open from "open";
 import { DEFAULT_WORKTREEMAN_MAIN_BRANCH } from "../shared/constants.js";
+import type { WorktreeId } from "../shared/worktree-id.js";
 import { createApiRouter } from "./routes/api.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
@@ -25,7 +26,7 @@ export interface StartServerOptions {
   host?: string;
   dangerouslyExposeToNetwork?: boolean;
   openBrowser?: boolean;
-  prepareInitialTerminalSession?: (target: { repoRoot: string; branch: string; worktreePath: string }) => Promise<string | void>;
+  prepareInitialTerminalSession?: (target: { repoRoot: string; id: WorktreeId; branch: string; worktreePath: string }) => Promise<string | void>;
   networkInterfaces?: ReturnType<typeof os.networkInterfaces>;
 }
 
@@ -197,7 +198,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
         try {
           logInfo(`[shutdown] stopping background commands for ${runtime.branch}...`);
-          await stopAllBackgroundCommandsForShutdown(runtime.worktreePath);
+          await stopAllBackgroundCommandsForShutdown(options.repo.repoRoot, runtime);
         } catch (error) {
           logError(
             `[shutdown] Failed to stop background commands for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
@@ -213,7 +214,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
           );
         }
 
-        await operationalState.deleteRuntime(runtime.branch);
+        await operationalState.deleteRuntimeById(runtime.id);
       }
 
       if (terminalService) {
@@ -312,18 +313,19 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
     terminalService = createTerminalService({
       server,
-      getTerminalTarget: async (branch) => {
+      getTerminalTarget: async (worktreeId) => {
         const worktrees = await listWorktrees(options.repo.repoRoot);
-        const worktree = worktrees.find((entry) => entry.branch === branch);
+        const worktree = worktrees.find((entry) => entry.id === worktreeId);
         if (!worktree) {
           return undefined;
         }
 
         return {
           repoRoot: options.repo.repoRoot,
+          id: worktree.id,
           branch: worktree.branch,
           worktreePath: worktree.worktreePath,
-          runtime: (await operationalState.getRuntime(branch)) ?? undefined,
+          runtime: (await operationalState.getRuntimeById(worktreeId)) ?? undefined,
         };
       },
     });
@@ -348,6 +350,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       try {
         await prepareInitialTerminalSession({
           repoRoot: options.repo.repoRoot,
+          id: startupWorktree.id,
           branch: startupWorktree.branch,
           worktreePath: startupWorktree.worktreePath,
         });

@@ -666,7 +666,7 @@ export function WorktreeDetail({
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
   const tmuxSessionName = worktree?.runtime?.tmuxSession
-    ?? (worktree?.branch && repoRoot ? getTmuxSessionName(repoRoot, worktree.branch) : null);
+    ?? (worktree && repoRoot ? getTmuxSessionName(repoRoot, worktree.id) : null);
   const attachCommand = tmuxSessionName
     ? `tmux attach-session -t '${tmuxSessionName.replace(/'/g, `'\\''`)}'`
     : null;
@@ -1283,7 +1283,8 @@ export function WorktreeDetail({
       return;
     }
 
-    if (origin.location.tab === "git" || origin.location.tab === "merge") {
+    const originTab = origin.location.tab as string;
+    if (originTab === "git" || originTab === "merge") {
       // PR reviews belong on the merge tab; support legacy "git" tab origins too
       const targetTab = origin.location.documentId ? "merge" : "git";
       onTabChange(targetTab);
@@ -1702,8 +1703,9 @@ export function WorktreeDetail({
         kind: "git-pull-request-review",
         label: "Git pull request review",
         location: {
-          tab: "merge",
+          tab: "git",
           branch: worktree.branch,
+          worktreeId: worktree.id,
           gitBaseBranch: payload.baseBranch,
           documentId: payload.documentId,
         },

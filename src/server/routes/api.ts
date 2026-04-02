@@ -52,12 +52,24 @@ import type {
   WorktreeRecord,
   WorktreeRuntime,
 } from "../../shared/types.js";
-import { DEFAULT_PROJECT_MANAGEMENT_BRANCH } from "../../shared/constants.js";
+import {
+  DEFAULT_GIT_AUTHOR_EMAIL,
+  DEFAULT_GIT_AUTHOR_NAME,
+  DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+  LOGS_DIR,
+} from "../../shared/constants.js";
+import {
+  parseAiCommandOrigin,
+  resolveAiCommandTemplate,
+  toAiCommandLogError,
+} from "../../shared/ai-command-utils.js";
 import {
   createProjectManagementDocumentWorktreeBranch,
   createProjectManagementDocumentWorktreeBranchCandidate,
   normalizeProjectManagementDocumentWorktreeName,
 } from "../../shared/project-management-worktree.js";
+import { quoteShellArg } from "../../shared/shell-utils.js";
+import { worktreeId as createWorktreeId, type WorktreeId } from "../../shared/worktree-id.js";
 import {
   getBackgroundCommandLogs,
   getBackgroundCommandEntries,
@@ -172,22 +184,18 @@ interface RunProjectManagementDocumentAiRequest {
 
 const CONFIG_COMMIT_ENV = {
   ...process.env,
-  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
-  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
-  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
-  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || DEFAULT_GIT_AUTHOR_NAME,
+  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
+  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || DEFAULT_GIT_AUTHOR_NAME,
+  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
 };
 
-function createAiLogIdentifiers(branch: string, date = new Date()) {
+function createAiLogIdentifiers(worktreeId: WorktreeId, date = new Date()) {
   return {
     jobId: randomUUID(),
-    fileName: createAiLogFileName(branch, date),
+    fileName: createAiLogFileName(worktreeId, date),
     startedAt: date.toISOString(),
   };
-}
-
-function quoteShellArg(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function formatLogSnippet(value: string, maxLength = 240): string {
@@ -203,9 +211,8 @@ function createAiLogTimestamp(date = new Date()): string {
   return date.toISOString().replace(/[:.]/g, "-");
 }
 
-function createAiLogFileName(branch: string, date = new Date()): string {
-  const safeBranch = branch.replace(/[^a-zA-Z0-9._-]+/g, "-");
-  return `${createAiLogTimestamp(date)}-${safeBranch}-ai-request.json`;
+function createAiLogFileName(worktreeId: WorktreeId, date = new Date()): string {
+  return `${createAiLogTimestamp(date)}-${worktreeId}-ai-request.json`;
 }
 
 function runBackgroundTask(task: () => Promise<void>, onError: (error: unknown) => void): Promise<void> {
@@ -213,13 +220,21 @@ function runBackgroundTask(task: () => Promise<void>, onError: (error: unknown) 
 }
 
 export function resolveAiLogsDir(repoRoot: string): string {
-  return path.resolve(repoRoot, ".logs");
+  return path.resolve(repoRoot, LOGS_DIR);
+}
+
+function resolveAiLogWorktreeId(options: {
+  worktreeId?: WorktreeId;
+  worktreePath: string;
+}): WorktreeId {
+  return options.worktreeId ?? createWorktreeId(options.worktreePath);
 }
 
 async function writeAiRequestLog(options: {
   fileName: string;
   jobId: string;
   repoRoot: string;
+  worktreeId?: WorktreeId;
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;
@@ -240,6 +255,7 @@ async function writeAiRequestLog(options: {
   const store = await createOperationalStateStore(options.repoRoot);
   const startedAt = options.startedAt ?? new Date().toISOString();
   const error = toAiCommandLogError(options.error);
+  const worktreeId = resolveAiLogWorktreeId(options);
   const stdout = options.stdout ?? "";
   const stderr = options.stderr ?? (error?.message ?? "");
   const events = ensureAiCommandOutputEvents({
@@ -254,6 +270,7 @@ async function writeAiRequestLog(options: {
     jobId: options.jobId,
     fileName: options.fileName,
     timestamp: startedAt,
+    worktreeId,
     branch: options.branch,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
@@ -275,7 +292,7 @@ async function writeAiRequestLog(options: {
   };
 
   await store.upsertAiCommandLogEntry(entry);
-  await store.syncAiCommandOutputEvents(entry.jobId, entry.fileName, entry.branch, entry.response.events);
+  await store.syncAiCommandOutputEvents(entry.jobId, entry.fileName, entry.worktreeId, entry.branch, entry.response.events);
   return options.fileName;
 }
 
@@ -283,6 +300,7 @@ async function safeWriteAiRequestLog(options: {
   fileName: string;
   jobId: string;
   repoRoot: string;
+  worktreeId?: WorktreeId;
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;
@@ -305,6 +323,7 @@ async function safeWriteAiRequestLog(options: {
   } catch (logError) {
     logServerEvent("ai-command", "failed-to-write-log", {
       repoRoot: options.repoRoot,
+      worktreeId: options.worktreeId,
       branch: options.branch,
       jobId: options.jobId,
       error: logError instanceof Error ? logError.message : String(logError),
@@ -319,27 +338,6 @@ function getAiCommandLogStatus(error: unknown, completedAt: unknown): "running" 
   }
 
   return error ? "failed" : "completed";
-}
-
-function toAiCommandLogError(error: unknown) {
-  if (!error) {
-    return null;
-  }
-
-  if (typeof error === "string") {
-    return { message: error };
-  }
-
-  if (typeof error === "object") {
-    const candidate = error as { name?: unknown; message?: unknown; stack?: unknown };
-    return {
-      name: typeof candidate.name === "string" ? candidate.name : undefined,
-      message: typeof candidate.message === "string" ? candidate.message : String(error),
-      stack: typeof candidate.stack === "string" ? candidate.stack : undefined,
-    };
-  }
-
-  return { message: String(error) };
 }
 
 function createAiCommandOutputEvent(
@@ -449,10 +447,6 @@ function resolveRequestedAiCommandId(value: unknown, options?: { documentId?: st
   }
 
   return "smart";
-}
-
-function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiCommandId): string {
-  return (aiCommands[commandId] ?? "").trim();
 }
 
 function formatPromptList(values: string[]): string {
@@ -649,13 +643,14 @@ function buildProjectManagementExecutionAiPrompt(options: {
   ].filter(Boolean).join("\n");
 }
 
-function createWorktreeEnvironmentOrigin(branch: string): AiCommandOrigin {
+function createWorktreeEnvironmentOrigin(branch: string, worktreeId?: WorktreeId): AiCommandOrigin {
   return {
     kind: "worktree-environment",
     label: "Worktree environment",
     description: `Started from ${branch}.`,
     location: {
       tab: "environment",
+      worktreeId,
       branch,
       environmentSubTab: "terminal",
     },
@@ -664,6 +659,7 @@ function createWorktreeEnvironmentOrigin(branch: string): AiCommandOrigin {
 
 function createProjectManagementDocumentOrigin(options: {
   branch: string;
+  worktreeId?: WorktreeId;
   document: ProjectManagementDocumentResponse["document"];
   kind: "project-management-document" | "project-management-document-run";
   label: string;
@@ -675,6 +671,7 @@ function createProjectManagementDocumentOrigin(options: {
     description: `#${options.document.number} ${options.document.title}`,
     location: {
       tab: "project-management",
+      worktreeId: options.worktreeId,
       branch: options.branch,
       projectManagementSubTab: "document",
       documentId: options.document.id,
@@ -685,6 +682,7 @@ function createProjectManagementDocumentOrigin(options: {
 
 function createGitConflictResolutionOrigin(options: {
   branch: string;
+  worktreeId?: WorktreeId;
   baseBranch: string;
 }): AiCommandOrigin {
   return {
@@ -693,6 +691,7 @@ function createGitConflictResolutionOrigin(options: {
     description: `Resolve conflicts while merging ${options.baseBranch} into ${options.branch}.`,
     location: {
       tab: "git",
+      worktreeId: options.worktreeId,
       branch: options.branch,
       gitBaseBranch: options.baseBranch,
     },
@@ -701,6 +700,7 @@ function createGitConflictResolutionOrigin(options: {
 
 function createGitPullRequestReviewOrigin(options: {
   branch: string;
+  worktreeId?: WorktreeId;
   baseBranch: string;
   documentId?: string | null;
   label?: string;
@@ -711,95 +711,10 @@ function createGitPullRequestReviewOrigin(options: {
     description: `Review the pull request workspace for ${options.branch} against ${options.baseBranch}.`,
     location: {
       tab: "git",
+      worktreeId: options.worktreeId,
       branch: options.branch,
       gitBaseBranch: options.baseBranch,
       documentId: options.documentId ?? null,
-    },
-  };
-}
-
-function parseAiCommandOrigin(value: unknown): AiCommandOrigin | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const candidate = value as {
-    kind?: unknown;
-    label?: unknown;
-    description?: unknown;
-    location?: {
-      tab?: unknown;
-      branch?: unknown;
-      gitBaseBranch?: unknown;
-      environmentSubTab?: unknown;
-      projectManagementSubTab?: unknown;
-      documentId?: unknown;
-      projectManagementDocumentViewMode?: unknown;
-    } | null;
-  };
-
-  const kind = candidate.kind;
-  if (
-    kind !== "worktree-environment"
-    && kind !== "project-management-document"
-    && kind !== "project-management-document-run"
-    && kind !== "git-conflict-resolution"
-    && kind !== "git-pull-request-review"
-  ) {
-    return null;
-  }
-
-  if (typeof candidate.label !== "string" || !candidate.label.trim()) {
-    return null;
-  }
-
-  const location = candidate.location;
-  if (!location || typeof location !== "object") {
-    return null;
-  }
-
-  const tab = location.tab;
-  if (tab !== "environment" && tab !== "git" && tab !== "project-management") {
-    return null;
-  }
-
-  return {
-    kind,
-    label: candidate.label,
-    description: typeof candidate.description === "string"
-      ? candidate.description
-      : candidate.description === null
-        ? null
-        : undefined,
-    location: {
-      tab,
-      branch: typeof location.branch === "string" ? location.branch : location.branch === null ? null : undefined,
-      gitBaseBranch: typeof location.gitBaseBranch === "string"
-        ? location.gitBaseBranch
-        : location.gitBaseBranch === null
-          ? null
-          : undefined,
-      environmentSubTab: location.environmentSubTab === "terminal" || location.environmentSubTab === "background"
-        ? location.environmentSubTab
-        : undefined,
-      projectManagementSubTab:
-        location.projectManagementSubTab === "document"
-          || location.projectManagementSubTab === "board"
-          || location.projectManagementSubTab === "dependency-tree"
-          || location.projectManagementSubTab === "history"
-          || location.projectManagementSubTab === "create"
-          || location.projectManagementSubTab === "users"
-          ? location.projectManagementSubTab
-          : undefined,
-      documentId: typeof location.documentId === "string"
-        ? location.documentId
-        : location.documentId === null
-          ? null
-          : undefined,
-      projectManagementDocumentViewMode:
-        location.projectManagementDocumentViewMode === "document" || location.projectManagementDocumentViewMode === "edit"
-          ? location.projectManagementDocumentViewMode
-          : undefined,
     },
   };
 }
@@ -905,16 +820,19 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
   const completedAt = typeof parsed.completedAt === "string" ? parsed.completedAt : undefined;
   const stdout = typeof parsed.response?.stdout === "string" ? parsed.response.stdout : "";
   const stderr = typeof parsed.response?.stderr === "string" ? parsed.response.stderr : "";
+  const worktreePath = typeof parsed.worktreePath === "string" ? parsed.worktreePath : "";
+  const worktreeId = resolveAiLogWorktreeId({ worktreePath });
 
   return {
     jobId: typeof parsed.jobId === "string" ? parsed.jobId : fileName,
     fileName,
     timestamp,
+    worktreeId,
     branch: typeof parsed.branch === "string" ? parsed.branch : "",
     documentId: typeof parsed.documentId === "string" ? parsed.documentId : null,
     commandId: parseAiCommandId(parsed.commandId),
     origin: parseAiCommandOrigin(parsed.origin),
-    worktreePath: typeof parsed.worktreePath === "string" ? parsed.worktreePath : "",
+    worktreePath,
     command: typeof parsed.command === "string" ? parsed.command : "",
     request,
       response: {
@@ -943,6 +861,7 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
     jobId: entry.jobId,
     fileName: entry.fileName,
     timestamp: entry.timestamp,
+    worktreeId: entry.worktreeId,
     branch: entry.branch,
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
@@ -978,6 +897,7 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
   return {
     jobId: entry.jobId,
     fileName: entry.fileName,
+    worktreeId: entry.worktreeId,
     branch: entry.branch,
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
@@ -1019,7 +939,7 @@ async function reconcileAiCommandLogEntry(options: {
   if (options.entry.status !== "running") {
     return options.entry;
   }
-  await getAiCommandJob(options.repoRoot, options.entry.branch, {
+  await getAiCommandJob(options.repoRoot, options.entry.worktreeId, {
     aiProcesses: {
       getProcess: options.aiProcesses.getProcess,
       readProcessLogs: options.aiProcesses.readProcessLogs,
@@ -1074,8 +994,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     return worktrees.find((entry) => entry.branch === branch);
   };
 
-  const getRunningAiJobForBranch = async (branch: string): Promise<AiCommandJob | null> => {
-    const job = await getAiCommandJob(options.repoRoot, branch, aiJobReadOptions);
+  const getRunningAiJobForBranch = async (worktree: WorktreeRecord): Promise<AiCommandJob | null> => {
+    const job = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
     return job?.status === "running" ? job : null;
   };
 
@@ -1085,7 +1005,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   const buildDeletionState = async (worktree: WorktreeRecord) => {
     const deletion = await getWorktreeDeletionState(options.repoRoot, worktree);
-    if (await getRunningAiJobForBranch(worktree.branch)) {
+    if (await getRunningAiJobForBranch(worktree)) {
       return {
         ...deletion,
         canDelete: false,
@@ -1102,7 +1022,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         continue;
       }
 
-      if (await getRunningAiJobForBranch(branch)) {
+      const worktree = await findWorktree(branch);
+      if (!worktree) {
+        continue;
+      }
+
+      if (await getRunningAiJobForBranch(worktree)) {
         return getMergeAiLockReason(branch);
       }
     }
@@ -1116,21 +1041,23 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   ): Promise<WorktreeRuntime> => {
     const startedAt = Date.now();
     logServerEvent("runtime", "start-requested", {
+      worktreeId: worktree.id,
       branch: worktree.branch,
       worktreePath: worktree.worktreePath,
     });
-    const { runtime } = await createRuntime(config, options.repoRoot, worktree.branch, worktree.worktreePath);
+    const { runtime } = await createRuntime(config, options.repoRoot, worktree);
     await options.operationalState.setRuntime(runtime);
     await ensureRuntimeTerminalSession(runtime, options.repoRoot);
     await runStartupCommands(config.startupCommands, worktree.worktreePath, buildRuntimeProcessEnv(runtime));
     await startConfiguredBackgroundCommands({
       config,
-      branch: worktree.branch,
-      worktreePath: worktree.worktreePath,
+      repoRoot: options.repoRoot,
+      worktree,
       runtime,
     });
     emitStateRefresh();
     logServerEvent("runtime", "start-completed", {
+      worktreeId: worktree.id,
       branch: worktree.branch,
       worktreePath: worktree.worktreePath,
       duration: formatDurationMs(Date.now() - startedAt),
@@ -1142,7 +1069,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     config: WorktreeManagerConfig,
     worktree: WorktreeRecord,
   ): Promise<WorktreeRuntime> => {
-    const existingRuntime = await options.operationalState.getRuntime(worktree.branch);
+    const existingRuntime = await options.operationalState.getRuntimeById(worktree.id);
     if (existingRuntime) {
       return existingRuntime;
     }
@@ -1150,20 +1077,20 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     return createWorktreeRuntime(config, worktree);
   };
 
-  const stopWorktreeRuntime = async (branch: string, worktreePath?: string): Promise<void> => {
+  const stopWorktreeRuntime = async (worktree: Pick<WorktreeRecord, "id" | "branch" | "worktreePath">): Promise<void> => {
     const startedAt = Date.now();
     logServerEvent("runtime", "stop-requested", {
-      branch,
-      worktreePath: worktreePath ?? null,
+      worktreeId: worktree.id,
+      branch: worktree.branch,
+      worktreePath: worktree.worktreePath,
     });
-    const runtime = await options.operationalState.getRuntime(branch);
+    const runtime = await options.operationalState.getRuntimeById(worktree.id);
     if (!runtime) {
-      if (worktreePath) {
-        await killTmuxSessionByName(getTmuxSessionName(options.repoRoot, branch), worktreePath);
-      }
+      await killTmuxSessionByName(getTmuxSessionName(options.repoRoot, worktree.id), worktree.worktreePath);
       logServerEvent("runtime", "stop-skipped", {
-        branch,
-        worktreePath: worktreePath ?? null,
+        worktreeId: worktree.id,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
         duration: formatDurationMs(Date.now() - startedAt),
       });
       return;
@@ -1172,7 +1099,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     let stopError: unknown = null;
 
     try {
-      await stopAllBackgroundCommands(branch, runtime.worktreePath);
+      await stopAllBackgroundCommands(options.repoRoot, runtime);
     } catch (error) {
       stopError = error;
     }
@@ -1183,12 +1110,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       stopError ??= error;
     }
 
-    await options.operationalState.deleteRuntime(branch);
+    await options.operationalState.deleteRuntimeById(runtime.id);
     emitStateRefresh();
 
     if (stopError) {
       logServerEvent("runtime", "stop-failed", {
-        branch,
+        worktreeId: runtime.id,
+        branch: runtime.branch,
         worktreePath: runtime.worktreePath,
         duration: formatDurationMs(Date.now() - startedAt),
         error: stopError instanceof Error ? stopError.message : String(stopError),
@@ -1197,7 +1125,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     }
 
     logServerEvent("runtime", "stop-completed", {
-      branch,
+      worktreeId: runtime.id,
+      branch: runtime.branch,
       worktreePath: runtime.worktreePath,
       duration: formatDurationMs(Date.now() - startedAt),
     });
@@ -1207,21 +1136,26 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     config: WorktreeManagerConfig,
     worktree: WorktreeRecord,
   ): Promise<WorktreeRuntime> => {
-    await stopWorktreeRuntime(worktree.branch, worktree.worktreePath);
+    await stopWorktreeRuntime(worktree);
     return createWorktreeRuntime(config, worktree);
   };
 
-  const scheduleRuntimeStopAfterAiJob = (details: { branch: string; jobId: string; shouldStopRuntime: boolean }) => {
+  const scheduleRuntimeStopAfterAiJob = (details: {
+    worktree: Pick<WorktreeRecord, "id" | "branch" | "worktreePath">;
+    jobId: string;
+    shouldStopRuntime: boolean;
+  }) => {
     if (!details.shouldStopRuntime) {
       return;
     }
 
     runBackgroundTask(async () => {
-      await waitForAiCommandJob(options.repoRoot, details.branch, details.jobId).catch(() => null);
-      await stopWorktreeRuntime(details.branch);
+      await waitForAiCommandJob(options.repoRoot, details.worktree.id, details.jobId).catch(() => null);
+      await stopWorktreeRuntime(details.worktree);
     }, (error) => {
       logServerEvent("ai-command", "runtime-stop-after-job-failed", {
-        branch: details.branch,
+        worktreeId: details.worktree.id,
+        branch: details.worktree.branch,
         jobId: details.jobId,
         error: error instanceof Error ? error.message : String(error),
       }, "error");
@@ -1283,6 +1217,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   };
 
   const writeImmediateAiFailureLog = async (details: {
+    worktreeId?: WorktreeId;
     branch: string;
     documentId?: string | null;
     commandId: AiCommandId;
@@ -1292,11 +1227,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     input: string;
     error: Error;
   }) => {
-    const { jobId, fileName, startedAt } = createAiLogIdentifiers(details.branch);
+    const { jobId, fileName, startedAt } = createAiLogIdentifiers(resolveAiLogWorktreeId(details));
     return safeWriteAiRequestLog({
       fileName,
       jobId,
       repoRoot: options.repoRoot,
+      worktreeId: details.worktreeId,
       branch: details.branch,
       documentId: details.documentId ?? null,
       commandId: details.commandId,
@@ -1314,6 +1250,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   };
 
   const startAiProcessJob = async (details: {
+    worktreeId: WorktreeId;
     branch: string;
     documentId?: string | null;
     commandId: AiCommandId;
@@ -1328,6 +1265,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     commentRequestSummary?: string | null;
     autoCommitDirtyWorktree?: boolean;
   }): Promise<StartedAiCommandJob> => startAiCommandJob({
+    worktreeId: details.worktreeId,
     branch: details.branch,
     documentId: details.documentId ?? null,
     commandId: details.commandId,
@@ -1422,6 +1360,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   });
 
   const enqueueProjectManagementDocumentAiJob = async (details: {
+    worktreeId: WorktreeId;
     branch: string;
     documentId: string;
     commandId: AiCommandId;
@@ -1438,6 +1377,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   }) => enqueueProjectManagementAiJob({
     repoRoot: options.repoRoot,
     payload: {
+      worktreeId: details.worktreeId,
       branch: details.branch,
       commandId: details.commandId,
       aiCommands: details.aiCommands,
@@ -1785,7 +1725,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.get("/worktrees/:branch/ai-command/stream", async (req, res, next) => {
     try {
       const branch = req.params.branch;
-      let currentJob = await getAiCommandJob(options.repoRoot, branch, aiJobReadOptions);
+      const worktree = await findWorktree(branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${branch}` });
+        return;
+      }
+
+      let currentJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
       let lastPayload = JSON.stringify(currentJob);
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -1811,7 +1757,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
         polling = true;
         runBackgroundTask(async () => {
-          const nextJob = await getAiCommandJob(options.repoRoot, branch, aiJobReadOptions);
+          const nextJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
             currentJob = nextJob;
             const nextPayload = JSON.stringify(nextJob);
             if (nextPayload !== lastPayload) {
@@ -1993,7 +1939,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const comparisonBeforeMerge: GitComparisonResponse = await getGitComparison(options.repoRoot, compareBranch, baseBranch);
       const comparison: GitComparisonResponse = await mergeGitBranch(options.repoRoot, compareBranch, baseBranch);
 
-      const linkedDocument = await getWorktreeDocumentLink(options.repoRoot, compareBranch);
+      const compareWorktree = await findWorktree(compareBranch);
+      const linkedDocument = compareWorktree
+        ? await getWorktreeDocumentLink(options.repoRoot, compareWorktree.id)
+        : null;
       if (linkedDocument?.documentId) {
         try {
           await addProjectManagementComment(options.repoRoot, linkedDocument.documentId, {
@@ -2051,12 +2000,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         throw new Error(`Branch ${branch} does not currently expose merge conflicts against ${baseBranch}.`);
       }
 
-      const runtime = await options.operationalState.getRuntime(worktree.branch);
+      const runtime = await options.operationalState.getRuntimeById(worktree.id);
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
         : {
           ...process.env,
           ...config.env,
+          WORKTREE_ID: worktree.id,
           WORKTREE_BRANCH: worktree.branch,
           WORKTREE_PATH: worktree.worktreePath,
         };
@@ -2065,12 +2015,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       const origin = createGitConflictResolutionOrigin({
         branch: worktree.branch,
+        worktreeId: worktree.id,
         baseBranch,
       });
 
       if (!template) {
         const error = new Error(`${commandId === "simple" ? "Simple AI" : "Smart AI"} is not configured.`);
         await writeImmediateAiFailureLog({
+          worktreeId: worktree.id,
           branch: worktree.branch,
           commandId,
           origin,
@@ -2085,6 +2037,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       if (!template.includes("$WTM_AI_INPUT")) {
         const error = new Error(`${commandId === "simple" ? "Simple AI" : "Smart AI"} must include $WTM_AI_INPUT.`);
         await writeImmediateAiFailureLog({
+          worktreeId: worktree.id,
           branch: worktree.branch,
           commandId,
           origin,
@@ -2116,11 +2069,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
           await fs.writeFile(path.join(worktree.worktreePath, conflict.path), `${normalized}\n`, "utf8");
 
-          const { jobId, fileName, startedAt } = createAiLogIdentifiers(worktree.branch);
+          const { jobId, fileName, startedAt } = createAiLogIdentifiers(worktree.id);
           await safeWriteAiRequestLog({
             fileName,
             jobId,
             repoRoot: options.repoRoot,
+            worktreeId: worktree.id,
             branch: worktree.branch,
             commandId,
             origin,
@@ -2136,11 +2090,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
             processName: null,
           });
         } catch (error) {
-          const { jobId, fileName, startedAt } = createAiLogIdentifiers(worktree.branch);
+          const { jobId, fileName, startedAt } = createAiLogIdentifiers(worktree.id);
           await safeWriteAiRequestLog({
             fileName,
             jobId,
             repoRoot: options.repoRoot,
+            worktreeId: worktree.id,
             branch: worktree.branch,
             commandId,
             origin,
@@ -2162,10 +2117,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         cwd: worktree.worktreePath,
         env: {
           ...process.env,
-          GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
-          GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
-          GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
-          GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+          GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || DEFAULT_GIT_AUTHOR_NAME,
+          GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
+          GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || DEFAULT_GIT_AUTHOR_NAME,
+          GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
         },
       });
 
@@ -2194,12 +2149,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await options.operationalState.getRuntime(worktree.branch);
+      const runtime = await options.operationalState.getRuntimeById(worktree.id);
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
         : {
           ...process.env,
           ...config.env,
+          WORKTREE_ID: worktree.id,
           WORKTREE_BRANCH: worktree.branch,
           WORKTREE_PATH: worktree.worktreePath,
         };
@@ -2237,12 +2193,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await options.operationalState.getRuntime(worktree.branch);
+      const runtime = await options.operationalState.getRuntimeById(worktree.id);
       const env = runtime
         ? buildRuntimeProcessEnv(runtime)
         : {
           ...process.env,
           ...config.env,
+          WORKTREE_ID: worktree.id,
           WORKTREE_BRANCH: worktree.branch,
           WORKTREE_PATH: worktree.worktreePath,
         };
@@ -2485,6 +2442,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   });
 
   router.post("/project-management/documents/:id/ai-command/run", async (req, res, next) => {
+    let worktree: WorktreeRecord | null = null;
     let worktreePath = "";
     let branch = "";
     let input = "";
@@ -2516,18 +2474,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           return;
         }
 
-        const requestedLink = await getWorktreeDocumentLink(options.repoRoot, requestedTargetBranch);
-        if (!requestedLink || requestedLink.documentId !== documentId) {
-          res.status(404).json({ message: `No linked worktree ${requestedTargetBranch} exists for document ${documentId}.` });
-          return;
-        }
-
         const existingWorktree = await findWorktree(requestedTargetBranch);
         if (!existingWorktree) {
           res.status(404).json({ message: `Unknown worktree ${requestedTargetBranch}` });
           return;
         }
 
+        const requestedLink = await getWorktreeDocumentLink(options.repoRoot, existingWorktree.id);
+        if (!requestedLink || requestedLink.documentId !== documentId) {
+          res.status(404).json({ message: `No linked worktree ${requestedTargetBranch} exists for document ${documentId}.` });
+          return;
+        }
+
+        worktree = existingWorktree;
         branch = existingWorktree.branch;
         worktreePath = existingWorktree.worktreePath;
       } else {
@@ -2542,6 +2501,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId });
       const defaultOrigin = createProjectManagementDocumentOrigin({
         branch,
+        worktreeId: worktree?.id,
         document: documentPayload.document,
         kind: "project-management-document-run",
         label: "Project management document run",
@@ -2556,6 +2516,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
             ...requestedOrigin.location,
             tab: "project-management",
             branch,
+            worktreeId: worktree?.id,
             documentId: documentPayload.document.id,
             projectManagementSubTab: requestedOrigin.location.projectManagementSubTab ?? "document",
             projectManagementDocumentViewMode: requestedOrigin.location.projectManagementDocumentViewMode ?? "document",
@@ -2595,7 +2556,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const worktreesBefore = await listWorktrees(options.repoRoot);
-      let worktree = worktreesBefore.find((entry) => entry.branch === branch) ?? null;
+      worktree = worktreesBefore.find((entry) => entry.branch === branch) ?? null;
       let createdWorktreeForAiRun = false;
       if (!worktree) {
         worktree = await createWorktree(options.repoRoot, config, { branch });
@@ -2607,28 +2568,54 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       await setWorktreeDocumentLink(options.repoRoot, {
-        branch,
+        worktreeId: worktree.id,
+        branch: worktree.branch,
         worktreePath: worktree.worktreePath,
         documentId,
       });
 
       worktreePath = worktree.worktreePath;
-      if ((await getAiCommandJob(options.repoRoot, branch, aiJobReadOptions))?.status === "running") {
+      branch = worktree.branch;
+      origin = requestedOrigin?.kind === "project-management-document-run"
+        && requestedOrigin.location.tab === "project-management"
+        ? {
+          ...requestedOrigin,
+          description: requestedOrigin.description?.trim() || defaultOrigin.description,
+          location: {
+            ...requestedOrigin.location,
+            tab: "project-management",
+            branch,
+            worktreeId: worktree.id,
+            documentId: documentPayload.document.id,
+            projectManagementSubTab: requestedOrigin.location.projectManagementSubTab ?? "document",
+            projectManagementDocumentViewMode: requestedOrigin.location.projectManagementDocumentViewMode ?? "document",
+          },
+        }
+        : createProjectManagementDocumentOrigin({
+          branch,
+          worktreeId: worktree.id,
+          document: documentPayload.document,
+          kind: "project-management-document-run",
+          label: "Project management document run",
+          viewMode: "document",
+        });
+
+      if ((await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions))?.status === "running") {
         res.status(409).json({ message: `AI command already running for ${branch}.` });
         return;
       }
 
-      const existingRuntime = await options.operationalState.getRuntime(branch);
+      const existingRuntime = await options.operationalState.getRuntimeById(worktree.id);
       if (!existingRuntime && createdWorktreeForAiRun) {
         await runStartupCommands(
           config.startupCommands,
           worktreePath,
-          buildWorktreeProcessEnv(config, branch, worktreePath),
+          buildWorktreeProcessEnv(config, worktree),
         );
       }
       const runtime = existingRuntime ?? (config.aiCommands.autoStartRuntime ? await ensureWorktreeRuntime(config, worktree) : undefined);
       stopAutoStartedRuntimeOnError = !existingRuntime && runtime != null;
-      const backgroundCommands = await listBackgroundCommands(config, branch, worktreePath, runtime);
+      const backgroundCommands = await listBackgroundCommands(config, options.repoRoot, worktree, runtime);
       const environmentContext = buildAiEnvironmentContext({
         repoRoot: options.repoRoot,
         config,
@@ -2648,6 +2635,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
       const job = await enqueueProjectManagementDocumentAiJob({
+        worktreeId: worktree.id,
         branch,
         documentId,
         commandId,
@@ -2669,7 +2657,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
       await moveProjectManagementDocumentTowardInProgress(options.repoRoot, documentId);
       scheduleRuntimeStopAfterAiJob({
-        branch,
+        worktree,
         jobId: job.jobId,
         shouldStopRuntime: stopAutoStartedRuntimeOnError,
       });
@@ -2679,9 +2667,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       emitStateRefresh();
       res.json(payload);
     } catch (error) {
-      if (stopAutoStartedRuntimeOnError && branch) {
-        await stopWorktreeRuntime(branch).catch((cleanupError) => {
+      const cleanupWorktree = worktree;
+      if (stopAutoStartedRuntimeOnError && cleanupWorktree) {
+        await stopWorktreeRuntime(cleanupWorktree).catch((cleanupError) => {
           logServerEvent("ai-command", "runtime-stop-after-project-management-error-failed", {
+            worktreeId: cleanupWorktree.id,
             branch,
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           }, "error");
@@ -2691,6 +2681,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const message = error instanceof Error ? error.message : String(error);
       if (message.startsWith("Unknown project management document ")) {
         await writeImmediateAiFailureLog({
+          worktreeId: worktree?.id,
           branch: branch || `pm-${sanitizeBranchName(decodeURIComponent(req.params.id)) || "document"}`,
           documentId: decodeURIComponent(req.params.id),
           commandId,
@@ -2738,6 +2729,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const worktree = await createWorktree(options.repoRoot, config, body);
       if (documentId) {
         await setWorktreeDocumentLink(options.repoRoot, {
+          worktreeId: worktree.id,
           branch: worktree.branch,
           worktreePath: worktree.worktreePath,
           documentId,
@@ -2803,6 +2795,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   });
 
   router.post("/worktrees/:branch/ai-command/run", async (req, res, next) => {
+    let worktree: WorktreeRecord | null = null;
     let input = "";
     let renderedCommand = "";
     let worktreePath = "";
@@ -2816,7 +2809,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     try {
       const config = await loadCurrentConfig();
       const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      worktree = worktrees.find((entry) => entry.branch === req.params.branch) ?? null;
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
       const explicitDocumentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
@@ -2824,19 +2817,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         ? body.commentDocumentId.trim()
         : null;
       const requestedOrigin = parseAiCommandOrigin(body?.origin);
-      const linkedDocumentId = explicitDocumentId
-        ? null
-        : (await getWorktreeDocumentLink(options.repoRoot, req.params.branch))?.documentId ?? null;
-      const documentId = explicitDocumentId ?? linkedDocumentId;
-      const commentDocumentId = explicitDocumentId ? null : requestedCommentDocumentId ?? linkedDocumentId;
-      commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
 
       if (!worktree) {
         await writeImmediateAiFailureLog({
           branch: req.params.branch,
-          documentId,
+          documentId: explicitDocumentId,
           commandId,
-          origin,
+          origin: requestedOrigin,
           worktreePath: "",
           renderedCommand: "",
           input,
@@ -2846,20 +2833,28 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
+      const linkedDocumentId = explicitDocumentId
+        ? null
+        : (await getWorktreeDocumentLink(options.repoRoot, worktree.id))?.documentId ?? null;
+      const documentId = explicitDocumentId ?? linkedDocumentId;
+      const commentDocumentId = explicitDocumentId ? null : requestedCommentDocumentId ?? linkedDocumentId;
+      commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
       worktreePath = worktree.worktreePath;
       branch = worktree.branch;
       origin = requestedOrigin?.kind === "git-pull-request-review"
         ? createGitPullRequestReviewOrigin({
           branch: worktree.branch,
+          worktreeId: worktree.id,
           baseBranch: requestedOrigin.location.gitBaseBranch ?? worktree.branch,
           documentId: commentDocumentId,
           label: requestedOrigin.label,
         })
-        : requestedOrigin ?? createWorktreeEnvironmentOrigin(worktree.branch);
+        : requestedOrigin ?? createWorktreeEnvironmentOrigin(worktree.branch, worktree.id);
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
         await writeImmediateAiFailureLog({
+          worktreeId: worktree.id,
           branch: worktree.branch,
           documentId,
           commandId,
@@ -2875,6 +2870,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       if (!template.includes("$WTM_AI_INPUT")) {
         await writeImmediateAiFailureLog({
+          worktreeId: worktree.id,
           branch: worktree.branch,
           documentId,
           commandId,
@@ -2890,6 +2886,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       if (!input.trim()) {
         await writeImmediateAiFailureLog({
+          worktreeId: worktree.id,
           branch: worktree.branch,
           documentId,
           commandId,
@@ -2909,6 +2906,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           documentsPayload = await listProjectManagementDocuments(options.repoRoot);
           origin = requestedOrigin ?? createProjectManagementDocumentOrigin({
             branch: worktree.branch,
+            worktreeId: worktree.id,
             document: explicitDocumentPayload.document,
             kind: "project-management-document",
             label: "Project management document",
@@ -2923,12 +2921,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
             location: {
               tab: "project-management",
               branch: worktree.branch,
+              worktreeId: worktree.id,
               projectManagementSubTab: "document",
               documentId: explicitDocumentId,
               projectManagementDocumentViewMode: "edit",
             },
           };
           await writeImmediateAiFailureLog({
+            worktreeId: worktree.id,
             branch: worktree.branch,
             documentId: explicitDocumentId,
             commandId,
@@ -2943,15 +2943,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         }
       }
 
-      if ((await getAiCommandJob(options.repoRoot, worktree.branch, aiJobReadOptions))?.status === "running") {
+      if ((await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions))?.status === "running") {
         res.status(409).json({ message: `AI command already running for ${worktree.branch}.` });
         return;
       }
 
-      const existingRuntime = await options.operationalState.getRuntime(worktree.branch);
+      const existingRuntime = await options.operationalState.getRuntimeById(worktree.id);
       const runtime = existingRuntime ?? (config.aiCommands.autoStartRuntime ? await ensureWorktreeRuntime(config, worktree) : undefined);
       stopAutoStartedRuntimeOnError = !existingRuntime && runtime != null;
-      const backgroundCommands = await listBackgroundCommands(config, worktree.branch, worktreePath, runtime);
+      const backgroundCommands = await listBackgroundCommands(config, options.repoRoot, worktree, runtime);
       const environmentContext = buildAiEnvironmentContext({
         repoRoot: options.repoRoot,
         config,
@@ -2992,6 +2992,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       renderedCommand = template;
       const runDetails = {
+        worktreeId: worktree.id,
         branch: worktree.branch,
         documentId,
         commandId,
@@ -3008,6 +3009,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       };
       const job = explicitDocumentId
         ? await enqueueProjectManagementDocumentAiJob({
+          worktreeId: runDetails.worktreeId,
           branch: runDetails.branch,
           documentId: explicitDocumentId,
           commandId: runDetails.commandId,
@@ -3030,7 +3032,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         requestSummary: runDetails.commentRequestSummary,
       });
       scheduleRuntimeStopAfterAiJob({
-        branch: worktree.branch,
+        worktree,
         jobId: job.jobId,
         shouldStopRuntime: stopAutoStartedRuntimeOnError,
       });
@@ -3040,9 +3042,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       emitStateRefresh();
       res.json(payload);
     } catch (error) {
-      if (stopAutoStartedRuntimeOnError && branch) {
-        await stopWorktreeRuntime(branch).catch((cleanupError) => {
+      const cleanupWorktree = worktree;
+      if (stopAutoStartedRuntimeOnError && cleanupWorktree) {
+        await stopWorktreeRuntime(cleanupWorktree).catch((cleanupError) => {
           logServerEvent("ai-command", "runtime-stop-after-request-error-failed", {
+            worktreeId: cleanupWorktree.id,
             branch,
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           }, "error");
@@ -3061,7 +3065,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/ai-command/cancel", async (req, res, next) => {
     try {
-      const inMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch, aiJobReadOptions);
+      const worktree = await findWorktree(req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}.` });
+        return;
+      }
+
+      const inMemoryJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
       const persistedLog = (await Promise.all(
         (await listAiCommandLogEntries(options.repoRoot)).map((entry) => reconcileAiCommandLogEntry({
           entry,
@@ -3069,7 +3079,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           aiProcesses,
           reconcileJobs: shouldReconcileAiJobs,
         })),
-      )).find((entry) => entry.branch === req.params.branch && isAiCommandLogActivelyRunning(entry)) ?? null;
+      )).find((entry) => entry.worktreeId === worktree.id && isAiCommandLogActivelyRunning(entry)) ?? null;
 
       const job = inMemoryJob?.status === "running"
         ? inMemoryJob
@@ -3093,7 +3103,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const failedJob = inMemoryJob?.status === "running"
         ? await failAiCommandJob({
           repoRoot: options.repoRoot,
-          branch: req.params.branch,
+          worktreeId: worktree.id,
           jobId: job.jobId,
           error: cancellationMessage,
           outputEvents: appendAiCommandOutputEvents(job.jobId, job.outputEvents, "stderr", cancellationMessage),
@@ -3105,11 +3115,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           fileName: failedJob.fileName,
           jobId: failedJob.jobId,
           repoRoot: options.repoRoot,
+          worktreeId: failedJob.worktreeId,
           branch: failedJob.branch,
           documentId: failedJob.documentId ?? null,
           commandId: failedJob.commandId,
           origin: failedJob.origin ?? null,
-          worktreePath: persistedLog?.worktreePath ?? job.branch,
+          worktreePath: persistedLog?.worktreePath ?? worktree.worktreePath,
           renderedCommand: failedJob.command,
           input: failedJob.input,
           stdout: failedJob.stdout,
@@ -3127,6 +3138,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           fileName: persistedLog.fileName,
           jobId: persistedLog.jobId,
           repoRoot: options.repoRoot,
+          worktreeId: persistedLog.worktreeId,
           branch: persistedLog.branch,
           documentId: persistedLog.documentId ?? null,
           commandId: persistedLog.commandId,
@@ -3148,12 +3160,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
       const settledJob = await Promise.race([
-        waitForAiCommandJob(options.repoRoot, req.params.branch, job.jobId),
+        waitForAiCommandJob(options.repoRoot, worktree.id, job.jobId),
         new Promise<typeof job>((resolve) => {
           fallbackTimer = setTimeout(() => {
             runBackgroundTask(async () => {
               try {
-                const nextInMemoryJob = await getAiCommandJob(options.repoRoot, req.params.branch, aiJobReadOptions);
+                const nextInMemoryJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
                 if (nextInMemoryJob) {
                   resolve(nextInMemoryJob);
                   return;
@@ -3192,6 +3204,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           fileName: resolvedLog.fileName,
           jobId: resolvedLog.jobId,
           repoRoot: options.repoRoot,
+          worktreeId: resolvedLog.worktreeId,
           branch: resolvedLog.branch,
           documentId: resolvedLog.documentId ?? null,
           commandId: resolvedLog.commandId,
@@ -3231,13 +3244,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await options.operationalState.getRuntime(req.params.branch);
+      const runtime = await options.operationalState.getRuntimeById(worktree.id);
       if (!runtime) {
         res.status(404).json({ message: `No runtime for branch ${req.params.branch}` });
         return;
       }
 
-      await stopWorktreeRuntime(req.params.branch, worktree.worktreePath);
+      await stopWorktreeRuntime(worktree);
       res.status(204).send();
     } catch (error) {
       next(error);
@@ -3268,9 +3281,10 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const runtime = await options.operationalState.getRuntime(worktree.branch) ?? undefined;
+      const runtime = await options.operationalState.getRuntimeById(worktree.id) ?? undefined;
       const tmuxSession = await ensureTerminalSession({
         repoRoot: options.repoRoot,
+        id: worktree.id,
         branch: worktree.branch,
         worktreePath: worktree.worktreePath,
         runtime,
@@ -3292,19 +3306,21 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.get("/worktrees/:branch/runtime/tmux-clients", async (req, res, next) => {
     try {
-      const runtime = await options.operationalState.getRuntime(req.params.branch);
       const worktree = await findWorktree(req.params.branch);
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
         return;
       }
 
-        const tmuxSession = await ensureTerminalSession({
-          repoRoot: options.repoRoot,
-          branch: worktree.branch,
-          worktreePath: worktree.worktreePath,
-          runtime: runtime ?? undefined,
-        });
+      const runtime = await options.operationalState.getRuntimeById(worktree.id);
+
+      const tmuxSession = await ensureTerminalSession({
+        repoRoot: options.repoRoot,
+        id: worktree.id,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        runtime: runtime ?? undefined,
+      });
 
       const clients: TmuxClientInfo[] = await listTmuxClients({
         tmuxSession,
@@ -3349,16 +3365,16 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       try {
         validateDeleteWorktreeRequest(worktree, deletion, request);
       } catch (error) {
-        res.status(await getRunningAiJobForBranch(worktree.branch) ? 409 : 400).json({
+        res.status(await getRunningAiJobForBranch(worktree) ? 409 : 400).json({
           message: error instanceof Error ? error.message : "Invalid delete request.",
         });
         return;
       }
 
-      await stopWorktreeRuntime(worktree.branch, worktree.worktreePath);
+      await stopWorktreeRuntime(worktree);
 
       await removeWorktree(options.repoRoot, worktree.worktreePath);
-      await clearWorktreeDocumentLink(options.repoRoot, worktree.branch);
+      await clearWorktreeDocumentLink(options.repoRoot, worktree.id);
       if (request.deleteBranch) {
         await deleteBranch(options.repoRoot, worktree.branch);
       }
@@ -3372,8 +3388,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.get("/worktrees/:branch/background-commands", async (req, res, next) => {
     try {
       const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
 
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
@@ -3382,9 +3397,9 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const commands: BackgroundCommandState[] = await listBackgroundCommands(
         config,
-        worktree.branch,
-        worktree.worktreePath,
-        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
+        options.repoRoot,
+        worktree,
+        (await options.operationalState.getRuntimeById(worktree.id)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {
@@ -3395,8 +3410,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.post("/worktrees/:branch/background-commands/:name/start", async (req, res, next) => {
     try {
       const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
 
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
@@ -3412,17 +3426,17 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       await startBackgroundCommand({
         config,
-        branch: worktree.branch,
-        worktreePath: worktree.worktreePath,
-        runtime: (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
+        repoRoot: options.repoRoot,
+        worktree,
+        runtime: (await options.operationalState.getRuntimeById(worktree.id)) ?? undefined,
         commandName: decodedName,
       });
 
       const commands: BackgroundCommandState[] = await listBackgroundCommands(
         config,
-        worktree.branch,
-        worktree.worktreePath,
-        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
+        options.repoRoot,
+        worktree,
+        (await options.operationalState.getRuntimeById(worktree.id)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {
@@ -3432,8 +3446,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.post("/worktrees/:branch/background-commands/:name/stop", async (req, res, next) => {
     try {
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const config = await loadCurrentConfig();
+      const worktree = await findWorktree(req.params.branch);
 
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
@@ -3441,19 +3455,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       }
 
       const decodedName = decodeURIComponent(req.params.name);
-      const command = getBackgroundCommandEntries(await loadCurrentConfig())[decodedName];
+      const command = getBackgroundCommandEntries(config)[decodedName];
       if (!command) {
         res.status(404).json({ message: `Unknown background command ${decodedName}` });
         return;
       }
 
-      await stopBackgroundCommand(worktree.branch, worktree.worktreePath, decodedName);
+      await stopBackgroundCommand(options.repoRoot, worktree, decodedName);
 
       const commands: BackgroundCommandState[] = await listBackgroundCommands(
-        await loadCurrentConfig(),
-        worktree.branch,
-        worktree.worktreePath,
-        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
+        config,
+        options.repoRoot,
+        worktree,
+        (await options.operationalState.getRuntimeById(worktree.id)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {
@@ -3464,8 +3478,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.post("/worktrees/:branch/background-commands/:name/restart", async (req, res, next) => {
     try {
       const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
 
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
@@ -3481,17 +3494,17 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       await restartBackgroundCommand({
         config,
-        branch: worktree.branch,
-        worktreePath: worktree.worktreePath,
-        runtime: (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
+        repoRoot: options.repoRoot,
+        worktree,
+        runtime: (await options.operationalState.getRuntimeById(worktree.id)) ?? undefined,
         commandName: decodedName,
       });
 
       const commands: BackgroundCommandState[] = await listBackgroundCommands(
         config,
-        worktree.branch,
-        worktree.worktreePath,
-        (await options.operationalState.getRuntime(worktree.branch)) ?? undefined,
+        options.repoRoot,
+        worktree,
+        (await options.operationalState.getRuntimeById(worktree.id)) ?? undefined,
       );
       res.json(commands);
     } catch (error) {
@@ -3502,8 +3515,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.get("/worktrees/:branch/background-commands/:name/logs", async (req, res, next) => {
     try {
       const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
 
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
@@ -3512,8 +3524,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const logs: BackgroundCommandLogsResponse = await getBackgroundCommandLogs(
         config,
-        worktree.branch,
-        worktree.worktreePath,
+        worktree,
         decodeURIComponent(req.params.name),
       );
       res.json(logs);
@@ -3525,8 +3536,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   router.get("/worktrees/:branch/background-commands/:name/logs/stream", async (req, res, next) => {
     try {
       const config = await loadCurrentConfig();
-      const worktrees = await listWorktrees(options.repoRoot);
-      const worktree = worktrees.find((entry) => entry.branch === req.params.branch);
+      const worktree = await findWorktree(req.params.branch);
 
       if (!worktree) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
@@ -3549,13 +3559,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         res.write(`data: ${JSON.stringify(payload)}\n\n`);
       };
 
-      const history = await getBackgroundCommandLogs(config, worktree.branch, worktree.worktreePath, commandName);
+      const history = await getBackgroundCommandLogs(config, worktree, commandName);
       writeEvent({ type: "snapshot", commandName: history.commandName, lines: history.lines });
 
       const dispose = await streamBackgroundCommandLogs({
         config,
-        branch: worktree.branch,
-        worktreePath: worktree.worktreePath,
+        worktree,
         commandName,
         onEvent: (event) => writeEvent(event),
         onError: (message) => writeEvent({

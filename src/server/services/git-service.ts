@@ -18,9 +18,13 @@ import type {
   WorktreeRecord,
 } from "../../shared/types.js";
 import {
+  DEFAULT_GIT_AUTHOR_EMAIL,
+  DEFAULT_GIT_AUTHOR_NAME,
   DEFAULT_WORKTREEMAN_MAIN_BRANCH,
   DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
 } from "../../shared/constants.js";
+import { resolveAiCommandTemplate } from "../../shared/ai-command-utils.js";
+import { worktreeId } from "../../shared/worktree-id.js";
 import { runCommand } from "../utils/process.js";
 import { resolveWorktreeBaseDir } from "./config-service.js";
 import { ensureBranchWorktree } from "./repository-layout-service.js";
@@ -28,18 +32,18 @@ import { sanitizeBranchName } from "../utils/paths.js";
 
 const GIT_MERGE_ENV = {
   ...process.env,
-  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
-  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
-  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
-  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || DEFAULT_GIT_AUTHOR_NAME,
+  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
+  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || DEFAULT_GIT_AUTHOR_NAME,
+  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
 };
 
 const GIT_COMMIT_ENV = {
   ...process.env,
-  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || "worktreeman",
-  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || "worktreeman@example.com",
-  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || "worktreeman",
-  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || "worktreeman@example.com",
+  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || DEFAULT_GIT_AUTHOR_NAME,
+  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
+  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || DEFAULT_GIT_AUTHOR_NAME,
+  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
 };
 
 const EMPTY_TREE_HASH = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -327,14 +331,11 @@ export async function listWorktrees(repoRoot: string): Promise<WorktreeRecord[]>
   })));
 
   return usablePaths
-    .filter(({ entry, usable }) => {
-      if (entry.isBare || entry.prunable || !usable) {
-        return false;
-      }
-
-      return path.basename(entry.worktreePath) === sanitizeBranchName(entry.branch);
-    })
-    .map(({ entry }) => entry);
+    .filter(({ entry, usable }) => !entry.isBare && !entry.prunable && usable)
+    .map(({ entry }) => ({
+      id: worktreeId(entry.worktreePath),
+      ...entry,
+    }));
 }
 
 export async function createWorktree(
@@ -498,10 +499,6 @@ function parseGitBranchName(raw: string): string {
     .replace(/^refs\/heads\//, "")
     .replace(/^refs\/remotes\//, "")
     .replace(/^origin\//, "");
-}
-
-function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiCommandId): string {
-  return (aiCommands[commandId] ?? "").trim();
 }
 
 type CommitMessageStyle = "default" | "short";

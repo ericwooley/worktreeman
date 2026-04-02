@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOrigin } from "@shared/types";
 import { ProjectManagementAiTab } from "./project-management-ai-tab";
 
+const WORKTREE_ID = "55555555555555555555555555555555" as AiCommandJob["worktreeId"];
+
 const sampleOrigin: AiCommandOrigin = {
   kind: "project-management-document-run",
   label: "Project document #12",
@@ -20,6 +22,7 @@ const sampleOrigin: AiCommandOrigin = {
 const sampleRunningJob: AiCommandJob = {
   jobId: "job-running-1",
   fileName: "job-running-1.log",
+  worktreeId: WORKTREE_ID,
   branch: "feature/active-run",
   documentId: "doc-12",
   commandId: "smart",
@@ -37,6 +40,7 @@ const sampleLogSummary: AiCommandLogSummary = {
   jobId: "job-log-1",
   fileName: "job-log-1.log",
   timestamp: "2026-03-27T09:45:00.000Z",
+  worktreeId: WORKTREE_ID,
   branch: "feature/ai-log",
   documentId: "doc-8",
   commandId: "simple",
@@ -52,6 +56,7 @@ const sampleLogDetail: AiCommandLogEntry = {
   jobId: "job-log-1",
   fileName: "job-log-1.log",
   timestamp: "2026-03-27T09:45:00.000Z",
+  worktreeId: WORKTREE_ID,
   branch: "feature/ai-log",
   documentId: "doc-8",
   commandId: "simple",
@@ -136,7 +141,7 @@ test("active AI worktrees sub tab renders live output and runtime details", () =
     assert.match(markup, /Active worktrees/);
     assert.match(markup, /Running for 5m 30s/);
     assert.match(markup, /AI has been running in feature\/active-run for 5m 30s\./);
-    assert.match(markup, /Streaming mixed stdout and stderr from feature\/active-run while the worktree run is active\./);
+    assert.match(markup, /Streaming the combined AI log from feature\/active-run while the worktree run is active\./);
     assert.match(markup, /PID/);
     assert.match(markup, /runner --prompt \$WTM_AI_INPUT/);
   } finally {

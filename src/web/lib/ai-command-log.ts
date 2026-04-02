@@ -4,6 +4,7 @@ export function toAiCommandJobFromLog(logDetail: AiCommandLogEntry): AiCommandJo
   return {
     jobId: logDetail.jobId,
     fileName: logDetail.fileName,
+    worktreeId: logDetail.worktreeId,
     branch: logDetail.branch,
     documentId: logDetail.documentId ?? null,
     commandId: logDetail.commandId,
@@ -20,5 +21,6 @@ export function toAiCommandJobFromLog(logDetail: AiCommandLogEntry): AiCommandJo
     processName: logDetail.processName ?? null,
     error: logDetail.error?.message ?? null,
     origin: logDetail.origin ?? null,
+    worktreePath: logDetail.worktreePath,
   };
 }

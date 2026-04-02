@@ -25,6 +25,9 @@ import {
 } from "./project-management-ai-output-viewer";
 import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 
+const PRIMARY_WORKTREE_ID = "66666666666666666666666666666661" as WorktreeRecord["id"];
+const RUNTIME_WORKTREE_ID = "66666666666666666666666666666662" as WorktreeRecord["id"];
+
 const sampleDocuments: ProjectManagementDocumentSummary[] = [
   {
     id: "doc-1",
@@ -84,6 +87,7 @@ const sampleDocument: ProjectManagementDocument = {
 
 const sampleWorktrees: WorktreeRecord[] = [
   {
+    id: PRIMARY_WORKTREE_ID,
     branch: "feature/doc-1-primary",
     worktreePath: "/repo/.worktrees/feature-doc-1-primary",
     isBare: false,
@@ -102,6 +106,7 @@ const sampleWorktrees: WorktreeRecord[] = [
     },
   },
   {
+    id: RUNTIME_WORKTREE_ID,
     branch: "feature/doc-1-runtime",
     worktreePath: "/repo/.worktrees/feature-doc-1-runtime",
     isBare: false,
@@ -119,6 +124,7 @@ const sampleWorktrees: WorktreeRecord[] = [
       archived: false,
     },
     runtime: {
+      id: RUNTIME_WORKTREE_ID,
       branch: "feature/doc-1-runtime",
       worktreePath: "/repo/.worktrees/feature-doc-1-runtime",
       env: {},
@@ -242,6 +248,7 @@ function createAiJob(overrides: Partial<AiCommandJob> = {}): AiCommandJob {
   return {
     jobId: "job-1",
     fileName: "job-1.log",
+    worktreeId: RUNTIME_WORKTREE_ID,
     branch: "pm-doc-1-dependencies",
     documentId: "doc-1",
     commandId: "smart",
@@ -663,6 +670,7 @@ test("AI stream viewer prefers persisted log output over an empty fallback job",
         fileName: fallbackJob.fileName,
         timestamp: fallbackJob.startedAt,
         completedAt: "2026-03-26T10:05:10.000Z",
+        worktreeId: fallbackJob.worktreeId,
         branch: fallbackJob.branch,
         documentId: fallbackJob.documentId ?? null,
         commandId: fallbackJob.commandId,
@@ -906,6 +914,7 @@ test("board view marks AI running for documents even when the active worktree di
         {
           jobId: "job-3",
           fileName: "job-3.log",
+          worktreeId: RUNTIME_WORKTREE_ID,
           branch: "feature/doc-1-runtime",
           documentId: "doc-1",
           commandId: "smart",

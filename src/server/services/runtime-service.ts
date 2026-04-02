@@ -1,5 +1,5 @@
 import process from "node:process";
-import type { QuickLinkConfigEntry, WorktreeManagerConfig, WorktreeRuntime } from "../../shared/types.js";
+import type { QuickLinkConfigEntry, WorktreeManagerConfig, WorktreeRecord, WorktreeRuntime } from "../../shared/types.js";
 import { renderDerivedEnv, renderTemplate } from "./config-service.js";
 import { allocateRuntimePorts } from "./runtime-port-service.js";
 import { runCommand } from "../utils/process.js";
@@ -21,6 +21,7 @@ export function buildRuntimeProcessEnv(runtime: WorktreeRuntime): NodeJS.Process
   return {
     ...process.env,
     ...runtime.env,
+    WORKTREE_ID: runtime.id,
     WORKTREE_BRANCH: runtime.branch,
     WORKTREE_PATH: runtime.worktreePath,
     TMUX_SESSION_NAME: runtime.tmuxSession,
@@ -29,8 +30,7 @@ export function buildRuntimeProcessEnv(runtime: WorktreeRuntime): NodeJS.Process
 
 export function buildWorktreeProcessEnv(
   config: WorktreeManagerConfig,
-  branch: string,
-  worktreePath: string,
+  worktree: Pick<WorktreeRecord, "id" | "branch" | "worktreePath">,
 ): NodeJS.ProcessEnv {
   const baseEnv = {
     ...config.env,
@@ -40,8 +40,9 @@ export function buildWorktreeProcessEnv(
     ...process.env,
     ...baseEnv,
     ...renderDerivedEnv(config.derivedEnv ?? {}, baseEnv),
-    WORKTREE_BRANCH: branch,
-    WORKTREE_PATH: worktreePath,
+    WORKTREE_ID: worktree.id,
+    WORKTREE_BRANCH: worktree.branch,
+    WORKTREE_PATH: worktree.worktreePath,
   };
 }
 
@@ -68,8 +69,7 @@ export async function runStartupCommands(
 export async function createRuntime(
   config: WorktreeManagerConfig,
   repoRoot: string,
-  branch: string,
-  worktreePath: string,
+  worktree: Pick<WorktreeRecord, "id" | "branch" | "worktreePath">,
 ): Promise<RuntimeResult> {
   const startedAt = Date.now();
   const allocatedPortEntries = await allocateRuntimePorts(config.runtimePorts);
@@ -84,19 +84,21 @@ export async function createRuntime(
   };
   const quickLinks = renderQuickLinks(config.quickLinks ?? [], env);
 
-  const runtime = {
-    branch,
-    worktreePath,
+  const runtime: WorktreeRuntime = {
+    id: worktree.id,
+    branch: worktree.branch,
+    worktreePath: worktree.worktreePath,
     env,
     quickLinks,
     allocatedPorts,
-    tmuxSession: getTmuxSessionName(repoRoot, branch),
+    tmuxSession: getTmuxSessionName(repoRoot, worktree.id),
     runtimeStartedAt: new Date().toISOString(),
   };
 
   logServerEvent("runtime", "runtime-created", {
-    branch,
-    worktreePath,
+    worktreeId: worktree.id,
+    branch: worktree.branch,
+    worktreePath: worktree.worktreePath,
     ports: Object.keys(allocatedPorts).length,
     quickLinks: quickLinks.length,
     duration: formatDurationMs(Date.now() - startedAt),

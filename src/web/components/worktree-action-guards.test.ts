@@ -3,10 +3,13 @@ import test from "node:test";
 import type { AiCommandJob } from "@shared/types";
 import { getWorktreeDeleteAiDisabledReason, getWorktreeMergeAiDisabledReason } from "./worktree-action-guards";
 
+const WORKTREE_ID = "77777777777777777777777777777777" as AiCommandJob["worktreeId"];
+
 function createAiJob(overrides: Partial<AiCommandJob> = {}): AiCommandJob {
   return {
     jobId: "job-1",
     fileName: "job-1.json",
+    worktreeId: WORKTREE_ID,
     branch: "feature-ai",
     commandId: "smart",
     command: "echo test",

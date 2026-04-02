@@ -1,5 +1,6 @@
 import { PgBoss } from "pg-boss";
 import type { AiCommandConfig, AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
+import type { WorktreeId } from "../../shared/worktree-id.js";
 import { beginAiCommandJob, continueAiCommandJob, type StartedAiCommandJob } from "./ai-command-service.js";
 import { closeManagedDatabaseClient, getManagedDatabaseClient } from "./database-client-service.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
@@ -12,6 +13,7 @@ const WORKER_STOP_TIMEOUT_MS = 60_000;
 
 export interface ProjectManagementAiQueuePayload {
   jobId?: string;
+  worktreeId: WorktreeId;
   branch: string;
   commandId: AiCommandId;
   worktreePath: string;
@@ -38,6 +40,7 @@ const managedQueues = new Map<string, ManagedAiCommandJobQueue>();
 
 function summarizeQueuePayload(payload: ProjectManagementAiQueuePayload) {
   return {
+    worktreeId: payload.worktreeId,
     branch: payload.branch,
     documentId: payload.documentId,
     commandId: payload.commandId,
@@ -64,13 +67,12 @@ function describeError(error: unknown) {
 
 async function runManagedAiProcess(options: {
   repoRoot: string;
-  branch: string;
   jobId: string;
   payload: ProjectManagementAiQueuePayload;
 }): Promise<StartedAiCommandJob> {
   return await continueAiCommandJob({
     repoRoot: options.repoRoot,
-    branch: options.branch,
+    worktreeId: options.payload.worktreeId,
     jobId: options.jobId,
     execute: async (payload) => {
       const processName = getAiCommandProcessName(payload.jobId);
@@ -163,7 +165,6 @@ async function processProjectManagementJob(repoRoot: string, payload: ProjectMan
 
   const started = await runManagedAiProcess({
     repoRoot,
-    branch: payload.branch,
     jobId: payload.jobId,
     payload,
   });
@@ -233,6 +234,7 @@ export async function enqueueProjectManagementAiJob(options: {
   const manager = await ensureJobManager(options.repoRoot);
   const job = await beginAiCommandJob({
     repoRoot: options.repoRoot,
+    worktreeId: options.payload.worktreeId,
     branch: options.payload.branch,
     documentId: options.payload.documentId,
     commandId: options.payload.commandId,

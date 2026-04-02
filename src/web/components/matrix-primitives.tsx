@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 export type MatrixBadgeTone = "active" | "idle" | "warning" | "danger" | "neutral";
@@ -248,7 +248,7 @@ export function MatrixModal({
   const descriptionId = useId();
 
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
@@ -259,7 +259,7 @@ export function MatrixModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  function handleBackdropClick(event: MouseEvent<HTMLDivElement>) {
+  function handleBackdropClick(event: ReactMouseEvent<HTMLDivElement>) {
     if (event.target === event.currentTarget) {
       onClose();
     }

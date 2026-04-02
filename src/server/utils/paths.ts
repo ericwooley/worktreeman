@@ -6,6 +6,7 @@ import {
   WORKTREEMAN_GIT_FILE,
   WORKTREEMAN_GIT_FILE_CONTENT,
 } from "../../shared/constants.js";
+import { sanitizeSlug } from "../../shared/slug-utils.js";
 import { runCommand } from "./process.js";
 
 export const CONFIG_CANDIDATES = ["worktree.yml", "worktree.yaml", "worktreeman.yml", "worktreeman.yaml"];
@@ -170,5 +171,5 @@ function normalizeBranchRef(ref: string): string {
 }
 
 export function sanitizeBranchName(branch: string): string {
-  return branch.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
+  return sanitizeSlug(branch);
 }

@@ -1,3 +1,5 @@
+import type { WorktreeId } from "./worktree-id.js";
+
 export interface BackgroundCommandConfigEntry {
   command: string;
 }
@@ -44,6 +46,7 @@ export interface WorktreeManagerConfig {
 }
 
 export interface WorktreeRuntime {
+  id: WorktreeId;
   branch: string;
   worktreePath: string;
   env: Record<string, string>;
@@ -118,6 +121,7 @@ export interface TmuxClientInfo {
 }
 
 export interface WorktreeRecord {
+  id: WorktreeId;
   branch: string;
   worktreePath: string;
   headSha?: string;
@@ -158,6 +162,7 @@ export interface ApiStateResponse {
   configSourceRef: string;
   configWorktreePath?: string;
   config: WorktreeManagerConfig;
+  selectedWorktreeId?: WorktreeId;
   worktrees: WorktreeRecord[];
 }
 
@@ -567,6 +572,7 @@ export type AiCommandOriginKind =
   | "git-pull-request-review";
 
 export interface AiCommandOriginLocation {
+  worktreeId?: WorktreeId | null;
   tab: AiCommandOriginTab;
   branch?: string | null;
   gitBaseBranch?: string | null;
@@ -588,6 +594,7 @@ export type AiCommandJobStatus = "running" | "completed" | "failed";
 export interface AiCommandJob {
   jobId: string;
   fileName: string;
+  worktreeId: WorktreeId;
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;
@@ -635,6 +642,7 @@ export interface AiCommandLogSummary {
   jobId: string;
   fileName: string;
   timestamp: string;
+  worktreeId: WorktreeId;
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;
@@ -650,6 +658,7 @@ export interface AiCommandLogEntry {
   jobId: string;
   fileName: string;
   timestamp: string;
+  worktreeId: WorktreeId;
   branch: string;
   documentId?: string | null;
   commandId: AiCommandId;

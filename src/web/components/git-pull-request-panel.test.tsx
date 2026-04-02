@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ProjectManagementDocument, ProjectManagementDocumentSummary, ProjectManagementHistoryEntry, WorktreeRecord } from "@shared/types";
 import { GitPullRequestPanel } from "./git-pull-request-panel";
 
+const WORKTREE_ID = "33333333333333333333333333333333" as WorktreeRecord["id"];
+
 const pullRequestSummary: ProjectManagementDocumentSummary = {
   id: "pr-1",
   number: 14,
@@ -62,6 +64,7 @@ const pullRequestHistory: ProjectManagementHistoryEntry[] = [
 ];
 
 const sampleWorktree: WorktreeRecord = {
+  id: WORKTREE_ID,
   branch: "feature/pull-request-workspace",
   worktreePath: "/repo/.worktrees/feature-pull-request-workspace",
   isBare: false,
@@ -121,6 +124,7 @@ test("pull request panel renders AI review action state", () => {
     aiReviewJob: {
       jobId: "job-ai-review",
       fileName: "job-ai-review.json",
+      worktreeId: sampleWorktree.id,
       branch: sampleWorktree.branch,
       documentId: pullRequestDocument.id,
       commandId: "smart",

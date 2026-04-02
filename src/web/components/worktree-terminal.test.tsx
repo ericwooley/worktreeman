@@ -4,7 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { WorktreeRecord } from "@shared/types";
 import { WorktreeTerminal } from "./worktree-terminal";
 
+const WORKTREE_ID = "88888888888888888888888888888888" as WorktreeRecord["id"];
+
 const sampleWorktree: WorktreeRecord = {
+  id: WORKTREE_ID,
   branch: "feature-shell-reconnect",
   worktreePath: "/repo/feature-shell-reconnect",
   isBare: false,
@@ -12,6 +15,7 @@ const sampleWorktree: WorktreeRecord = {
   locked: false,
   prunable: false,
   runtime: {
+    id: WORKTREE_ID,
     branch: "feature-shell-reconnect",
     worktreePath: "/repo/feature-shell-reconnect",
     env: {

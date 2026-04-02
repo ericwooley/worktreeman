@@ -85,7 +85,7 @@ export function WorktreeTerminal({
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession
-    ?? (worktree?.branch && repoRoot ? getTmuxSessionName(repoRoot, worktree.branch) : null);
+    ?? (worktree && repoRoot ? getTmuxSessionName(repoRoot, worktree.id) : null);
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
   const [tmuxClients, setTmuxClients] = useState<TmuxClientInfo[]>([]);
   const [currentClientId, setCurrentClientId] = useState<string | null>(null);
