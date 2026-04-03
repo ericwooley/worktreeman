@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import type { ChildProcess } from "node:child_process";
 import { restartManagedRuntimeProcess, type ManagedRuntimeProcess } from "./process-supervisor-service.js";
 

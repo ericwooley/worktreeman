@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { readDashboardUrlState } from "./dashboard-url-state";
 
 test("readDashboardUrlState maps legacy shell and background tabs into Worktree Environment sub tabs", () => {

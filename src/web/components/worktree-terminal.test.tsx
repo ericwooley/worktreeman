@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { WorktreeRecord } from "@shared/types";
 import { WorktreeTerminal } from "./worktree-terminal";

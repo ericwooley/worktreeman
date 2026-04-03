@@ -5,7 +5,7 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test from "#test-runtime";
 import express from "express";
 import request from "supertest";
 import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "../../shared/constants.js";
@@ -16,16 +16,19 @@ import { createWorktree } from "../services/git-service.js";
 import { loadConfig, parseConfigContents, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { findRepoContext, findWorktreePathForRef } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
-import { createOperationalStateStore, stopAllOperationalStateStores, stopOperationalStateStore } from "../services/operational-state-service.js";
+import { createOperationalStateStore, stopOperationalStateStore } from "../services/operational-state-service.js";
 import { closeManagedDatabaseClient, getManagedDatabaseClient } from "../services/database-client-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
-import { getAiCommandJob, startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
-import { startProjectManagementAiWorker, stopAiCommandJobManager, stopAllAiCommandJobManagers } from "../services/ai-command-job-manager-service.js";
+import { getAiCommandJob, startAiCommandJob, waitForActiveAiCommandJobs, waitForAiCommandJob } from "../services/ai-command-service.js";
+import { startProjectManagementAiWorker, stopAiCommandJobManager } from "../services/ai-command-job-manager-service.js";
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
+import { deleteAiCommandProcess } from "../services/ai-command-process-service.js";
+import { stopDatabaseSocketServer } from "../services/database-socket-service.js";
 import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
 import { getWorktreeDocumentLink, setWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { getTmuxSessionName } from "../../shared/tmux.js";
+import { worktreeId } from "../../shared/worktree-id.js";
 import type { AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent, SystemStatusResponse } from "../../shared/types.js";
 
 type RouterOptions = Parameters<typeof createApiRouter>[0];
@@ -48,6 +51,19 @@ async function repoRootExists(repoRoot: string) {
   } catch {
     return false;
   }
+}
+
+async function stopRunningAiJobsForRepo(
+  repoRoot: string,
+  deleteProcess: (processName: string) => Promise<void>,
+) {
+  const operationalState = await createOperationalStateStore(repoRoot);
+  const jobs = await operationalState.listAiCommandJobs().catch(() => []);
+  const runningProcessNames = jobs
+    .filter((job) => job.status === "running" && typeof job.processName === "string" && job.processName.length > 0)
+    .map((job) => job.processName as string);
+
+  await Promise.all(runningProcessNames.map((processName) => deleteProcess(processName).catch(() => undefined)));
 }
 
 function createFakeAiProcesses() {
@@ -244,6 +260,7 @@ async function writeAiLogFixture(options: {
     jobId,
     fileName: options.fileName,
     timestamp,
+    worktreeId: worktreeId(options.worktreePath),
     branch: options.branch,
     documentId: null,
     commandId: options.commandId ?? "smart",
@@ -267,12 +284,13 @@ async function writeAiLogFixture(options: {
   };
 
   await store.upsertAiCommandLogEntry(entry);
-  await store.syncAiCommandOutputEvents(entry.jobId, entry.fileName, entry.branch, entry.response.events);
+  await store.syncAiCommandOutputEvents(entry.jobId, entry.fileName, entry.worktreeId, entry.branch, entry.response.events);
 
     if (status === "running") {
       await store.setAiCommandJob({
         jobId,
         fileName: options.fileName,
+        worktreeId: entry.worktreeId,
       branch: options.branch,
       documentId: null,
       commandId: options.commandId ?? "smart",
@@ -296,25 +314,79 @@ async function writeAiLogFixture(options: {
 }
 
 async function openSse(url: string) {
-  const controller = new AbortController();
-  const response = await fetch(url, {
-    headers: { Accept: "text/event-stream" },
-    signal: controller.signal,
+  const target = new URL(url);
+  let request: http.ClientRequest | null = null;
+  const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+    request = http.get(target, {
+      headers: { Accept: "text/event-stream" },
+    });
+    request.once("response", resolve);
+    request.once("error", reject);
   });
-  assert.equal(response.status, 200);
-  assert.ok(response.body);
-
-  const reader = response.body.getReader();
+  assert.equal(response.statusCode, 200);
   const decoder = new TextDecoder();
   let buffer = "";
+  let ended = false;
+  let closed = false;
+  let streamError: unknown = null;
+  let waiter: (() => void) | null = null;
 
-  async function readChunk(timeoutMs: number) {
-    return await Promise.race([
-      reader.read(),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Timed out waiting for SSE chunk after ${timeoutMs}ms.`)), timeoutMs);
-      }),
-    ]);
+  const wake = () => {
+    const pending = waiter;
+    waiter = null;
+    pending?.();
+  };
+
+  response.on("data", (chunk) => {
+    if (closed) {
+      return;
+    }
+    buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+    wake();
+  });
+  response.on("end", () => {
+    ended = true;
+    buffer += decoder.decode();
+    wake();
+  });
+  response.on("error", (error) => {
+    if (closed) {
+      return;
+    }
+    streamError = error;
+    wake();
+  });
+  response.on("close", () => {
+    ended = true;
+    wake();
+  });
+  request?.on("error", (error) => {
+    if (closed) {
+      return;
+    }
+    streamError = error;
+    wake();
+  });
+
+  async function waitForChunk(timeoutMs: number) {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (waiter === onWake) {
+          waiter = null;
+        }
+        reject(new Error(`Timed out waiting for SSE chunk after ${timeoutMs}ms.`));
+      }, timeoutMs);
+
+      const onWake = () => {
+        if (waiter === onWake) {
+          waiter = null;
+        }
+        clearTimeout(timeout);
+        resolve();
+      };
+
+      waiter = onWake;
+    });
   }
 
   return {
@@ -336,21 +408,31 @@ async function openSse(url: string) {
           return JSON.parse(payload) as { type: string; log: unknown };
         }
 
-        const chunk = await readChunk(timeoutMs);
-        if (chunk.done) {
+        if (streamError) {
+          throw streamError;
+        }
+
+        if (ended) {
           throw new Error("SSE stream closed before the next event arrived.");
         }
 
-        buffer += decoder.decode(chunk.value, { stream: true });
+        await waitForChunk(timeoutMs);
       }
     },
     async close() {
-      controller.abort();
-      try {
-        await reader.cancel();
-      } catch {
-        // ignore abort/cancel errors during cleanup
-      }
+      closed = true;
+      ended = true;
+      streamError = null;
+      const closePromise = response.destroyed
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            response.once("close", () => resolve());
+            setTimeout(resolve, 100);
+          });
+      request?.destroy();
+      response.destroy();
+      wake();
+      await closePromise;
     },
   };
 }
@@ -394,6 +476,7 @@ async function startApiServer(
   app.use(express.json());
   const operationalState = await createOperationalStateStore(repo.repoRoot);
   testContextRepoRoots.add(repo.repoRoot);
+  const deleteProcess = overrides?.aiProcesses?.deleteProcess ?? deleteAiCommandProcess;
   app.use("/api", createApiRouter({
     repoRoot: repo.repoRoot,
     configPath: repo.configPath,
@@ -406,6 +489,7 @@ async function startApiServer(
 
   let server: http.Server | null = null;
   let liveBaseUrl: string | null = null;
+  const liveSockets = new Set<net.Socket>();
 
   const ensureLiveBaseUrl = async () => {
     if (liveBaseUrl) {
@@ -413,6 +497,12 @@ async function startApiServer(
     }
 
     server = http.createServer(app);
+    server.on("connection", (socket) => {
+      liveSockets.add(socket);
+      socket.on("close", () => {
+        liveSockets.delete(socket);
+      });
+    });
     await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
     const address = server.address();
     if (!address || typeof address === "string") {
@@ -480,17 +570,25 @@ async function startApiServer(
     fetch: apiFetch,
     url: ensureLiveBaseUrl,
     close: async () => {
-      await worker.close();
-      await stopAiCommandJobManager(repo.repoRoot);
-      await stopOperationalStateStore(repo.repoRoot);
+      try {
+        if (server) {
+          server.closeIdleConnections?.();
+          for (const socket of liveSockets) {
+            socket.destroy();
+          }
 
-      if (!server) {
-        return;
+          await new Promise<void>((resolve, reject) => {
+            server?.close((error) => error ? reject(error) : resolve());
+          });
+        }
+      } finally {
+        await stopRunningAiJobsForRepo(repo.repoRoot, deleteProcess).catch(() => undefined);
+        await waitForActiveAiCommandJobs(repo.repoRoot, { timeoutMs: 500 });
+        await worker.close();
+        await stopAiCommandJobManager(repo.repoRoot);
+        await stopOperationalStateStore(repo.repoRoot);
+        await stopDatabaseSocketServer(repo.repoRoot).catch(() => undefined);
       }
-
-      await new Promise<void>((resolve, reject) => {
-        server?.close((error) => error ? reject(error) : resolve());
-      });
     },
   };
 }
@@ -539,20 +637,26 @@ test.afterEach(async () => {
     testContextRepoRoots.delete(repoRoot);
     await stopAiCommandJobManager(repoRoot);
     await stopOperationalStateStore(repoRoot);
+    await stopDatabaseSocketServer(repoRoot).catch(() => undefined);
   }));
-});
+}, { timeout: 15000 });
 
 test.after(async () => {
   const repos = Array.from(testContextRepoRoots);
   testContextRepoRoots.clear();
+  await Promise.all(repos.map(async (repoRoot) => {
+    await stopRunningAiJobsForRepo(repoRoot, deleteAiCommandProcess).catch(() => undefined);
+  }));
+  await Promise.all(repos.map(async (repoRoot) => {
+    await waitForActiveAiCommandJobs(repoRoot, { timeoutMs: 500 }).catch(() => undefined);
+  }));
   await Promise.all(repos.map((repoRoot) => stopAiCommandJobManager(repoRoot)));
   await Promise.all(repos.map((repoRoot) => stopOperationalStateStore(repoRoot)));
-  await stopAllOperationalStateStores();
-  await stopAllAiCommandJobManagers();
+  await Promise.all(repos.map((repoRoot) => stopDatabaseSocketServer(repoRoot).catch(() => undefined)));
   await Promise.all(repos.map(async (repoRoot) => {
     await fs.rm(repoRoot, { recursive: true, force: true }).catch(() => undefined);
   }));
-});
+}, { timeout: 30000 });
 
 test("GET /api/state returns favicon and preferred port config", async () => {
   const repo = await createApiTestRepo();
@@ -620,6 +724,7 @@ test("GET /api/state/stream emits runtime updates after the runtime starts", asy
 
 test("GET /api/state/stream replays persisted runtime state after a server restart", async () => {
   const repo = await createApiTestRepo();
+  const featureAiLogId = worktreeId(path.join(repo.repoRoot, "feature-ai-log"));
 
   try {
     const firstServer = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
@@ -643,7 +748,7 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
       const runtime = snapshot.state.worktrees.find((entry) => entry.branch === "feature-ai-log")?.runtime;
       assert.ok(runtime);
       assert.equal(runtime.branch, "feature-ai-log");
-      assert.match(runtime.tmuxSession, /feature-ai-log/);
+      assert.equal(runtime.tmuxSession, getTmuxSessionName(repo.repoRoot, featureAiLogId));
     } finally {
       await stream.close();
       await secondServer.close();
@@ -669,13 +774,16 @@ test("GET /api/state/stream rebuilds state on the fallback interval for out-of-b
       assert.equal(snapshot.state.worktrees.find((entry) => entry.branch === "feature-ai-log")?.runtime, undefined);
 
       const operationalState = await createOperationalStateStore(repo.repoRoot);
+      const featureAiLogPath = path.join(repo.repoRoot, "feature-ai-log");
+      const featureAiLogId = worktreeId(featureAiLogPath);
       await operationalState.setRuntime({
+        id: featureAiLogId,
         branch: "feature-ai-log",
-        worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+        worktreePath: featureAiLogPath,
         env: {},
         quickLinks: [],
         allocatedPorts: {},
-        tmuxSession: getTmuxSessionName(repo.repoRoot, "feature-ai-log"),
+        tmuxSession: getTmuxSessionName(repo.repoRoot, featureAiLogId),
         runtimeStartedAt: new Date().toISOString(),
       });
 
@@ -687,7 +795,7 @@ test("GET /api/state/stream rebuilds state on the fallback interval for out-of-b
       const runtime = update.state.worktrees.find((entry) => entry.branch === "feature-ai-log")?.runtime;
       assert.ok(runtime);
       assert.equal(runtime.branch, "feature-ai-log");
-      assert.match(runtime.tmuxSession, /feature-ai-log/);
+      assert.equal(runtime.tmuxSession, getTmuxSessionName(repo.repoRoot, featureAiLogId));
     } finally {
       await stream.close();
       await server.close();
@@ -697,7 +805,7 @@ test("GET /api/state/stream rebuilds state on the fallback interval for out-of-b
   }
 });
 
-test("startServer fails fast when the initial tmux session cannot be prepared", { concurrency: false }, async () => {
+test("startServer fails fast when the initial tmux session cannot be prepared", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const port = await allocateTestPort();
 
@@ -720,13 +828,15 @@ test("terminal tmux session resolution uses repoRoot when runtime is missing", {
   const repo = await createApiTestRepo();
 
   try {
+    const mainWorktreeId = worktreeId(path.join(repo.repoRoot, "main"));
     assert.equal(
       resolveTmuxSessionName({
         repoRoot: repo.repoRoot,
+        id: mainWorktreeId,
         branch: "main",
         worktreePath: path.join(repo.repoRoot, "main"),
       }),
-      getTmuxSessionName(repo.repoRoot, "main"),
+      getTmuxSessionName(repo.repoRoot, mainWorktreeId),
     );
   } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1205,7 +1315,7 @@ test("POST /api/worktrees persists an optional linked project-management documen
     assert.equal(linkedWorktree.linkedDocument?.title, outline.title);
     assert.equal(linkedWorktree.linkedDocument?.archived, false);
 
-    const storedLink = await getWorktreeDocumentLink(repo.repoRoot, "feature-linked-doc");
+    const storedLink = await getWorktreeDocumentLink(repo.repoRoot, worktreeId(path.join(repo.repoRoot, "feature-linked-doc")));
     assert.ok(storedLink);
     assert.equal(storedLink.documentId, outline.id);
     assert.match(storedLink.worktreePath, /feature-linked-doc$/);
@@ -1482,7 +1592,7 @@ test("worktree AI auto-commits dirty files after a successful run", { concurrenc
     assert.equal(payload.job.branch, "feature-ai-log");
     assert.equal(payload.job.status, "running");
 
-    const completedJob = await waitForAiCommandJob(repo.repoRoot, "feature-ai-log", payload.job.jobId);
+    const completedJob = await waitForAiCommandJob(repo.repoRoot, worktreeId(worktreePath), payload.job.jobId);
     assert.equal(completedJob.status, "completed");
 
     const { stdout: subject } = await runCommand("git", ["log", "-1", "--pretty=%s", "feature-ai-log"], { cwd: repo.repoRoot });
@@ -1525,7 +1635,7 @@ test("worktree AI skips auto-commit when the worktree stays clean", { concurrenc
     };
     assert.equal(payload.job.status, "running");
 
-    const completedJob = await waitForAiCommandJob(repo.repoRoot, "feature-ai-log", payload.job.jobId);
+    const completedJob = await waitForAiCommandJob(repo.repoRoot, worktreeId(worktreePath), payload.job.jobId);
     assert.equal(completedJob.status, "completed");
 
     const { stdout: afterHead } = await runCommand("git", ["rev-parse", "HEAD"], { cwd: worktreePath });
@@ -1598,6 +1708,7 @@ test("git compare merge merges a feature branch into main", { concurrency: false
     assert.equal(createDocumentResponse.status, 201);
     const createDocumentPayload = await createDocumentResponse.json() as { document: { id: string } };
     await setWorktreeDocumentLink(repo.repoRoot, {
+      worktreeId: feature.id,
       branch: feature.branch,
       worktreePath: feature.worktreePath,
       documentId: createDocumentPayload.document.id,
@@ -2867,11 +2978,12 @@ test("stale persisted running AI jobs reconcile on the worktree stream and no lo
     repoRoot: repo.repoRoot,
     gitFile: repo.configFile,
   });
-  await createWorktree(repo.repoRoot, config, { branch: "feature-ai-restart" });
+  const featureAiRestart = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-restart" });
   const operationalState = await createOperationalStateStore(repo.repoRoot);
   await operationalState.setAiCommandJob({
     jobId: "stale-job",
     fileName: "stale-job.json",
+    worktreeId: featureAiRestart.id,
     branch: "feature-ai-restart",
     commandId: "smart",
     command: "printf %s 'recover me'",
@@ -2884,6 +2996,7 @@ test("stale persisted running AI jobs reconcile on the worktree stream and no lo
     pid: 4321,
     exitCode: null,
     processName: "wtm:ai:stale-process",
+    worktreePath: featureAiRestart.worktreePath,
     origin: {
       kind: "worktree-environment",
       label: "Worktree environment",
@@ -3662,7 +3775,7 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(createdWorktree.linkedDocument?.status, "in-progress");
     assert.equal(createdWorktree.linkedDocument?.archived, false);
 
-    const storedLink = await getWorktreeDocumentLink(repo.repoRoot, payload.job.branch);
+    const storedLink = await getWorktreeDocumentLink(repo.repoRoot, worktreeId(createdWorktree.worktreePath));
     assert.ok(storedLink);
     assert.equal(storedLink.documentId, outline.id);
     assert.equal(storedLink.worktreePath, createdWorktree.worktreePath);
@@ -3845,7 +3958,7 @@ test("project-management document AI runs startup commands for a new derived wor
     );
 
     const operationalState = await createOperationalStateStore(repo.repoRoot);
-    const runtime = await operationalState.getRuntime(payload.job.branch);
+    const runtime = await operationalState.getRuntimeById(worktreeId(createdWorktree.worktreePath));
     assert.equal(runtime, null);
   } finally {
     await server.close();
@@ -4051,7 +4164,7 @@ test("worktree AI can append pull request review comments with git origin metada
   }
 });
 
-test("project-management document AI continues the selected linked worktree when requested", { concurrency: false }, async () => {
+test("project-management document AI continues the selected linked worktree when requested", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -4124,7 +4237,7 @@ test("project-management document AI continues the selected linked worktree when
       return logsPayload.logs.filter((entry) => entry.branch === firstPayload.job.branch && entry.status === "completed").length >= 2;
     });
 
-    const link = await getWorktreeDocumentLink(repo.repoRoot, firstPayload.job.branch);
+    const link = await getWorktreeDocumentLink(repo.repoRoot, worktreeId(path.join(repo.repoRoot, firstPayload.job.branch)));
     assert.equal(link?.documentId, outline.id);
 
     const statePayload = await readStateSnapshot<{
@@ -4137,7 +4250,7 @@ test("project-management document AI continues the selected linked worktree when
   }
 });
 
-test("project-management document AI uses a suffixed branch when explicitly starting a new worktree again", { concurrency: false }, async () => {
+test("project-management document AI uses a suffixed branch when explicitly starting a new worktree again", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -4210,8 +4323,8 @@ test("project-management document AI uses a suffixed branch when explicitly star
     assert.notEqual(firstPayload.job.branch, secondPayload.job.branch);
     assert.equal(secondPayload.job.branch, `${firstPayload.job.branch}-2`);
 
-    const firstLink = await getWorktreeDocumentLink(repo.repoRoot, firstPayload.job.branch);
-    const secondLink = await getWorktreeDocumentLink(repo.repoRoot, secondPayload.job.branch);
+    const firstLink = await getWorktreeDocumentLink(repo.repoRoot, worktreeId(path.join(repo.repoRoot, firstPayload.job.branch)));
+    const secondLink = await getWorktreeDocumentLink(repo.repoRoot, worktreeId(path.join(repo.repoRoot, secondPayload.job.branch)));
     assert.equal(firstLink?.documentId, outline.id);
     assert.equal(secondLink?.documentId, outline.id);
 
@@ -4226,14 +4339,14 @@ test("project-management document AI uses a suffixed branch when explicitly star
   }
 });
 
-test("AI cancel route deletes the running process and returns the settled failed job", { concurrency: false }, async () => {
+test("AI cancel route deletes the running process and returns the settled failed job", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({
     path: repo.configPath,
     repoRoot: repo.repoRoot,
     gitFile: repo.configFile,
   });
-  await createWorktree(repo.repoRoot, config, { branch: "feature-ai-cancel" });
+  const cancelWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-cancel" });
   const fakeAiProcesses = createFakeAiProcesses();
   const expectedOrigin: AiCommandOrigin = {
     kind: "worktree-environment",
@@ -4241,6 +4354,7 @@ test("AI cancel route deletes the running process and returns the settled failed
     description: "Started from feature-ai-cancel.",
     location: {
       tab: "environment",
+      worktreeId: cancelWorktree.id,
       branch: "feature-ai-cancel",
       environmentSubTab: "terminal",
     },
@@ -4338,14 +4452,15 @@ test("AI cancel route can cancel a running job before the process spawns", { con
     repoRoot: repo.repoRoot,
     gitFile: repo.configFile,
   });
-  await createWorktree(repo.repoRoot, config, { branch: "feature-ai-no-process" });
+  const featureAiNoProcess = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-no-process" });
   await (await startAiCommandJob({
+    worktreeId: featureAiNoProcess.id,
     branch: "feature-ai-no-process",
     commandId: "smart",
     input: "wait",
     command: "printf %s 'wait'",
     repoRoot: repo.repoRoot,
-    worktreePath: path.join(repo.repoRoot, "feature-ai-no-process"),
+    worktreePath: featureAiNoProcess.worktreePath,
     execute: async () => await new Promise<{ stdout: string; stderr: string }>(() => {}),
   })).started;
   const server = await startApiServer(repo, {
@@ -4370,7 +4485,7 @@ test("AI cancel route can cancel a running job before the process spawns", { con
     assert.equal(payload.job.pid ?? null, null);
     assert.match(payload.job.error ?? "", /Cancellation requested by the user/);
 
-    const runningJob = await getAiCommandJob(repo.repoRoot, "feature-ai-no-process", { reconcile: false });
+    const runningJob = await getAiCommandJob(repo.repoRoot, worktreeId(path.join(repo.repoRoot, "feature-ai-no-process")), { reconcile: false });
     assert.ok(runningJob);
     assert.equal(runningJob.processName?.startsWith("wtm:ai:"), true);
     assert.equal(runningJob.pid ?? null, null);
@@ -4381,7 +4496,7 @@ test("AI cancel route can cancel a running job before the process spawns", { con
   }
 });
 
-test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidance when runtime is active", { concurrency: false }, async () => {
+test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidance when runtime is active", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const parsedConfig = await loadConfig({
     path: repo.configPath,
@@ -4405,7 +4520,7 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     repoRoot: repo.repoRoot,
     gitFile: repo.configFile,
   });
-  await createWorktree(repo.repoRoot, config, { branch: "feature-ai-env" });
+  const featureAiEnv = await createWorktree(repo.repoRoot, config, { branch: "feature-ai-env" });
 
   let capturedPrompt = "";
   const aiProcesses: InjectedAiProcesses = {
@@ -4468,8 +4583,8 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     assert.equal(capturedPrompt.includes("PORT="), true);
     assert.equal(capturedPrompt.includes("- Allocated ports: PORT="), true);
     assert.equal(capturedPrompt.includes("- Quicklinks: App: http://127.0.0.1:"), true);
-    assert.equal(capturedPrompt.includes("web (wtm:feature-ai-env:web, online)"), true);
-    assert.equal(capturedPrompt.includes("pm2 logs wtm:feature-ai-env:web"), true);
+    assert.equal(capturedPrompt.includes(`web (wtm:${featureAiEnv.id}:web, online)`), true);
+    assert.equal(capturedPrompt.includes(`pm2 logs wtm:${featureAiEnv.id}:web`), true);
     assert.equal(capturedPrompt.includes("Operator request:"), true);
     assert.equal(capturedPrompt.includes("inspect the runtime"), true);
 
@@ -4481,13 +4596,13 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
       return runtime?.branch === "feature-ai-env" && runtime.tmuxSession === payload.runtime?.tmuxSession;
     });
   } finally {
-    await stopAllBackgroundCommands("feature-ai-env", path.join(repo.repoRoot, "feature-ai-env")).catch(() => undefined);
+    await stopAllBackgroundCommands(repo.repoRoot, featureAiEnv).catch(() => undefined);
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }
 });
 
-test("worktree AI auto-starts a runtime and stops it after completion when the runtime was created for the AI run", { concurrency: false }, async () => {
+test("worktree AI auto-starts a runtime and stops it after completion when the runtime was created for the AI run", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const currentContents = await readConfigContents({
     path: repo.configPath,
@@ -4580,7 +4695,7 @@ test("worktree AI auto-starts a runtime and stops it after completion when the r
   }
 });
 
-test("runtime restart reloads config changes and reconnect ensures the tmux session", { concurrency: false }, async () => {
+test("runtime restart reloads config changes and reconnect ensures the tmux session", { concurrency: false, timeout: 15000 }, async () => {
   const repo = await createApiTestRepo();
   const initialConfig = await loadConfig({
     path: repo.configPath,
@@ -4694,6 +4809,9 @@ test("runtime restart reloads config changes and reconnect ensures the tmux sess
       body: JSON.stringify({ input: "verify restarted runtime" }),
     });
     assert.equal(aiResponse.status, 200);
+    const aiPayload = await aiResponse.json() as {
+      job: { jobId: string };
+    };
 
     if (!capturedEnv) {
       assert.fail("Expected AI process env to be captured after runtime restart.");
@@ -4706,8 +4824,14 @@ test("runtime restart reloads config changes and reconnect ensures the tmux sess
     assert.match(capturedPrompt, /- Runtime env: .*FEATURE_FLAG=new-value/);
     assert.match(capturedPrompt, /- Quicklinks: API: http:\/\/127\.0\.0\.1:\d+\/health/);
     assert.match(capturedPrompt, /- Allocated ports: API_PORT=\d+/);
+
+    await waitForAiCommandJob(repo.repoRoot, worktreeId(path.join(repo.repoRoot, branch)), aiPayload.job.jobId);
   } finally {
-    await stopAllBackgroundCommands(branch, path.join(repo.repoRoot, branch)).catch(() => undefined);
+    await stopAllBackgroundCommands(repo.repoRoot, {
+      id: worktreeId(path.join(repo.repoRoot, branch)),
+      branch,
+      worktreePath: path.join(repo.repoRoot, branch),
+    }).catch(() => undefined);
     await server.close();
     await removePathWithRetry(repo.repoRoot);
   }

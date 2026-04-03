@@ -3,11 +3,13 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import test from "node:test";
+import test from "#test-runtime";
 import pm2 from "pm2";
 import type { ProcessDescription, StartOptions } from "pm2";
 import { startBackgroundCommand, stopAllBackgroundCommands } from "./background-command-service.js";
-import type { WorktreeManagerConfig, WorktreeRuntime } from "../../shared/types.js";
+import { stopOperationalStateStore } from "./operational-state-service.js";
+import type { WorktreeManagerConfig, WorktreeRecord, WorktreeRuntime } from "../../shared/types.js";
+import { worktreeId } from "../../shared/worktree-id.js";
 
 async function withPm2<T>(operation: () => Promise<T>): Promise<T> {
   await new Promise<void>((resolve, reject) => {
@@ -24,7 +26,10 @@ async function withPm2<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } finally {
-    pm2.disconnect();
+    const disconnectPm2 = pm2.disconnect.bind(pm2) as unknown as (callback?: () => void) => void;
+    await new Promise<void>((resolve) => {
+      disconnectPm2(() => resolve());
+    });
   }
 }
 
@@ -126,7 +131,9 @@ function createConfig(commandName: string, command: string): WorktreeManagerConf
 }
 
 function createRuntime(branch: string, worktreePath: string): WorktreeRuntime {
+  const id = worktreeId(worktreePath);
   return {
+    id,
     branch,
     worktreePath,
     env: {},
@@ -137,28 +144,38 @@ function createRuntime(branch: string, worktreePath: string): WorktreeRuntime {
   };
 }
 
+function createWorktree(branch: string, worktreePath: string): Pick<WorktreeRecord, "id" | "branch" | "worktreePath"> {
+  return {
+    id: worktreeId(worktreePath),
+    branch,
+    worktreePath,
+  };
+}
+
 test("stopAllBackgroundCommands removes managed background commands for the matching worktree", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-background-managed-"));
   const branch = `feature-managed-${Date.now()}`;
   const commandName = "worker";
-  const processName = `wtm:${branch}:${commandName}`;
+  const worktree = createWorktree(branch, tempDir);
+  const processName = `wtm:${worktree.id}:${commandName}`;
 
   try {
     await startBackgroundCommand({
       config: createConfig(commandName, `${process.execPath} -e \"setInterval(() => {}, 1000)\"`),
-      branch,
-      worktreePath: tempDir,
+      repoRoot: tempDir,
+      worktree,
       runtime: createRuntime(branch, tempDir),
       commandName,
     });
 
     await waitForProcessPresence(processName, true);
 
-    await stopAllBackgroundCommands(branch, tempDir);
+    await stopAllBackgroundCommands(tempDir, worktree);
 
     await waitForProcessPresence(processName, false);
   } finally {
     await deletePm2Process(processName).catch(() => undefined);
+    await stopOperationalStateStore(tempDir).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
@@ -167,13 +184,14 @@ test("startBackgroundCommand assigns a branch-specific PM2 namespace", async () 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-background-namespace-"));
   const branch = `feature-namespace-${Date.now()}`;
   const commandName = "worker";
-  const processName = `wtm:${branch}:${commandName}`;
+  const worktree = createWorktree(branch, tempDir);
+  const processName = `wtm:${worktree.id}:${commandName}`;
 
   try {
     await startBackgroundCommand({
       config: createConfig(commandName, `${process.execPath} -e "setInterval(() => {}, 1000)"`),
-      branch,
-      worktreePath: tempDir,
+      repoRoot: tempDir,
+      worktree,
       runtime: createRuntime(branch, tempDir),
       commandName,
     });
@@ -181,9 +199,10 @@ test("startBackgroundCommand assigns a branch-specific PM2 namespace", async () 
     await waitForProcessPresence(processName, true);
 
     const processDescription = await getPm2Process(processName);
-    assert.equal((processDescription?.pm2_env as { namespace?: string } | undefined)?.namespace, `worktreeman:${branch}`);
+    assert.equal((processDescription?.pm2_env as { namespace?: string } | undefined)?.namespace, `worktreeman:${worktree.id}`);
   } finally {
     await deletePm2Process(processName).catch(() => undefined);
+    await stopOperationalStateStore(tempDir).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
@@ -191,7 +210,8 @@ test("startBackgroundCommand assigns a branch-specific PM2 namespace", async () 
 test("stopAllBackgroundCommands ignores unrelated PM2 processes that only share the branch prefix", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-background-unrelated-"));
   const branch = `feature-unrelated-${Date.now()}`;
-  const processName = `wtm:${branch}:dev`;
+  const worktree = createWorktree(branch, tempDir);
+  const processName = `wtm:${worktree.id}:dev`;
 
   try {
     await startPm2Process({
@@ -204,11 +224,12 @@ test("stopAllBackgroundCommands ignores unrelated PM2 processes that only share 
 
     await waitForProcessPresence(processName, true);
 
-    await stopAllBackgroundCommands(branch, tempDir);
+    await stopAllBackgroundCommands(tempDir, worktree);
 
     await waitForProcessPresence(processName, true);
   } finally {
     await deletePm2Process(processName).catch(() => undefined);
+    await stopOperationalStateStore(tempDir).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });

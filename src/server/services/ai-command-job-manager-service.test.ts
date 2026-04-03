@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import test from "node:test";
+import test from "#test-runtime";
 import { fileURLToPath } from "node:url";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "./repository-layout-service.js";
 import { initRepository } from "./init-service.js";
@@ -15,6 +15,7 @@ import { startDatabaseSocketServer, stopDatabaseSocketServer } from "./database-
 import { getAiCommandJob } from "./ai-command-service.js";
 import { stopOperationalStateStore } from "./operational-state-service.js";
 import { getAiCommandProcessName } from "./ai-command-process-service.js";
+import { worktreeId } from "../../shared/worktree-id.js";
 
 async function waitFor<T>(callback: () => Promise<T | null | undefined> | T | null | undefined, timeoutMs = 15000, intervalMs = 50): Promise<T> {
   const startedAt = Date.now();
@@ -129,6 +130,7 @@ test("worker entrypoint shutdown drains active AI job without killing its child 
       repoRoot: repo.repoRoot,
       payload: {
         branch: "main",
+        worktreeId: worktreeId(path.join(repo.repoRoot, "main")),
         commandId: "smart",
         worktreePath: path.join(repo.repoRoot, "main"),
         input: "test drain",
@@ -144,7 +146,7 @@ test("worker entrypoint shutdown drains active AI job without killing its child 
     });
 
     const runningJob = await waitFor(async () => {
-      const job = await getAiCommandJob(repo.repoRoot, "main", { reconcile: false });
+      const job = await getAiCommandJob(repo.repoRoot, worktreeId(path.join(repo.repoRoot, "main")), { reconcile: false });
       return job?.jobId === startedJob.jobId && typeof job.pid === "number" ? job : null;
     });
 
@@ -155,7 +157,7 @@ test("worker entrypoint shutdown drains active AI job without killing its child 
     assert.doesNotThrow(() => process.kill(runningJob.pid!, 0));
 
     const completedJob = await waitFor(async () => {
-      const job = await getAiCommandJob(repo.repoRoot, "main", { reconcile: false });
+      const job = await getAiCommandJob(repo.repoRoot, worktreeId(path.join(repo.repoRoot, "main")), { reconcile: false });
       return job?.jobId === startedJob.jobId && job.status === "completed" ? job : null;
     }, 20000, 100);
 
@@ -206,6 +208,7 @@ test("queued project-management AI jobs stay running before the worker spawns th
       repoRoot: repo.repoRoot,
       payload: {
         branch: "main",
+        worktreeId: worktreeId(path.join(repo.repoRoot, "main")),
         commandId: "smart",
         worktreePath: path.join(repo.repoRoot, "main"),
         input: "draft the next steps",
@@ -226,7 +229,7 @@ test("queued project-management AI jobs stay running before the worker spawns th
     assert.equal(queuedJob.origin?.kind, "project-management-document-run");
     assert.equal(queuedJob.documentId, "doc-123");
 
-    const reconciledJob = await getAiCommandJob(repo.repoRoot, "main");
+    const reconciledJob = await getAiCommandJob(repo.repoRoot, worktreeId(path.join(repo.repoRoot, "main")));
     assert.ok(reconciledJob);
     assert.equal(reconciledJob.jobId, queuedJob.jobId);
     assert.equal(reconciledJob.status, "running");

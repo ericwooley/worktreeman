@@ -10,8 +10,9 @@ import type { WorktreeId } from "../shared/worktree-id.js";
 import { createApiRouter } from "./routes/api.js";
 import { loadConfig } from "./services/config-service.js";
 import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
+import { waitForActiveAiCommandJobs } from "./services/ai-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
-import { createOperationalStateStore, stopAllOperationalStateStores } from "./services/operational-state-service.js";
+import { createOperationalStateStore, stopOperationalStateStore } from "./services/operational-state-service.js";
 import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
 import { formatServerUrl, resolveServerHost } from "./utils/server-host.js";
 import { formatDurationMs, logServerEvent } from "./utils/server-logger.js";
@@ -251,6 +252,8 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
         });
       }
 
+      await waitForActiveAiCommandJobs(options.repo.repoRoot, { timeoutMs: 500 });
+
       if (vite) {
         logInfo("[shutdown] Closing Vite dev server...");
         await vite.close();
@@ -263,7 +266,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       process.stderr.write(`${message}\n`);
       await operationalState.failShutdown(message).catch(() => undefined);
     } finally {
-      await stopAllOperationalStateStores();
+      await stopOperationalStateStore(options.repo.repoRoot).catch(() => undefined);
     }
 
     if (shutdownError) {
@@ -291,7 +294,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       process.stdout.write("[startup] Closing Vite dev server after failed startup...\n");
       await vite.close();
     }
-    await stopAllOperationalStateStores().catch(() => undefined);
+    await stopOperationalStateStore(options.repo.repoRoot).catch(() => undefined);
   };
 
   try {

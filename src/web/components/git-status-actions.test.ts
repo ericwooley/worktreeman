@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
 
 test("resolvable conflict count falls back to merge-preview conflicts", () => {

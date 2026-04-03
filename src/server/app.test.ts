@@ -4,7 +4,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test from "#test-runtime";
 import { startServer } from "./app.js";
 import { configureDatabaseConnection } from "./services/database-connection-service.js";
 import { startDatabaseSocketServer, stopDatabaseSocketServer } from "./services/database-socket-service.js";
@@ -13,6 +13,7 @@ import { createOperationalStateStore, stopOperationalStateStore } from "./servic
 import { deleteAiCommandProcess, getAiCommandProcess, getAiCommandProcessName, startAiCommandProcess } from "./services/ai-command-process-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "./services/repository-layout-service.js";
 import { findRepoContext } from "./utils/paths.js";
+import { worktreeId } from "../shared/worktree-id.js";
 
 async function createTestRepo() {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-app-"));
@@ -291,16 +292,19 @@ test("startServer reconciles interrupted running AI jobs on startup", async () =
   try {
     await withSocketDatabase(repo.repoRoot, async () => {
       const operationalState = await createOperationalStateStore(repo.repoRoot);
+      const mainWorktreePath = path.join(repo.repoRoot, "main");
+      const mainWorktreeId = worktreeId(mainWorktreePath);
       await operationalState.setAiCommandJob({
         jobId: "interrupted-job",
         fileName: "interrupted-job.json",
+        worktreeId: mainWorktreeId,
         branch: "main",
         commandId: "smart",
         command: "printf %s 'resume'",
         input: "resume",
         status: "running",
         startedAt: new Date(Date.now() - 60_000).toISOString(),
-        worktreePath: path.join(repo.repoRoot, "main"),
+        worktreePath: mainWorktreePath,
         stdout: "partial output",
         stderr: "",
         outputEvents: [],
@@ -313,7 +317,7 @@ test("startServer reconciles interrupted running AI jobs on startup", async () =
       startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
 
       const restartedOperationalState = await createOperationalStateStore(repo.repoRoot);
-      const reconciledJob = await restartedOperationalState.getAiCommandJob("main");
+      const reconciledJob = await restartedOperationalState.getAiCommandJobById(mainWorktreeId);
       assert.equal(reconciledJob?.status, "running");
       assert.equal(reconciledJob?.stdout, "partial output");
       assert.equal(reconciledJob?.processName, "wtm:ai:missing-restart-process");

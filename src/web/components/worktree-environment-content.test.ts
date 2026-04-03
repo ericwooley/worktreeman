@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import {
   BACKGROUND_COMMAND_CONTROL_DESCRIPTION,
   BACKGROUND_COMMAND_CONTROL_TITLE,

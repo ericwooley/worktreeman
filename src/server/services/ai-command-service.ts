@@ -15,6 +15,9 @@ import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 
 const aiCommandJobEmitter = new EventEmitter();
 const AI_COMMAND_PROCESS_METADATA_GRACE_MS = 5_000;
+const activeAiCommandJobsByRepo = new Map<string, Map<string, Promise<AiCommandJob>>>();
+const completingAiCommandJobsByRepo = new Map<string, Set<string>>();
+const postExecuteAiCommandJobsByRepo = new Map<string, Set<string>>();
 
 interface AiCommandProcessAdapter {
   getProcess: (processName: string) => Promise<AiCommandProcessDescription | null>;
@@ -32,9 +35,117 @@ function getAiCommandEventKey(repoRoot: string, worktreeId: WorktreeId) {
   return `${repoRoot}:${worktreeId}`;
 }
 
+function describeAiCommandError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 function buildAiCommandLogFileName(worktreeId: WorktreeId, date = new Date()): string {
   const timestamp = date.toISOString().replace(/[:.]/g, "-");
   return `${timestamp}-${worktreeId}-ai-request.json`;
+}
+
+function trackActiveAiCommandJob(repoRoot: string, jobId: string, completed: Promise<AiCommandJob>): Promise<AiCommandJob> {
+  let activeJobs = activeAiCommandJobsByRepo.get(repoRoot);
+  if (!activeJobs) {
+    activeJobs = new Map();
+    activeAiCommandJobsByRepo.set(repoRoot, activeJobs);
+  }
+
+  activeJobs.set(jobId, completed);
+  void completed.finally(() => {
+    activeJobs?.delete(jobId);
+    if (activeJobs && activeJobs.size === 0) {
+      activeAiCommandJobsByRepo.delete(repoRoot);
+    }
+  });
+
+  return completed;
+}
+
+function isActiveAiCommandJob(repoRoot: string, jobId: string): boolean {
+  return activeAiCommandJobsByRepo.get(repoRoot)?.has(jobId) ?? false;
+}
+
+function markAiCommandJobCompleting(repoRoot: string, jobId: string): () => void {
+  let completingJobs = completingAiCommandJobsByRepo.get(repoRoot);
+  if (!completingJobs) {
+    completingJobs = new Set();
+    completingAiCommandJobsByRepo.set(repoRoot, completingJobs);
+  }
+
+  completingJobs.add(jobId);
+  return () => {
+    completingJobs?.delete(jobId);
+    if (completingJobs && completingJobs.size === 0) {
+      completingAiCommandJobsByRepo.delete(repoRoot);
+    }
+  };
+}
+
+function isCompletingAiCommandJob(repoRoot: string, jobId: string): boolean {
+  return completingAiCommandJobsByRepo.get(repoRoot)?.has(jobId) ?? false;
+}
+
+function markAiCommandJobPostExecute(repoRoot: string, jobId: string): () => void {
+  let repoJobs = postExecuteAiCommandJobsByRepo.get(repoRoot);
+  if (!repoJobs) {
+    repoJobs = new Set<string>();
+    postExecuteAiCommandJobsByRepo.set(repoRoot, repoJobs);
+  }
+  repoJobs.add(jobId);
+
+  return () => {
+    const currentRepoJobs = postExecuteAiCommandJobsByRepo.get(repoRoot);
+    if (!currentRepoJobs) {
+      return;
+    }
+
+    currentRepoJobs.delete(jobId);
+    if (currentRepoJobs.size === 0) {
+      postExecuteAiCommandJobsByRepo.delete(repoRoot);
+    }
+  };
+}
+
+function isPostExecuteAiCommandJob(repoRoot: string, jobId: string): boolean {
+  return postExecuteAiCommandJobsByRepo.get(repoRoot)?.has(jobId) ?? false;
+}
+
+export async function waitForActiveAiCommandJobs(repoRoot: string, options?: { timeoutMs?: number }): Promise<void> {
+  const activeJobs = Array.from(activeAiCommandJobsByRepo.get(repoRoot)?.values() ?? []);
+  if (activeJobs.length === 0) {
+    return;
+  }
+
+  const waitForJobs = Promise.allSettled(activeJobs).then(() => undefined);
+  const timeoutMs = options?.timeoutMs ?? 0;
+  if (timeoutMs <= 0) {
+    await waitForJobs;
+    return;
+  }
+
+  await Promise.race([
+    waitForJobs,
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    }),
+  ]);
 }
 
 function cloneOutputEvent(event: AiCommandOutputEvent): AiCommandOutputEvent {
@@ -244,6 +355,17 @@ async function reconcileAiCommandJob(
     ),
   };
 
+  if (isPostExecuteAiCommandJob(repoRoot, currentJob.jobId) || isCompletingAiCommandJob(repoRoot, currentJob.jobId)) {
+    const settlingJob: AiCommandJob = {
+      ...baseJob,
+      status: "running",
+      completedAt,
+      error: currentJob.error,
+    };
+    await persistJob(settlingJob);
+    return cloneAiCommandJob(settlingJob);
+  }
+
   if (resolvedExitCode === 0) {
     const nextJob: AiCommandJob = {
       ...baseJob,
@@ -254,24 +376,17 @@ async function reconcileAiCommandJob(
     return cloneAiCommandJob(nextJob);
   }
 
+  const failureMessage = currentJob.error ?? (processInfo
+    ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
+    : "AI process was no longer available. The server may have restarted or the process may have crashed.");
+
   const settledJob: AiCommandJob = {
-        ...baseJob,
-        status: "failed",
-        stderr: `${baseJob.stderr}${currentJob.error ?? (processInfo
-          ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
-          : "AI process was no longer available. The server may have restarted or the process may have crashed.")}`,
-        outputEvents: appendOutputEvent(
-          currentJob.jobId,
-          baseJob.outputEvents,
-          "stderr",
-          currentJob.error ?? (processInfo
-            ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
-            : "AI process was no longer available. The server may have restarted or the process may have crashed."),
-        ),
-        error: currentJob.error ?? (processInfo
-          ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
-          : "AI process was no longer available. The server may have restarted or the process may have crashed."),
-      };
+    ...baseJob,
+    status: "failed",
+    stderr: `${baseJob.stderr}${failureMessage}`,
+    outputEvents: baseJob.outputEvents,
+    error: failureMessage,
+  };
 
   await persistJob(settledJob);
   return cloneAiCommandJob(settledJob);
@@ -509,6 +624,7 @@ async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<Started
   };
   const runJob = async () => {
     const executionStartedAt = Date.now();
+    const finishPostExecute = markAiCommandJobPostExecute(options.repoRoot, jobId);
       logServerEvent("ai-command", "job-started", {
         repoRoot: options.repoRoot,
         worktreeId: options.worktreeId,
@@ -585,26 +701,38 @@ async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<Started
         return cloneAiCommandJob(currentJob)!;
       }
 
-      await options.onComplete?.({
-        job: {
+      try {
+        if (options.onComplete) {
+          const finishCompleting = markAiCommandJobCompleting(options.repoRoot, jobId);
+          try {
+            await options.onComplete({
+              job: {
+                ...currentJob,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                outputEvents: currentJob.outputEvents?.map((event) => ({ ...event })) ?? [],
+              },
+              stdout: result.stdout,
+              stderr: result.stderr,
+            });
+          } finally {
+            finishCompleting();
+          }
+        }
+
+        const completedAt = new Date().toISOString();
+        currentJob = {
           ...currentJob,
+          status: "completed",
+          completedAt,
           stdout: result.stdout,
           stderr: result.stderr,
-          outputEvents: currentJob.outputEvents?.map((event) => ({ ...event })) ?? [],
-        },
-        stdout: result.stdout,
-        stderr: result.stderr,
-      });
-      const completedAt = new Date().toISOString();
-      currentJob = {
-        ...currentJob,
-        status: "completed",
-        completedAt,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        outputEvents: currentJob.outputEvents?.map(cloneOutputEvent) ?? [],
-      };
-      await persistJobSafely(currentJob);
+          outputEvents: currentJob.outputEvents?.map(cloneOutputEvent) ?? [],
+        };
+        await persistJobSafely(currentJob);
+      } finally {
+        finishPostExecute();
+      }
       logServerEvent("ai-command", "job-completed", {
         repoRoot: options.repoRoot,
         worktreeId: options.worktreeId,
@@ -621,9 +749,7 @@ async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<Started
       const latestJob = storedJob && storedJob.jobId === jobId ? storedJob : null;
       const errorMessage = latestJob?.status === "failed" && latestJob.error
         ? latestJob.error
-        : error instanceof Error
-          ? error.message
-          : String(error);
+        : describeAiCommandError(error);
       const nextOutputEvents = latestJob?.status === "failed"
         ? latestJob.outputEvents?.map(cloneOutputEvent) ?? []
         : appendOutputEvent(jobId, currentJob.outputEvents, "stderr", errorMessage);
@@ -652,6 +778,8 @@ async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<Started
       }, "error");
       resolveStartup();
       return cloneAiCommandJob(currentJob)!;
+    } finally {
+      finishPostExecute();
     }
   };
   const persistJobSafely = async (nextJob: AiCommandJob) => {
@@ -675,14 +803,14 @@ async function runAiCommandJob(options: RunAiCommandJobOptions): Promise<Started
     }
 
     if (error) {
-      nextJob.error = error instanceof Error ? error.message : String(error);
+      nextJob.error = describeAiCommandError(error);
     }
 
     currentJob = nextJob;
     await persistJobSafely(nextJob);
   };
 
-  const completed = runJob();
+  const completed = trackActiveAiCommandJob(options.repoRoot, jobId, runJob());
 
   await Promise.race([
     startupObserved,

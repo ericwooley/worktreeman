@@ -3,6 +3,9 @@
   "version": "0.2.2",
   "type": "module",
   "packageManager": "bun@1.3.11",
+  "imports": {
+    "#test-runtime": "./src/shared/test-runtime.ts"
+  },
   "trustedDependencies": [
     "esbuild",
     "node-pty"
@@ -28,7 +31,7 @@
     "check:docs": "vite build --config vite.docs.config.ts --mode production",
     "check:server": "tsc -p tsconfig.node.json --noEmit",
     "build": "bun run build:server && bun run build:web && bun run build:docs",
-    "build:server": "bun run clean:server-dist && tsc -p tsconfig.node.json",
+    "build:server": "bun run clean:server-dist && tsc -p tsconfig.node.build.json",
     "build:web": "bun run clean:web-dist && vite build",
     "build:docs": "vite build --config vite.docs.config.ts",
     "preview:docs": "bun run build:docs && http-server dist/docs -p 4174 -c-1",

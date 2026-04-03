@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOrigin } from "@shared/types";
 import { ProjectManagementAiTab } from "./project-management-ai-tab";

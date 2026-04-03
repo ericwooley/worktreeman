@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { formatServerUrl, isWildcardHost, resolveServerHost } from "./server-host.js";
 
 test("resolveServerHost auto prefers Tailscale over WireGuard, LAN, and localhost", () => {

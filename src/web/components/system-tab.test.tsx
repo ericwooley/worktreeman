@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { SystemStatusResponse } from "@shared/types";
 import { SystemTab } from "./system-tab";

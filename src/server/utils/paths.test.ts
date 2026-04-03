@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test from "#test-runtime";
 import { DEFAULT_WORKTREEMAN_MAIN_BRANCH, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "../../shared/constants.js";
 import { getTmuxRepoName, getTmuxSessionName } from "../../shared/tmux.js";
+import { worktreeId } from "../../shared/worktree-id.js";
 import { initRepository } from "../services/init-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { runCommand } from "./process.js";
@@ -87,14 +88,18 @@ test("findRepoContext resolves once initRepository creates the missing settings 
   }
 });
 
-test("tmux session names include repository identity and branch", () => {
+test("tmux session names include repository identity and worktree id", () => {
   assert.equal(getTmuxRepoName("/home/alice/projects/whatever"), "projects_whatever");
-  assert.equal(getTmuxSessionName("/home/alice/projects/whatever", "main"), "wt-projects_whatever-main");
-  assert.equal(getTmuxSessionName("/home/alice/client-a", "main"), "wt-client-a-main");
-  assert.equal(getTmuxSessionName("/home/alice/client-b", "main"), "wt-client-b-main");
+  const whateverId = worktreeId("/home/alice/projects/whatever/main");
+  const clientAId = worktreeId("/home/alice/client-a/main");
+  const clientBId = worktreeId("/home/alice/client-b/main");
+  assert.equal(getTmuxSessionName("/home/alice/projects/whatever", whateverId), `wt-projects_whatever-${whateverId}`);
+  assert.equal(getTmuxSessionName("/home/alice/client-a", clientAId), `wt-client-a-${clientAId}`);
+  assert.equal(getTmuxSessionName("/home/alice/client-b", clientBId), `wt-client-b-${clientBId}`);
 });
 
 test("tmux session names normalize Windows and nested paths consistently", () => {
   assert.equal(getTmuxRepoName("C:\\Users\\alice\\src\\some-other-repo"), "src_some-other-repo");
-  assert.equal(getTmuxSessionName("/srv/repos/example-app", "feature/add search"), "wt-repos_example-app-feature-add-search");
+  const nestedId = worktreeId("/srv/repos/example-app/feature/add search");
+  assert.equal(getTmuxSessionName("/srv/repos/example-app", nestedId), `wt-repos_example-app-${nestedId}`);
 });

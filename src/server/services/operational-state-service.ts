@@ -208,7 +208,11 @@ function parseRuntimeEnv(value: unknown): Record<string, string> {
   );
 }
 
-function toWorktreeDocumentLinkRecord(row: WorktreeDocumentLinkRow): WorktreeDocumentLinkRecord | null {
+function toWorktreeDocumentLinkRecord(row: WorktreeDocumentLinkRow | null | undefined): WorktreeDocumentLinkRecord | null {
+  if (!row) {
+    return null;
+  }
+
   const worktreeId = parseWorktreeId(row.worktree_id);
   if (!worktreeId) {
     return null;
@@ -223,7 +227,11 @@ function toWorktreeDocumentLinkRecord(row: WorktreeDocumentLinkRow): WorktreeDoc
   };
 }
 
-function toBackgroundCommandMetadataRecord(row: BackgroundCommandMetadataRow): BackgroundCommandMetadataRecord | null {
+function toBackgroundCommandMetadataRecord(row: BackgroundCommandMetadataRow | null | undefined): BackgroundCommandMetadataRecord | null {
+  if (!row) {
+    return null;
+  }
+
   const worktreeId = parseWorktreeId(row.worktree_id);
   if (!worktreeId) {
     return null;
@@ -310,7 +318,7 @@ async function readAiCommandOutputEvents(repoRoot: string, jobId: string): Promi
   const result = await managed.db.query<AiCommandOutputRow>(
     `
       select job_id, event_id, entry_number, source, text, timestamp
-      from ai_run_output_entries
+      from ${AI_RUN_OUTPUT_TABLE}
       where job_id = $1
       order by entry_number asc
     `,
@@ -916,6 +924,44 @@ export class OperationalStateStore {
         where job_id = $1
       `,
       [jobId],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    const events = await readAiCommandOutputEvents(this.repoRoot, row.job_id);
+    return toAiCommandLogEntry(row, events);
+  }
+
+  async getAiCommandLogEntryByFileName(fileName: string): Promise<AiCommandLogEntry | null> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<AiCommandLogRow>(
+      `
+        select
+          job_id,
+          file_name,
+          timestamp,
+          worktree_id,
+          branch,
+          document_id,
+          command_id,
+          origin_json,
+          worktree_path,
+          command_text,
+          request_text,
+          status,
+          stdout_text,
+          stderr_text,
+          pid,
+          exit_code,
+          process_name,
+          completed_at,
+          error_json
+        from ${AI_RUN_LOGS_TABLE}
+        where file_name = $1
+      `,
+      [fileName],
     );
     const row = result.rows[0];
     if (!row) {

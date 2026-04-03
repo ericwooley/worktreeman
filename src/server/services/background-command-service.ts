@@ -30,6 +30,7 @@ interface Pm2ProcessDescription {
   createdAt?: string;
   outLogPath?: string;
   errLogPath?: string;
+  namespace?: string;
 }
 
 interface BackgroundCommandTarget {
@@ -74,7 +75,10 @@ async function withPm2<T>(operation: () => Promise<T>): Promise<T> {
   try {
     return await operation();
   } finally {
-    pm2.disconnect();
+    const disconnectPm2 = pm2.disconnect.bind(pm2) as unknown as (callback?: () => void) => void;
+    await new Promise<void>((resolve) => {
+      disconnectPm2(() => resolve());
+    });
   }
 }
 
@@ -92,8 +96,11 @@ function toPm2ProcessDescription(entry: ProcessDescription): [string, Pm2Process
   const status = typeof pm2Env.status === "string" ? pm2Env.status : "unknown";
   const outLogPath = typeof pm2Env.pm_out_log_path === "string" ? pm2Env.pm_out_log_path : undefined;
   const errLogPath = typeof pm2Env.pm_err_log_path === "string" ? pm2Env.pm_err_log_path : undefined;
+  const namespace = typeof (pm2Env as { namespace?: unknown }).namespace === "string"
+    ? (pm2Env as { namespace: string }).namespace
+    : undefined;
 
-  return [name, { name, pid, status, createdAt, outLogPath, errLogPath }];
+  return [name, { name, pid, status, createdAt, outLogPath, errLogPath, namespace }];
 }
 
 async function listPm2Processes(): Promise<Map<string, Pm2ProcessDescription>> {
@@ -461,8 +468,11 @@ export async function streamBackgroundCommandLogs(options: {
 export async function stopAllBackgroundCommands(repoRoot: string, worktree: BackgroundCommandTarget): Promise<void> {
   const operationalState = await createOperationalStateStore(repoRoot);
   const processes = await listPm2Processes().catch(() => new Map<string, Pm2ProcessDescription>());
+  const namespace = getPm2Namespace(worktree.id);
   const processNames = new Set([
-    ...[...processes.keys()].filter((name) => name.startsWith(`${PM2_PROCESS_PREFIX}${worktree.id}:`)),
+    ...[...processes.entries()]
+      .filter(([name, process]) => name.startsWith(`${PM2_PROCESS_PREFIX}${worktree.id}:`) && process.namespace === namespace)
+      .map(([name]) => name),
     ...(await operationalState.listBackgroundCommandMetadataByWorktreeId(worktree.id)).map((entry) => entry.processName),
   ]);
 
@@ -486,8 +496,11 @@ export async function stopAllBackgroundCommandsForShutdown(
 ): Promise<void> {
   const operationalState = await createOperationalStateStore(repoRoot);
   const processes = await listPm2Processes().catch(() => new Map<string, Pm2ProcessDescription>());
+  const namespace = getPm2Namespace(worktree.id);
   const processNames = new Set([
-    ...[...processes.keys()].filter((name) => name.startsWith(`${PM2_PROCESS_PREFIX}${worktree.id}:`)),
+    ...[...processes.entries()]
+      .filter(([name, process]) => name.startsWith(`${PM2_PROCESS_PREFIX}${worktree.id}:`) && process.namespace === namespace)
+      .map(([name]) => name),
     ...(await operationalState.listBackgroundCommandMetadataByWorktreeId(worktree.id)).map((entry) => entry.processName),
   ]);
 

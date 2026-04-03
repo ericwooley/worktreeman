@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { isPwaInstalled, registerPwaServiceWorker } from "./pwa";
 
 test("isPwaInstalled returns true for standalone display mode and iOS standalone", () => {

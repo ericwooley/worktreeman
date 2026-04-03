@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test from "#test-runtime";
 import {
   loadConfig,
   updateAiCommandInConfigContents,
@@ -52,6 +52,7 @@ test("loadConfig parses runtime env, links, and background commands", async () =
      assert.deepEqual(config.aiCommands, {
        smart: "opencode run $WTM_AI_INPUT",
        simple: "opencode run --model gpt-5-mini $WTM_AI_INPUT",
+       autoStartRuntime: false,
      });
      assert.deepEqual(config.backgroundCommands, {
        "Web dev": { command: "bun run dev" },
@@ -88,6 +89,7 @@ test("loadConfig falls back from legacy aiCommand to smart ai command", async ()
     assert.deepEqual(config.aiCommands, {
       smart: "opencode run $WTM_AI_INPUT",
       simple: "",
+      autoStartRuntime: false,
     });
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });

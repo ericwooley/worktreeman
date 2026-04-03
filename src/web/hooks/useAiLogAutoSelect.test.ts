@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { shouldAutoSelectAiLog } from "./useAiLogAutoSelect";
 
 test("AI log auto-select starts with the primary candidate when nothing is selected", () => {

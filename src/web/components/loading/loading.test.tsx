@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LoadingOverlay } from "./LoadingOverlay";
 import { CardLoadingBadge } from "./CardLoadingBadge";

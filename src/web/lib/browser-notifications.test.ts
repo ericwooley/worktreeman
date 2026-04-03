@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test from "#test-runtime";
 import type { AiCommandJob } from "@shared/types";
 import {
   buildAiJobNotification,

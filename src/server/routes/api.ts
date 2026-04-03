@@ -766,8 +766,9 @@ async function generateProjectManagementDocumentSummary(options: {
     document: options.document,
     relatedDocuments: options.relatedDocuments,
   });
+  const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
   try {
-    const { stdout } = await runCommand("bash", ["-lc", template], {
+    const { stdout } = await runCommand("bash", ["-lc", renderedCommand], {
       cwd: options.repoRoot,
       env: {
         ...process.env,
@@ -857,6 +858,10 @@ function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLog
 }
 
 function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
+  const historicalStatus = isAiCommandLogFinalizing(entry) && entry.documentId
+    ? "completed"
+    : entry.status;
+
   return {
     jobId: entry.jobId,
     fileName: entry.fileName,
@@ -869,7 +874,7 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
     worktreePath: entry.worktreePath,
     command: entry.command,
     requestPreview: toAiCommandLogPreview(entry.request),
-    status: entry.status,
+    status: historicalStatus,
     pid: entry.pid,
   };
 }
@@ -918,6 +923,63 @@ function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
   };
 }
 
+function hasObservedAiCommandLogProcess(entry: AiCommandLogEntry): boolean {
+  return Boolean(
+    typeof entry.pid === "number"
+      || typeof entry.exitCode === "number"
+      || entry.response.stdout
+      || entry.response.stderr
+      || (entry.response.events?.length ?? 0) > 0,
+  );
+}
+
+function hasObservedAiCommandJobProcess(job: AiCommandJob): boolean {
+  return Boolean(
+    typeof job.pid === "number"
+      || typeof job.exitCode === "number"
+      || typeof job.completedAt === "string"
+      || job.stdout
+      || job.stderr
+      || (job.outputEvents?.length ?? 0) > 0,
+  );
+}
+
+function mergeAiCommandLogEntryWithJob(entry: AiCommandLogEntry, job: AiCommandJob): AiCommandLogEntry {
+  return {
+    ...entry,
+    documentId: job.documentId ?? entry.documentId ?? null,
+    origin: job.origin ?? entry.origin ?? null,
+    worktreePath: job.worktreePath ?? entry.worktreePath,
+    response: {
+      stdout: job.stdout,
+      stderr: job.stderr,
+      events: job.outputEvents?.map((event) => ({ ...event })) ?? [],
+    },
+    status: job.status,
+    pid: job.pid ?? null,
+    exitCode: job.exitCode ?? null,
+    processName: job.processName ?? null,
+    completedAt: job.completedAt,
+    error: job.error ? { message: job.error } : null,
+  };
+}
+
+function shouldPreferAiCommandJobState(entry: AiCommandLogEntry, job: AiCommandJob): boolean {
+  if (entry.jobId !== job.jobId) {
+    return false;
+  }
+
+  return entry.status !== job.status
+    || (entry.completedAt ?? null) !== (job.completedAt ?? null)
+    || (entry.pid ?? null) !== (job.pid ?? null)
+    || (entry.exitCode ?? null) !== (job.exitCode ?? null)
+    || entry.response.stdout !== job.stdout
+    || entry.response.stderr !== job.stderr
+    || (entry.response.events?.length ?? 0) !== (job.outputEvents?.length ?? 0)
+    || (entry.error?.message ?? null) !== (job.error ?? null)
+    || (entry.documentId ?? null) !== (job.documentId ?? null);
+}
+
 async function readAiCommandLogEntryByJobId(repoRoot: string, jobId: string): Promise<AiCommandLogEntry> {
   const store = await createOperationalStateStore(repoRoot);
   const entry = await store.getAiCommandLogEntryByJobId(jobId);
@@ -930,6 +992,27 @@ async function readAiCommandLogEntryByJobId(repoRoot: string, jobId: string): Pr
   throw error;
 }
 
+async function readAiCommandLogEntryByIdentifier(repoRoot: string, identifier: string): Promise<AiCommandLogEntry> {
+  const store = await createOperationalStateStore(repoRoot);
+  const byJobId = await store.getAiCommandLogEntryByJobId(identifier);
+  if (byJobId) {
+    return byJobId;
+  }
+
+  const byFileName = await store.getAiCommandLogEntryByFileName(identifier);
+  if (byFileName) {
+    return byFileName;
+  }
+
+  const error = new Error(`Unknown AI log ${identifier}`) as NodeJS.ErrnoException;
+  error.code = "ENOENT";
+  throw error;
+}
+
+function renderAiCommand(template: string, input: string): string {
+  return template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+}
+
 async function reconcileAiCommandLogEntry(options: {
   entry: AiCommandLogEntry;
   repoRoot: string;
@@ -939,7 +1022,45 @@ async function reconcileAiCommandLogEntry(options: {
   if (options.entry.status !== "running") {
     return options.entry;
   }
-  await getAiCommandJob(options.repoRoot, options.entry.worktreeId, {
+  if (!hasObservedAiCommandLogProcess(options.entry)) {
+    if (!options.reconcileJobs) {
+      return options.entry;
+    }
+
+    const store = await createOperationalStateStore(options.repoRoot);
+    const currentJob = await store.getAiCommandJobById(options.entry.worktreeId);
+    if (!currentJob || currentJob.jobId !== options.entry.jobId) {
+      return options.entry;
+    }
+
+    if (currentJob.status === "running" && !hasObservedAiCommandJobProcess(currentJob)) {
+      return options.entry;
+    }
+
+    const reconciledJob = currentJob.status === "running"
+      ? await getAiCommandJob(options.repoRoot, options.entry.worktreeId, {
+          aiProcesses: {
+            getProcess: options.aiProcesses.getProcess,
+            readProcessLogs: options.aiProcesses.readProcessLogs,
+            isProcessActive: options.aiProcesses.isProcessActive,
+          },
+          reconcile: true,
+        })
+      : currentJob;
+
+    const refreshedEntry = await readAiCommandLogEntryByJobId(options.repoRoot, options.entry.jobId).catch(() => null);
+    const preferredJob = reconciledJob && reconciledJob.jobId === options.entry.jobId ? reconciledJob : currentJob;
+    if (refreshedEntry && !shouldPreferAiCommandJobState(refreshedEntry, preferredJob)) {
+      return refreshedEntry;
+    }
+
+    return mergeAiCommandLogEntryWithJob(refreshedEntry ?? options.entry, preferredJob);
+  }
+
+  if (!options.reconcileJobs) {
+    return options.entry;
+  }
+  const reconciledJob = await getAiCommandJob(options.repoRoot, options.entry.worktreeId, {
     aiProcesses: {
       getProcess: options.aiProcesses.getProcess,
       readProcessLogs: options.aiProcesses.readProcessLogs,
@@ -947,7 +1068,34 @@ async function reconcileAiCommandLogEntry(options: {
     },
     reconcile: options.reconcileJobs ?? true,
   });
-  return await readAiCommandLogEntryByJobId(options.repoRoot, options.entry.jobId);
+  const refreshedEntry = await readAiCommandLogEntryByJobId(options.repoRoot, options.entry.jobId);
+  if (reconciledJob && reconciledJob.jobId === options.entry.jobId && shouldPreferAiCommandJobState(refreshedEntry, reconciledJob)) {
+    return mergeAiCommandLogEntryWithJob(refreshedEntry, reconciledJob);
+  }
+
+  return refreshedEntry;
+}
+
+async function resolveHistoricalAiCommandLogEntry(options: {
+  entry: AiCommandLogEntry;
+  repoRoot: string;
+  aiProcesses: NonNullable<ApiRouterOptions["aiProcesses"]>;
+  reconcileJobs?: boolean;
+}): Promise<AiCommandLogEntry> {
+  const firstPass = await reconcileAiCommandLogEntry(options);
+  if (
+    !options.reconcileJobs
+    || firstPass.status !== "running"
+    || !hasObservedAiCommandLogProcess(firstPass)
+    || !isAiCommandLogActivelyRunning(firstPass)
+  ) {
+    return firstPass;
+  }
+
+  return await reconcileAiCommandLogEntry({
+    ...options,
+    entry: firstPass,
+  });
 }
 
 export function createApiRouter(options: ApiRouterOptions): express.Router {
@@ -957,10 +1105,11 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     startProcess: startAiCommandProcess,
     getProcess: getAiCommandProcess,
     deleteProcess: deleteAiCommandProcess,
-    readProcessLogs: readAiCommandProcessLogs,
-    isProcessActive: isAiCommandProcessActive,
+      readProcessLogs: readAiCommandProcessLogs,
+      isProcessActive: isAiCommandProcessActive,
   };
-  const aiProcesses = options.aiProcesses
+  const executionAiProcesses = options.aiProcesses ?? defaultAiProcesses;
+  const passiveAiProcesses = options.aiProcesses
     ? options.aiProcesses
     : process.env.WTM_SERVER_ROLE === "worker"
       ? defaultAiProcesses
@@ -973,12 +1122,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   const aiProcessPollIntervalMs = options.aiProcessPollIntervalMs ?? 250;
   const aiLogStreamPollIntervalMs = options.aiLogStreamPollIntervalMs ?? 500;
   const stateStreamFullRefreshIntervalMs = options.stateStreamFullRefreshIntervalMs ?? 120_000;
-  const shouldReconcileAiJobs = process.env.WTM_SERVER_ROLE === "worker";
+  const shouldReconcileAiJobs = process.env.WTM_SERVER_ROLE === "worker" || Boolean(options.aiProcesses);
   const aiJobReadOptions = {
     aiProcesses: {
-      getProcess: aiProcesses.getProcess,
-      readProcessLogs: aiProcesses.readProcessLogs,
-      isProcessActive: aiProcesses.isProcessActive,
+      getProcess: passiveAiProcesses.getProcess,
+      readProcessLogs: passiveAiProcesses.readProcessLogs,
+      isProcessActive: passiveAiProcesses.isProcessActive,
     },
     reconcile: shouldReconcileAiJobs,
   };
@@ -1206,12 +1355,12 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     });
   };
 
-  const loadResolvedAiLog = async (jobId: string) => {
-    const entry = await readAiCommandLogEntryByJobId(options.repoRoot, jobId);
+  const loadResolvedAiLog = async (identifier: string) => {
+    const entry = await readAiCommandLogEntryByIdentifier(options.repoRoot, identifier);
     return reconcileAiCommandLogEntry({
       entry,
       repoRoot: options.repoRoot,
-      aiProcesses,
+      aiProcesses: passiveAiProcesses,
       reconcileJobs: shouldReconcileAiJobs,
     });
   };
@@ -1276,7 +1425,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
     worktreePath: details.worktreePath,
     execute: async (payload) => {
       const processName = getAiCommandProcessName(payload.jobId);
-      const processInfo = await aiProcesses.startProcess({
+      const processInfo = await executionAiProcesses.startProcess({
         processName,
         command: details.renderedCommand,
         input: details.input,
@@ -1293,8 +1442,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       let lastStderr = "";
 
       while (true) {
-        const nextProcess = await aiProcesses.getProcess(processName);
-        const logs = await aiProcesses.readProcessLogs(nextProcess ?? processInfo);
+        const nextProcess = await executionAiProcesses.getProcess(processName);
+        const logs = await executionAiProcesses.readProcessLogs(nextProcess ?? processInfo);
 
         if (logs.stdout.startsWith(lastStdout)) {
           const chunk = logs.stdout.slice(lastStdout.length);
@@ -1328,7 +1477,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           throw new Error("AI process no longer available.");
         }
 
-        if (!aiProcesses.isProcessActive(nextProcess.status)) {
+        if (!executionAiProcesses.isProcessActive(nextProcess.status)) {
           await payload.hooks.onExit?.({ exitCode: nextProcess.exitCode ?? null });
           if ((nextProcess.exitCode ?? 0) !== 0) {
             throw new Error(`AI process exited with code ${nextProcess.exitCode ?? "unknown"}.`);
@@ -1461,10 +1610,40 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        unsubscribe();
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
 
       const writeEvent = (type: ApiStateStreamEvent["type"], state: ApiStateResponse) => {
+        if (isStreamClosed()) {
+          return;
+        }
         const event: ApiStateStreamEvent = { type, state };
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
       };
 
       writeEvent("snapshot", currentState);
@@ -1476,7 +1655,13 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
         rebuilding = true;
         void runBackgroundTask(async () => {
+          if (isStreamClosed()) {
+            return;
+          }
           const nextState = await loadState();
+          if (isStreamClosed()) {
+            return;
+          }
           currentState = nextState;
           const nextPayload = JSON.stringify(nextState);
           if (nextPayload !== lastPayload) {
@@ -1495,15 +1680,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       const unsubscribe = subscribeToStateRefresh(rebuildAndEmit);
       const interval = setInterval(rebuildAndEmit, stateStreamFullRefreshIntervalMs);
       const keepAlive = setInterval(() => {
-        res.write(`: keep-alive\n\n`);
+        if (isStreamClosed()) {
+          return;
+        }
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
       }, 15000);
 
-      req.on("close", () => {
-        unsubscribe();
-        clearInterval(interval);
-        clearInterval(keepAlive);
-        res.end();
-      });
+      req.on("close", closeStream);
+      res.on("close", closeStream);
+      res.on("error", closeStream);
     } catch (error) {
       next(error);
     }
@@ -1738,33 +1927,65 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
 
       const writeEvent = (type: "snapshot" | "update", job: AiCommandJob | null) => {
+        if (isStreamClosed()) {
+          return;
+        }
         const event = {
           type,
           job,
         };
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
       };
 
       writeEvent("snapshot", currentJob);
 
       let polling = false;
       const interval = setInterval(() => {
-        if (polling) {
+        if (polling || isStreamClosed()) {
           return;
         }
 
         polling = true;
         runBackgroundTask(async () => {
           const nextJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
-            currentJob = nextJob;
-            const nextPayload = JSON.stringify(nextJob);
-            if (nextPayload !== lastPayload) {
-              lastPayload = nextPayload;
-              writeEvent("update", nextJob);
-            }
-          }, (error) => {
+          if (isStreamClosed()) {
+            return;
+          }
+          currentJob = nextJob;
+          const nextPayload = JSON.stringify(nextJob);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            writeEvent("update", nextJob);
+          }
+        }, (error) => {
             logServerEvent("ai-command-stream", "poll-failed", {
               branch,
               error: error instanceof Error ? error.message : String(error),
@@ -1774,14 +1995,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           });
       }, aiLogStreamPollIntervalMs);
       const keepAlive = setInterval(() => {
-        res.write(`: keep-alive\n\n`);
+        if (isStreamClosed()) {
+          return;
+        }
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
       }, 15000);
 
-      req.on("close", () => {
-        clearInterval(interval);
-        clearInterval(keepAlive);
-        res.end();
-      });
+      req.on("close", closeStream);
+      res.on("close", closeStream);
+      res.on("error", closeStream);
     } catch (error) {
       next(error);
     }
@@ -1789,17 +2015,18 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
   router.get("/ai/logs", async (_req, res, next) => {
     try {
-      const entries = await Promise.all(
-        (await listAiCommandLogEntries(options.repoRoot)).map((entry) => reconcileAiCommandLogEntry({
+      const rawEntries = await listAiCommandLogEntries(options.repoRoot);
+      const reconciledEntries = await Promise.all(
+        rawEntries.map((entry) => resolveHistoricalAiCommandLogEntry({
           entry,
           repoRoot: options.repoRoot,
-          aiProcesses,
+          aiProcesses: passiveAiProcesses,
           reconcileJobs: shouldReconcileAiJobs,
         })),
-      );
+        );
       const payload: AiCommandLogsResponse = {
-        logs: toHistoricalAiCommandLogSummaries(entries),
-        runningJobs: entries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
+        logs: toHistoricalAiCommandLogSummaries(reconciledEntries),
+        runningJobs: rawEntries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
       };
       res.json(payload);
     } catch (error) {
@@ -1836,28 +2063,60 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      let currentLog = await readAiCommandLogEntryByJobId(options.repoRoot, jobId);
+      let currentLog = await readAiCommandLogEntryByIdentifier(options.repoRoot, jobId);
       let lastPayload = JSON.stringify(currentLog);
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        clearInterval(keepAlive);
+        void unsubscribe().catch(() => undefined);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
 
       const writeEvent = (type: AiCommandLogStreamEvent["type"], log: AiCommandLogEntry | null) => {
+        if (isStreamClosed()) {
+          return;
+        }
         const event: AiCommandLogStreamEvent = { type, log };
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
       };
 
       writeEvent("snapshot", currentLog);
       const unsubscribe = await options.operationalState.subscribeToAiCommandLogNotifications((notification) => {
-        if (notification.jobId !== jobId) {
+        if (notification.jobId !== currentLog.jobId && notification.fileName !== currentLog.fileName) {
           return;
         }
 
         void runBackgroundTask(async () => {
           try {
-            currentLog = await readAiCommandLogEntryByJobId(options.repoRoot, jobId);
+            currentLog = await readAiCommandLogEntryByIdentifier(options.repoRoot, jobId);
+            if (isStreamClosed()) {
+              return;
+            }
             const nextPayload = JSON.stringify(currentLog);
             if (nextPayload !== lastPayload) {
               lastPayload = nextPayload;
@@ -1884,14 +2143,19 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
 
       const keepAlive = setInterval(() => {
-        res.write(": keep-alive\n\n");
+        if (isStreamClosed()) {
+          return;
+        }
+        try {
+          res.write(": keep-alive\n\n");
+        } catch {
+          closeStream();
+        }
       }, 15000);
 
-      req.on("close", () => {
-        clearInterval(keepAlive);
-        void unsubscribe().catch(() => undefined);
-        res.end();
-      });
+      req.on("close", closeStream);
+      res.on("close", closeStream);
+      res.on("error", closeStream);
     } catch (error) {
       const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
       if (code === "ENOENT") {
@@ -2600,7 +2864,21 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
           viewMode: "document",
         });
 
-      if ((await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions))?.status === "running") {
+      const existingAiJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
+      if (
+        requestedWorktreeStrategy === "continue-current"
+        && existingAiJob?.status === "running"
+        && existingAiJob.origin?.kind === "project-management-document-run"
+        && existingAiJob.documentId === documentId
+        && typeof existingAiJob.completedAt === "string"
+      ) {
+        await waitForAiCommandJob(options.repoRoot, worktree.id, existingAiJob.jobId).catch(() => null);
+      }
+
+      const latestAiJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
+      const blocksProjectManagementContinuation = latestAiJob?.status === "running";
+
+      if (blocksProjectManagementContinuation) {
         res.status(409).json({ message: `AI command already running for ${branch}.` });
         return;
       }
@@ -2634,7 +2912,8 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
       });
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
-      const job = await enqueueProjectManagementDocumentAiJob({
+      const renderedCommand = renderAiCommand(template, input);
+      const runDetails = {
         worktreeId: worktree.id,
         branch,
         documentId,
@@ -2642,13 +2921,14 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         aiCommands: config.aiCommands,
         origin,
         input,
-        renderedCommand: template,
+        renderedCommand,
         worktreePath,
         env,
         commentDocumentId: documentId,
         commentRequestSummary: requestedChange,
         autoCommitDirtyWorktree: true,
-      });
+      };
+      const job = await (await startAiProcessJob(runDetails)).started;
       await addWorktreeAiStartedComment({
         branch,
         commandId,
@@ -2990,7 +3270,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
 
       const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
 
-      renderedCommand = template;
+      renderedCommand = renderAiCommand(template, input);
       const runDetails = {
         worktreeId: worktree.id,
         branch: worktree.branch,
@@ -3008,22 +3288,24 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         autoCommitDirtyWorktree: true,
       };
       const job = explicitDocumentId
-        ? await enqueueProjectManagementDocumentAiJob({
-          worktreeId: runDetails.worktreeId,
-          branch: runDetails.branch,
-          documentId: explicitDocumentId,
-          commandId: runDetails.commandId,
-          aiCommands: runDetails.aiCommands,
-          origin: runDetails.origin,
-          input: runDetails.input,
-          renderedCommand: runDetails.renderedCommand,
-          worktreePath: runDetails.worktreePath,
-          env: runDetails.env,
-          applyDocumentUpdateToDocumentId: runDetails.applyDocumentUpdateToDocumentId,
-          commentDocumentId: runDetails.commentDocumentId,
-          commentRequestSummary: runDetails.commentRequestSummary,
-          autoCommitDirtyWorktree: runDetails.autoCommitDirtyWorktree,
-        })
+        ? options.aiProcesses
+          ? await (await startAiProcessJob(runDetails)).started
+          : await enqueueProjectManagementDocumentAiJob({
+            worktreeId: runDetails.worktreeId,
+            branch: runDetails.branch,
+            documentId: explicitDocumentId,
+            commandId: runDetails.commandId,
+            aiCommands: runDetails.aiCommands,
+            origin: runDetails.origin,
+            input: runDetails.input,
+            renderedCommand: runDetails.renderedCommand,
+            worktreePath: runDetails.worktreePath,
+            env: runDetails.env,
+            applyDocumentUpdateToDocumentId: runDetails.applyDocumentUpdateToDocumentId,
+            commentDocumentId: runDetails.commentDocumentId,
+            commentRequestSummary: runDetails.commentRequestSummary,
+            autoCommitDirtyWorktree: runDetails.autoCommitDirtyWorktree,
+          })
         : await (await startAiProcessJob(runDetails)).started;
       await addWorktreeAiStartedComment({
         branch: runDetails.branch,
@@ -3071,15 +3353,15 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      const inMemoryJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
-      const persistedLog = (await Promise.all(
-        (await listAiCommandLogEntries(options.repoRoot)).map((entry) => reconcileAiCommandLogEntry({
-          entry,
-          repoRoot: options.repoRoot,
-          aiProcesses,
-          reconcileJobs: shouldReconcileAiJobs,
-        })),
-      )).find((entry) => entry.worktreeId === worktree.id && isAiCommandLogActivelyRunning(entry)) ?? null;
+        const inMemoryJob = await getAiCommandJob(options.repoRoot, worktree.id, aiJobReadOptions);
+        const persistedLog = (await Promise.all(
+          (await listAiCommandLogEntries(options.repoRoot)).map((entry) => reconcileAiCommandLogEntry({
+            entry,
+            repoRoot: options.repoRoot,
+            aiProcesses: passiveAiProcesses,
+            reconcileJobs: shouldReconcileAiJobs,
+          })),
+        )).find((entry) => entry.worktreeId === worktree.id && isAiCommandLogActivelyRunning(entry)) ?? null;
 
       const job = inMemoryJob?.status === "running"
         ? inMemoryJob
@@ -3097,7 +3379,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
         return;
       }
 
-      await aiProcesses.deleteProcess(job.processName);
+      await executionAiProcesses.deleteProcess(job.processName);
 
       const cancellationMessage = "AI process exited with code unknown. Cancellation requested by the user.";
       const failedJob = inMemoryJob?.status === "running"
