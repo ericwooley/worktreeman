@@ -5,18 +5,18 @@ worktreeman is the local app for creating Git worktrees, preparing branch-scoped
 ## Local app
 
 ```bash
-bun install
-bun run dev -- create --cwd /path/to/repo
-bun run dev:watch -- --cwd /path/to/repo
+pnpm install
+pnpm run dev -- create --cwd /path/to/repo
+pnpm run dev:watch -- --cwd /path/to/repo
 node --import tsx src/cli.ts start --cwd /path/to/repo
 ```
 
 Then open `http://localhost:4312`.
 
-- `bun run dev -- <subcommand>` runs the CLI once and exits
-- `bun run dev -- create --cwd /path/to/repo` bootstraps the required bare layout with `.bare/`, `.git`, `main/`, and `wtm-settings/`
-- `bun run dev -- clone <remote> --cwd /path/to/repo` clones a remote into that same layout and checks out `main/` plus `wtm-settings/`
-- `bun run dev:watch -- --cwd /path/to/repo` starts the watched local server flow and refuses to run outside the required bare layout
+- `pnpm run dev -- <subcommand>` runs the CLI once and exits
+- `pnpm run dev -- create --cwd /path/to/repo` bootstraps the required bare layout with `.bare/`, `.git`, `main/`, and `wtm-settings/`
+- `pnpm run dev -- clone <remote> --cwd /path/to/repo` clones a remote into that same layout and checks out `main/` plus `wtm-settings/`
+- `pnpm run dev:watch -- --cwd /path/to/repo` starts the watched local server flow and refuses to run outside the required bare layout
 - `worktreeman start` defaults to localhost for the local-only UI
 - `worktreeman start --host auto` prefers a Tailscale address, then WireGuard, then a private LAN address, then localhost
 - `worktreeman start --host 0.0.0.0 --dangerously-expose-to-network` is required for wildcard binds because the terminal UI would otherwise be exposed to the network
@@ -41,7 +41,7 @@ repo-root/
 ## Build outputs
 
 ```bash
-bun run build
+pnpm run build
 ```
 
 - `dist/web` contains the local app frontend used by the CLI server
@@ -60,7 +60,7 @@ worktreeman --help
 
 ## Platform support
 
-- The published CLI runs on Node.js 20+; Bun is only used to develop and build this repository
+- The published CLI runs on Node.js 20+; pnpm is the expected package manager for developing this repository
 - macOS and Linux are the intended platforms because the runtime terminal depends on `tmux` and a Unix-style shell environment
 - Windows is not currently supported for the full runtime flow
 
@@ -82,8 +82,8 @@ set -as terminal-overrides ',xterm-256color:Ms=\E]52;%p1%s;%p2%s\a'
 ## Docs source
 
 - `docs/*.md` is the source of truth for the standalone docs website
-- `bun run build:docs` builds the publishable docs site
-- `bun run preview:docs` builds and serves the docs site at `http://127.0.0.1:4174`
+- `pnpm run build:docs` builds the publishable docs site
+- `pnpm run preview:docs` builds and serves the docs site at `http://127.0.0.1:4174`
 
 ## CLI help
 

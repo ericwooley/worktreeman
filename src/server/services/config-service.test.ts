@@ -33,12 +33,12 @@ test("loadConfig parses runtime env, links, and background commands", async () =
         "  simple: opencode run --model gpt-5-mini $WTM_AI_INPUT",
         "backgroundCommands:",
         "  Web dev:",
-        "    command: bun run dev",
-        "  Worker: bun run worker",
+        "    command: pnpm run dev",
+        "  Worker: pnpm run worker",
         "worktrees:",
         "  baseDir: .",
         "startupCommands:",
-        "  - bun install",
+        "  - pnpm install",
         "",
       ].join("\n"),
       "utf8",
@@ -54,9 +54,9 @@ test("loadConfig parses runtime env, links, and background commands", async () =
        simple: "opencode run --model gpt-5-mini $WTM_AI_INPUT",
        autoStartRuntime: false,
      });
-     assert.deepEqual(config.backgroundCommands, {
-       "Web dev": { command: "bun run dev" },
-       Worker: { command: "bun run worker" },
+       assert.deepEqual(config.backgroundCommands, {
+        "Web dev": { command: "pnpm run dev" },
+        Worker: { command: "pnpm run worker" },
      });
      assert.deepEqual(config.quickLinks, [{ name: "App", url: "http://localhost:${PORT}" }]);
      assert.deepEqual(config.projectManagement.users, {

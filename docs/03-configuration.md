@@ -68,14 +68,14 @@ worktrees:
   baseDir: .
 
 startupCommands:
-  - bun install
-  - bun run db:migrate
+  - pnpm install
+  - pnpm run db:migrate
 
 backgroundCommands:
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
   Worker:
-    command: bun run worker
+    command: pnpm run worker
 ```
 
 ## How configuration flows at runtime
@@ -196,8 +196,8 @@ Example:
 
 ```yml
 startupCommands:
-  - bun install
-  - bun run db:migrate
+  - pnpm install
+  - pnpm run db:migrate
 ```
 
 Keep these commands idempotent and predictable. They run when a developer starts the environment.
@@ -208,7 +208,7 @@ Named long-running commands shown in the `Background commands` tab.
 
 These are intended for processes such as:
 
-- `bun run dev`
+- `pnpm run dev`
 - workers
 - file watchers
 - background job processors
@@ -218,9 +218,9 @@ Example:
 ```yml
 backgroundCommands:
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
   Worker:
-    command: bun run worker
+    command: pnpm run worker
 ```
 
 Notes:
@@ -270,11 +270,11 @@ worktrees:
   baseDir: .
 
 startupCommands:
-  - bun install
+  - pnpm install
 
 backgroundCommands:
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
 ```
 
 ## App plus database and worker
@@ -300,12 +300,12 @@ worktrees:
   baseDir: .
 
 startupCommands:
-  - bun install
-  - bun run db:migrate
+  - pnpm install
+  - pnpm run db:migrate
 
 backgroundCommands:
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
 ```
 
 ## Notes on `init`

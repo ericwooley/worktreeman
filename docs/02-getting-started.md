@@ -160,7 +160,7 @@ backgroundCommands:
   Docker services:
     command: docker compose up
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
 ```
 
 For the full field-by-field reference, see [`docs/03-configuration.md`](docs/03-configuration.md).
@@ -191,12 +191,12 @@ worktrees:
   baseDir: .
 
 startupCommands:
-  - bun install
-  - bun run db:migrate
+  - pnpm install
+  - pnpm run db:migrate
 
 backgroundCommands:
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
 ```
 
 ### 2. App plus database and worker
@@ -225,14 +225,14 @@ worktrees:
   baseDir: .
 
 startupCommands:
-  - bun install
-  - bun run db:migrate
+  - pnpm install
+  - pnpm run db:migrate
 
 backgroundCommands:
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
   Worker:
-    command: bun run worker
+    command: pnpm run worker
 ```
 
 ### 3. App plus Docker commands as background processes
@@ -257,13 +257,13 @@ worktrees:
   baseDir: .
 
 startupCommands:
-  - bun install
+  - pnpm install
 
 backgroundCommands:
   Docker services:
     command: docker compose up
   Web dev:
-    command: bun run dev
+    command: pnpm run dev
 ```
 
 These are intentionally minimal starting points. After pasting one in, the usual next steps are:

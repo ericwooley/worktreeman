@@ -315,13 +315,15 @@ async function writeAiLogFixture(options: {
 
 async function openSse(url: string) {
   const target = new URL(url);
-  let request: http.ClientRequest | null = null;
-  const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
-    request = http.get(target, {
+  const { request: streamRequest, response } = await new Promise<{
+    request: http.ClientRequest;
+    response: http.IncomingMessage;
+  }>((resolve, reject) => {
+    const nextRequest = http.get(target, {
       headers: { Accept: "text/event-stream" },
     });
-    request.once("response", resolve);
-    request.once("error", reject);
+    nextRequest.once("response", (incoming) => resolve({ request: nextRequest, response: incoming }));
+    nextRequest.once("error", reject);
   });
   assert.equal(response.statusCode, 200);
   const decoder = new TextDecoder();
@@ -360,7 +362,7 @@ async function openSse(url: string) {
     ended = true;
     wake();
   });
-  request?.on("error", (error) => {
+  streamRequest.on("error", (error: unknown) => {
     if (closed) {
       return;
     }
@@ -429,7 +431,7 @@ async function openSse(url: string) {
             response.once("close", () => resolve());
             setTimeout(resolve, 100);
           });
-      request?.destroy();
+      streamRequest.destroy();
       response.destroy();
       wake();
       await closePromise;
