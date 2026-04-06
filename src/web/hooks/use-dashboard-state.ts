@@ -611,7 +611,10 @@ function useDashboardStateInternal() {
       async mergeBaseBranchIntoWorktree(branch: string, baseBranch: string) {
         setGitComparisonLoading(true);
         try {
-          await mergeGitBranchRequest(baseBranch, { baseBranch: branch });
+          await mergeGitBranchRequest(baseBranch, {
+            baseBranch: branch,
+            preserveConflicts: true,
+          });
           const comparison = await fetchGitComparison(branch, baseBranch);
           setGitComparison((current) => areGitComparisonsEqual(current, comparison) ? current : comparison);
           setError(null);

@@ -215,7 +215,7 @@ export async function writeAiLogFixture(options: {
 }) {
   const store = await createOperationalStateStore(options.repoRoot);
   const timestamp = new Date().toISOString();
-  const jobId = `job-${options.fileName}`;
+  const jobId = `job-${worktreeId(options.worktreePath)}-${options.fileName}`;
   const status = options.completedAt
     ? (options.error ? "failed" : "completed")
     : "running";

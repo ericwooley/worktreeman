@@ -741,7 +741,17 @@ export function toHistoricalAiCommandLogSummaries(entries: AiCommandLogEntry[]):
 }
 
 export async function listAiCommandLogEntries(repoRoot: string): Promise<AiCommandLogEntry[]> {
-  return (await createOperationalStateStore(repoRoot)).listAiCommandLogEntries();
+  const entries = await (await createOperationalStateStore(repoRoot)).listAiCommandLogEntries();
+  return entries.filter((entry) => isAiCommandLogEntryInRepo(repoRoot, entry));
+}
+
+function isAiCommandLogEntryInRepo(repoRoot: string, entry: AiCommandLogEntry): boolean {
+  if (!entry.worktreePath) {
+    return false;
+  }
+
+  const relative = path.relative(path.resolve(repoRoot), path.resolve(entry.worktreePath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 export function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
@@ -820,7 +830,7 @@ function shouldPreferAiCommandJobState(entry: AiCommandLogEntry, job: AiCommandJ
 
 export async function readAiCommandLogEntryByJobId(repoRoot: string, jobId: string): Promise<AiCommandLogEntry> {
   const entry = await (await createOperationalStateStore(repoRoot)).getAiCommandLogEntryByJobId(jobId);
-  if (!entry) {
+  if (!entry || !isAiCommandLogEntryInRepo(repoRoot, entry)) {
     const error = new Error(`Unknown AI log ${jobId}`) as NodeJS.ErrnoException;
     error.code = "ENOENT";
     throw error;
@@ -831,12 +841,12 @@ export async function readAiCommandLogEntryByJobId(repoRoot: string, jobId: stri
 export async function readAiCommandLogEntryByIdentifier(repoRoot: string, identifier: string): Promise<AiCommandLogEntry> {
   const store = await createOperationalStateStore(repoRoot);
   const byJobId = await store.getAiCommandLogEntryByJobId(identifier);
-  if (byJobId) {
+  if (byJobId && isAiCommandLogEntryInRepo(repoRoot, byJobId)) {
     return byJobId;
   }
 
   const byFileName = await store.getAiCommandLogEntryByFileName(identifier);
-  if (byFileName) {
+  if (byFileName && isAiCommandLogEntryInRepo(repoRoot, byFileName)) {
     return byFileName;
   }
 

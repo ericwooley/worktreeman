@@ -394,6 +394,76 @@ test("git compare reports why merge is disabled when branches conflict", { concu
   }
 });
 
+test("git compare merge can preserve conflicted worktree state when merging base into worktree", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-preserve-conflict-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo);
+
+  try {
+    await fs.writeFile(path.join(feature.worktreePath, "shared.txt"), "feature version\n", "utf8");
+    await runCommand("git", ["add", "shared.txt"], { cwd: feature.worktreePath });
+    await runCommand("git", ["commit", "-m", "feature shared"], {
+      cwd: feature.worktreePath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    await fs.writeFile(path.join(mainPath, "shared.txt"), "main version\n", "utf8");
+    await runCommand("git", ["add", "shared.txt"], { cwd: mainPath });
+    await runCommand("git", ["commit", "-m", "main shared"], {
+      cwd: mainPath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const response = await server.fetch(`/api/git/compare/main/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseBranch: "feature-preserve-conflict-merge",
+        preserveConflicts: true,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      baseBranch: string;
+      compareBranch: string;
+      workingTreeSummary: { conflicted: boolean; conflictedFiles: number };
+      workingTreeConflicts: Array<{ path: string; preview: string | null }>;
+      mergeIntoCompareStatus: { hasConflicts: boolean; conflicts: Array<unknown> };
+    };
+    assert.equal(payload.baseBranch, "main");
+    assert.equal(payload.compareBranch, "feature-preserve-conflict-merge");
+    assert.equal(payload.workingTreeSummary.conflicted, true);
+    assert.equal(payload.workingTreeSummary.conflictedFiles, 1);
+    assert.equal(payload.workingTreeConflicts.length, 1);
+    assert.equal(payload.workingTreeConflicts[0]?.path, "shared.txt");
+    assert.match(payload.workingTreeConflicts[0]?.preview ?? "", /<<<<<<< HEAD|<<<<<<< /);
+    assert.equal(payload.mergeIntoCompareStatus.hasConflicts, false);
+    assert.equal(payload.mergeIntoCompareStatus.conflicts.length, 0);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("git compare resolve-conflicts uses AI output to rewrite conflict files", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({

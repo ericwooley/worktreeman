@@ -248,6 +248,7 @@ export interface GitComparisonResponse {
 
 export interface MergeGitBranchRequest {
   baseBranch?: string;
+  preserveConflicts?: boolean;
 }
 
 export interface ResolveGitMergeConflictsRequest {

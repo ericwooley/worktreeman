@@ -313,16 +313,42 @@ async function notifyAiCommandLogUpdate(repoRoot: string, payload: AiCommandLogN
   await managed.db.query(`select pg_notify($1, $2)`, ["ai_command_log_updates", JSON.stringify(payload)]);
 }
 
-async function readAiCommandOutputEvents(repoRoot: string, jobId: string): Promise<AiCommandOutputEvent[]> {
+async function readAiCommandOutputEvents(
+  repoRoot: string,
+  options: {
+    jobId: string;
+    fileName?: string;
+    worktreeId?: string;
+    branch?: string;
+  },
+): Promise<AiCommandOutputEvent[]> {
   const managed = await ensureManagedStore(repoRoot);
+  const conditions = ["job_id = $1"];
+  const params: unknown[] = [options.jobId];
+
+  if (typeof options.fileName === "string" && options.fileName.length > 0) {
+    conditions.push(`file_name = $${params.length + 1}`);
+    params.push(options.fileName);
+  }
+
+  if (typeof options.worktreeId === "string" && options.worktreeId.length > 0) {
+    conditions.push(`worktree_id = $${params.length + 1}`);
+    params.push(options.worktreeId);
+  }
+
+  if (typeof options.branch === "string" && options.branch.length > 0) {
+    conditions.push(`branch = $${params.length + 1}`);
+    params.push(options.branch);
+  }
+
   const result = await managed.db.query<AiCommandOutputRow>(
     `
       select job_id, event_id, entry_number, source, text, timestamp
       from ${AI_RUN_OUTPUT_TABLE}
-      where job_id = $1
+      where ${conditions.join(" and ")}
       order by entry_number asc
     `,
-    [jobId],
+    params,
   );
 
   return result.rows.flatMap((row) => {
@@ -930,7 +956,12 @@ export class OperationalStateStore {
       return null;
     }
 
-    const events = await readAiCommandOutputEvents(this.repoRoot, row.job_id);
+    const events = await readAiCommandOutputEvents(this.repoRoot, {
+      jobId: row.job_id,
+      fileName: row.file_name,
+      worktreeId: row.worktree_id,
+      branch: row.branch,
+    });
     return toAiCommandLogEntry(row, events);
   }
 
@@ -968,7 +999,12 @@ export class OperationalStateStore {
       return null;
     }
 
-    const events = await readAiCommandOutputEvents(this.repoRoot, row.job_id);
+    const events = await readAiCommandOutputEvents(this.repoRoot, {
+      jobId: row.job_id,
+      fileName: row.file_name,
+      worktreeId: row.worktree_id,
+      branch: row.branch,
+    });
     return toAiCommandLogEntry(row, events);
   }
 
@@ -1002,7 +1038,12 @@ export class OperationalStateStore {
     );
 
     return await Promise.all(result.rows.map(async (row) => {
-      const events = await readAiCommandOutputEvents(this.repoRoot, row.job_id);
+      const events = await readAiCommandOutputEvents(this.repoRoot, {
+        jobId: row.job_id,
+        fileName: row.file_name,
+        worktreeId: row.worktree_id,
+        branch: row.branch,
+      });
       return toAiCommandLogEntry(row, events);
     }));
   }

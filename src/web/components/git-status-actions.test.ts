@@ -55,6 +55,19 @@ test("AI resolve button enables when merge preview exposes conflicts", () => {
   assert.match(state.title, /resolve the current git conflicts/i);
 });
 
+test("AI resolve button enables when a conflicted worktree becomes actionable automatically", () => {
+  const state = getAiResolveButtonState({
+    hasWorktreeBranch: true,
+    gitComparisonLoading: false,
+    mergeConflictAiRunning: false,
+    resolvableConflicts: 1,
+  });
+
+  assert.equal(state.disabled, false);
+  assert.equal(state.label, "AI resolve conflicts");
+  assert.match(state.title, /resolve the current git conflicts/i);
+});
+
 test("AI resolve button shows running state while AI is active", () => {
   const state = getAiResolveButtonState({
     hasWorktreeBranch: true,

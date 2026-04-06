@@ -968,7 +968,12 @@ export async function getGitComparison(repoRoot: string, compareBranch: string, 
   };
 }
 
-export async function mergeGitBranch(repoRoot: string, compareBranch: string, baseBranch?: string): Promise<GitComparisonResponse> {
+export async function mergeGitBranch(
+  repoRoot: string,
+  compareBranch: string,
+  baseBranch?: string,
+  options?: { preserveConflicts?: boolean },
+): Promise<GitComparisonResponse> {
   const normalizedCompareBranch = parseGitBranchName(compareBranch);
   if (!normalizedCompareBranch) {
     throw new Error("A compare branch is required for merge.");
@@ -987,7 +992,12 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
     allowDirtyCompareBranch: true,
   });
   if (!mergeStatus.canMerge) {
-    throw new Error(mergeStatus.reason ?? `Branch ${normalizedCompareBranch} cannot be merged into ${normalizedBaseBranch}.`);
+    if (options?.preserveConflicts && mergeStatus.hasConflicts) {
+      // Allow the actual merge to run so the worktree can enter the conflicted
+      // state and expose actionable conflict markers to the UI.
+    } else {
+      throw new Error(mergeStatus.reason ?? `Branch ${normalizedCompareBranch} cannot be merged into ${normalizedBaseBranch}.`);
+    }
   }
 
   const worktrees = await listWorktrees(repoRoot);
@@ -997,6 +1007,19 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
   if (baseSummary.dirty) {
     throw new Error(`Base branch ${normalizedBaseBranch} has uncommitted changes. Clean it up before merging.`);
   }
+
+  const preserveConflictState = async () => {
+    if (!options?.preserveConflicts) {
+      return null;
+    }
+
+    const conflictedSummary = await getWorkingTreeSummary(baseWorktreePath);
+    if (!conflictedSummary.conflicted) {
+      return null;
+    }
+
+    return getGitComparison(repoRoot, normalizedBaseBranch, normalizedCompareBranch);
+  };
 
   try {
     await runCommand("git", ["merge", "--no-edit", normalizedCompareBranch], {
@@ -1013,6 +1036,11 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
         });
         return getGitComparison(repoRoot, normalizedCompareBranch, normalizedBaseBranch);
       } catch (retryError) {
+        const preservedComparison = await preserveConflictState();
+        if (preservedComparison) {
+          return preservedComparison;
+        }
+
         try {
           await runCommand("git", ["merge", "--abort"], {
             cwd: baseWorktreePath,
@@ -1026,6 +1054,11 @@ export async function mergeGitBranch(repoRoot: string, compareBranch: string, ba
         const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
         throw new Error(`Failed to merge ${normalizedCompareBranch} into ${normalizedBaseBranch}: ${retryMessage}`);
       }
+    }
+
+    const preservedComparison = await preserveConflictState();
+    if (preservedComparison) {
+      return preservedComparison;
     }
 
     try {
