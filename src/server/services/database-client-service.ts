@@ -8,6 +8,7 @@ export interface ManagedDatabaseClient {
   query<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<{ rows: T[] }>;
   exec(text: string): Promise<void>;
   executeSql(text: string, values?: unknown[]): Promise<{ rows: unknown[] }>;
+  transaction<T>(callback: (client: ManagedDatabaseClient) => Promise<T>): Promise<T>;
   listen(channel: string, listener: (payload: string | null) => void): Promise<() => Promise<void>>;
   close(): Promise<void>;
 }
@@ -40,6 +41,41 @@ async function createConnectionStringClient(connectionString: string): Promise<M
     async executeSql(text, values) {
       const result = await pool.query<QueryResultRow>(text, values);
       return { rows: result.rows };
+    },
+    async transaction<T>(callback: (client: ManagedDatabaseClient) => Promise<T>) {
+      const client = await pool.connect();
+      const transactionalClient: ManagedDatabaseClient = {
+        async query<U extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) {
+          const result = await client.query<QueryResultRow>(text, values);
+          return { rows: result.rows as U[] };
+        },
+        async exec(text) {
+          await client.query(text);
+        },
+        async executeSql(text, values) {
+          const result = await client.query<QueryResultRow>(text, values);
+          return { rows: result.rows };
+        },
+        async transaction<U>(nestedCallback: (nestedClient: ManagedDatabaseClient) => Promise<U>) {
+          return nestedCallback(transactionalClient);
+        },
+        async listen() {
+          throw new Error("LISTEN is not supported inside a transaction-scoped database client.");
+        },
+        async close() {},
+      };
+
+      try {
+        await client.query("begin");
+        const result = await callback(transactionalClient);
+        await client.query("commit");
+        return result;
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
     },
     async listen(channel, listener) {
       const client = new Client({ connectionString });
@@ -95,6 +131,46 @@ async function createFallbackPgliteClient(repoRoot: string, namespace: string): 
       const results = await db.exec(text);
       const last = results.at(-1) ?? { rows: [] };
       return { rows: last.rows ?? [] };
+    },
+    async transaction<T>(callback: (client: ManagedDatabaseClient) => Promise<T>) {
+      const transactionalClient: ManagedDatabaseClient = {
+        async query<U extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) {
+          const result = values && values.length > 0
+            ? await db.query(text, values)
+            : await db.query(text);
+          return { rows: (result.rows ?? []) as U[] };
+        },
+        async exec(text) {
+          await db.exec(text);
+        },
+        async executeSql(text, values) {
+          if (values && values.length > 0) {
+            const result = await db.query(text, values);
+            return { rows: result.rows ?? [] };
+          }
+
+          const results = await db.exec(text);
+          const last = results.at(-1) ?? { rows: [] };
+          return { rows: last.rows ?? [] };
+        },
+        async transaction<U>(nestedCallback: (nestedClient: ManagedDatabaseClient) => Promise<U>) {
+          return nestedCallback(transactionalClient);
+        },
+        async listen() {
+          throw new Error("LISTEN is not supported inside a transaction-scoped database client.");
+        },
+        async close() {},
+      };
+
+      await db.exec("begin");
+      try {
+        const result = await callback(transactionalClient);
+        await db.exec("commit");
+        return result;
+      } catch (error) {
+        await db.exec("rollback").catch(() => undefined);
+        throw error;
+      }
     },
     async listen(channel, listener) {
       return await db.listen(channel, listener);

@@ -32,13 +32,12 @@ import type {
   UpdateProjectManagementDocumentRequest,
 } from "../../shared/types.js";
 import { loadConfig } from "./config-service.js";
-import { getManagedDatabaseClient } from "./database-client-service.js";
+import { getManagedDatabaseClient, type ManagedDatabaseClient } from "./database-client-service.js";
 import { runCommand } from "../utils/process.js";
 
 const PROJECT_MANAGEMENT_MAX_APPEND_RETRIES = 5;
 const PROJECT_MANAGEMENT_MAX_HISTORY_DIFF_CHARS = 20_000;
 const PROJECT_MANAGEMENT_CACHE_NAMESPACE = "project-management-cache";
-const PROJECT_MANAGEMENT_CACHE_TABLE = "project_management_state_cache";
 
 type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restore" | "comment";
 
@@ -99,55 +98,59 @@ interface StoredProjectManagementBatch {
   entries: StoredProjectManagementBatchEntry[];
 }
 
-interface ReducedProjectManagementState {
-  branch: string;
-  headSha: string;
-  documentsById: Map<string, ProjectManagementDocument>;
-  documentOrder: string[];
-  tagIndex: Map<string, Set<string>>;
-  historyByDocumentId: Map<string, ProjectManagementHistoryEntry[]>;
-  updatedAt: string;
-}
-
-interface ProjectManagementCacheEntry extends ReducedProjectManagementState {
-  automergeDocsById: Map<string, Automerge.Doc<ProjectManagementAutomergeDocument>>;
-}
-
-interface PersistedProjectManagementCacheState {
-  schemaVersion: number;
+interface ProjectManagementStoreState {
   branch: string;
   headSha: string;
   updatedAt: string;
-  documentOrder: string[];
-  documents: ProjectManagementDocument[];
-  historyByDocumentId: Array<{
-    documentId: string;
-    history: ProjectManagementHistoryEntry[];
-  }>;
-  automergeDocsById: Array<{
-    documentId: string;
-    binary: string;
-  }>;
 }
 
-const projectManagementCache = new Map<string, ProjectManagementCacheEntry>();
-
-function createEmptyReducedState(headSha = ""): ProjectManagementCacheEntry {
-  return {
-    branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
-    headSha,
-    documentsById: new Map(),
-    documentOrder: [],
-    tagIndex: new Map(),
-    historyByDocumentId: new Map(),
-    updatedAt: "",
-    automergeDocsById: new Map(),
-  };
+interface PersistedProjectManagementDocumentRecord {
+  documentOrder: number;
+  document: ProjectManagementDocument;
+  automergeDoc: Automerge.Doc<ProjectManagementAutomergeDocument>;
 }
 
-function getNextDocumentNumber(cache: ProjectManagementCacheEntry): number {
+interface PersistedProjectManagementDocumentSummaryRow {
+  document_id: string;
+  number: number;
+  title: string;
+  summary: string;
+  kind: string;
+  pull_request_json: string;
+  tags_json: string;
+  dependencies_json: string;
+  status: string;
+  assignee: string;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+  history_count: number;
+}
+
+interface PersistedProjectManagementDocumentRow extends PersistedProjectManagementDocumentSummaryRow {
+  document_order: number;
+  markdown: string;
+  comments_json: string;
+  automerge_binary: string;
+}
+
+interface PersistedProjectManagementHistoryRow {
+  entry_json: string;
+}
+
+interface ProjectManagementDependencyDocument {
+  dependencies: string[];
+}
+
+const PROJECT_MANAGEMENT_STATE_TABLE = "project_management_state_cache";
+const PROJECT_MANAGEMENT_DOCUMENTS_TABLE = "project_management_documents";
+const PROJECT_MANAGEMENT_HISTORY_TABLE = "project_management_history";
+
+const projectManagementCache = new Map<string, ProjectManagementStoreState>();
+
+function getNextDocumentNumber(documents: Iterable<ProjectManagementDocumentSummary>): number {
   let maxNumber = 0;
-  for (const document of cache.documentsById.values()) {
+  for (const document of documents) {
     if (document.number > maxNumber) {
       maxNumber = document.number;
     }
@@ -423,165 +426,523 @@ function decodeChange(change: string): Uint8Array {
   return Uint8Array.from(Buffer.from(change, "base64"));
 }
 
-function cloneCacheEntry(cache: ProjectManagementCacheEntry): ProjectManagementCacheEntry {
+function serializePullRequest(value: ProjectManagementPullRequest | null): string {
+  return JSON.stringify(value);
+}
+
+function parsePullRequest(value: string): ProjectManagementPullRequest | null {
+  if (!value) {
+    return null;
+  }
+
+  return normalizePullRequest(JSON.parse(value) as ProjectManagementPullRequest | null, "pull-request");
+}
+
+function parseStringArray(value: string): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const parsed = JSON.parse(value) as unknown[];
+  return parsed.filter((entry): entry is string => typeof entry === "string");
+}
+
+function parseComments(value: string): ProjectManagementComment[] {
+  if (!value) {
+    return [];
+  }
+
+  const parsed = JSON.parse(value) as unknown[];
+  return parsed
+    .filter((entry): entry is ProjectManagementComment => Boolean(entry) && typeof entry === "object")
+    .map((entry) => ({ ...entry }));
+}
+
+function toSummaryFromRow(row: PersistedProjectManagementDocumentSummaryRow): ProjectManagementDocumentSummary {
+  const kind = normalizeDocumentKind(row.kind as ProjectManagementDocumentKind);
   return {
-    branch: cache.branch,
-    headSha: cache.headSha,
-    documentsById: new Map(
-      Array.from(cache.documentsById.entries(), ([documentId, document]) => [documentId, {
-        ...document,
-        tags: [...document.tags],
-        dependencies: [...document.dependencies],
-        comments: document.comments.map((comment) => ({ ...comment })),
-      }]),
-    ),
-    documentOrder: [...cache.documentOrder],
-    tagIndex: new Map(Array.from(cache.tagIndex.entries(), ([tag, documentIds]) => [tag, new Set(documentIds)])),
-    historyByDocumentId: new Map(
-      Array.from(cache.historyByDocumentId.entries(), ([documentId, history]) => [
-        documentId,
-        history.map((entry) => ({ ...entry, tags: [...entry.tags] })),
-      ]),
-    ),
-    updatedAt: cache.updatedAt,
-    automergeDocsById: new Map(
-      Array.from(cache.automergeDocsById.entries(), ([documentId, doc]) => [documentId, Automerge.clone(doc)]),
+    id: row.document_id,
+    number: row.number,
+    title: row.title,
+    summary: row.summary,
+    kind,
+    pullRequest: kind === "pull-request" ? parsePullRequest(row.pull_request_json) : null,
+    tags: parseStringArray(row.tags_json),
+    dependencies: parseStringArray(row.dependencies_json),
+    status: row.status,
+    assignee: row.assignee,
+    archived: Boolean(row.archived),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    historyCount: row.history_count,
+  };
+}
+
+function toDocumentFromRow(row: PersistedProjectManagementDocumentRow): PersistedProjectManagementDocumentRecord {
+  const summary = toSummaryFromRow(row);
+  return {
+    documentOrder: row.document_order,
+    document: {
+      ...summary,
+      markdown: row.markdown,
+      comments: parseComments(row.comments_json),
+    },
+    automergeDoc: Automerge.load<ProjectManagementAutomergeDocument>(
+      Uint8Array.from(Buffer.from(row.automerge_binary, "base64")),
     ),
   };
 }
 
-async function ensureProjectManagementCacheTable(repoRoot: string) {
+async function getProjectManagementDb(repoRoot: string) {
   const db = await getManagedDatabaseClient(repoRoot, PROJECT_MANAGEMENT_CACHE_NAMESPACE);
   await db.exec(`
-    create table if not exists ${PROJECT_MANAGEMENT_CACHE_TABLE} (
+    create table if not exists ${PROJECT_MANAGEMENT_STATE_TABLE} (
       singleton boolean primary key default true,
       head_sha text not null,
-      snapshot_json text not null,
       updated_at timestamptz not null default now()
     );
+
+    create table if not exists ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE} (
+      document_id text primary key,
+      document_order integer not null,
+      number integer not null,
+      title text not null,
+      summary text not null,
+      kind text not null,
+      pull_request_json text not null,
+      tags_json text not null,
+      dependencies_json text not null,
+      status text not null,
+      assignee text not null,
+      archived boolean not null,
+      created_at timestamptz not null,
+      updated_at timestamptz not null,
+      history_count integer not null,
+      markdown text not null,
+      comments_json text not null,
+      automerge_binary text not null
+    );
+
+    create table if not exists ${PROJECT_MANAGEMENT_HISTORY_TABLE} (
+      document_id text not null,
+      history_order integer not null,
+      created_at timestamptz not null,
+      entry_json text not null,
+      primary key (document_id, history_order)
+    );
+
+    create index if not exists project_management_documents_order_idx
+      on ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE} (document_order);
+    create index if not exists project_management_history_lookup_idx
+      on ${PROJECT_MANAGEMENT_HISTORY_TABLE} (document_id, history_order);
   `);
   return db;
 }
 
-function serializeProjectManagementCache(cache: ProjectManagementCacheEntry): PersistedProjectManagementCacheState {
-  return {
-    schemaVersion: PROJECT_MANAGEMENT_SCHEMA_VERSION,
-    branch: cache.branch,
-    headSha: cache.headSha,
-    updatedAt: cache.updatedAt,
-    documentOrder: [...cache.documentOrder],
-    documents: cache.documentOrder
-      .map((documentId) => cache.documentsById.get(documentId))
-      .filter((document): document is ProjectManagementDocument => Boolean(document))
-      .map((document) => ({
-        ...document,
-        pullRequest: document.pullRequest ? { ...document.pullRequest } : null,
-        tags: [...document.tags],
-        dependencies: [...document.dependencies],
-        comments: document.comments.map((comment) => ({ ...comment })),
-      })),
-    historyByDocumentId: Array.from(cache.historyByDocumentId.entries(), ([documentId, history]) => ({
-      documentId,
-      history: history.map((entry) => ({ ...entry, tags: [...entry.tags] })),
-    })),
-    automergeDocsById: Array.from(cache.automergeDocsById.entries(), ([documentId, doc]) => ({
-      documentId,
-      binary: Buffer.from(Automerge.save(doc)).toString("base64"),
-    })),
-  };
+async function getProjectManagementDbExecutor(
+  repoRoot: string,
+  db?: ManagedDatabaseClient,
+): Promise<ManagedDatabaseClient> {
+  return db ?? getProjectManagementDb(repoRoot);
 }
 
-function deserializeProjectManagementCache(value: PersistedProjectManagementCacheState): ProjectManagementCacheEntry {
-  const documentsById = new Map<string, ProjectManagementDocument>();
-  const documentOrder = [...value.documentOrder];
-  const tagIndex = new Map<string, Set<string>>();
-  const historyByDocumentId = new Map<string, ProjectManagementHistoryEntry[]>();
-  const automergeDocsById = new Map<string, Automerge.Doc<ProjectManagementAutomergeDocument>>();
-
-  for (const entry of value.historyByDocumentId) {
-    historyByDocumentId.set(entry.documentId, entry.history.map((historyEntry) => ({
-      ...historyEntry,
-      tags: [...historyEntry.tags],
-    })));
-  }
-
-  for (const document of value.documents) {
-    const history = historyByDocumentId.get(document.id) ?? [];
-    const clonedDocument: ProjectManagementDocument = {
-      ...document,
-      pullRequest: document.pullRequest ? { ...document.pullRequest } : null,
-      tags: [...document.tags],
-      dependencies: [...document.dependencies],
-      comments: document.comments.map((comment) => ({ ...comment })),
-      historyCount: history.length,
-    };
-    documentsById.set(document.id, clonedDocument);
-    for (const tag of clonedDocument.tags) {
-      const tagDocuments = tagIndex.get(tag) ?? new Set<string>();
-      tagDocuments.add(clonedDocument.id);
-      tagIndex.set(tag, tagDocuments);
-    }
-  }
-
-  for (const entry of value.automergeDocsById) {
-    automergeDocsById.set(
-      entry.documentId,
-      Automerge.load<ProjectManagementAutomergeDocument>(Uint8Array.from(Buffer.from(entry.binary, "base64"))),
-    );
-  }
-
-  return {
-    branch: value.branch,
-    headSha: value.headSha,
-    documentsById,
-    documentOrder,
-    tagIndex,
-    historyByDocumentId,
-    updatedAt: value.updatedAt,
-    automergeDocsById,
-  };
-}
-
-async function loadPersistedProjectManagementCache(repoRoot: string, headSha: string): Promise<ProjectManagementCacheEntry | null> {
-  try {
-    const db = await ensureProjectManagementCacheTable(repoRoot);
-    const result = await db.query<{ snapshot_json: string }>(
-      `select snapshot_json from ${PROJECT_MANAGEMENT_CACHE_TABLE} where singleton = true and head_sha = $1`,
-      [headSha],
-    );
-    const row = result.rows[0];
-    if (!row) {
-      return null;
-    }
-
-    const parsed = JSON.parse(row.snapshot_json) as PersistedProjectManagementCacheState;
-    if (parsed.schemaVersion !== PROJECT_MANAGEMENT_SCHEMA_VERSION || parsed.headSha !== headSha) {
-      return null;
-    }
-
-    return deserializeProjectManagementCache(parsed);
-  } catch {
+async function readPersistedProjectManagementState(repoRoot: string, db?: ManagedDatabaseClient): Promise<ProjectManagementStoreState | null> {
+  const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  const result = await executor.query<{ head_sha: string; updated_at: string }>(
+    `select head_sha, updated_at::text from ${PROJECT_MANAGEMENT_STATE_TABLE} where singleton = true`,
+  );
+  const row = result.rows[0];
+  if (!row) {
     return null;
   }
+
+  return {
+    branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+    headSha: row.head_sha,
+    updatedAt: row.updated_at,
+  };
 }
 
-async function persistProjectManagementCache(repoRoot: string, cache: ProjectManagementCacheEntry): Promise<void> {
-  try {
-    const db = await ensureProjectManagementCacheTable(repoRoot);
-    await db.query(
-      `
-        insert into ${PROJECT_MANAGEMENT_CACHE_TABLE} (singleton, head_sha, snapshot_json, updated_at)
-        values (true, $1, $2, now())
-        on conflict (singleton) do update
-        set head_sha = excluded.head_sha,
-            snapshot_json = excluded.snapshot_json,
-            updated_at = now()
-      `,
-      [cache.headSha, JSON.stringify(serializeProjectManagementCache(cache))],
-    );
-  } catch {
-    // Cache persistence is best-effort and should not block document reads or writes.
+async function persistProjectManagementStoreState(
+  repoRoot: string,
+  state: ProjectManagementStoreState,
+  db?: ManagedDatabaseClient,
+): Promise<void> {
+  const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  await executor.query(
+    `
+      insert into ${PROJECT_MANAGEMENT_STATE_TABLE} (singleton, head_sha, updated_at)
+      values (true, $1, $2)
+      on conflict (singleton) do update
+      set head_sha = excluded.head_sha,
+          updated_at = excluded.updated_at
+    `,
+    [state.headSha, state.updatedAt],
+  );
+}
+
+async function clearPersistedProjectManagementStore(repoRoot: string, db?: ManagedDatabaseClient): Promise<void> {
+  const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  await executor.exec(`
+    delete from ${PROJECT_MANAGEMENT_HISTORY_TABLE};
+    delete from ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE};
+    delete from ${PROJECT_MANAGEMENT_STATE_TABLE};
+  `);
+}
+
+async function listPersistedDocumentSummaries(repoRoot: string): Promise<ProjectManagementDocumentSummary[]> {
+  const db = await getProjectManagementDb(repoRoot);
+  const result = await db.query<PersistedProjectManagementDocumentSummaryRow>(
+    `
+      select
+        document_id,
+        number,
+        title,
+        summary,
+        kind,
+        pull_request_json,
+        tags_json,
+        dependencies_json,
+        status,
+        assignee,
+        archived,
+        created_at::text,
+        updated_at::text,
+        history_count
+      from ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE}
+      order by document_order asc
+    `,
+  );
+  return result.rows.map(toSummaryFromRow);
+}
+
+async function loadPersistedDocumentRecord(
+  repoRoot: string,
+  documentId: string,
+  db?: ManagedDatabaseClient,
+): Promise<PersistedProjectManagementDocumentRecord | null> {
+  const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  const result = await executor.query<PersistedProjectManagementDocumentRow>(
+    `
+      select
+        document_id,
+        document_order,
+        number,
+        title,
+        summary,
+        kind,
+        pull_request_json,
+        tags_json,
+        dependencies_json,
+        status,
+        assignee,
+        archived,
+        created_at::text,
+        updated_at::text,
+        history_count,
+        markdown,
+        comments_json,
+        automerge_binary
+      from ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE}
+      where document_id = $1
+    `,
+    [documentId],
+  );
+  const row = result.rows[0];
+  return row ? toDocumentFromRow(row) : null;
+}
+
+async function loadPersistedDocumentHistory(repoRoot: string, documentId: string): Promise<ProjectManagementHistoryEntry[]> {
+  const db = await getProjectManagementDb(repoRoot);
+  const result = await db.query<PersistedProjectManagementHistoryRow>(
+    `
+      select entry_json
+      from ${PROJECT_MANAGEMENT_HISTORY_TABLE}
+      where document_id = $1
+      order by history_order asc
+    `,
+    [documentId],
+  );
+  return result.rows.map((row) => {
+    const entry = JSON.parse(row.entry_json) as ProjectManagementHistoryEntry;
+    return {
+      ...entry,
+      tags: [...entry.tags],
+      diff: ensureProjectManagementDiff(entry),
+    };
+  });
+}
+
+async function getNextDocumentOrder(repoRoot: string, db?: ManagedDatabaseClient): Promise<number> {
+  const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  const result = await executor.query<{ max_order: number | null }>(
+    `select max(document_order) as max_order from ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE}`,
+  );
+  return (result.rows[0]?.max_order ?? 0) + 1;
+}
+
+async function upsertPersistedDocumentRecord(
+  repoRoot: string,
+  record: PersistedProjectManagementDocumentRecord,
+  db?: ManagedDatabaseClient,
+): Promise<void> {
+  const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  await executor.query(
+    `
+      insert into ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE} (
+        document_id,
+        document_order,
+        number,
+        title,
+        summary,
+        kind,
+        pull_request_json,
+        tags_json,
+        dependencies_json,
+        status,
+        assignee,
+        archived,
+        created_at,
+        updated_at,
+        history_count,
+        markdown,
+        comments_json,
+        automerge_binary
+      ) values (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+      )
+      on conflict (document_id) do update
+      set document_order = excluded.document_order,
+          number = excluded.number,
+          title = excluded.title,
+          summary = excluded.summary,
+          kind = excluded.kind,
+          pull_request_json = excluded.pull_request_json,
+          tags_json = excluded.tags_json,
+          dependencies_json = excluded.dependencies_json,
+          status = excluded.status,
+          assignee = excluded.assignee,
+          archived = excluded.archived,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          history_count = excluded.history_count,
+          markdown = excluded.markdown,
+          comments_json = excluded.comments_json,
+          automerge_binary = excluded.automerge_binary
+    `,
+    [
+      record.document.id,
+      record.documentOrder,
+      record.document.number,
+      record.document.title,
+      record.document.summary,
+      record.document.kind,
+      serializePullRequest(record.document.pullRequest),
+      JSON.stringify(record.document.tags),
+      JSON.stringify(record.document.dependencies),
+      record.document.status,
+      record.document.assignee,
+      record.document.archived,
+      record.document.createdAt,
+      record.document.updatedAt,
+      record.document.historyCount,
+      record.document.markdown,
+      JSON.stringify(record.document.comments),
+      Buffer.from(Automerge.save(record.automergeDoc)).toString("base64"),
+    ],
+  );
+}
+
+async function appendPersistedHistoryEntry(
+  repoRoot: string,
+  documentId: string,
+  historyOrder: number,
+  entry: ProjectManagementHistoryEntry,
+  db?: ManagedDatabaseClient,
+): Promise<void> {
+  const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  await executor.query(
+    `
+      insert into ${PROJECT_MANAGEMENT_HISTORY_TABLE} (document_id, history_order, created_at, entry_json)
+      values ($1, $2, $3, $4)
+      on conflict (document_id, history_order) do update
+      set created_at = excluded.created_at,
+          entry_json = excluded.entry_json
+    `,
+    [documentId, historyOrder, entry.createdAt, JSON.stringify(entry)],
+  );
+}
+
+async function applyBatchToStore(repoRoot: string, batch: StoredProjectManagementBatch, commitSha: string): Promise<void> {
+  const db = await getProjectManagementDb(repoRoot);
+  await db.transaction(async (tx) => {
+    let nextDocumentOrder = await getNextDocumentOrder(repoRoot, tx);
+
+    for (const entry of batch.entries) {
+      const previous = await loadPersistedDocumentRecord(repoRoot, entry.documentId, tx);
+      const previousDocument = previous?.document ?? null;
+      const currentDoc = previous?.automergeDoc ?? Automerge.init<ProjectManagementAutomergeDocument>({ actor: entry.actorId });
+      const [nextDoc] = Automerge.applyChanges(
+        currentDoc,
+        entry.changes.map((change) => decodeChange(change)),
+      );
+      const materialized = materializeDocument(nextDoc as Automerge.Doc<ProjectManagementAutomergeDocument>);
+      const historyCount = (previous?.document.historyCount ?? 0) + 1;
+      const record: PersistedProjectManagementDocumentRecord = {
+        documentOrder: previous?.documentOrder ?? nextDocumentOrder,
+        document: {
+          ...materialized,
+          historyCount,
+        },
+        automergeDoc: nextDoc as Automerge.Doc<ProjectManagementAutomergeDocument>,
+      };
+
+      if (!previous) {
+        nextDocumentOrder += 1;
+      }
+
+      const historyEntry: ProjectManagementHistoryEntry = {
+        commitSha,
+        batchId: batch.batchId,
+        createdAt: batch.createdAt,
+        actorId: entry.actorId,
+        authorName: entry.authorName,
+        authorEmail: entry.authorEmail,
+        documentId: entry.documentId,
+        number: record.document.number,
+        title: record.document.title,
+        tags: [...record.document.tags],
+        status: record.document.status,
+        assignee: record.document.assignee,
+        archived: record.document.archived,
+        changeCount: entry.changes.length,
+        action: entry.action,
+        diff: clampProjectManagementDiff(ensureProjectManagementDiff({
+          action: entry.action,
+          diff: buildProjectManagementDiff(previousDocument, record.document),
+        })),
+      };
+
+      await upsertPersistedDocumentRecord(repoRoot, record, tx);
+      await appendPersistedHistoryEntry(repoRoot, entry.documentId, historyCount, historyEntry, tx);
+    }
+  });
+}
+
+async function rebuildProjectManagementStore(repoRoot: string, headSha: string): Promise<ProjectManagementStoreState> {
+  const commits = await listCommits(repoRoot, headSha);
+  let updatedAt = "";
+  const db = await getProjectManagementDb(repoRoot);
+
+  await db.transaction(async (tx) => {
+    await clearPersistedProjectManagementStore(repoRoot, tx);
+
+    for (const commitSha of commits) {
+      const batch = await readBatchAtCommit(repoRoot, commitSha);
+      let nextDocumentOrder = await getNextDocumentOrder(repoRoot, tx);
+
+      for (const entry of batch.entries) {
+        const previous = await loadPersistedDocumentRecord(repoRoot, entry.documentId, tx);
+        const previousDocument = previous?.document ?? null;
+        const currentDoc = previous?.automergeDoc ?? Automerge.init<ProjectManagementAutomergeDocument>({ actor: entry.actorId });
+        const [nextDoc] = Automerge.applyChanges(
+          currentDoc,
+          entry.changes.map((change) => decodeChange(change)),
+        );
+        const materialized = materializeDocument(nextDoc as Automerge.Doc<ProjectManagementAutomergeDocument>);
+        const historyCount = (previous?.document.historyCount ?? 0) + 1;
+        const record: PersistedProjectManagementDocumentRecord = {
+          documentOrder: previous?.documentOrder ?? nextDocumentOrder,
+          document: {
+            ...materialized,
+            historyCount,
+          },
+          automergeDoc: nextDoc as Automerge.Doc<ProjectManagementAutomergeDocument>,
+        };
+
+        if (!previous) {
+          nextDocumentOrder += 1;
+        }
+
+        const historyEntry: ProjectManagementHistoryEntry = {
+          commitSha,
+          batchId: batch.batchId,
+          createdAt: batch.createdAt,
+          actorId: entry.actorId,
+          authorName: entry.authorName,
+          authorEmail: entry.authorEmail,
+          documentId: entry.documentId,
+          number: record.document.number,
+          title: record.document.title,
+          tags: [...record.document.tags],
+          status: record.document.status,
+          assignee: record.document.assignee,
+          archived: record.document.archived,
+          changeCount: entry.changes.length,
+          action: entry.action,
+          diff: clampProjectManagementDiff(ensureProjectManagementDiff({
+            action: entry.action,
+            diff: buildProjectManagementDiff(previousDocument, record.document),
+          })),
+        };
+
+        await upsertPersistedDocumentRecord(repoRoot, record, tx);
+        await appendPersistedHistoryEntry(repoRoot, entry.documentId, historyCount, historyEntry, tx);
+      }
+
+      updatedAt = batch.createdAt;
+    }
+
+    const state: ProjectManagementStoreState = {
+      branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+      headSha,
+      updatedAt,
+    };
+    await persistProjectManagementStoreState(repoRoot, state, tx);
+  });
+
+  const state: ProjectManagementStoreState = {
+    branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+    headSha,
+    updatedAt,
+  };
+  projectManagementCache.set(repoRoot, state);
+  return state;
+}
+
+async function syncProjectManagementStore(repoRoot: string): Promise<ProjectManagementStoreState> {
+  const ensuredHead = await ensureProjectManagementInitialized(repoRoot);
+  const cached = projectManagementCache.get(repoRoot);
+  if (cached?.headSha === ensuredHead) {
+    return cached;
   }
+
+  const persisted = await readPersistedProjectManagementState(repoRoot);
+  if (persisted?.headSha === ensuredHead) {
+    projectManagementCache.set(repoRoot, persisted);
+    return persisted;
+  }
+
+  if (persisted?.headSha && await isAncestor(repoRoot, persisted.headSha, ensuredHead)) {
+    const commits = await listCommits(repoRoot, ensuredHead, persisted.headSha);
+    let updatedAt = persisted.updatedAt;
+    for (const commitSha of commits) {
+      const batch = await readBatchAtCommit(repoRoot, commitSha);
+      await applyBatchToStore(repoRoot, batch, commitSha);
+      updatedAt = batch.createdAt;
+    }
+
+    const nextState: ProjectManagementStoreState = {
+      branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+      headSha: ensuredHead,
+      updatedAt,
+    };
+    await persistProjectManagementStoreState(repoRoot, nextState);
+    projectManagementCache.set(repoRoot, nextState);
+    return nextState;
+  }
+
+  return rebuildProjectManagementStore(repoRoot, ensuredHead);
 }
 
 function buildSeedMarkdown(): string {
@@ -752,149 +1113,32 @@ function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocume
   };
 }
 
-function setDocumentTagsInIndex(cache: ProjectManagementCacheEntry, documentId: string, previousTags: string[], nextTags: string[]) {
-  for (const tag of previousTags) {
-    const entry = cache.tagIndex.get(tag);
-    if (!entry) {
-      continue;
-    }
-
-    entry.delete(documentId);
-    if (entry.size === 0) {
-      cache.tagIndex.delete(tag);
-    }
-  }
-
-  for (const tag of nextTags) {
-    const entry = cache.tagIndex.get(tag) ?? new Set<string>();
-    entry.add(documentId);
-    cache.tagIndex.set(tag, entry);
-  }
+async function loadStoreDocuments(repoRoot: string): Promise<ProjectManagementDocumentSummary[]> {
+  return listPersistedDocumentSummaries(repoRoot);
 }
 
-function reduceBatchIntoCache(
-  cache: ProjectManagementCacheEntry,
-  batch: StoredProjectManagementBatch,
-  commitSha: string,
-) {
-  for (const entry of batch.entries) {
-    const previousDocument = cache.documentsById.get(entry.documentId) ?? null;
-    let doc = cache.automergeDocsById.get(entry.documentId);
-    if (!doc) {
-      doc = Automerge.init<ProjectManagementAutomergeDocument>({ actor: entry.actorId });
-    }
-
-    const [nextDoc] = Automerge.applyChanges(
-      doc,
-      entry.changes.map((change) => decodeChange(change)),
-    );
-
-    const previousTags = cache.documentsById.get(entry.documentId)?.tags ?? [];
-    const materialized = materializeDocument(nextDoc);
-    const history = cache.historyByDocumentId.get(entry.documentId) ?? [];
-
-    cache.automergeDocsById.set(entry.documentId, nextDoc);
-    cache.documentsById.set(entry.documentId, {
-      ...materialized,
-      historyCount: history.length + 1,
-    });
-
-    if (!cache.documentOrder.includes(entry.documentId)) {
-      cache.documentOrder.push(entry.documentId);
-    }
-
-    setDocumentTagsInIndex(cache, entry.documentId, previousTags, materialized.tags);
-
-      const historyEntry: ProjectManagementHistoryEntry = {
-        commitSha,
-        batchId: batch.batchId,
-        createdAt: batch.createdAt,
-        actorId: entry.actorId,
-        authorName: entry.authorName,
-        authorEmail: entry.authorEmail,
-        documentId: entry.documentId,
-        number: materialized.number,
-      title: materialized.title,
-      tags: [...materialized.tags],
-      status: materialized.status,
-      assignee: materialized.assignee,
-      archived: materialized.archived,
-      changeCount: entry.changes.length,
-      action: entry.action,
-      diff: clampProjectManagementDiff(ensureProjectManagementDiff({
-        action: entry.action,
-        diff: buildProjectManagementDiff(previousDocument, materialized),
-      })),
-    };
-    history.push(historyEntry);
-    cache.historyByDocumentId.set(entry.documentId, history);
-    cache.documentsById.set(entry.documentId, {
-      ...cache.documentsById.get(entry.documentId)!,
-      historyCount: history.length,
-    });
-    cache.updatedAt = batch.createdAt;
-  }
-}
-
-function toListResponse(cache: ReducedProjectManagementState): ProjectManagementListResponse {
-  const documents = cache.documentOrder
-    .map((documentId) => cache.documentsById.get(documentId))
-    .filter((document): document is ProjectManagementDocument => Boolean(document))
-    .map<ProjectManagementDocumentSummary>((document) => ({
-      id: document.id,
-      number: document.number,
-      title: document.title,
-      summary: document.summary,
-      kind: document.kind,
-      pullRequest: document.pullRequest ? { ...document.pullRequest } : null,
-      tags: [...document.tags],
-      dependencies: [...document.dependencies],
-      status: document.status,
-      assignee: document.assignee,
-      archived: document.archived,
-      createdAt: document.createdAt,
-      updatedAt: document.updatedAt,
-      historyCount: document.historyCount,
-    }));
-
-  return {
-    branch: cache.branch,
-    headSha: cache.headSha,
-    documents,
-    availableTags: Array.from(cache.tagIndex.keys()).sort((left, right) => left.localeCompare(right)),
-    availableStatuses: [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES],
-  };
-}
-
-function toDocumentResponse(cache: ReducedProjectManagementState, documentId: string): ProjectManagementDocumentResponse {
-  const document = cache.documentsById.get(documentId);
-  if (!document) {
+async function loadStoreDocument(repoRoot: string, documentId: string): Promise<ProjectManagementDocument> {
+  const record = await loadPersistedDocumentRecord(repoRoot, documentId);
+  if (!record) {
     throw new Error(`Unknown project management document ${documentId}.`);
   }
 
   return {
-    branch: cache.branch,
-    headSha: cache.headSha,
-      document: {
-        ...document,
-        pullRequest: document.pullRequest ? { ...document.pullRequest } : null,
-        tags: [...document.tags],
-        dependencies: [...document.dependencies],
-        comments: document.comments.map((comment) => ({ ...comment })),
-    },
+    ...record.document,
+    pullRequest: record.document.pullRequest ? { ...record.document.pullRequest } : null,
+    tags: [...record.document.tags],
+    dependencies: [...record.document.dependencies],
+    comments: record.document.comments.map((comment) => ({ ...comment })),
   };
 }
 
-function toHistoryResponse(cache: ReducedProjectManagementState, documentId: string): ProjectManagementHistoryResponse {
-  return {
-    branch: cache.branch,
-    headSha: cache.headSha,
-    history: (cache.historyByDocumentId.get(documentId) ?? []).map((entry) => ({
-      ...entry,
-      tags: [...entry.tags],
-      diff: ensureProjectManagementDiff(entry),
-    })),
-  };
+async function loadStoreHistory(repoRoot: string, documentId: string): Promise<ProjectManagementHistoryEntry[]> {
+  const document = await loadPersistedDocumentRecord(repoRoot, documentId);
+  if (!document) {
+    throw new Error(`Unknown project management document ${documentId}.`);
+  }
+
+  return loadPersistedDocumentHistory(repoRoot, documentId);
 }
 
 async function resolveBranchHead(repoRoot: string): Promise<string | null> {
@@ -1045,10 +1289,7 @@ async function ensureProjectManagementInitialized(repoRoot: string): Promise<str
   const batch = createSeedBatch(new Date().toISOString(), author);
   try {
     const commitSha = await appendBatchCommit(repoRoot, null, batch, buildProjectManagementCommitEnv(author));
-    const cache = createEmptyReducedState(commitSha);
-    reduceBatchIntoCache(cache, batch, commitSha);
-    projectManagementCache.set(repoRoot, cache);
-    await persistProjectManagementCache(repoRoot, cache);
+    await rebuildProjectManagementStore(repoRoot, commitSha);
     return commitSha;
   } catch {
     const headSha = await resolveBranchHead(repoRoot);
@@ -1059,44 +1300,8 @@ async function ensureProjectManagementInitialized(repoRoot: string): Promise<str
   }
 }
 
-async function getReducedProjectManagementState(repoRoot: string): Promise<ProjectManagementCacheEntry> {
-  const ensuredHead = await ensureProjectManagementInitialized(repoRoot);
-  const cached = projectManagementCache.get(repoRoot);
-
-  if (cached?.headSha === ensuredHead) {
-    return cached;
-  }
-
-  if (cached?.headSha && await isAncestor(repoRoot, cached.headSha, ensuredHead)) {
-    const nextCache = cloneCacheEntry(cached);
-    const commits = await listCommits(repoRoot, ensuredHead, cached.headSha);
-
-    for (const commitSha of commits) {
-      reduceBatchIntoCache(nextCache, await readBatchAtCommit(repoRoot, commitSha), commitSha);
-    }
-
-    nextCache.headSha = ensuredHead;
-    projectManagementCache.set(repoRoot, nextCache);
-    await persistProjectManagementCache(repoRoot, nextCache);
-    return nextCache;
-  }
-
-  const persisted = await loadPersistedProjectManagementCache(repoRoot, ensuredHead);
-  if (persisted) {
-    projectManagementCache.set(repoRoot, persisted);
-    return persisted;
-  }
-
-  const nextCache = createEmptyReducedState(ensuredHead);
-  const commits = await listCommits(repoRoot, ensuredHead);
-  for (const commitSha of commits) {
-    reduceBatchIntoCache(nextCache, await readBatchAtCommit(repoRoot, commitSha), commitSha);
-  }
-
-  nextCache.headSha = ensuredHead;
-  projectManagementCache.set(repoRoot, nextCache);
-  await persistProjectManagementCache(repoRoot, nextCache);
-  return nextCache;
+async function getReducedProjectManagementState(repoRoot: string): Promise<ProjectManagementStoreState> {
+  return syncProjectManagementStore(repoRoot);
 }
 
 function applyDocumentChange(
@@ -1189,22 +1394,32 @@ async function appendEntries(
 ): Promise<ProjectManagementBatchResponse> {
   for (let attempt = 1; attempt <= PROJECT_MANAGEMENT_MAX_APPEND_RETRIES; attempt += 1) {
     const state = await getReducedProjectManagementState(repoRoot);
-    const workingState = cloneCacheEntry(state);
+    const summaries = await loadStoreDocuments(repoRoot);
+    const summariesById = new Map(summaries.map((document) => [document.id, document]));
+    let nextDocumentOrder = await getNextDocumentOrder(repoRoot);
     const now = new Date().toISOString();
     const author = await resolveProjectManagementAuthor(repoRoot);
     const commitEnv = buildProjectManagementCommitEnv(author);
     const batchEntries: StoredProjectManagementBatchEntry[] = [];
     const documentIds: string[] = [];
+    const predictedDependencies = new Map<string, string[]>(
+      summaries.map((document) => [document.id, [...document.dependencies]]),
+    );
+    const loadedDocs = new Map<string, PersistedProjectManagementDocumentRecord | null>();
 
     for (const entry of entries) {
       const actorId = createActorId();
       const documentId = entry.documentId?.trim() || createDocumentId(entry.title);
-      const existingDoc = workingState.automergeDocsById.get(documentId);
+      const existingRecord = loadedDocs.has(documentId)
+        ? loadedDocs.get(documentId) ?? null
+        : await loadPersistedDocumentRecord(repoRoot, documentId);
+      loadedDocs.set(documentId, existingRecord);
+      const existingDoc = existingRecord?.automergeDoc;
       if (entry.documentId && !existingDoc) {
         throw new Error(`Unknown project management document ${documentId}.`);
       }
       const dependencies = normalizeDependencyIds(entry.dependencies ?? existingDoc?.dependencies ?? [], documentId);
-      assertValidDependencies(workingState, documentId, dependencies);
+      assertValidDependencies(predictedDependencies, summariesById, documentId, dependencies);
 
       let nextDoc: Automerge.Doc<ProjectManagementAutomergeDocument>;
       let action: ProjectManagementDocumentAction;
@@ -1238,7 +1453,7 @@ async function appendEntries(
         action = "comment";
       } else {
         ({ nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
-          number: existingDoc?.number ?? getNextDocumentNumber(workingState),
+          number: existingDoc?.number ?? getNextDocumentNumber(summariesById.values()),
           title: entry.title,
           summary: entry.summary,
           markdown: entry.markdown,
@@ -1272,15 +1487,32 @@ async function appendEntries(
         changes: [encodeChange(change)],
       });
       documentIds.push(documentId);
-
-      const predictedBatch: StoredProjectManagementBatch = {
-        schemaVersion: PROJECT_MANAGEMENT_SCHEMA_VERSION,
-        batchId: "prediction",
-        createdAt: now,
-        documentIds: [documentId],
-        entries: [batchEntries[batchEntries.length - 1]],
-      };
-      reduceBatchIntoCache(workingState, predictedBatch, state.headSha);
+      predictedDependencies.set(documentId, [...dependencies]);
+      const predictedKind = normalizeDocumentKind(nextDoc.kind);
+      summariesById.set(documentId, {
+        id: documentId,
+        number: nextDoc.number,
+        title: nextDoc.title,
+        summary: nextDoc.summary || "",
+        kind: predictedKind,
+        pullRequest: normalizePullRequest(nextDoc.pullRequest, predictedKind),
+        tags: Array.from(nextDoc.tags ?? []),
+        dependencies: [...dependencies],
+        status: nextDoc.status,
+        assignee: nextDoc.assignee,
+        archived: nextDoc.archived,
+        createdAt: nextDoc.createdAt,
+        updatedAt: nextDoc.updatedAt,
+        historyCount: (existingRecord?.document.historyCount ?? 0) + 1,
+      });
+      loadedDocs.set(documentId, {
+        documentOrder: existingRecord?.documentOrder ?? nextDocumentOrder++,
+        document: {
+          ...materializeDocument(nextDoc),
+          historyCount: (existingRecord?.document.historyCount ?? 0) + 1,
+        },
+        automergeDoc: nextDoc,
+      });
     }
 
     const batch: StoredProjectManagementBatch = {
@@ -1293,11 +1525,14 @@ async function appendEntries(
 
     try {
       const commitSha = await appendBatchCommit(repoRoot, state.headSha, batch, commitEnv);
-      const nextCache = cloneCacheEntry(state);
-      reduceBatchIntoCache(nextCache, batch, commitSha);
-      nextCache.headSha = commitSha;
-      projectManagementCache.set(repoRoot, nextCache);
-      await persistProjectManagementCache(repoRoot, nextCache);
+      await applyBatchToStore(repoRoot, batch, commitSha);
+      const nextState: ProjectManagementStoreState = {
+        branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+        headSha: commitSha,
+        updatedAt: now,
+      };
+      await persistProjectManagementStoreState(repoRoot, nextState);
+      projectManagementCache.set(repoRoot, nextState);
       return {
         branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
         headSha: commitSha,
@@ -1314,10 +1549,10 @@ async function appendEntries(
   throw new Error("Failed to append project management updates.");
 }
 
-function buildDependencyGraph(state: ReducedProjectManagementState): Map<string, string[]> {
+function buildDependencyGraph(state: Map<string, string[]>): Map<string, string[]> {
   const graph = new Map<string, string[]>();
-  for (const [documentId, document] of state.documentsById.entries()) {
-    graph.set(documentId, [...document.dependencies]);
+  for (const [documentId, dependencies] of state.entries()) {
+    graph.set(documentId, [...dependencies]);
   }
   return graph;
 }
@@ -1345,10 +1580,15 @@ function hasDependencyPath(graph: Map<string, string[]>, startId: string, target
   return false;
 }
 
-function assertValidDependencies(state: ReducedProjectManagementState, documentId: string, dependencyIds: string[]): void {
-  const graph = buildDependencyGraph(state);
+function assertValidDependencies(
+  dependencyState: Map<string, string[]>,
+  documentsById: Map<string, ProjectManagementDependencyDocument>,
+  documentId: string,
+  dependencyIds: string[],
+): void {
+  const graph = buildDependencyGraph(dependencyState);
   for (const dependencyId of dependencyIds) {
-    if (!state.documentsById.has(dependencyId)) {
+    if (!documentsById.has(dependencyId)) {
       throw new Error(`Unknown dependency document ${dependencyId}.`);
     }
   }
@@ -1362,19 +1602,34 @@ function assertValidDependencies(state: ReducedProjectManagementState, documentI
 }
 
 export async function listProjectManagementDocuments(repoRoot: string): Promise<ProjectManagementListResponse> {
-  return toListResponse(await getReducedProjectManagementState(repoRoot));
+  const state = await getReducedProjectManagementState(repoRoot);
+  const documents = await loadStoreDocuments(repoRoot);
+  const availableTags = [...new Set(documents.flatMap((document) => document.tags))].sort((left, right) => left.localeCompare(right));
+  return {
+    branch: state.branch,
+    headSha: state.headSha,
+    documents,
+    availableTags,
+    availableStatuses: [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES],
+  };
 }
 
 export async function getProjectManagementDocument(repoRoot: string, documentId: string): Promise<ProjectManagementDocumentResponse> {
-  return toDocumentResponse(await getReducedProjectManagementState(repoRoot), documentId);
+  const state = await getReducedProjectManagementState(repoRoot);
+  return {
+    branch: state.branch,
+    headSha: state.headSha,
+    document: await loadStoreDocument(repoRoot, documentId),
+  };
 }
 
 export async function getProjectManagementDocumentHistory(repoRoot: string, documentId: string): Promise<ProjectManagementHistoryResponse> {
   const state = await getReducedProjectManagementState(repoRoot);
-  if (!state.documentsById.has(documentId)) {
-    throw new Error(`Unknown project management document ${documentId}.`);
-  }
-  return toHistoryResponse(state, documentId);
+  return {
+    branch: state.branch,
+    headSha: state.headSha,
+    history: await loadStoreHistory(repoRoot, documentId),
+  };
 }
 
 export async function createProjectManagementDocument(
@@ -1444,14 +1699,14 @@ export async function updateProjectManagementDependencies(
   documentId: string,
   dependencyIds: string[],
 ): Promise<ProjectManagementDocumentResponse> {
-  const state = await getReducedProjectManagementState(repoRoot);
-  const currentDocument = state.documentsById.get(documentId);
-  if (!currentDocument) {
-    throw new Error(`Unknown project management document ${documentId}.`);
-  }
+  await getReducedProjectManagementState(repoRoot);
+  const currentDocument = await loadStoreDocument(repoRoot, documentId);
+  const summaries = await loadStoreDocuments(repoRoot);
+  const dependenciesById = new Map(summaries.map((document) => [document.id, [...document.dependencies]]));
+  const documentsById = new Map(summaries.map((document) => [document.id, document]));
 
   const normalizedDependencies = normalizeDependencyIds(dependencyIds, documentId);
-  assertValidDependencies(state, documentId, normalizedDependencies);
+  assertValidDependencies(dependenciesById, documentsById, documentId, normalizedDependencies);
 
   await appendEntries(repoRoot, [{
     documentId,
@@ -1475,11 +1730,8 @@ export async function updateProjectManagementStatus(
   documentId: string,
   status: string,
 ): Promise<ProjectManagementDocumentResponse> {
-  const state = await getReducedProjectManagementState(repoRoot);
-  const currentDocument = state.documentsById.get(documentId);
-  if (!currentDocument) {
-    throw new Error(`Unknown project management document ${documentId}.`);
-  }
+  await getReducedProjectManagementState(repoRoot);
+  const currentDocument = await loadStoreDocument(repoRoot, documentId);
 
   await appendEntries(repoRoot, [{
     documentId,
@@ -1515,11 +1767,8 @@ export async function addProjectManagementComment(
   documentId: string,
   request: AddProjectManagementCommentRequest,
 ): Promise<ProjectManagementDocumentResponse> {
-  const state = await getReducedProjectManagementState(repoRoot);
-  const currentDocument = state.documentsById.get(documentId);
-  if (!currentDocument) {
-    throw new Error(`Unknown project management document ${documentId}.`);
-  }
+  await getReducedProjectManagementState(repoRoot);
+  const currentDocument = await loadStoreDocument(repoRoot, documentId);
 
   const body = normalizeCommentBody(request.body);
   if (!body) {

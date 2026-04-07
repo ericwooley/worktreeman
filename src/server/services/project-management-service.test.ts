@@ -628,7 +628,7 @@ test("dependency cycles are rejected", async () => {
   }
 });
 
-test("clearing the in-memory cache rebuilds state from git history", async () => {
+test("clearing the in-memory cache reuses the persisted Postgres store without replaying history", async () => {
   const repoRoot = await createTestRepo();
 
   try {
@@ -644,32 +644,6 @@ test("clearing the in-memory cache rebuilds state from git history", async () =>
       tags: ["plan", "decision"],
     });
 
-    clearProjectManagementCache(repoRoot);
-
-    const rebuilt = await getProjectManagementDocument(repoRoot, created.document.id);
-    assert.match(rebuilt.document.markdown, /Updated after cache clear/);
-    assert.deepEqual(rebuilt.document.tags, ["plan", "decision"]);
-  } finally {
-    await destroyTestRepo(repoRoot);
-  }
-});
-
-test("clearing the in-memory cache reuses the persisted head-sha snapshot", async () => {
-  const repoRoot = await createTestRepo();
-
-  try {
-    const created = await createProjectManagementDocument(repoRoot, {
-      title: "Persisted Snapshot",
-      markdown: "# Persisted Snapshot\n",
-      tags: ["plan"],
-    });
-
-    await updateProjectManagementDocument(repoRoot, created.document.id, {
-      title: "Persisted Snapshot",
-      markdown: "# Persisted Snapshot\n\nWarm cache content.\n",
-      tags: ["plan", "cached"],
-    });
-
     const originalPath = process.env.PATH;
     const shimDir = await fs.mkdtemp(path.join(repoRoot, "git-cache-shim-"));
     const realGit = (await runCommand("which", ["git"], { cwd: repoRoot })).stdout.trim();
@@ -680,8 +654,8 @@ test("clearing the in-memory cache reuses the persisted head-sha snapshot", asyn
     try {
       const shimPath = path.join(shimDir, "git");
       await fs.writeFile(shimPath, `#!/bin/sh
-if [ "$1" = "rev-list" ] || [ "$1" = "cat-file" ]; then
-  echo "unexpected git history replay" >&2
+if [ "$1" = "rev-list" ] || [ "$1" = "cat-file" ] || [ "$1" = "merge-base" ]; then
+  echo "unexpected git replay" >&2
   exit 99
 fi
 exec ${realGit} "$@"
@@ -690,8 +664,163 @@ exec ${realGit} "$@"
       process.env.PATH = `${shimDir}:${originalPath ?? ""}`;
 
       const rebuilt = await getProjectManagementDocument(repoRoot, created.document.id);
+      assert.match(rebuilt.document.markdown, /Updated after cache clear/);
+      assert.deepEqual(rebuilt.document.tags, ["plan", "decision"]);
+    } finally {
+      process.env.PATH = originalPath;
+      await fs.rm(shimDir, { recursive: true, force: true });
+    }
+  } finally {
+    await closeManagedDatabaseClient(repoRoot, "project-management-cache").catch(() => undefined);
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("clearing the in-memory cache incrementally applies new commits when the persisted head is an ancestor", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Persisted Snapshot",
+      markdown: "# Persisted Snapshot\n",
+      tags: ["plan"],
+    });
+
+    const updated = await updateProjectManagementDocument(repoRoot, created.document.id, {
+      title: "Persisted Snapshot",
+      markdown: "# Persisted Snapshot\n\nWarm cache content.\n",
+      tags: ["plan", "cached"],
+    });
+
+    await runCommand("git", ["update-ref", "refs/heads/wtm-project-management", created.headSha, updated.headSha], { cwd: repoRoot });
+    clearProjectManagementCache(repoRoot);
+    await closeManagedDatabaseClient(repoRoot, "project-management-cache");
+
+    const rewound = await getProjectManagementDocument(repoRoot, created.document.id);
+    assert.equal(rewound.headSha, created.headSha);
+    assert.deepEqual(rewound.document.tags, ["plan"]);
+
+    const originalPath = process.env.PATH;
+    const shimDir = await fs.mkdtemp(path.join(repoRoot, "git-cache-shim-"));
+    const realGit = (await runCommand("which", ["git"], { cwd: repoRoot })).stdout.trim();
+
+    await runCommand("git", ["update-ref", "refs/heads/wtm-project-management", updated.headSha, created.headSha], { cwd: repoRoot });
+
+    clearProjectManagementCache(repoRoot);
+    await closeManagedDatabaseClient(repoRoot, "project-management-cache");
+
+    try {
+      const shimPath = path.join(shimDir, "git");
+      await fs.writeFile(shimPath, `#!/bin/sh
+if [ "$1" = "merge-base" ] || [ "$1" = "rev-parse" ] || [ "$1" = "config" ] || [ "$1" = "log" ]; then
+  exec ${realGit} "$@"
+fi
+if [ "$1" = "rev-list" ]; then
+  if [ "$2" = "--reverse" ] && [ "$3" = "${created.headSha}..${updated.headSha}" ]; then
+    exec ${realGit} "$@"
+  fi
+  echo "unexpected full rev-list replay" >&2
+  exit 99
+fi
+if [ "$1" = "cat-file" ]; then
+  if [ "$2" = "-p" ] && [ "$3" = "${updated.headSha}:batch.json" ]; then
+    exec ${realGit} "$@"
+  fi
+  echo "unexpected historical cat-file replay" >&2
+  exit 99
+fi
+echo "unexpected git command: $1" >&2
+exit 99
+`, "utf8");
+      await fs.chmod(shimPath, 0o755);
+      process.env.PATH = `${shimDir}:${originalPath ?? ""}`;
+
+      const rebuilt = await getProjectManagementDocument(repoRoot, created.document.id);
+      assert.equal(rebuilt.headSha, updated.headSha);
       assert.match(rebuilt.document.markdown, /Warm cache content/);
       assert.deepEqual(rebuilt.document.tags, ["plan", "cached"]);
+    } finally {
+      process.env.PATH = originalPath;
+      await fs.rm(shimDir, { recursive: true, force: true });
+    }
+  } finally {
+    await closeManagedDatabaseClient(repoRoot, "project-management-cache").catch(() => undefined);
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("clearing the in-memory cache rebuilds from scratch when the persisted head is not an ancestor", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Rebuild Required",
+      markdown: "# Rebuild Required\n",
+      tags: ["plan"],
+    });
+
+    const updated = await updateProjectManagementDocument(repoRoot, created.document.id, {
+      title: "Rebuild Required",
+      markdown: "# Rebuild Required\n\nBefore rebuild.\n",
+      tags: ["plan", "before-rebuild"],
+    });
+
+    const batchContents = await runCommand("git", ["show", `${updated.headSha}:batch.json`], { cwd: repoRoot });
+    const blob = await runCommand("git", ["hash-object", "-w", "--stdin"], {
+      cwd: repoRoot,
+      stdin: batchContents.stdout,
+    });
+    const tree = await runCommand("git", ["mktree"], {
+      cwd: repoRoot,
+      stdin: `100644 blob ${blob.stdout.trim()}\tbatch.json\n`,
+    });
+    const replacementCommit = await runCommand(
+      "git",
+      ["commit-tree", tree.stdout.trim(), "-p", created.headSha, "-m", "pm: rebuild branch"],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Manual Rebuild",
+          GIT_AUTHOR_EMAIL: "rebuild@example.com",
+          GIT_COMMITTER_NAME: "Manual Rebuild",
+          GIT_COMMITTER_EMAIL: "rebuild@example.com",
+        },
+      },
+    );
+    const replacementHead = replacementCommit.stdout.trim();
+    await runCommand("git", ["update-ref", "refs/heads/wtm-project-management", replacementHead, updated.headSha], { cwd: repoRoot });
+
+    const originalPath = process.env.PATH;
+    const shimDir = await fs.mkdtemp(path.join(repoRoot, "git-rebuild-shim-"));
+    const realGit = (await runCommand("which", ["git"], { cwd: repoRoot })).stdout.trim();
+
+    clearProjectManagementCache(repoRoot);
+    await closeManagedDatabaseClient(repoRoot, "project-management-cache");
+
+    try {
+      const shimPath = path.join(shimDir, "git");
+      await fs.writeFile(shimPath, `#!/bin/sh
+if [ "$1" = "merge-base" ] || [ "$1" = "rev-parse" ] || [ "$1" = "config" ] || [ "$1" = "log" ] || [ "$1" = "cat-file" ]; then
+  exec ${realGit} "$@"
+fi
+if [ "$1" = "rev-list" ]; then
+  if [ "$2" = "--reverse" ] && [ "$3" = "${replacementHead}" ]; then
+    exec ${realGit} "$@"
+  fi
+  echo "expected full rebuild rev-list" >&2
+  exit 99
+fi
+echo "unexpected git command: $1" >&2
+exit 99
+`, "utf8");
+      await fs.chmod(shimPath, 0o755);
+      process.env.PATH = `${shimDir}:${originalPath ?? ""}`;
+
+      const rebuilt = await getProjectManagementDocument(repoRoot, created.document.id);
+      assert.equal(rebuilt.headSha, replacementHead);
+      assert.match(rebuilt.document.markdown, /Before rebuild/);
+      assert.deepEqual(rebuilt.document.tags, ["plan", "before-rebuild"]);
     } finally {
       process.env.PATH = originalPath;
       await fs.rm(shimDir, { recursive: true, force: true });
