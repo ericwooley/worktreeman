@@ -32,10 +32,13 @@ import type {
   UpdateProjectManagementDocumentRequest,
 } from "../../shared/types.js";
 import { loadConfig } from "./config-service.js";
+import { getManagedDatabaseClient } from "./database-client-service.js";
 import { runCommand } from "../utils/process.js";
 
 const PROJECT_MANAGEMENT_MAX_APPEND_RETRIES = 5;
 const PROJECT_MANAGEMENT_MAX_HISTORY_DIFF_CHARS = 20_000;
+const PROJECT_MANAGEMENT_CACHE_NAMESPACE = "project-management-cache";
+const PROJECT_MANAGEMENT_CACHE_TABLE = "project_management_state_cache";
 
 type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restore" | "comment";
 
@@ -108,6 +111,23 @@ interface ReducedProjectManagementState {
 
 interface ProjectManagementCacheEntry extends ReducedProjectManagementState {
   automergeDocsById: Map<string, Automerge.Doc<ProjectManagementAutomergeDocument>>;
+}
+
+interface PersistedProjectManagementCacheState {
+  schemaVersion: number;
+  branch: string;
+  headSha: string;
+  updatedAt: string;
+  documentOrder: string[];
+  documents: ProjectManagementDocument[];
+  historyByDocumentId: Array<{
+    documentId: string;
+    history: ProjectManagementHistoryEntry[];
+  }>;
+  automergeDocsById: Array<{
+    documentId: string;
+    binary: string;
+  }>;
 }
 
 const projectManagementCache = new Map<string, ProjectManagementCacheEntry>();
@@ -428,6 +448,140 @@ function cloneCacheEntry(cache: ProjectManagementCacheEntry): ProjectManagementC
       Array.from(cache.automergeDocsById.entries(), ([documentId, doc]) => [documentId, Automerge.clone(doc)]),
     ),
   };
+}
+
+async function ensureProjectManagementCacheTable(repoRoot: string) {
+  const db = await getManagedDatabaseClient(repoRoot, PROJECT_MANAGEMENT_CACHE_NAMESPACE);
+  await db.exec(`
+    create table if not exists ${PROJECT_MANAGEMENT_CACHE_TABLE} (
+      singleton boolean primary key default true,
+      head_sha text not null,
+      snapshot_json text not null,
+      updated_at timestamptz not null default now()
+    );
+  `);
+  return db;
+}
+
+function serializeProjectManagementCache(cache: ProjectManagementCacheEntry): PersistedProjectManagementCacheState {
+  return {
+    schemaVersion: PROJECT_MANAGEMENT_SCHEMA_VERSION,
+    branch: cache.branch,
+    headSha: cache.headSha,
+    updatedAt: cache.updatedAt,
+    documentOrder: [...cache.documentOrder],
+    documents: cache.documentOrder
+      .map((documentId) => cache.documentsById.get(documentId))
+      .filter((document): document is ProjectManagementDocument => Boolean(document))
+      .map((document) => ({
+        ...document,
+        pullRequest: document.pullRequest ? { ...document.pullRequest } : null,
+        tags: [...document.tags],
+        dependencies: [...document.dependencies],
+        comments: document.comments.map((comment) => ({ ...comment })),
+      })),
+    historyByDocumentId: Array.from(cache.historyByDocumentId.entries(), ([documentId, history]) => ({
+      documentId,
+      history: history.map((entry) => ({ ...entry, tags: [...entry.tags] })),
+    })),
+    automergeDocsById: Array.from(cache.automergeDocsById.entries(), ([documentId, doc]) => ({
+      documentId,
+      binary: Buffer.from(Automerge.save(doc)).toString("base64"),
+    })),
+  };
+}
+
+function deserializeProjectManagementCache(value: PersistedProjectManagementCacheState): ProjectManagementCacheEntry {
+  const documentsById = new Map<string, ProjectManagementDocument>();
+  const documentOrder = [...value.documentOrder];
+  const tagIndex = new Map<string, Set<string>>();
+  const historyByDocumentId = new Map<string, ProjectManagementHistoryEntry[]>();
+  const automergeDocsById = new Map<string, Automerge.Doc<ProjectManagementAutomergeDocument>>();
+
+  for (const entry of value.historyByDocumentId) {
+    historyByDocumentId.set(entry.documentId, entry.history.map((historyEntry) => ({
+      ...historyEntry,
+      tags: [...historyEntry.tags],
+    })));
+  }
+
+  for (const document of value.documents) {
+    const history = historyByDocumentId.get(document.id) ?? [];
+    const clonedDocument: ProjectManagementDocument = {
+      ...document,
+      pullRequest: document.pullRequest ? { ...document.pullRequest } : null,
+      tags: [...document.tags],
+      dependencies: [...document.dependencies],
+      comments: document.comments.map((comment) => ({ ...comment })),
+      historyCount: history.length,
+    };
+    documentsById.set(document.id, clonedDocument);
+    for (const tag of clonedDocument.tags) {
+      const tagDocuments = tagIndex.get(tag) ?? new Set<string>();
+      tagDocuments.add(clonedDocument.id);
+      tagIndex.set(tag, tagDocuments);
+    }
+  }
+
+  for (const entry of value.automergeDocsById) {
+    automergeDocsById.set(
+      entry.documentId,
+      Automerge.load<ProjectManagementAutomergeDocument>(Uint8Array.from(Buffer.from(entry.binary, "base64"))),
+    );
+  }
+
+  return {
+    branch: value.branch,
+    headSha: value.headSha,
+    documentsById,
+    documentOrder,
+    tagIndex,
+    historyByDocumentId,
+    updatedAt: value.updatedAt,
+    automergeDocsById,
+  };
+}
+
+async function loadPersistedProjectManagementCache(repoRoot: string, headSha: string): Promise<ProjectManagementCacheEntry | null> {
+  try {
+    const db = await ensureProjectManagementCacheTable(repoRoot);
+    const result = await db.query<{ snapshot_json: string }>(
+      `select snapshot_json from ${PROJECT_MANAGEMENT_CACHE_TABLE} where singleton = true and head_sha = $1`,
+      [headSha],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    const parsed = JSON.parse(row.snapshot_json) as PersistedProjectManagementCacheState;
+    if (parsed.schemaVersion !== PROJECT_MANAGEMENT_SCHEMA_VERSION || parsed.headSha !== headSha) {
+      return null;
+    }
+
+    return deserializeProjectManagementCache(parsed);
+  } catch {
+    return null;
+  }
+}
+
+async function persistProjectManagementCache(repoRoot: string, cache: ProjectManagementCacheEntry): Promise<void> {
+  try {
+    const db = await ensureProjectManagementCacheTable(repoRoot);
+    await db.query(
+      `
+        insert into ${PROJECT_MANAGEMENT_CACHE_TABLE} (singleton, head_sha, snapshot_json, updated_at)
+        values (true, $1, $2, now())
+        on conflict (singleton) do update
+        set head_sha = excluded.head_sha,
+            snapshot_json = excluded.snapshot_json,
+            updated_at = now()
+      `,
+      [cache.headSha, JSON.stringify(serializeProjectManagementCache(cache))],
+    );
+  } catch {
+    // Cache persistence is best-effort and should not block document reads or writes.
+  }
 }
 
 function buildSeedMarkdown(): string {
@@ -894,6 +1048,7 @@ async function ensureProjectManagementInitialized(repoRoot: string): Promise<str
     const cache = createEmptyReducedState(commitSha);
     reduceBatchIntoCache(cache, batch, commitSha);
     projectManagementCache.set(repoRoot, cache);
+    await persistProjectManagementCache(repoRoot, cache);
     return commitSha;
   } catch {
     const headSha = await resolveBranchHead(repoRoot);
@@ -922,7 +1077,14 @@ async function getReducedProjectManagementState(repoRoot: string): Promise<Proje
 
     nextCache.headSha = ensuredHead;
     projectManagementCache.set(repoRoot, nextCache);
+    await persistProjectManagementCache(repoRoot, nextCache);
     return nextCache;
+  }
+
+  const persisted = await loadPersistedProjectManagementCache(repoRoot, ensuredHead);
+  if (persisted) {
+    projectManagementCache.set(repoRoot, persisted);
+    return persisted;
   }
 
   const nextCache = createEmptyReducedState(ensuredHead);
@@ -933,6 +1095,7 @@ async function getReducedProjectManagementState(repoRoot: string): Promise<Proje
 
   nextCache.headSha = ensuredHead;
   projectManagementCache.set(repoRoot, nextCache);
+  await persistProjectManagementCache(repoRoot, nextCache);
   return nextCache;
 }
 
@@ -1134,6 +1297,7 @@ async function appendEntries(
       reduceBatchIntoCache(nextCache, batch, commitSha);
       nextCache.headSha = commitSha;
       projectManagementCache.set(repoRoot, nextCache);
+      await persistProjectManagementCache(repoRoot, nextCache);
       return {
         branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
         headSha: commitSha,

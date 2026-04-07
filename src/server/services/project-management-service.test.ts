@@ -19,6 +19,7 @@ import {
   updateProjectManagementDependencies,
   updateProjectManagementStatus,
 } from "./project-management-service.js";
+import { closeManagedDatabaseClient } from "./database-client-service.js";
 
 async function createTestRepo(): Promise<string> {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-project-management-"));
@@ -649,6 +650,54 @@ test("clearing the in-memory cache rebuilds state from git history", async () =>
     assert.match(rebuilt.document.markdown, /Updated after cache clear/);
     assert.deepEqual(rebuilt.document.tags, ["plan", "decision"]);
   } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("clearing the in-memory cache reuses the persisted head-sha snapshot", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Persisted Snapshot",
+      markdown: "# Persisted Snapshot\n",
+      tags: ["plan"],
+    });
+
+    await updateProjectManagementDocument(repoRoot, created.document.id, {
+      title: "Persisted Snapshot",
+      markdown: "# Persisted Snapshot\n\nWarm cache content.\n",
+      tags: ["plan", "cached"],
+    });
+
+    const originalPath = process.env.PATH;
+    const shimDir = await fs.mkdtemp(path.join(repoRoot, "git-cache-shim-"));
+    const realGit = (await runCommand("which", ["git"], { cwd: repoRoot })).stdout.trim();
+
+    clearProjectManagementCache(repoRoot);
+    await closeManagedDatabaseClient(repoRoot, "project-management-cache");
+
+    try {
+      const shimPath = path.join(shimDir, "git");
+      await fs.writeFile(shimPath, `#!/bin/sh
+if [ "$1" = "rev-list" ] || [ "$1" = "cat-file" ]; then
+  echo "unexpected git history replay" >&2
+  exit 99
+fi
+exec ${realGit} "$@"
+`, "utf8");
+      await fs.chmod(shimPath, 0o755);
+      process.env.PATH = `${shimDir}:${originalPath ?? ""}`;
+
+      const rebuilt = await getProjectManagementDocument(repoRoot, created.document.id);
+      assert.match(rebuilt.document.markdown, /Warm cache content/);
+      assert.deepEqual(rebuilt.document.tags, ["plan", "cached"]);
+    } finally {
+      process.env.PATH = originalPath;
+      await fs.rm(shimDir, { recursive: true, force: true });
+    }
+  } finally {
+    await closeManagedDatabaseClient(repoRoot, "project-management-cache").catch(() => undefined);
     await destroyTestRepo(repoRoot);
   }
 });
