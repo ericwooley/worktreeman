@@ -18,20 +18,25 @@ import type {
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
+  GitComparisonStreamEvent,
   MergeGitBranchRequest,
   ResolveGitMergeConflictsRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  ProjectManagementDocumentsStreamEvent,
   ProjectManagementUsersResponse,
+  ProjectManagementUsersStreamEvent,
   ReconnectTerminalResponse,
   RunAiCommandRequest,
   RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
   ShutdownStatus,
   SystemStatusResponse,
+  SystemStatusStreamEvent,
   TmuxClientInfo,
+  TmuxClientsStreamEvent,
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
@@ -195,6 +200,26 @@ export function getSystemStatus(): Promise<SystemStatusResponse> {
   return request<SystemStatusResponse>("/api/system");
 }
 
+export function subscribeToSystemStatus(onEvent: (event: SystemStatusStreamEvent) => void): () => void {
+  let closed = false;
+  const source = new EventSource("/api/system/stream");
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as SystemStatusStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
+}
+
 export function subscribeToAiCommandLog(
   jobId: string,
   onEvent: (event: AiCommandLogStreamEvent) => void,
@@ -225,6 +250,35 @@ export function getGitComparison(compareBranch: string, baseBranch?: string): Pr
   }
 
   return request<GitComparisonResponse>(`/api/git/compare?${params.toString()}`);
+}
+
+export function subscribeToGitComparison(
+  compareBranch: string,
+  baseBranch: string | undefined,
+  onEvent: (event: GitComparisonStreamEvent) => void,
+): () => void {
+  let closed = false;
+  const params = new URLSearchParams({ compareBranch });
+  if (baseBranch) {
+    params.set("baseBranch", baseBranch);
+  }
+
+  const source = new EventSource(`/api/git/compare/stream?${params.toString()}`);
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as GitComparisonStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
 }
 
 export function mergeGitBranch(compareBranch: string, payload?: MergeGitBranchRequest): Promise<GitComparisonResponse> {
@@ -262,8 +316,52 @@ export function listProjectManagementDocuments(): Promise<ProjectManagementListR
   return request<ProjectManagementListResponse>("/api/project-management/documents");
 }
 
+export function subscribeToProjectManagementDocuments(
+  onEvent: (event: ProjectManagementDocumentsStreamEvent) => void,
+): () => void {
+  let closed = false;
+  const source = new EventSource("/api/project-management/documents/stream");
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as ProjectManagementDocumentsStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
+}
+
 export function getProjectManagementUsers(): Promise<ProjectManagementUsersResponse> {
   return request<ProjectManagementUsersResponse>("/api/project-management/users");
+}
+
+export function subscribeToProjectManagementUsers(
+  onEvent: (event: ProjectManagementUsersStreamEvent) => void,
+): () => void {
+  let closed = false;
+  const source = new EventSource("/api/project-management/users/stream");
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as ProjectManagementUsersStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
 }
 
 export function getProjectManagementDocument(documentId: string): Promise<ProjectManagementDocumentResponse> {
@@ -390,6 +488,26 @@ export function reconnectTerminal(branch: string): Promise<ReconnectTerminalResp
 
 export function getTmuxClients(branch: string): Promise<TmuxClientInfo[]> {
   return request<TmuxClientInfo[]>(`/api/worktrees/${encodeURIComponent(branch)}/runtime/tmux-clients`);
+}
+
+export function subscribeToTmuxClients(branch: string, onEvent: (event: TmuxClientsStreamEvent) => void): () => void {
+  let closed = false;
+  const source = new EventSource(`/api/worktrees/${encodeURIComponent(branch)}/runtime/tmux-clients/stream`);
+
+  source.onmessage = (event) => {
+    onEvent(JSON.parse(event.data) as TmuxClientsStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
 }
 
 export function disconnectTmuxClient(branch: string, clientId: string): Promise<void> {

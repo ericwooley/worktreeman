@@ -7,8 +7,10 @@ import type {
   ApiStateStreamEvent,
   ConfigDocumentResponse,
   ProjectManagementUsersResponse,
+  ProjectManagementUsersStreamEvent,
   ShutdownStatus,
   SystemStatusResponse,
+  SystemStatusStreamEvent,
   UpdateAiCommandSettingsRequest,
   UpdateProjectManagementUsersRequest,
 } from "../../shared/types.js";
@@ -186,6 +188,103 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
     }
   });
 
+  router.get("/system/stream", async (_req, res, next) => {
+    try {
+      let currentStatus = await getSystemStatus(context.repoRoot);
+      let lastPayload = JSON.stringify(currentStatus);
+      let rebuilding = false;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        unsubscribe();
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
+
+      const writeEvent = (type: SystemStatusStreamEvent["type"], status: SystemStatusResponse) => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        const event: SystemStatusStreamEvent = { type, status };
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
+      };
+
+      writeEvent("snapshot", currentStatus);
+
+      const rebuildAndEmit = () => {
+        if (rebuilding || isStreamClosed()) {
+          return;
+        }
+
+        rebuilding = true;
+        void Promise.resolve().then(async () => {
+          const nextStatus = await getSystemStatus(context.repoRoot);
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentStatus = nextStatus;
+          const nextPayload = JSON.stringify(nextStatus);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            writeEvent("update", nextStatus);
+          }
+        }).catch((error) => {
+          logServerEvent("system-status-stream", "rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuilding = false;
+        });
+      };
+
+      const unsubscribe = context.subscribeToSystemStatusRefresh(rebuildAndEmit);
+      const interval = setInterval(rebuildAndEmit, context.stateStreamFullRefreshIntervalMs);
+      const keepAlive = setInterval(() => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
+      }, 15000);
+
+      res.on("close", closeStream);
+      res.on("error", closeStream);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/config/document", async (_req, res, next) => {
     try {
       const contents = await readConfigDocumentContents({
@@ -229,6 +328,8 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       };
 
       context.emitStateRefresh();
+      context.emitProjectManagementUsersRefresh();
+      context.emitSystemStatusRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -275,6 +376,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       };
 
       context.emitStateRefresh();
+      context.emitSystemStatusRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -286,6 +388,105 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       const config = await context.loadCurrentConfig();
       const payload: ProjectManagementUsersResponse = await listProjectManagementUsers(context.repoRoot, config.projectManagement.users);
       res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/project-management/users/stream", async (_req, res, next) => {
+    try {
+      const config = await context.loadCurrentConfig();
+      let currentUsers = await listProjectManagementUsers(context.repoRoot, config.projectManagement.users);
+      let lastPayload = JSON.stringify(currentUsers);
+      let rebuilding = false;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        unsubscribe();
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
+
+      const writeEvent = (type: ProjectManagementUsersStreamEvent["type"], users: ProjectManagementUsersResponse) => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        const event: ProjectManagementUsersStreamEvent = { type, users };
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
+      };
+
+      writeEvent("snapshot", currentUsers);
+
+      const rebuildAndEmit = () => {
+        if (rebuilding || isStreamClosed()) {
+          return;
+        }
+
+        rebuilding = true;
+        void Promise.resolve().then(async () => {
+          const nextConfig = await context.loadCurrentConfig();
+          const nextUsers = await listProjectManagementUsers(context.repoRoot, nextConfig.projectManagement.users);
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentUsers = nextUsers;
+          const nextPayload = JSON.stringify(nextUsers);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            writeEvent("update", nextUsers);
+          }
+        }).catch((error) => {
+          logServerEvent("project-management-users-stream", "rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuilding = false;
+        });
+      };
+
+      const unsubscribe = context.subscribeToProjectManagementUsersRefresh(rebuildAndEmit);
+      const interval = setInterval(rebuildAndEmit, context.stateStreamFullRefreshIntervalMs);
+      const keepAlive = setInterval(() => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
+      }, 15000);
+
+      res.on("close", closeStream);
+      res.on("error", closeStream);
     } catch (error) {
       next(error);
     }
@@ -325,6 +526,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       const nextConfig = await context.loadCurrentConfig();
       const payload: ProjectManagementUsersResponse = await listProjectManagementUsers(context.repoRoot, nextConfig.projectManagement.users);
       context.emitStateRefresh();
+      context.emitProjectManagementUsersRefresh();
       res.json(payload);
     } catch (error) {
       next(error);

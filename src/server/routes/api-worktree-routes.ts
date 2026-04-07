@@ -11,6 +11,7 @@ import type {
   RunAiCommandRequest,
   RunAiCommandResponse,
   TmuxClientInfo,
+  TmuxClientsStreamEvent,
   WorktreeRecord,
 } from "../../shared/types.js";
 import {
@@ -69,6 +70,34 @@ import {
 import type { ApiRouterContext } from "./api-router-context.js";
 
 export function registerApiWorktreeRoutes(router: express.Router, context: ApiRouterContext) {
+  const loadTmuxClients = async (branch: string) => {
+    const worktree = await context.findWorktree(branch);
+    if (!worktree) {
+      return null;
+    }
+
+    const runtime = await context.operationalState.getRuntimeById(worktree.id);
+    const tmuxSession = await ensureTerminalSession({
+      repoRoot: context.repoRoot,
+      id: worktree.id,
+      branch: worktree.branch,
+      worktreePath: worktree.worktreePath,
+      runtime: runtime ?? undefined,
+    });
+
+    const clients = await listTmuxClients({
+      tmuxSession,
+      worktreePath: worktree.worktreePath,
+    });
+
+    return {
+      worktree,
+      runtime: runtime ?? undefined,
+      tmuxSession,
+      clients,
+    };
+  };
+
   router.get("/worktrees/:branch/ai-command/stream", async (req, res, next) => {
     try {
       const branch = req.params.branch;
@@ -737,6 +766,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       const runtime = await context.restartWorktreeRuntime(config, worktree);
+      context.emitSystemStatusRefresh();
       res.json(runtime);
     } catch (error) {
       next(error);
@@ -745,30 +775,125 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
 
   router.post("/worktrees/:branch/runtime/reconnect", async (req, res, next) => {
     try {
-      const worktree = await context.findWorktree(req.params.branch);
-      if (!worktree) {
+      const payloadSource = await loadTmuxClients(req.params.branch);
+      if (!payloadSource) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
         return;
       }
 
-      const runtime = await context.operationalState.getRuntimeById(worktree.id) ?? undefined;
-      const tmuxSession = await ensureTerminalSession({
-        repoRoot: context.repoRoot,
-        id: worktree.id,
-        branch: worktree.branch,
-        worktreePath: worktree.worktreePath,
-        runtime,
-      });
-      const clients = await listTmuxClients({
-        tmuxSession,
-        worktreePath: worktree.worktreePath,
-      });
       const payload: ReconnectTerminalResponse = {
-        tmuxSession,
-        clients,
-        runtime,
+        tmuxSession: payloadSource.tmuxSession,
+        clients: payloadSource.clients,
+        runtime: payloadSource.runtime,
       };
+      context.emitTmuxClientsRefresh(payloadSource.worktree.branch);
       res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/worktrees/:branch/runtime/tmux-clients/stream", async (req, res, next) => {
+    try {
+      const branch = req.params.branch;
+      const initialPayload = await loadTmuxClients(branch);
+      if (!initialPayload) {
+        res.status(404).json({ message: `Unknown worktree ${branch}` });
+        return;
+      }
+
+      let currentClients = initialPayload.clients;
+      let lastPayload = JSON.stringify(currentClients);
+      let rebuilding = false;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        unsubscribe();
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
+
+      const writeEvent = (type: TmuxClientsStreamEvent["type"], clients: TmuxClientInfo[]) => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        const event: TmuxClientsStreamEvent = { type, branch, clients };
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
+      };
+
+      writeEvent("snapshot", currentClients);
+
+      const rebuildAndEmit = () => {
+        if (rebuilding || isStreamClosed()) {
+          return;
+        }
+
+        rebuilding = true;
+        void Promise.resolve().then(async () => {
+          const nextPayload = await loadTmuxClients(branch);
+          if (!nextPayload || isStreamClosed()) {
+            return;
+          }
+
+          currentClients = nextPayload.clients;
+          const nextSerialized = JSON.stringify(nextPayload.clients);
+          if (nextSerialized !== lastPayload) {
+            lastPayload = nextSerialized;
+            writeEvent("update", nextPayload.clients);
+          }
+        }).catch((error) => {
+          logServerEvent("tmux-clients-stream", "rebuild-failed", {
+            branch,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuilding = false;
+        });
+      };
+
+      const unsubscribe = context.subscribeToTmuxClientsRefresh(branch, rebuildAndEmit);
+      const interval = setInterval(rebuildAndEmit, context.stateStreamFullRefreshIntervalMs);
+      const keepAlive = setInterval(() => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
+      }, 15000);
+
+      req.on("close", closeStream);
+      res.on("close", closeStream);
+      res.on("error", closeStream);
     } catch (error) {
       next(error);
     }
@@ -776,27 +901,13 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
 
   router.get("/worktrees/:branch/runtime/tmux-clients", async (req, res, next) => {
     try {
-      const worktree = await context.findWorktree(req.params.branch);
-      if (!worktree) {
+      const payload = await loadTmuxClients(req.params.branch);
+      if (!payload) {
         res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
         return;
       }
 
-      const runtime = await context.operationalState.getRuntimeById(worktree.id);
-
-      const tmuxSession = await ensureTerminalSession({
-        repoRoot: context.repoRoot,
-        id: worktree.id,
-        branch: worktree.branch,
-        worktreePath: worktree.worktreePath,
-        runtime: runtime ?? undefined,
-      });
-
-      const clients: TmuxClientInfo[] = await listTmuxClients({
-        tmuxSession,
-        worktreePath: worktree.worktreePath,
-      });
-      res.json(clients);
+      res.json(payload.clients);
     } catch (error) {
       next(error);
     }
@@ -811,6 +922,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       await disconnectTmuxClient({ worktreePath: worktree.worktreePath }, decodeURIComponent(req.params.clientId));
+      context.emitTmuxClientsRefresh(worktree.branch);
       res.status(204).send();
     } catch (error) {
       next(error);

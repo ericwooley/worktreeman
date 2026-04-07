@@ -71,10 +71,7 @@ function getCssVariable(name: string, fallback: string): string {
   return value || fallback;
 }
 
-const GIT_COMPARISON_POLL_INTERVAL_MS = 3000;
-const PROJECT_MANAGEMENT_POLL_INTERVAL_MS = 5000;
 const AI_LOG_POLL_INTERVAL_MS = 3000;
-const SYSTEM_STATUS_POLL_INTERVAL_MS = 3000;
 const DIFF_RENDER_MAX_CHARS = 350_000;
 const DIFF_RENDER_MAX_LINES = 8_000;
 const DIFF_RENDER_MAX_FILES = 80;
@@ -394,6 +391,7 @@ interface WorktreeDetailProps {
   onStopBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
+  onSubscribeToGitComparison: (compareBranch: string, baseBranch?: string) => () => void;
   onMergeWorktreeIntoBase: (branch: string, baseBranch?: string) => Promise<GitComparisonResponse | null>;
   onMergeBaseIntoWorktree: (branch: string, baseBranch: string) => Promise<GitComparisonResponse | null>;
   onResolveGitMergeConflicts: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<GitComparisonResponse | null>;
@@ -543,6 +541,7 @@ export function WorktreeDetail({
   onStopBackgroundCommand,
   onLoadBackgroundLogs,
   onLoadGitComparison,
+  onSubscribeToGitComparison,
   onMergeWorktreeIntoBase,
   onMergeBaseIntoWorktree,
   onResolveGitMergeConflicts,
@@ -899,40 +898,8 @@ export function WorktreeDetail({
       return;
     }
 
-    let cancelled = false;
-
-    const loadComparison = async () => {
-      const comparison = await onLoadGitComparison(worktree.branch, selectedGitBaseBranch ?? undefined, {
-        silent: true,
-      });
-      if (cancelled || !comparison) {
-        return;
-      }
-    };
-
-    const pollController = startSequentialPoll(loadComparison, {
-      intervalMs: GIT_COMPARISON_POLL_INTERVAL_MS,
-      runImmediately: document.visibilityState === "visible",
-    });
-
-    const handleVisibilityRefresh = () => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      pollController.trigger();
-    };
-
-    window.addEventListener("focus", handleVisibilityRefresh);
-    document.addEventListener("visibilitychange", handleVisibilityRefresh);
-
-    return () => {
-      cancelled = true;
-      pollController.stop();
-      window.removeEventListener("focus", handleVisibilityRefresh);
-      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
-    };
-  }, [activeTab, onLoadGitComparison, selectedGitBaseBranch, worktree?.branch]);
+    return onSubscribeToGitComparison(worktree.branch, selectedGitBaseBranch ?? undefined);
+  }, [activeTab, onSubscribeToGitComparison, selectedGitBaseBranch, worktree?.branch]);
 
   useEffect(() => {
     if (!gitComparison) {
@@ -948,44 +915,6 @@ export function WorktreeDetail({
       setSelectedGitBaseBranch(gitComparison.baseBranch);
     }
   }, [gitComparison, selectedGitBaseBranch]);
-
-  useEffect(() => {
-    if (activeTab !== "project-management") {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadWorkspace = async () => {
-      await refreshProjectManagementWorkspace({ silent: true, includeSelectedDocument: false });
-      if (cancelled) {
-        return;
-      }
-    };
-
-    const pollController = startSequentialPoll(loadWorkspace, {
-      intervalMs: PROJECT_MANAGEMENT_POLL_INTERVAL_MS,
-      runImmediately: document.visibilityState === "visible",
-    });
-
-    const handleVisibilityRefresh = () => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      pollController.trigger();
-    };
-
-    window.addEventListener("focus", handleVisibilityRefresh);
-    document.addEventListener("visibilitychange", handleVisibilityRefresh);
-
-    return () => {
-      cancelled = true;
-      pollController.stop();
-      window.removeEventListener("focus", handleVisibilityRefresh);
-      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
-    };
-  }, [activeTab, refreshProjectManagementWorkspace]);
 
   useEffect(() => {
     if (activeTab !== "ai-log") {
@@ -1024,44 +953,6 @@ export function WorktreeDetail({
       document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
   }, [activeTab, refreshAiLogs]);
-
-  useEffect(() => {
-    if (activeTab !== "system") {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadSystemState = async () => {
-      await refreshSystemStatus({ silent: true });
-      if (cancelled) {
-        return;
-      }
-    };
-
-    const pollController = startSequentialPoll(loadSystemState, {
-      intervalMs: SYSTEM_STATUS_POLL_INTERVAL_MS,
-      runImmediately: document.visibilityState === "visible",
-    });
-
-    const handleVisibilityRefresh = () => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      pollController.trigger();
-    };
-
-    window.addEventListener("focus", handleVisibilityRefresh);
-    document.addEventListener("visibilitychange", handleVisibilityRefresh);
-
-    return () => {
-      cancelled = true;
-      pollController.stop();
-      window.removeEventListener("focus", handleVisibilityRefresh);
-      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
-    };
-  }, [activeTab, refreshSystemStatus]);
 
   useEffect(() => {
     if (!isBackgroundCommandsActive || !worktree?.branch) {

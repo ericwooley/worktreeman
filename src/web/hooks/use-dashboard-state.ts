@@ -69,7 +69,11 @@ import {
   subscribeToAiCommandJob,
   subscribeToAiCommandLog,
   subscribeToBackgroundCommandLogs,
+  subscribeToGitComparison as subscribeToGitComparisonStream,
+  subscribeToProjectManagementDocuments,
+  subscribeToProjectManagementUsers,
   subscribeToShutdownStatus,
+  subscribeToSystemStatus,
   syncEnvFiles,
   updateProjectManagementDependencies as updateProjectManagementDependenciesRequest,
   updateProjectManagementDocument as updateProjectManagementDocumentRequest,
@@ -192,6 +196,30 @@ function useDashboardStateInternal() {
   ), []);
 
   useEffect(() => subscribeToShutdownStatus(setShutdownStatus), []);
+
+  useEffect(() => subscribeToProjectManagementDocuments((event) => {
+    setProjectManagement(event.documents);
+    setProjectManagementError(null);
+    setProjectManagementLastUpdatedAt(new Date().toISOString());
+    setProjectManagementLoading(false);
+    setError(null);
+  }), []);
+
+  useEffect(() => subscribeToProjectManagementUsers((event) => {
+    setProjectManagementUsers(event.users);
+    setProjectManagementError(null);
+    setProjectManagementLastUpdatedAt(new Date().toISOString());
+    setProjectManagementLoading(false);
+    setError(null);
+  }), []);
+
+  useEffect(() => subscribeToSystemStatus((event) => {
+    setSystemStatus(event.status);
+    setSystemError(null);
+    setSystemLastUpdatedAt(new Date().toISOString());
+    setSystemLoading(false);
+    setError(null);
+  }), []);
 
   useEffect(() => {
     const refreshIfVisible = () => {
@@ -572,6 +600,15 @@ function useDashboardStateInternal() {
         return subscribeToBackgroundCommandLogs(branch, commandName, (event) => {
           onEvent?.(event);
           appendBackgroundLogs(event);
+        });
+      },
+      subscribeToGitComparison(compareBranch: string, baseBranch?: string) {
+        setGitComparisonLoading(true);
+
+        return subscribeToGitComparisonStream(compareBranch, baseBranch, (event) => {
+          setGitComparison((current) => areGitComparisonsEqual(current, event.comparison) ? current : event.comparison);
+          setGitComparisonLoading(false);
+          setError(null);
         });
       },
       async loadGitComparison(compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) {

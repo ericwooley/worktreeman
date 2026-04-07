@@ -87,6 +87,11 @@ const CONFIG_COMMIT_ENV = {
 
 export function createApiRouterContext(options: ApiRouterOptions) {
   const stateListeners = new Set<() => void>();
+  const gitComparisonListeners = new Set<() => void>();
+  const projectManagementDocumentsListeners = new Set<() => void>();
+  const projectManagementUsersListeners = new Set<() => void>();
+  const systemStatusListeners = new Set<() => void>();
+  const tmuxClientsListenersByBranch = new Map<string, Set<() => void>>();
   const defaultAiProcesses: ApiAiProcesses = {
     startProcess: startAiCommandProcess,
     getProcess: getAiCommandProcess,
@@ -184,6 +189,95 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     };
   };
 
+  const emitGitComparisonRefresh = () => {
+    for (const listener of gitComparisonListeners) {
+      listener();
+    }
+  };
+
+  const subscribeToGitComparisonRefresh = (listener: () => void) => {
+    gitComparisonListeners.add(listener);
+    return () => {
+      gitComparisonListeners.delete(listener);
+    };
+  };
+
+  const emitProjectManagementDocumentsRefresh = () => {
+    for (const listener of projectManagementDocumentsListeners) {
+      listener();
+    }
+  };
+
+  const subscribeToProjectManagementDocumentsRefresh = (listener: () => void) => {
+    projectManagementDocumentsListeners.add(listener);
+    return () => {
+      projectManagementDocumentsListeners.delete(listener);
+    };
+  };
+
+  const emitProjectManagementUsersRefresh = () => {
+    for (const listener of projectManagementUsersListeners) {
+      listener();
+    }
+  };
+
+  const subscribeToProjectManagementUsersRefresh = (listener: () => void) => {
+    projectManagementUsersListeners.add(listener);
+    return () => {
+      projectManagementUsersListeners.delete(listener);
+    };
+  };
+
+  const emitSystemStatusRefresh = () => {
+    for (const listener of systemStatusListeners) {
+      listener();
+    }
+  };
+
+  const subscribeToSystemStatusRefresh = (listener: () => void) => {
+    systemStatusListeners.add(listener);
+    return () => {
+      systemStatusListeners.delete(listener);
+    };
+  };
+
+  const emitTmuxClientsRefresh = (branch: string) => {
+    const listeners = tmuxClientsListenersByBranch.get(branch);
+    if (!listeners) {
+      return;
+    }
+
+    for (const listener of listeners) {
+      listener();
+    }
+  };
+
+  const subscribeToTmuxClientsRefresh = (branch: string, listener: () => void) => {
+    let listeners = tmuxClientsListenersByBranch.get(branch);
+    if (!listeners) {
+      listeners = new Set<() => void>();
+      tmuxClientsListenersByBranch.set(branch, listeners);
+    }
+
+    listeners.add(listener);
+    return () => {
+      const current = tmuxClientsListenersByBranch.get(branch);
+      if (!current) {
+        return;
+      }
+
+      current.delete(listener);
+      if (current.size === 0) {
+        tmuxClientsListenersByBranch.delete(branch);
+      }
+    };
+  };
+
+  const emitRuntimeRefreshes = (branch: string) => {
+    emitSystemStatusRefresh();
+    emitTmuxClientsRefresh(branch);
+  };
+
   const createWorktreeRuntime = async (
     config: WorktreeManagerConfig,
     worktree: WorktreeRecord,
@@ -205,6 +299,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       runtime,
     });
     emitStateRefresh();
+    emitRuntimeRefreshes(worktree.branch);
     logServerEvent("runtime", "start-completed", {
       worktreeId: worktree.id,
       branch: worktree.branch,
@@ -261,6 +356,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
 
     await options.operationalState.deleteRuntimeById(runtime.id);
     emitStateRefresh();
+    emitRuntimeRefreshes(runtime.branch);
 
     if (stopError) {
       logServerEvent("runtime", "stop-failed", {
@@ -614,6 +710,16 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     scheduleRuntimeStopAfterAiJob,
     emitStateRefresh,
     subscribeToStateRefresh,
+    emitGitComparisonRefresh,
+    subscribeToGitComparisonRefresh,
+    emitProjectManagementDocumentsRefresh,
+    subscribeToProjectManagementDocumentsRefresh,
+    emitProjectManagementUsersRefresh,
+    subscribeToProjectManagementUsersRefresh,
+    emitSystemStatusRefresh,
+    subscribeToSystemStatusRefresh,
+    emitTmuxClientsRefresh,
+    subscribeToTmuxClientsRefresh,
     commitConfigEdit,
     loadResolvedAiLog,
     writeImmediateAiFailureLog,

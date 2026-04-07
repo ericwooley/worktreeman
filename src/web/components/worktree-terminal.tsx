@@ -6,8 +6,7 @@ import type {
   TerminalServerMessage,
   TmuxClientInfo,
 } from "@shared/types";
-import { disconnectTmuxClient, getTmuxClients, reconnectTerminal, restartRuntime } from "../lib/api";
-import { startSequentialPoll } from "../lib/sequential-poll";
+import { disconnectTmuxClient, getTmuxClients, reconnectTerminal, restartRuntime, subscribeToTmuxClients } from "../lib/api";
 import { getTmuxSessionName } from "../lib/tmux";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
@@ -317,14 +316,16 @@ export function WorktreeTerminal({
       }
     };
 
-    const pollController = startSequentialPoll(refreshClients, {
-      intervalMs: 3000,
-      runImmediately: true,
+    void refreshClients();
+    const unsubscribe = subscribeToTmuxClients(terminalBranch, (event) => {
+      if (!cancelled) {
+        setTmuxClients(event.clients);
+      }
     });
 
     return () => {
       cancelled = true;
-      pollController.stop();
+      unsubscribe();
     };
   }, [sessionName, terminalBranch, worktree]);
 
@@ -702,7 +703,7 @@ export function WorktreeTerminal({
     setDisconnectingClientId(clientId);
     try {
       await disconnectTmuxClient(terminalBranch, clientId);
-      await refreshTmuxClients(terminalBranch);
+      setTmuxClients((current) => current.filter((client) => client.id !== clientId));
     } finally {
       setDisconnectingClientId(null);
     }

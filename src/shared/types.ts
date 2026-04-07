@@ -171,6 +171,32 @@ export interface ApiStateStreamEvent {
   state: ApiStateResponse;
 }
 
+export interface GitComparisonStreamEvent {
+  type: "snapshot" | "update";
+  comparison: GitComparisonResponse;
+}
+
+export interface ProjectManagementDocumentsStreamEvent {
+  type: "snapshot" | "update";
+  documents: ProjectManagementListResponse;
+}
+
+export interface ProjectManagementUsersStreamEvent {
+  type: "snapshot" | "update";
+  users: ProjectManagementUsersResponse;
+}
+
+export interface SystemStatusStreamEvent {
+  type: "snapshot" | "update";
+  status: SystemStatusResponse;
+}
+
+export interface TmuxClientsStreamEvent {
+  type: "snapshot" | "update";
+  branch: string;
+  clients: TmuxClientInfo[];
+}
+
 export interface ConfigDocumentResponse {
   branch: string;
   filePath: string;

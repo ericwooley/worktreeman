@@ -8,6 +8,7 @@ import type {
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
+  GitComparisonStreamEvent,
   MergeGitBranchRequest,
   ResolveGitMergeConflictsRequest,
 } from "../../shared/types.js";
@@ -40,6 +41,114 @@ import {
 import type { ApiRouterContext } from "./api-router-context.js";
 
 export function registerApiGitRoutes(router: express.Router, context: ApiRouterContext) {
+  router.get("/git/compare/stream", async (req, res, next) => {
+    try {
+      const compareBranch = String(req.query.compareBranch ?? "").trim();
+      const baseBranch = typeof req.query.baseBranch === "string" ? req.query.baseBranch : undefined;
+
+      if (!compareBranch) {
+        res.status(400).json({ message: "compareBranch is required" });
+        return;
+      }
+
+      let currentComparison = await getGitComparison(context.repoRoot, compareBranch, baseBranch);
+      let lastPayload = JSON.stringify(currentComparison);
+      let rebuilding = false;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        unsubscribe();
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
+
+      const writeEvent = (type: GitComparisonStreamEvent["type"], comparison: GitComparisonResponse) => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        const event: GitComparisonStreamEvent = { type, comparison };
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
+      };
+
+      writeEvent("snapshot", currentComparison);
+
+      const rebuildAndEmit = () => {
+        if (rebuilding || isStreamClosed()) {
+          return;
+        }
+
+        rebuilding = true;
+        void Promise.resolve().then(async () => {
+          const nextComparison = await getGitComparison(context.repoRoot, compareBranch, baseBranch);
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentComparison = nextComparison;
+          const nextPayload = JSON.stringify(nextComparison);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            writeEvent("update", nextComparison);
+          }
+        }).catch((error) => {
+          logServerEvent("git-comparison-stream", "rebuild-failed", {
+            compareBranch,
+            baseBranch: baseBranch ?? null,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuilding = false;
+        });
+      };
+
+      const unsubscribe = context.subscribeToGitComparisonRefresh(rebuildAndEmit);
+      const interval = setInterval(rebuildAndEmit, context.stateStreamFullRefreshIntervalMs);
+      const keepAlive = setInterval(() => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
+      }, 15000);
+
+      req.on("close", closeStream);
+      res.on("close", closeStream);
+      res.on("error", closeStream);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/git/compare", async (req, res, next) => {
     try {
       const compareBranch = String(req.query.compareBranch ?? "").trim();
@@ -263,6 +372,8 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       });
 
       const comparison: GitComparisonResponse = await getGitComparison(context.repoRoot, branch, baseBranch);
+      context.emitGitComparisonRefresh();
+      context.emitStateRefresh();
       res.json(comparison);
     } catch (error) {
       next(error);
@@ -307,6 +418,8 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
         env,
         message: typeof body?.message === "string" ? body.message : undefined,
       });
+      context.emitGitComparisonRefresh();
+      context.emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);

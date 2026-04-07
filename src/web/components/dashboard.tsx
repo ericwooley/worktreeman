@@ -171,6 +171,7 @@ export function Dashboard() {
     loadAiCommandLogs,
     loadSystemStatus,
     loadGitComparison,
+    subscribeToGitComparison,
     mergeGitBranch,
     mergeBaseBranchIntoWorktree,
     resolveGitMergeConflicts,
@@ -1536,6 +1537,7 @@ export function Dashboard() {
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
             onLoadGitComparison={loadGitComparison}
+            onSubscribeToGitComparison={subscribeToGitComparison}
             onMergeWorktreeIntoBase={mergeGitBranch}
             onMergeBaseIntoWorktree={mergeBaseBranchIntoWorktree}
             onResolveGitMergeConflicts={resolveGitMergeConflicts}

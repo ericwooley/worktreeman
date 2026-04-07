@@ -9,6 +9,7 @@ import type {
   CreateProjectManagementDocumentRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
+  ProjectManagementDocumentsStreamEvent,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
   RunAiCommandResponse,
@@ -64,6 +65,103 @@ import type { ApiRouterContext } from "./api-router-context.js";
 import type { RunProjectManagementDocumentAiRequest } from "./api-types.js";
 
 export function registerApiProjectManagementRoutes(router: express.Router, context: ApiRouterContext) {
+  router.get("/project-management/documents/stream", async (_req, res, next) => {
+    try {
+      let currentDocuments = await listProjectManagementDocuments(context.repoRoot);
+      let lastPayload = JSON.stringify(currentDocuments);
+      let rebuilding = false;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        unsubscribe();
+        clearInterval(interval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
+
+      const writeEvent = (type: ProjectManagementDocumentsStreamEvent["type"], documents: ProjectManagementListResponse) => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        const event: ProjectManagementDocumentsStreamEvent = { type, documents };
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
+      };
+
+      writeEvent("snapshot", currentDocuments);
+
+      const rebuildAndEmit = () => {
+        if (rebuilding || isStreamClosed()) {
+          return;
+        }
+
+        rebuilding = true;
+        void Promise.resolve().then(async () => {
+          const nextDocuments = await listProjectManagementDocuments(context.repoRoot);
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentDocuments = nextDocuments;
+          const nextPayload = JSON.stringify(nextDocuments);
+          if (nextPayload !== lastPayload) {
+            lastPayload = nextPayload;
+            writeEvent("update", nextDocuments);
+          }
+        }).catch((error) => {
+          logServerEvent("project-management-documents-stream", "rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuilding = false;
+        });
+      };
+
+      const unsubscribe = context.subscribeToProjectManagementDocumentsRefresh(rebuildAndEmit);
+      const interval = setInterval(rebuildAndEmit, context.stateStreamFullRefreshIntervalMs);
+      const keepAlive = setInterval(() => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
+      }, 15000);
+
+      res.on("close", closeStream);
+      res.on("error", closeStream);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/project-management/documents", async (_req, res, next) => {
     try {
       const payload: ProjectManagementListResponse = await listProjectManagementDocuments(context.repoRoot);
@@ -151,6 +249,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
       }
 
       context.emitStateRefresh();
+      context.emitProjectManagementDocumentsRefresh();
       res.status(201).json(payload);
     } catch (error) {
       next(error);
@@ -189,6 +288,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         },
       );
       context.emitStateRefresh();
+      context.emitProjectManagementDocumentsRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -226,6 +326,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         })),
       });
       context.emitStateRefresh();
+      context.emitProjectManagementDocumentsRefresh();
       res.status(201).json(payload);
     } catch (error) {
       next(error);
@@ -241,6 +342,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         Array.isArray(body?.dependencyIds) ? body.dependencyIds.map((entry) => String(entry)) : [],
       );
       context.emitStateRefresh();
+      context.emitProjectManagementDocumentsRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -261,6 +363,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         body.status,
       );
       context.emitStateRefresh();
+      context.emitProjectManagementDocumentsRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -281,6 +384,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         { body: body.body },
       );
       context.emitStateRefresh();
+      context.emitProjectManagementDocumentsRefresh();
       res.status(201).json(payload);
     } catch (error) {
       next(error);
@@ -527,6 +631,8 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
 
       const payload: RunAiCommandResponse = { job, runtime };
       context.emitStateRefresh();
+      context.emitProjectManagementDocumentsRefresh();
+      context.emitSystemStatusRefresh();
       res.json(payload);
     } catch (error) {
       const cleanupWorktree = worktree;
