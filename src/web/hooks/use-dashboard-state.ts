@@ -464,6 +464,43 @@ function useDashboardStateInternal() {
     }
   }, []);
 
+  const loadSystemStatusState = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setSystemLoading(true);
+    }
+
+    try {
+      const payload = await fetchSystemStatus();
+      setSystemStatus(payload);
+      setSystemError(null);
+      setSystemLastUpdatedAt(new Date().toISOString());
+      setError(null);
+      return payload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load system status.";
+      setSystemStatus(null);
+      setSystemError(message);
+      setError(message);
+      return null;
+    } finally {
+      if (!options?.silent) {
+        setSystemLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProjectManagementDocumentsState({ silent: true });
+  }, [loadProjectManagementDocumentsState]);
+
+  useEffect(() => {
+    void loadProjectManagementUsersState({ silent: true });
+  }, [loadProjectManagementUsersState]);
+
+  useEffect(() => {
+    void loadSystemStatusState({ silent: true });
+  }, [loadSystemStatusState]);
+
   const actions = useMemo(
     () => ({
       async create(branch: string, documentId?: string | null) {
@@ -805,30 +842,7 @@ function useDashboardStateInternal() {
           }
         }
       },
-      async loadSystemStatus(options?: { silent?: boolean }) {
-        if (!options?.silent) {
-          setSystemLoading(true);
-        }
-
-        try {
-          const payload = await fetchSystemStatus();
-          setSystemStatus(payload);
-          setSystemError(null);
-          setSystemLastUpdatedAt(new Date().toISOString());
-          setError(null);
-          return payload;
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "Failed to load system status.";
-          setSystemStatus(null);
-          setSystemError(message);
-          setError(message);
-          return null;
-        } finally {
-          if (!options?.silent) {
-            setSystemLoading(false);
-          }
-        }
-      },
+      loadSystemStatus: loadSystemStatusState,
       loadAiCommandLog,
       async runAiCommand(branch: string, payload: RunAiCommandRequest) {
         try {
@@ -1074,7 +1088,7 @@ function useDashboardStateInternal() {
         }
       },
     }),
-    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, loadSystemStatusState, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {

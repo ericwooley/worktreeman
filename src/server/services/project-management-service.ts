@@ -1614,6 +1614,20 @@ export async function listProjectManagementDocuments(repoRoot: string): Promise<
   };
 }
 
+export async function rebuildProjectManagementStateForStartup(repoRoot: string): Promise<ProjectManagementListResponse> {
+  const headSha = await ensureProjectManagementInitialized(repoRoot);
+  const state = await rebuildProjectManagementStore(repoRoot, headSha);
+  const documents = await loadStoreDocuments(repoRoot);
+  const availableTags = [...new Set(documents.flatMap((document) => document.tags))].sort((left, right) => left.localeCompare(right));
+  return {
+    branch: state.branch,
+    headSha: state.headSha,
+    documents,
+    availableTags,
+    availableStatuses: [...PROJECT_MANAGEMENT_DOCUMENT_STATUSES],
+  };
+}
+
 export async function getProjectManagementDocument(repoRoot: string, documentId: string): Promise<ProjectManagementDocumentResponse> {
   const state = await getReducedProjectManagementState(repoRoot);
   return {

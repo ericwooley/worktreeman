@@ -13,6 +13,7 @@ import { stopAllBackgroundCommandsForShutdown } from "./services/background-comm
 import { waitForActiveAiCommandJobs } from "./services/ai-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
 import { createOperationalStateStore, stopOperationalStateStore } from "./services/operational-state-service.js";
+import { rebuildProjectManagementStateForStartup } from "./services/project-management-service.js";
 import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
 import { formatServerUrl, resolveServerHost } from "./utils/server-host.js";
 import { formatDurationMs, logServerEvent } from "./utils/server-logger.js";
@@ -344,6 +345,19 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     }
 
     process.stdout.write(`[startup] Host selection: ${resolvedHost.detail}.\n`);
+
+    try {
+      const projectManagement = await rebuildProjectManagementStateForStartup(options.repo.repoRoot);
+      logServerEvent("startup", "project-management-rebuilt", {
+        branch: projectManagement.branch,
+        headSha: projectManagement.headSha,
+        documentCount: projectManagement.documents.length,
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to rebuild project management state during startup: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
 
     const startupWorktrees = await listWorktrees(options.repo.repoRoot);
     const startupWorktree = startupWorktrees.find((entry) => entry.branch === DEFAULT_WORKTREEMAN_MAIN_BRANCH)
