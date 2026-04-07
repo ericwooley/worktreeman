@@ -536,6 +536,10 @@ async function getProjectManagementDb(repoRoot: string) {
     create index if not exists project_management_history_lookup_idx
       on ${PROJECT_MANAGEMENT_HISTORY_TABLE} (document_id, history_order);
   `);
+  await db.exec(`
+    alter table ${PROJECT_MANAGEMENT_STATE_TABLE}
+      add column if not exists snapshot_json text;
+  `);
   return db;
 }
 
@@ -548,11 +552,26 @@ async function getProjectManagementDbExecutor(
 
 async function readPersistedProjectManagementState(repoRoot: string, db?: ManagedDatabaseClient): Promise<ProjectManagementStoreState | null> {
   const executor = await getProjectManagementDbExecutor(repoRoot, db);
-  const result = await executor.query<{ head_sha: string; updated_at: string }>(
-    `select head_sha, updated_at::text from ${PROJECT_MANAGEMENT_STATE_TABLE} where singleton = true`,
+  const result = await executor.query<{ head_sha: string | null; updated_at: string | null; snapshot_json: string | null }>(
+    `select head_sha, updated_at::text, snapshot_json from ${PROJECT_MANAGEMENT_STATE_TABLE} where singleton = true`,
   );
   const row = result.rows[0];
   if (!row) {
+    return null;
+  }
+
+  if (row.snapshot_json) {
+    const snapshot = JSON.parse(row.snapshot_json) as Partial<ProjectManagementStoreState>;
+    if (typeof snapshot.headSha === "string" && typeof snapshot.updatedAt === "string") {
+      return {
+        branch: typeof snapshot.branch === "string" ? snapshot.branch : DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+        headSha: snapshot.headSha,
+        updatedAt: snapshot.updatedAt,
+      };
+    }
+  }
+
+  if (!row.head_sha || !row.updated_at) {
     return null;
   }
 
@@ -569,15 +588,17 @@ async function persistProjectManagementStoreState(
   db?: ManagedDatabaseClient,
 ): Promise<void> {
   const executor = await getProjectManagementDbExecutor(repoRoot, db);
+  const snapshot = JSON.stringify(state);
   await executor.query(
     `
-      insert into ${PROJECT_MANAGEMENT_STATE_TABLE} (singleton, head_sha, updated_at)
-      values (true, $1, $2)
+      insert into ${PROJECT_MANAGEMENT_STATE_TABLE} (singleton, head_sha, updated_at, snapshot_json)
+      values (true, $1, $2, $3)
       on conflict (singleton) do update
       set head_sha = excluded.head_sha,
-          updated_at = excluded.updated_at
+          updated_at = excluded.updated_at,
+          snapshot_json = excluded.snapshot_json
     `,
-    [state.headSha, state.updatedAt],
+    [state.headSha, state.updatedAt, snapshot],
   );
 }
 
