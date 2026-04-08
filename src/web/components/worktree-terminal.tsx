@@ -85,6 +85,7 @@ export function WorktreeTerminal({
   onTerminalShortcutToggle: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const shellSurfaceRef = useRef<HTMLDivElement | null>(null);
   const sessionName = worktree?.runtime?.tmuxSession
     ?? (worktree && repoRoot ? getTmuxSessionName(repoRoot, worktree.id) : null);
   const terminalBranch = worktree?.runtime?.branch ?? worktree?.branch ?? null;
@@ -230,7 +231,7 @@ export function WorktreeTerminal({
 
         <div className="theme-terminal-border theme-shell-shadow matrix-panel flex min-h-0 flex-1 flex-col overflow-hidden border-x-0 border-t border-b-0">
           <div className="theme-terminal-surface flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div ref={shellSurfaceRef} className="min-h-0 min-w-0 flex-1 overflow-hidden">
               <div
                 ref={hostRef}
                 className="theme-terminal-border theme-terminal-surface theme-shell-host h-full w-full overflow-hidden border-b"
@@ -426,13 +427,13 @@ export function WorktreeTerminal({
           return false;
         });
         terminal.focus();
-        fitAddon.fit();
 
-        let lastCols = terminal.cols;
-        let lastRows = terminal.rows;
-        let lastHostWidth = Math.round(host.clientWidth);
-        let lastHostHeight = Math.round(host.clientHeight);
+        let lastCols = 0;
+        let lastRows = 0;
+        let lastHostWidth = 0;
+        let lastHostHeight = 0;
         let resizeFrame: number | null = null;
+        let pendingResizeForce = false;
         let outputFrame: number | null = null;
         let outputBuffer = "";
 
@@ -509,19 +510,31 @@ export function WorktreeTerminal({
         });
 
         const resize = (force = false) => {
+          const rect = host.getBoundingClientRect();
+          const nextHostWidth = Math.round(rect.width);
+          const nextHostHeight = Math.round(rect.height);
+
+          if (nextHostWidth <= 0 || nextHostHeight <= 0) {
+            return;
+          }
+
           fitAddon.fit();
 
           const nextCols = terminal.cols;
           const nextRows = terminal.rows;
 
-          if (nextCols !== terminal.cols || nextRows !== terminal.rows) {
-            terminal.resize(nextCols, nextRows);
-          }
-
-          if (!force && nextCols === lastCols && nextRows === lastRows) {
+          if (
+            !force &&
+            nextCols === lastCols &&
+            nextRows === lastRows &&
+            nextHostWidth === lastHostWidth &&
+            nextHostHeight === lastHostHeight
+          ) {
             return;
           }
 
+          lastHostWidth = nextHostWidth;
+          lastHostHeight = nextHostHeight;
           lastCols = nextCols;
           lastRows = nextRows;
 
@@ -536,39 +549,36 @@ export function WorktreeTerminal({
         };
 
         const scheduleResize = (force = false) => {
+          pendingResizeForce = pendingResizeForce || force;
+
           if (resizeFrame !== null) {
             return;
           }
 
           resizeFrame = window.requestAnimationFrame(() => {
             resizeFrame = null;
-            resize(force);
+            const nextForce = pendingResizeForce;
+            pendingResizeForce = false;
+            resize(nextForce);
           });
+        };
+
+        const triggerInitialResizePass = () => {
+          scheduleResize(true);
+          window.requestAnimationFrame(() => scheduleResize(true));
+          window.setTimeout(() => scheduleResize(true), 0);
+          window.setTimeout(() => scheduleResize(true), 150);
         };
 
         scheduleResizeRef.current = scheduleResize;
 
-        const resizeObserver = new ResizeObserver((entries) => {
-          const entry = entries[0];
-          if (!entry) {
-            return;
-          }
-
-          const nextWidth = Math.round(entry.contentRect.width);
-          const nextHeight = Math.round(entry.contentRect.height);
-
-          if (
-            nextWidth <= 0 ||
-            nextHeight <= 0 ||
-            (nextWidth === lastHostWidth && nextHeight === lastHostHeight)
-          ) {
-            return;
-          }
-
-          lastHostWidth = nextWidth;
-          lastHostHeight = nextHeight;
+        const resizeObserver = new ResizeObserver(() => {
           scheduleResize();
         });
+        const shellSurface = shellSurfaceRef.current;
+        if (shellSurface) {
+          resizeObserver.observe(shellSurface);
+        }
         resizeObserver.observe(host);
 
         const hasDomSelection = () => Boolean(window.getSelection()?.toString());
@@ -598,8 +608,9 @@ export function WorktreeTerminal({
           });
         };
         const handleViewportResize = () => {
-          lastHostWidth = Math.round(host.clientWidth);
-          lastHostHeight = Math.round(host.clientHeight);
+          scheduleResize(true);
+        };
+        const handleDrawerTransitionEnd = () => {
           scheduleResize(true);
         };
         const scheduleCopySelection = () => {
@@ -635,15 +646,17 @@ export function WorktreeTerminal({
           event.clipboardData?.setData("text/plain", selection);
           lastCopiedSelectionRef.current = selection;
         };
-        socket.addEventListener("open", () => scheduleResize(true));
+        socket.addEventListener("open", () => triggerInitialResizePass());
         terminal.onSelectionChange(handleSelectionChange);
         host.addEventListener("click", focusTerminal);
         host.addEventListener("mouseup", handleMouseUp);
         host.addEventListener("focusin", focusTerminal);
+        shellSurface?.addEventListener("transitionend", handleDrawerTransitionEnd);
         document.addEventListener("copy", handleCopy, true);
         window.addEventListener("resize", handleViewportResize);
         window.visualViewport?.addEventListener("resize", handleViewportResize);
         window.addEventListener("focus", handleViewportResize);
+        triggerInitialResizePass();
         void document.fonts?.ready?.then(() => scheduleResize(true));
 
         cleanup = () => {
@@ -660,6 +673,7 @@ export function WorktreeTerminal({
           host.removeEventListener("click", focusTerminal);
           host.removeEventListener("mouseup", handleMouseUp);
           host.removeEventListener("focusin", focusTerminal);
+          shellSurface?.removeEventListener("transitionend", handleDrawerTransitionEnd);
           document.removeEventListener("copy", handleCopy, true);
           window.removeEventListener("resize", handleViewportResize);
           window.visualViewport?.removeEventListener("resize", handleViewportResize);
