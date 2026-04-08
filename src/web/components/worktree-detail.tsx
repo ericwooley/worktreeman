@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
-import { DiffFile, changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
+import { changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
 import type {
   AiCommandOrigin,
   AiCommandConfig,
@@ -149,35 +149,24 @@ function GitDiffAccordionContent({
   diffHighlight: boolean;
   diffFontSize: number;
 }) {
-  const diffFile = useMemo(() => {
-    const primaryFileName = file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName;
-    const oldLang = file.oldFileName !== "/dev/null" ? getLang(file.oldFileName) : "plaintext";
-    const newLang = primaryFileName !== "/dev/null" ? getLang(primaryFileName) : "plaintext";
-    const nextDiffFile = new DiffFile(
-      file.oldFileName,
-      "",
-      file.newFileName,
-      "",
-      file.hunks,
-      oldLang,
-      newLang,
-    );
-
-    nextDiffFile.initTheme(diffTheme);
-    if (diffHighlight) {
-      nextDiffFile.init();
-    } else {
-      nextDiffFile.initRaw();
-    }
-    nextDiffFile.buildSplitDiffLines();
-    nextDiffFile.buildUnifiedDiffLines();
-    return nextDiffFile;
-  }, [diffHighlight, diffTheme, file, diffMode, diffWrap, diffFontSize]);
+  const primaryFileName = file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName;
+  const oldLang = file.oldFileName !== "/dev/null" ? getLang(file.oldFileName) : "plaintext";
+  const newLang = primaryFileName !== "/dev/null" ? getLang(primaryFileName) : "plaintext";
 
   return (
     <div className="max-h-[40rem] overflow-auto matrix-diff-file">
       <DiffView
-        diffFile={diffFile}
+        data={{
+          oldFile: {
+            fileName: file.oldFileName,
+            fileLang: oldLang,
+          },
+          newFile: {
+            fileName: file.newFileName,
+            fileLang: newLang,
+          },
+          hunks: [file.diffText],
+        }}
         diffViewMode={diffMode}
         diffViewTheme={diffTheme}
         diffViewWrap={diffWrap}

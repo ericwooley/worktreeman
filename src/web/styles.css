@@ -1122,7 +1122,6 @@ body,
 }
 
 .matrix-diff-file {
-  overflow: hidden;
   border: 1px solid rgb(var(--rgb-base0E) / 0.16);
   background: rgb(var(--rgb-base01) / 0.96);
 }
