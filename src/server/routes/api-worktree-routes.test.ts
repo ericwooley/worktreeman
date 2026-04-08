@@ -786,7 +786,8 @@ test("worktree AI auto-starts a runtime and stops it after completion when the r
   });
   const nextContents = updateAiCommandInConfigContents(currentContents, {
     smart: "printf %s $WTM_AI_INPUT",
-    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+    simple:
+      "node -e \"const text = process.argv[1] || ''; const isCommitPrompt = text.includes('single-line git commit message') || text.includes('concise git commit message') || text.includes('git commit message'); console.log(isCommitPrompt ? 'commit me' : text);\" $WTM_AI_INPUT",
     autoStartRuntime: true,
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");

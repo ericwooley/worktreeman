@@ -446,7 +446,8 @@ export async function createApiTestRepo(): Promise<ApiTestRepo> {
 
   const nextContents = updateAiCommandInConfigContents(currentContents, {
     smart: "printf %s $WTM_AI_INPUT",
-    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+    simple:
+      "node -e \"const text = process.argv[1] || ''; const isCommitPrompt = text.includes('single-line git commit message') || text.includes('concise git commit message') || text.includes('git commit message'); console.log(isCommitPrompt ? 'commit me' : text);\" $WTM_AI_INPUT",
     autoStartRuntime: false,
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");

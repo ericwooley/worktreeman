@@ -674,7 +674,8 @@ test("project-management document AI creates a derived worktree and streams stdo
   });
   const nextContents = updateAiCommandInConfigContents(currentContents, {
     smart: "printf 'planning...\\nimplemented\\n'; printf '%s' \"$WTM_AI_INPUT\" > .wtm-captured-input; env > .wtm-captured-env",
-    simple: "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT",
+    simple:
+      "node -e \"const text = process.argv[1] || ''; const isCommitPrompt = text.includes('single-line git commit message') || text.includes('concise git commit message') || text.includes('git commit message'); console.log(isCommitPrompt ? 'commit me' : text);\" $WTM_AI_INPUT",
     autoStartRuntime: true,
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
@@ -870,7 +871,8 @@ test("project-management document AI runs startup commands for a new derived wor
   };
   parsedConfig.aiCommands.autoStartRuntime = false;
   parsedConfig.aiCommands.smart = "printf '%s' \"$WTM_AI_INPUT\" >/dev/null; printf 'planning...\\n'";
-  parsedConfig.aiCommands.simple = "node -e \"const text = process.argv[1] || ''; console.log(text.includes('git commit message') ? 'commit me' : text);\" $WTM_AI_INPUT";
+  parsedConfig.aiCommands.simple =
+    "node -e \"const text = process.argv[1] || ''; const isCommitPrompt = text.includes('single-line git commit message') || text.includes('concise git commit message') || text.includes('git commit message'); console.log(isCommitPrompt ? 'commit me' : text);\" $WTM_AI_INPUT";
   await fs.writeFile(repo.configPath, serializeConfigContents(parsedConfig as unknown as Record<string, unknown>, { includeSchemaHeader: true }), "utf8");
 
   const server = await startApiServer(repo, {

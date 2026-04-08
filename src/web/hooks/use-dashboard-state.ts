@@ -713,7 +713,6 @@ function useDashboardStateInternal() {
         }
       },
       async generateGitCommitMessage(branch: string, baseBranch?: string, commandId: AiCommandId = "simple"): Promise<GenerateGitCommitMessageResponse | null> {
-        setGitComparisonLoading(true);
         try {
           const result = await generateGitCommitMessageRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
           setError(null);
@@ -721,8 +720,6 @@ function useDashboardStateInternal() {
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to generate commit message.");
           return null;
-        } finally {
-          setGitComparisonLoading(false);
         }
       },
       async commitGitChanges(

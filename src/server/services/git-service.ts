@@ -178,7 +178,7 @@ async function generateResolvedConflictContents(options: {
     baseBranch: options.baseBranch,
     conflicts: [options.conflict],
   });
-  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", template], {
+  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", prepareAiTemplate(template)], {
     cwd: options.worktreePath,
     env: { ...options.env, WTM_AI_INPUT: prompt },
   });
@@ -503,35 +503,63 @@ function parseGitBranchName(raw: string): string {
 
 type CommitMessageStyle = "default" | "short";
 
-function quoteShellArg(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+function prepareAiTemplate(template: string): string {
+  return template.replace(/(?<!["'])\$WTM_AI_INPUT(?!["'])/g, '"$WTM_AI_INPUT"');
 }
 
-function formatCommitMessagePrompt(options: { branch: string; baseBranch: string; style?: CommitMessageStyle }): string {
+function truncateUtf8(value: string, maxChars: number): string {
+  return value.length > maxChars ? value.slice(0, maxChars) : value;
+}
+
+function formatCommitMessagePrompt(options: {
+  branch: string;
+  baseBranch: string;
+  style?: CommitMessageStyle;
+  recentCommits: string;
+  gitStatus: string;
+  diff: string;
+}): string {
   if (options.style === "short") {
     return [
-      `Write a concise git commit message for the current changes on branch ${options.branch} relative to ${options.baseBranch}.`,
-      "Inspect the repository state yourself, including staged, unstaged, and untracked changes as needed.",
-      "Return only the final git commit message text as plain text.",
-      "Use a single short subject line no longer than 50 characters.",
-      "Focus on why the change exists.",
-      "Do not use markdown, bullets, quotes, prefixes, or code fences.",
-      "Avoid mentioning generated output, AI, or the prompt.",
+      "Generate a single-line git commit message (max 50 chars) for the following diff.",
+      "Output ONLY the message wrapped in <msg> tags.",
+      "Do not include markdown, formatting, explanations, or tool calls.",
+      "Example: <msg>Update MCP pipeline agent and workflow</msg>",
+      "",
+      "Context:",
+      `- Current Branch: ${options.branch}`,
+      "- Recent Commits (for style reference):",
+      options.recentCommits || "No recent commits",
+      "- Git Status:",
+      options.gitStatus || "Clean working tree",
+      "",
+      "Diff:",
+      options.diff || "No diff available.",
     ].join("\n");
   }
 
   return [
     `Write a concise git commit message for the current changes on branch ${options.branch} relative to ${options.baseBranch}.`,
-    "Inspect the repository state yourself, including staged, unstaged, and untracked changes as needed.",
     "Return only the final commit message text as plain text.",
     "Use 1 or 2 short sentences focused on why the change exists.",
     "Do not use markdown, bullets, quotes, prefixes, or code fences.",
     "Avoid mentioning generated output, AI, or the prompt.",
+    "",
+    "Context:",
+    `- Current Branch: ${options.branch}`,
+    "- Recent Commits (for style reference):",
+    options.recentCommits || "No recent commits",
+    "- Git Status:",
+    options.gitStatus || "Clean working tree",
+    "",
+    "Diff:",
+    options.diff || "No diff available.",
   ].join("\n");
 }
 
 function normalizeCommitMessage(raw: string, style: CommitMessageStyle = "default"): string {
-  const normalized = raw
+  const tagMatch = raw.match(/<msg>([\s\S]*?)<\/msg>/i);
+  const normalized = (tagMatch?.[1] ?? raw)
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .split("\n")
@@ -545,6 +573,34 @@ function normalizeCommitMessage(raw: string, style: CommitMessageStyle = "defaul
   }
 
   return normalized;
+}
+
+async function getRecentCommitSubjects(worktreePath: string): Promise<string> {
+  try {
+    const { stdout } = await runCommand("git", ["log", "-3", "--oneline"], { cwd: worktreePath });
+    return stdout.trim() || "No recent commits";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (isInvalidWorktreeErrorMessage(message) || message.includes("does not have any commits yet")) {
+      return "No recent commits";
+    }
+
+    throw error;
+  }
+}
+
+async function getWorkingTreeStatus(worktreePath: string): Promise<string> {
+  try {
+    const { stdout } = await runCommand("git", ["status", "--short"], { cwd: worktreePath });
+    return stdout.trim() || "Clean working tree";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (isInvalidWorktreeErrorMessage(message)) {
+      return "Clean working tree";
+    }
+
+    throw error;
+  }
 }
 
 function parseCommitLines(stdout: string): GitCompareCommit[] {
@@ -781,12 +837,21 @@ async function generateCommitMessage(options: {
     throw new Error(`${options.commandId === "simple" ? "Simple AI" : "Smart AI"} must include $WTM_AI_INPUT.`);
   }
 
+  const [recentCommits, gitStatus, diff] = await Promise.all([
+    getRecentCommitSubjects(options.worktreePath),
+    getWorkingTreeStatus(options.worktreePath),
+    getWorkingTreeDiff(options.worktreePath),
+  ]);
+
   const prompt = formatCommitMessagePrompt({
     branch: options.branch,
     baseBranch: options.baseBranch,
     style: options.style,
+    recentCommits,
+    gitStatus,
+    diff: truncateUtf8(diff, 10_000),
   });
-  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", template], {
+  const { stdout } = await runCommand(process.env.SHELL || "/usr/bin/bash", ["-lc", prepareAiTemplate(template)], {
     cwd: options.worktreePath,
     env: { ...options.env, WTM_AI_INPUT: prompt },
   });
@@ -1189,6 +1254,7 @@ export async function generateGitCommitMessage(options: {
     aiCommands: options.aiCommands,
     commandId: options.commandId,
     env: options.env,
+    style: "short",
   });
 
   return {

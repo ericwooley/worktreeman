@@ -865,6 +865,7 @@ export function WorktreeDetail({
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [commitMessageDraft, setCommitMessageDraft] = useState("");
   const [commitMessageLoading, setCommitMessageLoading] = useState(false);
+  const [commitSubmitting, setCommitSubmitting] = useState(false);
   const [mergeConflictAiRunning, setMergeConflictAiRunning] = useState(false);
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
   const linkedDocument = worktree?.linkedDocument ?? null;
@@ -1303,15 +1304,23 @@ export function WorktreeDetail({
     window.setTimeout(() => setCopied(false), 1500);
   };
 
-  const openCommitModal = async () => {
+  const openCommitModal = () => {
     if (!worktree?.branch || !gitComparison) {
       return;
     }
 
     setCommitModalOpen(true);
     setCommitMessageDraft("");
-    setCommitMessageLoading(true);
+    setCommitMessageLoading(false);
+    setCommitSubmitting(false);
+  };
 
+  const generateCommitMessage = async () => {
+    if (!worktree?.branch || !gitComparison) {
+      return;
+    }
+
+    setCommitMessageLoading(true);
     try {
       const result = await onGenerateGitCommitMessage(worktree.branch, gitComparison.baseBranch, "simple");
       setCommitMessageDraft(result?.message ?? "");
@@ -1325,15 +1334,20 @@ export function WorktreeDetail({
       return;
     }
 
-    const result = await onCommitGitChanges(worktree.branch, {
-      baseBranch: gitComparison.baseBranch,
-      commandId: "simple",
-      message: commitMessageDraft,
-    });
+    setCommitSubmitting(true);
+    try {
+      const result = await onCommitGitChanges(worktree.branch, {
+        baseBranch: gitComparison.baseBranch,
+        commandId: "simple",
+        message: commitMessageDraft,
+      });
 
-    if (result) {
-      setCommitModalOpen(false);
-      setCommitMessageDraft("");
+      if (result) {
+        setCommitModalOpen(false);
+        setCommitMessageDraft("");
+      }
+    } finally {
+      setCommitSubmitting(false);
     }
   };
 
@@ -1502,7 +1516,7 @@ export function WorktreeDetail({
                 void openCommitModal();
               }}
             >
-              AI commit
+              Commit
             </button>
           </div>
         </div>
@@ -1752,7 +1766,7 @@ export function WorktreeDetail({
                 void openCommitModal();
               }}
             >
-              AI commit
+              Commit
             </button>
             <button
               type="button"
@@ -2328,26 +2342,38 @@ export function WorktreeDetail({
 
       {commitModalOpen ? (
         <MatrixModal
-          kicker="AI commit"
+          kicker="Commit"
           title={<>Review commit message</>}
-          description="Generate a draft commit message with Simple AI, edit it if needed, then commit from the diff tab."
+          description="Generate a draft message when you want one, edit it if needed, then commit the current changes."
           closeLabel="Close commit dialog"
           maxWidthClass="max-w-2xl"
           onClose={() => {
-            if (commitMessageLoading || gitComparisonLoading) {
+            if (commitMessageLoading || commitSubmitting) {
               return;
             }
             setCommitModalOpen(false);
           }}
           footer={(
-            <button
-              type="submit"
-              form="git-ai-commit-form"
-              className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-              disabled={commitMessageLoading || gitComparisonLoading || !commitMessagePreview}
-            >
-              {gitComparisonLoading ? "Committing..." : "Commit"}
-            </button>
+            <div className="flex w-full flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => {
+                  void generateCommitMessage();
+                }}
+                disabled={commitMessageLoading || commitSubmitting}
+              >
+                {commitMessageLoading ? "Generating message..." : "Generate message"}
+              </button>
+              <button
+                type="submit"
+                form="git-ai-commit-form"
+                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                disabled={commitMessageLoading || commitSubmitting || !commitMessagePreview}
+              >
+                {commitSubmitting ? "Committing..." : "Commit"}
+              </button>
+            </div>
           )}
         >
           <form
@@ -2367,8 +2393,8 @@ export function WorktreeDetail({
               <textarea
                 value={commitMessageDraft}
                 onChange={(event) => setCommitMessageDraft(event.target.value)}
-                placeholder={commitMessageLoading ? "Generating commit message..." : "Write the commit message"}
-                disabled={commitMessageLoading || gitComparisonLoading}
+                placeholder={commitMessageLoading ? "Generating message..." : "Write the commit message"}
+                disabled={commitMessageLoading || commitSubmitting}
                 rows={8}
                 autoFocus
                 className="matrix-input min-h-[14rem] w-full rounded-none px-3 py-3 text-sm outline-none"
