@@ -640,8 +640,6 @@ function useDashboardStateInternal() {
         });
       },
       subscribeToGitComparison(compareBranch: string, baseBranch?: string) {
-        setGitComparisonLoading(true);
-
         return subscribeToGitComparisonStream(compareBranch, baseBranch, (event) => {
           setGitComparison((current) => areGitComparisonsEqual(current, event.comparison) ? current : event.comparison);
           setGitComparisonLoading(false);

@@ -31,7 +31,8 @@ import { getTmuxSessionName } from "../lib/tmux";
 import { startSequentialPoll } from "../lib/sequential-poll";
 import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixAccordion, MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabs } from "./matrix-primitives";
+import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabs } from "./matrix-primitives";
+import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
 import { WorktreeTerminal } from "./worktree-terminal";
 import {
   BACKGROUND_COMMAND_CONTROL_DESCRIPTION,
@@ -90,6 +91,34 @@ type ParsedDiffSection = {
   }>;
 };
 
+type ParsedDiffEntry = ParsedDiffSection["files"][number] & {
+  sectionKey: string;
+  sectionTitle: string;
+  displayName: string;
+  fileName: string;
+  pathSegments: string[];
+  directoryPaths: string[];
+  metrics: {
+    chars: number;
+    lines: number;
+  };
+  isTooLargeToRender: boolean;
+};
+
+type DiffTreeDirectory = {
+  key: string;
+  name: string;
+  path: string;
+  directories: DiffTreeDirectory[];
+  files: ParsedDiffEntry[];
+};
+
+type DiffTreeSection = {
+  key: string;
+  title: string;
+  root: DiffTreeDirectory;
+};
+
 export type WorktreeEnvironmentSubTab = "terminal" | "background";
 export type WorktreeGitSubTab = "status" | "pull-request";
 
@@ -113,7 +142,7 @@ function GitDiffAccordionContent({
   diffHighlight,
   diffFontSize,
 }: {
-  file: ParsedDiffSection["files"][number];
+  file: ParsedDiffEntry;
   diffMode: DiffModeEnum;
   diffTheme: "light" | "dark";
   diffWrap: boolean;
@@ -124,13 +153,12 @@ function GitDiffAccordionContent({
     const primaryFileName = file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName;
     const oldLang = file.oldFileName !== "/dev/null" ? getLang(file.oldFileName) : "plaintext";
     const newLang = primaryFileName !== "/dev/null" ? getLang(primaryFileName) : "plaintext";
-    const { oldContent, newContent } = buildDiffContents(file.hunks);
     const nextDiffFile = new DiffFile(
       file.oldFileName,
-      oldContent,
+      "",
       file.newFileName,
-      newContent,
-      [file.diffText],
+      "",
+      file.hunks,
       oldLang,
       newLang,
     );
@@ -160,33 +188,233 @@ function GitDiffAccordionContent({
   );
 }
 
-function buildDiffContents(hunks: string[]) {
-  const oldLines: string[] = [];
-  const newLines: string[] = [];
+function getDiffEntryMetrics(file: ParsedDiffSection["files"][number]) {
+  return {
+    chars: file.diffText.length,
+    lines: file.diffText ? file.diffText.split("\n").length : 0,
+  };
+}
 
-  for (const hunk of hunks) {
-    for (const line of hunk.split("\n").slice(1)) {
-      if (!line || line.startsWith("@@ ") || line.startsWith("\\ No newline at end of file")) {
-        continue;
-      }
+function isDiffEntryTooLargeToRender(file: ParsedDiffSection["files"][number]) {
+  const metrics = getDiffEntryMetrics(file);
+  return metrics.chars > DIFF_RENDER_MAX_CHARS || metrics.lines > DIFF_RENDER_MAX_LINES;
+}
 
-      const prefix = line[0];
-      const content = line.slice(1);
+function getDiffDisplayName(file: ParsedDiffSection["files"][number]) {
+  return file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName;
+}
 
-      if (prefix === " " || prefix === "-") {
-        oldLines.push(content);
-      }
+function getDiffPathSegments(file: ParsedDiffSection["files"][number]) {
+  return getDiffDisplayName(file).split("/").filter(Boolean);
+}
 
-      if (prefix === " " || prefix === "+") {
-        newLines.push(content);
-      }
-    }
+function getDiffDirectoryPaths(sectionKey: string, pathSegments: string[]) {
+  const directoryPaths: string[] = [];
+  let currentPath = sectionKey;
+
+  for (const segment of pathSegments.slice(0, -1)) {
+    currentPath = `${currentPath}/${segment}`;
+    directoryPaths.push(currentPath);
   }
 
-  return {
-    oldContent: oldLines.join("\n"),
-    newContent: newLines.join("\n"),
+  return directoryPaths;
+}
+
+function getDiffChangeType(file: ParsedDiffSection["files"][number]) {
+  if (file.oldFileName === "/dev/null") {
+    return "Added";
+  }
+
+  if (file.newFileName === "/dev/null") {
+    return "Deleted";
+  }
+
+  return "Modified";
+}
+
+function buildDiffTreeSections(entries: ParsedDiffEntry[]) {
+  type MutableDiffTreeDirectory = DiffTreeDirectory & {
+    directoryMap: Map<string, MutableDiffTreeDirectory>;
   };
+
+  const sections = new Map<string, { title: string; root: MutableDiffTreeDirectory }>();
+
+  for (const entry of entries) {
+    let section = sections.get(entry.sectionKey);
+    if (!section) {
+      section = {
+        title: entry.sectionTitle,
+        root: {
+          key: entry.sectionKey,
+          name: "",
+          path: entry.sectionKey,
+          directories: [],
+          files: [],
+          directoryMap: new Map(),
+        },
+      };
+      sections.set(entry.sectionKey, section);
+    }
+
+      let currentDirectory = section.root;
+      for (let index = 0; index < entry.pathSegments.length - 1; index += 1) {
+        const segment = entry.pathSegments[index];
+        const nextPath = entry.directoryPaths[index];
+        let nextDirectory = currentDirectory.directoryMap.get(segment);
+
+        if (!nextDirectory) {
+          nextDirectory = {
+            key: nextPath,
+            name: segment,
+            path: nextPath,
+            directories: [],
+            files: [],
+            directoryMap: new Map(),
+          };
+          currentDirectory.directoryMap.set(segment, nextDirectory);
+          currentDirectory.directories.push(nextDirectory);
+        }
+
+        currentDirectory = nextDirectory;
+      }
+
+      currentDirectory.files.push(entry);
+  }
+
+  const sortDirectory = (directory: MutableDiffTreeDirectory): DiffTreeDirectory => ({
+    key: directory.key,
+    name: directory.name,
+    path: directory.path,
+    directories: directory.directories
+      .map((child) => sortDirectory(child as MutableDiffTreeDirectory))
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    files: [...directory.files].sort((left, right) => left.fileName.localeCompare(right.fileName)),
+  });
+
+  const treeSections = Array.from(sections.entries())
+    .map(([key, section]) => ({
+      key,
+      title: section.title,
+      root: sortDirectory(section.root),
+    }))
+    .sort((left, right) => left.title.localeCompare(right.title));
+
+  const directoryPaths = treeSections.flatMap((section) => {
+    const collectPaths = (directory: DiffTreeDirectory): string[] => [
+      ...directory.directories.flatMap((child) => [child.path, ...collectPaths(child)]),
+    ];
+
+    return collectPaths(section.root);
+  });
+
+  return { treeSections, directoryPaths };
+}
+
+function GitDiffTreeDirectoryView({
+  directory,
+  depth,
+  expandedPaths,
+  selectedFileKey,
+  onToggleDirectory,
+  onSelectFile,
+}: {
+  directory: DiffTreeDirectory;
+  depth: number;
+  expandedPaths: Set<string>;
+  selectedFileKey: string | null;
+  onToggleDirectory: (path: string) => void;
+  onSelectFile: (file: ParsedDiffEntry) => void;
+}) {
+  const isExpanded = expandedPaths.has(directory.path);
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-2 py-1 text-left text-xs theme-text-muted hover:theme-text-strong"
+        style={{ paddingLeft: `${depth * 0.75 + 0.5}rem` }}
+        onClick={() => onToggleDirectory(directory.path)}
+      >
+        <span className="w-4 text-center font-mono text-[11px] theme-text-soft">{isExpanded ? "-" : "+"}</span>
+        <span className="truncate font-mono">{directory.name}</span>
+      </button>
+
+      {isExpanded ? (
+        <div className="space-y-1">
+          {directory.directories.map((child) => (
+            <GitDiffTreeDirectoryView
+              key={child.path}
+              directory={child}
+              depth={depth + 1}
+              expandedPaths={expandedPaths}
+              selectedFileKey={selectedFileKey}
+              onToggleDirectory={onToggleDirectory}
+              onSelectFile={onSelectFile}
+            />
+          ))}
+          {directory.files.map((file) => (
+            <button
+              key={file.key}
+              type="button"
+              className={`flex w-full items-center gap-2 px-2 py-1 text-left text-xs ${selectedFileKey === file.key ? "theme-text-strong" : "theme-text-muted hover:theme-text-strong"}`}
+              style={{ paddingLeft: `${(depth + 1) * 0.75 + 0.5}rem` }}
+              onClick={() => onSelectFile(file)}
+            >
+              <span className="w-4 text-center font-mono text-[11px] theme-text-soft">*</span>
+              <span className="min-w-0 flex-1 truncate font-mono">{file.fileName}</span>
+              {file.isTooLargeToRender ? <MatrixBadge tone="warning" compact>Large</MatrixBadge> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function GitDiffTreeSectionView({
+  section,
+  expandedPaths,
+  selectedFileKey,
+  onToggleDirectory,
+  onSelectFile,
+}: {
+  section: DiffTreeSection;
+  expandedPaths: Set<string>;
+  selectedFileKey: string | null;
+  onToggleDirectory: (path: string) => void;
+  onSelectFile: (file: ParsedDiffEntry) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-emphasis">{section.title}</div>
+      <div className="space-y-1">
+        {section.root.directories.map((directory) => (
+          <GitDiffTreeDirectoryView
+            key={directory.path}
+            directory={directory}
+            depth={0}
+            expandedPaths={expandedPaths}
+            selectedFileKey={selectedFileKey}
+            onToggleDirectory={onToggleDirectory}
+            onSelectFile={onSelectFile}
+          />
+        ))}
+        {section.root.files.map((file) => (
+          <button
+            key={file.key}
+            type="button"
+            className={`flex w-full items-center gap-2 px-2 py-1 text-left text-xs ${selectedFileKey === file.key ? "theme-text-strong" : "theme-text-muted hover:theme-text-strong"}`}
+            style={{ paddingLeft: "0.5rem" }}
+            onClick={() => onSelectFile(file)}
+          >
+            <span className="w-4 text-center font-mono text-[11px] theme-text-soft">*</span>
+            <span className="min-w-0 flex-1 truncate font-mono">{file.fileName}</span>
+            {file.isTooLargeToRender ? <MatrixBadge tone="warning" compact>Large</MatrixBadge> : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function getMergeActionState(worktreeBranch: string | undefined, gitComparison: GitComparisonResponse | null) {
@@ -641,8 +869,10 @@ export function WorktreeDetail({
   const [diffMode, setDiffMode] = useState<DiffModeEnum>(DiffModeEnum.SplitGitHub);
   const [diffTheme, setDiffTheme] = useState<"light" | "dark">("dark");
   const [diffWrap, setDiffWrap] = useState(false);
-  const [diffHighlight, setDiffHighlight] = useState(false);
+  const [diffHighlight, setDiffHighlight] = useState(true);
   const [diffFontSize, setDiffFontSize] = useState(13);
+  const [selectedGitDiffFileKey, setSelectedGitDiffFileKey] = useState<string | null>(null);
+  const [expandedGitDiffDirectories, setExpandedGitDiffDirectories] = useState<string[]>([]);
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [commitMessageDraft, setCommitMessageDraft] = useState("");
   const [commitMessageLoading, setCommitMessageLoading] = useState(false);
@@ -757,24 +987,10 @@ export function WorktreeDetail({
     }),
     [gitComparison?.baseBranch, gitComparison?.compareBranch, gitView, worktree?.branch],
   );
-  const gitDiffMetrics = useMemo(() => {
-    const raw = gitComparison?.effectiveDiff ?? "";
-    return {
-      chars: raw.length,
-      lines: raw ? raw.split("\n").length : 0,
-    };
-  }, [gitComparison?.effectiveDiff]);
   const parsedDiffSections = useMemo(
     () => gitComparison?.effectiveDiff ? parseDiffSections(gitComparison.effectiveDiff) : [],
     [gitComparison?.effectiveDiff],
   );
-  const parsedDiffFileCount = useMemo(
-    () => parsedDiffSections.reduce((count, section) => count + section.files.length, 0),
-    [parsedDiffSections],
-  );
-  const isDiffTooLargeToRender = gitDiffMetrics.chars > DIFF_RENDER_MAX_CHARS
-    || gitDiffMetrics.lines > DIFF_RENDER_MAX_LINES
-    || parsedDiffFileCount > DIFF_RENDER_MAX_FILES;
   const mergeActionState = useMemo(
     () => getMergeActionState(worktree?.branch, gitComparison),
     [gitComparison, worktree?.branch],
@@ -827,21 +1043,48 @@ export function WorktreeDetail({
     && gitComparison.workingTreeSummary.dirty,
   );
   const commitMessagePreview = commitMessageDraft.trim();
-  const gitDiffFiles = useMemo(() => {
-    if (isDiffTooLargeToRender) {
-      return [];
+  const gitDiffFiles = useMemo<ParsedDiffEntry[]>(() => parsedDiffSections.flatMap((section, sectionIndex) => section.files.map((file) => {
+    const displayName = getDiffDisplayName(file);
+    const pathSegments = getDiffPathSegments(file);
+    const sectionKey = `${section.title}:${sectionIndex}`;
+
+    return {
+      ...file,
+      sectionKey,
+      sectionTitle: section.title,
+      displayName,
+      fileName: pathSegments[pathSegments.length - 1] ?? displayName,
+      pathSegments,
+      directoryPaths: getDiffDirectoryPaths(sectionKey, pathSegments),
+      metrics: getDiffEntryMetrics(file),
+      isTooLargeToRender: isDiffEntryTooLargeToRender(file),
+    };
+  })), [parsedDiffSections]);
+  const gitDiffTree = useMemo(() => buildDiffTreeSections(gitDiffFiles), [gitDiffFiles]);
+  const selectedGitDiffFile = useMemo(
+    () => gitDiffFiles.find((file) => file.key === selectedGitDiffFileKey) ?? gitDiffFiles[0] ?? null,
+    [gitDiffFiles, selectedGitDiffFileKey],
+  );
+  const expandedGitDiffDirectorySet = useMemo(() => new Set(expandedGitDiffDirectories), [expandedGitDiffDirectories]);
+  const handleGitDiffDirectoryToggle = useCallback((path: string) => {
+    setExpandedGitDiffDirectories((current) => current.includes(path)
+      ? current.filter((entry) => entry !== path)
+      : [...current, path]);
+  }, []);
+  const handleGitDiffFileSelect = useCallback((file: ParsedDiffEntry) => {
+    setSelectedGitDiffFileKey(file.key);
+    if (!file.directoryPaths.length) {
+      return;
     }
 
-    return parsedDiffSections.map((section) => ({
-      title: section.title,
-      files: section.files.map((file) => ({
-        key: file.key,
-        file,
-        displayName: file.newFileName !== "/dev/null" ? file.newFileName : file.oldFileName,
-        hunkCount: file.hunks.length,
-      })),
-    }));
-  }, [isDiffTooLargeToRender, parsedDiffSections]);
+    setExpandedGitDiffDirectories((current) => {
+      const next = new Set(current);
+      for (const path of file.directoryPaths) {
+        next.add(path);
+      }
+      return Array.from(next);
+    });
+  }, []);
   const diffModeOptions = useMemo<MatrixDropdownOption[]>(() => ([
     { value: String(DiffModeEnum.SplitGitHub), label: "Split GitHub", description: "GitHub-style split view" },
     { value: String(DiffModeEnum.SplitGitLab), label: "Split GitLab", description: "GitLab-style split view" },
@@ -916,6 +1159,36 @@ export function WorktreeDetail({
       setSelectedGitBaseBranch(gitComparison.baseBranch);
     }
   }, [gitComparison, selectedGitBaseBranch]);
+
+  useEffect(() => {
+    if (!gitDiffFiles.length) {
+      if (selectedGitDiffFileKey !== null) {
+        setSelectedGitDiffFileKey(null);
+      }
+      return;
+    }
+
+    if (!selectedGitDiffFileKey || !gitDiffFiles.some((file) => file.key === selectedGitDiffFileKey)) {
+      setSelectedGitDiffFileKey(gitDiffFiles[0].key);
+    }
+  }, [gitDiffFiles, selectedGitDiffFileKey]);
+
+  useEffect(() => {
+    if (!gitDiffTree.directoryPaths.length) {
+      if (expandedGitDiffDirectories.length) {
+        setExpandedGitDiffDirectories([]);
+      }
+      return;
+    }
+
+    setExpandedGitDiffDirectories((current) => {
+      const valid = current.filter((path) => gitDiffTree.directoryPaths.includes(path));
+      if (valid.length) {
+        return valid;
+      }
+      return gitDiffTree.directoryPaths;
+    });
+  }, [expandedGitDiffDirectories.length, gitDiffTree.directoryPaths]);
 
   useEffect(() => {
     if (activeTab !== "ai-log") {
@@ -1268,7 +1541,7 @@ export function WorktreeDetail({
         ) : null}
       </div>
 
-      {gitComparisonLoading ? (
+      {!gitComparison && gitComparisonLoading ? (
         <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">Loading git comparison…</div>
       ) : gitComparison ? gitView === "graph" ? (
         gitComparison.ahead === 0 && gitComparison.behind === 0 ? (
@@ -1359,40 +1632,76 @@ export function WorktreeDetail({
               </button>
             </div>
 
-            {gitComparison.effectiveDiff ? isDiffTooLargeToRender ? (
-              <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
-                Diff is too large to render safely in the browser.
-                <div className="mt-2 font-mono text-xs theme-text-warning-soft">
-                  {parsedDiffFileCount} files, {gitDiffMetrics.lines.toLocaleString()} lines, {gitDiffMetrics.chars.toLocaleString()} chars
+            {gitComparison.effectiveDiff ? gitDiffFiles.length ? (
+              <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
+                <div className="border theme-border-subtle p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] theme-text-soft">Changed files</p>
+                    <MatrixBadge tone="neutral" compact>{gitDiffFiles.length}</MatrixBadge>
+                  </div>
+                  <div className="mt-3 max-h-[40rem] space-y-4 overflow-y-auto pr-1">
+                    {gitDiffTree.treeSections.map((section) => (
+                      <GitDiffTreeSectionView
+                        key={section.key}
+                        section={section}
+                        expandedPaths={expandedGitDiffDirectorySet}
+                        selectedFileKey={selectedGitDiffFile?.key ?? null}
+                        onToggleDirectory={handleGitDiffDirectoryToggle}
+                        onSelectFile={handleGitDiffFileSelect}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : gitDiffFiles.length ? (
-              <div className="space-y-4">
-                {gitDiffFiles.map((section) => (
-                  <div key={section.title} className="space-y-3">
-                    <div className="text-xs uppercase tracking-[0.18em] theme-text-emphasis">{section.title}</div>
-                    {section.files.map((file) => (
-                      <MatrixAccordion
-                        key={file.key}
-                        summary={(
-                          <div className="flex items-center justify-between gap-3 pr-3">
-                            <div className="min-w-0 font-mono text-xs theme-text-strong">{file.displayName}</div>
-                            <div className="text-[11px] theme-text-muted">{file.hunkCount} hunk{file.hunkCount === 1 ? "" : "s"}</div>
+
+                <div className="border theme-border-subtle p-4">
+                  {selectedGitDiffFile ? (
+                    <div className="space-y-4">
+                      <MatrixCard as="div" className="p-3">
+                        <MatrixCardHeader
+                          eyebrow={<span className="theme-text-soft">{selectedGitDiffFile.sectionTitle}</span>}
+                          title={<span className="font-mono text-sm">{selectedGitDiffFile.displayName}</span>}
+                          titleLines={2}
+                          titleText={selectedGitDiffFile.displayName}
+                          description={`${selectedGitDiffFile.hunks.length} hunk${selectedGitDiffFile.hunks.length === 1 ? "" : "s"}`}
+                          descriptionLines={1}
+                          descriptionText={`${selectedGitDiffFile.hunks.length} hunk${selectedGitDiffFile.hunks.length === 1 ? "" : "s"}`}
+                          badges={(
+                            <>
+                              <MatrixBadge tone="neutral" compact>{getDiffChangeType(selectedGitDiffFile)}</MatrixBadge>
+                              {selectedGitDiffFile.isTooLargeToRender ? <MatrixBadge tone="warning" compact>Too large</MatrixBadge> : null}
+                            </>
+                          )}
+                        />
+                        <MatrixCardFooter className="mt-3 justify-between gap-x-3 gap-y-1 text-xs theme-text-muted">
+                          <span>{selectedGitDiffFile.metrics.lines.toLocaleString()} lines</span>
+                          <span>{selectedGitDiffFile.metrics.chars.toLocaleString()} chars</span>
+                        </MatrixCardFooter>
+                      </MatrixCard>
+
+                      {selectedGitDiffFile.isTooLargeToRender ? (
+                        <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
+                          This file diff is too large to render safely in the browser.
+                          <div className="mt-2 font-mono text-xs theme-text-warning-soft">
+                            {selectedGitDiffFile.metrics.lines.toLocaleString()} lines, {selectedGitDiffFile.metrics.chars.toLocaleString()} chars
                           </div>
-                        )}
-                      >
+                        </div>
+                      ) : (
                         <GitDiffAccordionContent
-                          file={file.file}
+                          file={selectedGitDiffFile}
                           diffMode={diffMode}
                           diffTheme={diffTheme}
                           diffWrap={diffWrap}
                           diffHighlight={diffHighlight}
                           diffFontSize={diffFontSize}
                         />
-                      </MatrixAccordion>
-                    ))}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  ) : (
+                    <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                      Select a changed file to inspect its diff.
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="theme-inline-panel-warning px-4 py-4 text-sm theme-text-warning">
