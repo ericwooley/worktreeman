@@ -203,6 +203,17 @@ export async function disconnectTmuxClient(target: { worktreePath: string }, cli
   });
 }
 
+async function refreshTmuxClient(target: { worktreePath: string }, clientId: string, size?: { cols: number; rows: number }): Promise<void> {
+  const args = ["refresh-client"];
+  if (size) {
+    args.push("-C", `${size.cols}x${size.rows}`);
+  }
+  args.push("-t", clientId);
+  await runCommand("tmux", args, {
+    cwd: target.worktreePath,
+  });
+}
+
 export async function killTmuxSession(runtime: WorktreeRuntime): Promise<void> {
   await killTmuxSessionByName(runtime.tmuxSession, runtime.worktreePath);
 }
@@ -325,6 +336,8 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
         socket.close();
       });
 
+      let currentClientId: string | null = null;
+
       const resolveCurrentClientId = async () => {
         try {
           const clients = await listTmuxClients({ tmuxSession, worktreePath: target.worktreePath });
@@ -342,6 +355,9 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
             return;
           }
 
+          currentClientId = matchedClient.id;
+          await refreshTmuxClient(target, matchedClient.id, { cols: term.cols, rows: term.rows });
+
           send(socket, { type: "ready", session: tmuxSession, clientId: matchedClient.id });
         } catch {
           send(socket, { type: "ready", session: tmuxSession, clientId: null });
@@ -357,6 +373,9 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
             term.write(message.data);
           } else if (message.type === "resize") {
             term.resize(message.cols, message.rows);
+            if (currentClientId) {
+              void refreshTmuxClient(target, currentClientId, { cols: message.cols, rows: message.rows }).catch(() => undefined);
+            }
           }
         } catch (error) {
           send(socket, { type: "error", message: error instanceof Error ? error.message : "Invalid terminal payload." });

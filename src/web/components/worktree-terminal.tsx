@@ -339,7 +339,7 @@ export function WorktreeTerminal({
   useEffect(() => {
     const worktreeId = worktree?.id ?? null;
 
-    if (!isTerminalVisible || !hostRef.current || !terminalBranch || !sessionName || !worktreeId) {
+    if (!hostRef.current || !terminalBranch || !sessionName || !worktreeId) {
       setTerminalConnectionState("disconnected");
       return;
     }
@@ -488,7 +488,9 @@ export function WorktreeTerminal({
             setTerminalConnectionState("connected");
             setTerminalStatusMessage(null);
             setCurrentClientId(message.clientId);
-            terminal.focus();
+            if (isTerminalVisible) {
+              terminal.focus();
+            }
           }
         });
 
@@ -706,7 +708,7 @@ export function WorktreeTerminal({
       disposed = true;
       cleanup?.();
     };
-  }, [isTerminalVisible, reconnectGeneration, sessionName, terminalBranch, terminalSurfaceMode, worktree?.id]);
+  }, [reconnectGeneration, sessionName, terminalBranch, terminalSurfaceMode, worktree?.id]);
 
   const handleDisconnectClient = async (clientId: string) => {
     if (!terminalBranch || clientId === currentClientId) {

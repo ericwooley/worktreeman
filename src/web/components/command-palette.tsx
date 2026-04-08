@@ -30,7 +30,25 @@ export interface CommandPaletteShortcutSetting {
   onReset: () => void;
 }
 
-export function normalizeShortcutKey(key: string): string | null {
+const SHORTCUT_KEY_CODE_ALIASES: Record<string, string> = {
+  Quote: "'",
+  Semicolon: ";",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Backslash: "\\",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Minus: "-",
+  Equal: "=",
+  Backquote: "`",
+};
+
+export function normalizeShortcutKey(key: string, code?: string): string | null {
+  if (code && SHORTCUT_KEY_CODE_ALIASES[code]) {
+    return SHORTCUT_KEY_CODE_ALIASES[code];
+  }
+
   if (key === " ") {
     return "Space";
   }
@@ -61,7 +79,7 @@ export function normalizeShortcutKey(key: string): string | null {
 }
 
 export function shortcutFromKeyboardEvent(event: KeyboardEvent): string | null {
-  const key = normalizeShortcutKey(event.key);
+  const key = normalizeShortcutKey(event.key, event.code);
   if (!key) {
     return null;
   }
