@@ -898,8 +898,9 @@ export function WorktreeDetail({
       return;
     }
 
+    void onLoadGitComparison(worktree.branch, selectedGitBaseBranch ?? undefined, { silent: true });
     return onSubscribeToGitComparison(worktree.branch, selectedGitBaseBranch ?? undefined);
-  }, [activeTab, onSubscribeToGitComparison, selectedGitBaseBranch, worktree?.branch]);
+  }, [activeTab, onLoadGitComparison, onSubscribeToGitComparison, selectedGitBaseBranch, worktree?.branch]);
 
   useEffect(() => {
     if (!gitComparison) {

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AiCommandOrigin,
   AiCommandConfig,
@@ -35,21 +35,9 @@ import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
-
-const ProjectManagementBoardTab = lazy(async () => {
-  const module = await import("./project-management-board-tab");
-  return { default: module.ProjectManagementBoardTab };
-});
-
-const ProjectManagementDependencyTreeTab = lazy(async () => {
-  const module = await import("./project-management-dependency-tree-tab");
-  return { default: module.ProjectManagementDependencyTreeTab };
-});
-
-const ProjectManagementHistoryTab = lazy(async () => {
-  const module = await import("./project-management-history-tab");
-  return { default: module.ProjectManagementHistoryTab };
-});
+import { ProjectManagementBoardTab } from "./project-management-board-tab";
+import { ProjectManagementDependencyTreeTab } from "./project-management-dependency-tree-tab";
+import { ProjectManagementHistoryTab } from "./project-management-history-tab";
 
 export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "users";
 export type ProjectManagementDocumentViewMode = "document" | "edit";
@@ -1502,40 +1490,34 @@ export function ProjectManagementPanel({
             </div>
           ) : activeSubTab === "board" ? (
             <div id={getMatrixTabPanelId("project-management-workspace", "board")} role="tabpanel" aria-labelledby="project-management-workspace-board-tab" className="pt-4">
-              <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading board...</div>}>
-                <ProjectManagementBoardTab
-                  swimlaneDocuments={swimlaneDocuments}
-                  document={document}
-                  documentRunJob={documentRunJob}
-                  runningAiJobs={runningAiJobs}
-                  showBacklogLane={showBacklogLane}
-                  saving={saving}
-                  smartAiReady={isAiCommandReady(aiCommands, "smart")}
-                  onToggleBacklogLane={() => setShowBacklogLane((current) => !current)}
-                  onSelectDocument={handleSelectDocument}
-                  onMoveDocument={handleMoveDocument}
-                  onBatchUpdateDocuments={handleBatchBoardUpdate}
-                  onRunDocumentAi={onRunDocumentAi}
-                />
-              </Suspense>
+              <ProjectManagementBoardTab
+                swimlaneDocuments={swimlaneDocuments}
+                document={document}
+                documentRunJob={documentRunJob}
+                runningAiJobs={runningAiJobs}
+                showBacklogLane={showBacklogLane}
+                saving={saving}
+                smartAiReady={isAiCommandReady(aiCommands, "smart")}
+                onToggleBacklogLane={() => setShowBacklogLane((current) => !current)}
+                onSelectDocument={handleSelectDocument}
+                onMoveDocument={handleMoveDocument}
+                onBatchUpdateDocuments={handleBatchBoardUpdate}
+                onRunDocumentAi={onRunDocumentAi}
+              />
             </div>
           ) : activeSubTab === "dependency-tree" ? (
             <div id={getMatrixTabPanelId("project-management-workspace", "dependency-tree")} role="tabpanel" aria-labelledby="project-management-workspace-dependency-tree-tab" className="pt-4">
-              <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading dependency tree...</div>}>
-                <ProjectManagementDependencyTreeTab
-                  documents={filteredDocuments}
-                  selectedDocumentId={selectedDocumentId}
-                  saving={saving}
-                  onSelectDocument={handleSelectDocument}
-                  onUpdateDependencies={onUpdateDependencies}
-                />
-              </Suspense>
+              <ProjectManagementDependencyTreeTab
+                documents={filteredDocuments}
+                selectedDocumentId={selectedDocumentId}
+                saving={saving}
+                onSelectDocument={handleSelectDocument}
+                onUpdateDependencies={onUpdateDependencies}
+              />
             </div>
           ) : activeSubTab === "history" ? (
             <div id={getMatrixTabPanelId("project-management-workspace", "history")} role="tabpanel" aria-labelledby="project-management-workspace-history-tab" className="pt-4">
-              <Suspense fallback={<div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">Loading history...</div>}>
-                <ProjectManagementHistoryTab history={history} />
-              </Suspense>
+              <ProjectManagementHistoryTab history={history} />
             </div>
           ) : activeSubTab === "users" ? (
             <div id={getMatrixTabPanelId("project-management-workspace", "users")} role="tabpanel" aria-labelledby="project-management-workspace-users-tab" className="pt-4">

@@ -313,6 +313,18 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       });
       activeTerms.add(term);
 
+      // Register output handlers immediately so we do not miss tmux's first redraw
+      // when attaching to an already-running session.
+      term.onData((data) => {
+        send(socket, { type: "output", data });
+      });
+
+      term.onExit(({ exitCode }) => {
+        activeTerms.delete(term);
+        send(socket, { type: "exit", exitCode });
+        socket.close();
+      });
+
       const resolveCurrentClientId = async () => {
         try {
           const clients = await listTmuxClients({ tmuxSession, worktreePath: target.worktreePath });
@@ -337,16 +349,6 @@ export function createTerminalService(options: TerminalServiceOptions): WebSocke
       };
 
       void resolveCurrentClientId();
-
-      term.onData((data) => {
-        send(socket, { type: "output", data });
-      });
-
-      term.onExit(({ exitCode }) => {
-        activeTerms.delete(term);
-        send(socket, { type: "exit", exitCode });
-        socket.close();
-      });
 
       socket.on("message", (raw) => {
         try {

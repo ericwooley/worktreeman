@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
 import type {
   WorktreeRecord,
   TerminalClientMessage,
@@ -334,7 +336,9 @@ export function WorktreeTerminal({
   }, [isTerminalVisible]);
 
   useEffect(() => {
-    if (!hostRef.current || !terminalBranch || !sessionName) {
+    const worktreeId = worktree?.id ?? null;
+
+    if (!isTerminalVisible || !hostRef.current || !terminalBranch || !sessionName || !worktreeId) {
       setTerminalConnectionState("disconnected");
       return;
     }
@@ -348,11 +352,6 @@ export function WorktreeTerminal({
 
     void (async () => {
       try {
-        const [{ Terminal }, { FitAddon }] = await Promise.all([
-          import("@xterm/xterm"),
-          import("@xterm/addon-fit"),
-        ]);
-
         if (disposed || !hostRef.current) {
           return;
         }
@@ -459,7 +458,7 @@ export function WorktreeTerminal({
 
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
         const socket = new WebSocket(
-          `${protocol}//${window.location.host}/ws/terminal?branch=${encodeURIComponent(terminalBranch)}`,
+          `${protocol}//${window.location.host}/ws/terminal?id=${encodeURIComponent(worktreeId)}`,
         );
 
         socket.addEventListener("message", (event) => {
@@ -693,7 +692,7 @@ export function WorktreeTerminal({
       disposed = true;
       cleanup?.();
     };
-  }, [reconnectGeneration, sessionName, terminalBranch, terminalSurfaceMode]);
+  }, [isTerminalVisible, reconnectGeneration, sessionName, terminalBranch, terminalSurfaceMode, worktree?.id]);
 
   const handleDisconnectClient = async (clientId: string) => {
     if (!terminalBranch || clientId === currentClientId) {
