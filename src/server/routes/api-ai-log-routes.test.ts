@@ -15,9 +15,19 @@ import { createWorktree } from "../services/git-service.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
 
+function fixtureJobId(worktreePath: string, fileName: string): string {
+  return `job-${worktreeId(worktreePath)}-${fileName}`;
+}
+
+function fixtureFileName(worktreePath: string, label: string): string {
+  return `${worktreeId(worktreePath)}-${label}`;
+}
+
 test("AI log routes list logs and expose running jobs", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
+  const worktreePath = path.join(repo.repoRoot, "feature-ai-log");
+  const fileName = fixtureFileName(worktreePath, "running-log.json");
   const origin: AiCommandOrigin = {
     kind: "worktree-environment",
     label: "Worktree environment",
@@ -36,10 +46,10 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
   });
   await writeAiLogFixture({
     repoRoot: repo.repoRoot,
-    fileName: "running-log.json",
+    fileName,
     branch: "feature-ai-log",
     origin,
-    worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+    worktreePath,
     command: "printf %s 'summarize the work'",
     request: "summarize the work",
     processName: "wtm:ai:running-log",
@@ -71,9 +81,9 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
       }>;
     };
 
-    assert.equal(listPayload.logs.some((entry) => entry.fileName === "running-log.json"), false);
+    assert.equal(listPayload.logs.some((entry) => entry.fileName === fileName), false);
     assert.equal(listPayload.runningJobs.length, 1);
-    assert.equal(listPayload.runningJobs[0].fileName, "running-log.json");
+    assert.equal(listPayload.runningJobs[0].fileName, fileName);
     assert.equal(listPayload.runningJobs[0].branch, "feature-ai-log");
     assert.equal(listPayload.runningJobs[0].status, "running");
     assert.equal(listPayload.runningJobs[0].pid ?? null, null);
@@ -117,6 +127,8 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
 
 test("AI log detail stream replays persisted logs and follows durable updates", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
+  const worktreePath = path.join(repo.repoRoot, "feature-ai-log");
+  const fileName = fixtureFileName(worktreePath, "stream-log.json");
   const origin: AiCommandOrigin = {
     kind: "worktree-environment",
     label: "Worktree environment",
@@ -129,10 +141,10 @@ test("AI log detail stream replays persisted logs and follows durable updates", 
   };
   await writeAiLogFixture({
     repoRoot: repo.repoRoot,
-    fileName: "stream-log.json",
+    fileName,
     branch: "feature-ai-log",
     origin,
-    worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+    worktreePath,
     command: "printf %s 'stream me'",
     request: "stream me",
     processName: "wtm:ai:stream-log",
@@ -150,7 +162,7 @@ test("AI log detail stream replays persisted logs and follows durable updates", 
   const server = await startApiServer(repo);
 
   try {
-    const sse = await openSse(`${await server.url()}/api/ai/logs/${encodeURIComponent("job-stream-log.json")}/stream`);
+    const sse = await openSse(`${await server.url()}/api/ai/logs/${encodeURIComponent(fixtureJobId(worktreePath, fileName))}/stream`);
 
     async function waitForMatchingLogUpdate(predicate: (log: {
       status: string;
@@ -206,10 +218,10 @@ test("AI log detail stream replays persisted logs and follows durable updates", 
 
     await writeAiLogFixture({
       repoRoot: repo.repoRoot,
-      fileName: "stream-log.json",
+      fileName,
       branch: "feature-ai-log",
       origin,
-      worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+      worktreePath,
       command: "printf %s 'stream me'",
       request: "stream me",
       processName: "wtm:ai:stream-log",
@@ -257,10 +269,10 @@ test("AI log detail stream replays persisted logs and follows durable updates", 
 
     await writeAiLogFixture({
       repoRoot: repo.repoRoot,
-      fileName: "stream-log.json",
+      fileName,
       branch: "feature-ai-log",
       origin,
-      worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+      worktreePath,
       command: "printf %s 'stream me'",
       request: "stream me",
       processName: "wtm:ai:stream-log",
@@ -316,6 +328,8 @@ test("AI log detail stream replays persisted logs and follows durable updates", 
 test("missing AI processes reconcile stale running logs to a failed terminal state", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
+  const worktreePath = path.join(repo.repoRoot, "feature-ai-log");
+  const fileName = fixtureFileName(worktreePath, "missing-process.json");
   const origin: AiCommandOrigin = {
     kind: "worktree-environment",
     label: "Worktree environment",
@@ -328,10 +342,10 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
   };
   await writeAiLogFixture({
     repoRoot: repo.repoRoot,
-    fileName: "missing-process.json",
+    fileName,
     branch: "feature-ai-log",
     origin,
-    worktreePath: path.join(repo.repoRoot, "feature-ai-log"),
+    worktreePath,
     command: "printf %s 'recover me'",
     request: "recover me",
     processName: "wtm:ai:missing-process",
@@ -342,7 +356,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
   });
 
   try {
-    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent("missing-process.json")}`);
+    const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(fileName)}`);
     assert.equal(detailResponse.status, 200);
 
     const detailPayload = await detailResponse.json() as {
@@ -375,7 +389,7 @@ test("missing AI processes reconcile stale running logs to a failed terminal sta
     };
 
     assert.equal(listPayload.runningJobs.length, 0);
-    assert.equal(listPayload.logs[0].fileName, "missing-process.json");
+    assert.equal(listPayload.logs[0].fileName, fileName);
     assert.equal(listPayload.logs[0].status, "failed");
     assert.deepEqual(listPayload.logs[0].origin, origin);
   } finally {

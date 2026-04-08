@@ -68,8 +68,8 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
         return;
       }
 
-      let currentLog = await readAiCommandLogEntryByIdentifier(context.repoRoot, jobId);
-      let lastPayload = JSON.stringify(currentLog);
+      let currentLog: AiCommandLogEntry | null = null;
+      let lastPayload = "null";
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -79,12 +79,18 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
 
       const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
 
+      let unsubscribe: () => Promise<void> = async () => {};
+      let interval: NodeJS.Timeout | null = null;
+
       const closeStream = () => {
         if (closed) {
           return;
         }
 
         closed = true;
+        if (interval) {
+          clearInterval(interval);
+        }
         clearInterval(keepAlive);
         void unsubscribe().catch(() => undefined);
         if (res.destroyed || res.writableEnded) {
@@ -110,35 +116,45 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
         }
       };
 
-      writeEvent("snapshot", currentLog);
-      const unsubscribe = await context.operationalState.subscribeToAiCommandLogNotifications((notification) => {
+      const refreshLog = async () => {
+        try {
+          const nextLog = await readAiCommandLogEntryByIdentifier(context.repoRoot, jobId);
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentLog = nextLog;
+          const nextPayload = JSON.stringify(nextLog);
+          if (nextPayload !== lastPayload) {
+            const eventType = lastPayload === "null" ? "snapshot" : "update";
+            lastPayload = nextPayload;
+            writeEvent(eventType, nextLog);
+          }
+        } catch (error) {
+          const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
+          if (code === "ENOENT") {
+            currentLog = null;
+            if (lastPayload !== "null") {
+              lastPayload = "null";
+              writeEvent("update", null);
+            }
+            return;
+          }
+
+          throw error;
+        }
+      };
+
+      unsubscribe = await context.operationalState.subscribeToAiCommandLogNotifications((notification) => {
+        if (!currentLog) {
+          return;
+        }
         if (notification.jobId !== currentLog.jobId && notification.fileName !== currentLog.fileName) {
           return;
         }
 
         void Promise.resolve().then(async () => {
-          try {
-            currentLog = await readAiCommandLogEntryByIdentifier(context.repoRoot, jobId);
-            if (isStreamClosed()) {
-              return;
-            }
-            const nextPayload = JSON.stringify(currentLog);
-            if (nextPayload !== lastPayload) {
-              lastPayload = nextPayload;
-              writeEvent("update", currentLog);
-            }
-          } catch (error) {
-            const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
-            if (code === "ENOENT") {
-              if (lastPayload !== "null") {
-                lastPayload = "null";
-                writeEvent("update", null);
-              }
-              return;
-            }
-
-            throw error;
-          }
+          await refreshLog();
         }).catch((error) => {
           logServerEvent("ai-log-stream", "listen-failed", {
             jobId,
@@ -146,6 +162,27 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
           }, "error");
         });
       });
+
+      await refreshLog();
+
+      let polling = false;
+      interval = setInterval(() => {
+        if (polling || isStreamClosed()) {
+          return;
+        }
+
+        polling = true;
+        void Promise.resolve().then(async () => {
+          await refreshLog();
+        }).catch((error) => {
+          logServerEvent("ai-log-stream", "poll-failed", {
+            jobId,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          polling = false;
+        });
+      }, context.aiLogStreamPollIntervalMs);
 
       const keepAlive = setInterval(() => {
         if (isStreamClosed()) {

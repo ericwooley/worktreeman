@@ -171,6 +171,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       const compareBranch = decodeURIComponent(req.params.branch);
       const body = req.body as MergeGitBranchRequest | undefined;
       const baseBranch = typeof body?.baseBranch === "string" ? body.baseBranch : undefined;
+      const preserveConflicts = body?.preserveConflicts === true;
 
       if (!compareBranch.trim()) {
         res.status(400).json({ message: "compareBranch is required" });
@@ -184,7 +185,9 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       }
 
       const comparisonBeforeMerge: GitComparisonResponse = await getGitComparison(context.repoRoot, compareBranch, baseBranch);
-      const comparison: GitComparisonResponse = await mergeGitBranch(context.repoRoot, compareBranch, baseBranch);
+      const comparison: GitComparisonResponse = await mergeGitBranch(context.repoRoot, compareBranch, baseBranch, {
+        preserveConflicts,
+      });
 
       const compareWorktree = await context.findWorktree(compareBranch);
       const linkedDocument = compareWorktree
