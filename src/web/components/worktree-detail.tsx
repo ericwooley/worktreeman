@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
@@ -46,22 +46,10 @@ import {
 } from "./worktree-environment-content";
 import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
 import { GitPullRequestPanel } from "./git-pull-request-panel";
+import { ProjectManagementAiTab } from "./project-management-ai-tab";
+import { ProjectManagementPanel } from "./project-management-panel";
+import { SystemTab } from "./system-tab";
 import { getWorktreeDeleteAiDisabledReason, getWorktreeMergeAiDisabledReason } from "./worktree-action-guards";
-
-const ProjectManagementPanel = lazy(async () => {
-  const module = await import("./project-management-panel");
-  return { default: module.ProjectManagementPanel };
-});
-
-const ProjectManagementAiTab = lazy(async () => {
-  const module = await import("./project-management-ai-tab");
-  return { default: module.ProjectManagementAiTab };
-});
-
-const SystemTab = lazy(async () => {
-  const module = await import("./system-tab");
-  return { default: module.SystemTab };
-});
 
 function getCssVariable(name: string, fallback: string): string {
   if (typeof window === "undefined") {
@@ -2213,101 +2201,77 @@ export function WorktreeDetail({
             )}
           </>
         ) : activeTab === "project-management" ? (
-          <Suspense
-            fallback={(
-              <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-                Loading project management workspace...
-              </div>
-            )}
-          >
-            <ProjectManagementPanel
-              documents={standardProjectManagementDocuments}
-              worktrees={projectManagementWorktrees}
-              availableTags={projectManagementAvailableTags}
-              availableStatuses={projectManagementAvailableStatuses}
-              projectManagementUsers={projectManagementUsers}
-              activeSubTab={projectManagementActiveSubTab}
-              selectedDocumentId={projectManagementSelectedDocumentId}
-              documentViewMode={projectManagementDocumentViewMode}
-              editFormTab={projectManagementEditFormTab}
-              createFormTab={projectManagementCreateFormTab}
-              document={projectManagementDocument}
-              history={projectManagementHistory}
-              loading={projectManagementLoading}
-              refreshError={projectManagementError}
-              lastUpdatedAt={projectManagementLastUpdatedAt}
-              saving={projectManagementSaving}
-              aiCommands={projectManagementAiCommands}
-              aiJob={projectManagementAiJob}
-              documentRunJob={projectManagementDocumentAiJob}
-              runningAiJobs={projectManagementRunningAiJobs}
-              selectedWorktreeBranch={worktree?.branch ?? null}
-              onSelectWorktree={onSelectWorktree}
-              onSubTabChange={onProjectManagementSubTabChange}
-              onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
-              onEditFormTabChange={onProjectManagementEditFormTabChange}
-              onCreateFormTabChange={onProjectManagementCreateFormTabChange}
-              onSelectDocument={onLoadProjectManagementDocument}
-              onCreateDocument={onCreateProjectManagementDocument}
-              onUpdateDocument={onUpdateProjectManagementDocument}
-              onUpdateDependencies={onUpdateProjectManagementDependencies}
-              onUpdateStatus={onUpdateProjectManagementStatus}
-              onUpdateUsers={onUpdateProjectManagementUsers}
-              onBatchUpdateDocuments={onBatchUpdateProjectManagementDocuments}
-              onAddComment={onAddProjectManagementComment}
-              onRunAiCommand={onRunProjectManagementAiCommand}
-              onRunDocumentAi={onRunProjectManagementDocumentAi}
-              onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
-              onCancelAiCommand={onCancelProjectManagementAiCommand}
-              onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false })}
-            />
-          </Suspense>
+          <ProjectManagementPanel
+            documents={standardProjectManagementDocuments}
+            worktrees={projectManagementWorktrees}
+            availableTags={projectManagementAvailableTags}
+            availableStatuses={projectManagementAvailableStatuses}
+            projectManagementUsers={projectManagementUsers}
+            activeSubTab={projectManagementActiveSubTab}
+            selectedDocumentId={projectManagementSelectedDocumentId}
+            documentViewMode={projectManagementDocumentViewMode}
+            editFormTab={projectManagementEditFormTab}
+            createFormTab={projectManagementCreateFormTab}
+            document={projectManagementDocument}
+            history={projectManagementHistory}
+            loading={projectManagementLoading}
+            refreshError={projectManagementError}
+            lastUpdatedAt={projectManagementLastUpdatedAt}
+            saving={projectManagementSaving}
+            aiCommands={projectManagementAiCommands}
+            aiJob={projectManagementAiJob}
+            documentRunJob={projectManagementDocumentAiJob}
+            runningAiJobs={projectManagementRunningAiJobs}
+            selectedWorktreeBranch={worktree?.branch ?? null}
+            onSelectWorktree={onSelectWorktree}
+            onSubTabChange={onProjectManagementSubTabChange}
+            onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
+            onEditFormTabChange={onProjectManagementEditFormTabChange}
+            onCreateFormTabChange={onProjectManagementCreateFormTabChange}
+            onSelectDocument={onLoadProjectManagementDocument}
+            onCreateDocument={onCreateProjectManagementDocument}
+            onUpdateDocument={onUpdateProjectManagementDocument}
+            onUpdateDependencies={onUpdateProjectManagementDependencies}
+            onUpdateStatus={onUpdateProjectManagementStatus}
+            onUpdateUsers={onUpdateProjectManagementUsers}
+            onBatchUpdateDocuments={onBatchUpdateProjectManagementDocuments}
+            onAddComment={onAddProjectManagementComment}
+            onRunAiCommand={onRunProjectManagementAiCommand}
+            onRunDocumentAi={onRunProjectManagementDocumentAi}
+            onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
+            onCancelAiCommand={onCancelProjectManagementAiCommand}
+            onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false })}
+          />
         ) : isSystemTabActive ? (
-          <Suspense
-            fallback={(
-              <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-                Loading system status...
-              </div>
-            )}
-          >
-            <div className="mt-4">
-              <SystemTab
-                activeSubTab={systemSubTab}
-                status={systemStatus}
-                loading={systemLoading}
-                error={systemError}
-                lastUpdatedAt={systemLastUpdatedAt}
-                onSubTabChange={onSystemSubTabChange}
-                onRetry={() => void refreshSystemStatus({ silent: false })}
-              />
-            </div>
-          </Suspense>
+          <div className="mt-4">
+            <SystemTab
+              activeSubTab={systemSubTab}
+              status={systemStatus}
+              loading={systemLoading}
+              error={systemError}
+              lastUpdatedAt={systemLastUpdatedAt}
+              onSubTabChange={onSystemSubTabChange}
+              onRetry={() => void refreshSystemStatus({ silent: false })}
+            />
+          </div>
         ) : isAiLogTabActive ? (
-          <Suspense
-            fallback={(
-              <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-                Loading AI activity...
-              </div>
-            )}
-          >
-            <div className="mt-4">
-              <ProjectManagementAiTab
-                activeSubTab={projectManagementAiActiveSubTab}
-                logs={projectManagementAiLogs}
-                logDetail={projectManagementAiLogDetail}
-                selectedLogJobId={projectManagementSelectedAiLogJobId}
-                loading={projectManagementAiLogsLoading}
-                error={projectManagementAiLogsError}
-                lastUpdatedAt={projectManagementAiLogsLastUpdatedAt}
-                runningJobs={projectManagementRunningAiJobs}
-                onSubTabChange={onProjectManagementAiSubTabChange}
-                onSelectLog={onLoadProjectManagementAiLog}
-                onCancelJob={onCancelProjectManagementAiLogJob}
-                onOpenOrigin={(origin) => void openAiLogOrigin(origin)}
-                onRetry={() => void refreshAiLogs({ silent: false })}
-              />
-            </div>
-          </Suspense>
+          <div className="mt-4">
+            <ProjectManagementAiTab
+              activeSubTab={projectManagementAiActiveSubTab}
+              logs={projectManagementAiLogs}
+              logDetail={projectManagementAiLogDetail}
+              selectedLogJobId={projectManagementSelectedAiLogJobId}
+              loading={projectManagementAiLogsLoading}
+              error={projectManagementAiLogsError}
+              lastUpdatedAt={projectManagementAiLogsLastUpdatedAt}
+              runningJobs={projectManagementRunningAiJobs}
+              onSubTabChange={onProjectManagementAiSubTabChange}
+              onSelectLog={onLoadProjectManagementAiLog}
+              onCancelJob={onCancelProjectManagementAiLogJob}
+              onOpenOrigin={(origin) => void openAiLogOrigin(origin)}
+              onRetry={() => void refreshAiLogs({ silent: false })}
+            />
+          </div>
         ) : isGitTabActive ? (
           <div className="mt-4 space-y-4">
             {gitDiffView}
