@@ -124,27 +124,6 @@ test("buildAiJobNotification formats completion and failure messages", () => {
   assert.match(failureNotification.body, /^Worktree task failed in feature\/notifications: /);
   assert.ok(failureNotification.body.length < 220);
 
-  assert.deepEqual(
-    buildAiJobNotification(createAiJob({
-      status: "completed",
-      completedAt: "2026-03-27T12:03:00.000Z",
-      origin: {
-        kind: "git-pull-request-review",
-        label: "Git pull request review",
-        location: {
-          tab: "git",
-          branch: "feature/notifications",
-          gitBaseBranch: "main",
-          documentId: "doc-pr-1",
-        },
-      },
-    })),
-    {
-      title: "Smart AI finished",
-      body: "Pull request review finished in feature/notifications.",
-      tag: "ai-job-job-1",
-    },
-  );
 });
 
 test("requestBrowserNotificationPermission reuses existing permission and requests default permission", async () => {

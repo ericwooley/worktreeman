@@ -53,7 +53,6 @@ import {
   buildAiEnvironmentContext,
   buildProjectManagementAiPrompt,
   buildWorktreeAiPrompt,
-  createGitPullRequestReviewOrigin,
   createProjectManagementDocumentOrigin,
   createWorktreeEnvironmentOrigin,
   formatLogSnippet,
@@ -338,15 +337,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
       worktreePath = worktree.worktreePath;
       branch = worktree.branch;
-      origin = requestedOrigin?.kind === "git-pull-request-review"
-        ? createGitPullRequestReviewOrigin({
-            branch: worktree.branch,
-            worktreeId: worktree.id,
-            baseBranch: requestedOrigin.location.gitBaseBranch ?? worktree.branch,
-            documentId: commentDocumentId,
-            label: requestedOrigin.label,
-          })
-        : requestedOrigin ?? createWorktreeEnvironmentOrigin(worktree.branch, worktree.id);
+      origin = requestedOrigin ?? createWorktreeEnvironmentOrigin(worktree.branch, worktree.id);
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {

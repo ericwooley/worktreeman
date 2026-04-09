@@ -15,7 +15,7 @@ import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { PwaInstallCard } from "./pwa-install-card";
 import { useTheme } from "./theme-provider";
-import { WorktreeDetail, type WorktreeEnvironmentSubTab, type WorktreeGitSubTab } from "./worktree-detail";
+import { WorktreeDetail, type WorktreeEnvironmentSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
@@ -195,7 +195,6 @@ export function Dashboard() {
   const [aiActivitySubTab, setAiActivitySubTab] = useState<AiActivitySubTab>(initialUrlState.aiActivitySubTab);
   const [selectedAiLogJobId, setSelectedAiLogJobId] = useState<string | null>(initialUrlState.selectedAiLogJobId);
   const [environmentSubTab, setEnvironmentSubTab] = useState<WorktreeEnvironmentSubTab>(initialUrlState.environmentSubTab);
-  const [gitSubTab, setGitSubTab] = useState<WorktreeGitSubTab>("pull-request");
   const [systemSubTab, setSystemSubTab] = useState<SystemSubTab>(initialUrlState.systemSubTab);
   const [projectManagementSubTab, setProjectManagementSubTab] = useState<ProjectManagementSubTab>(
     initialUrlState.projectManagementSubTab,
@@ -211,7 +210,6 @@ export function Dashboard() {
     initialUrlState.projectManagementCreateFormTab,
   );
   const [gitView, setGitView] = useState<"graph" | "diff">(initialUrlState.gitView);
-  const [gitPullRequestDocumentId, setGitPullRequestDocumentId] = useState<string | null>(initialUrlState.gitPullRequestDocumentId);
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialUrlState.isTerminalVisible);
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmationState | null>(null);
   const [deleteConfirmationError, setDeleteConfirmationError] = useState<string | null>(null);
@@ -366,7 +364,7 @@ export function Dashboard() {
     [visibleWorktrees],
   );
   const projectDocumentOptions = useMemo<MatrixDropdownOption[]>(
-    () => (projectManagement?.documents ?? []).filter((entry) => entry.kind !== "pull-request").map((entry) => ({
+    () => (projectManagement?.documents ?? []).map((entry) => ({
       value: entry.id,
       label: `#${entry.number} ${entry.title}`,
       description: entry.archived ? "Archived document" : entry.status || "Project document",
@@ -567,13 +565,7 @@ export function Dashboard() {
     } else {
       params.delete("envTab");
     }
-    params.set("gitTab", "pull-request");
     params.set("git", gitView);
-    if (gitPullRequestDocumentId) {
-      params.set("gitPr", gitPullRequestDocumentId);
-    } else {
-      params.delete("gitPr");
-    }
 
     if (activeTab === "project-management") {
       params.set("pmTab", projectManagementSubTab);
@@ -649,8 +641,6 @@ export function Dashboard() {
     aiActivitySubTab,
     selectedAiLogJobId,
     environmentSubTab,
-    gitPullRequestDocumentId,
-    gitSubTab,
     gitView,
     isTerminalVisible,
     projectManagementCreateFormTab,
@@ -670,9 +660,7 @@ export function Dashboard() {
       setAiActivitySubTab(nextUrlState.aiActivitySubTab);
       setSelectedAiLogJobId(nextUrlState.selectedAiLogJobId);
       setEnvironmentSubTab(nextUrlState.environmentSubTab);
-      setGitSubTab("pull-request");
       setGitView(nextUrlState.gitView);
-      setGitPullRequestDocumentId(nextUrlState.gitPullRequestDocumentId);
       setIsTerminalVisible(nextUrlState.isTerminalVisible);
       setSystemSubTab(nextUrlState.systemSubTab);
       setProjectManagementSubTab(nextUrlState.projectManagementSubTab);
@@ -870,14 +858,6 @@ export function Dashboard() {
     setEnvironmentSubTab(tab);
   }, []);
 
-  const navigateToGitSubTab = useCallback((tab: WorktreeGitSubTab, options?: { documentId?: string | null }) => {
-    navigateToTab("merge");
-    setGitSubTab("pull-request");
-    if (options && "documentId" in options) {
-      setGitPullRequestDocumentId(options.documentId ?? null);
-    }
-  }, []);
-
   const navigateToProjectManagementSubTab = useCallback((
     tab: ProjectManagementSubTab,
     options?: { documentId?: string | null; viewMode?: ProjectManagementDocumentViewMode },
@@ -950,23 +930,12 @@ export function Dashboard() {
         id: "nav-git",
         code: "ng",
         title: "Open GIT diff",
-        subtitle: "Jump to the branch diff and status view.",
+        subtitle: "Jump to the branch diff, status, and merge controls.",
         group: "Navigation",
         keywords: ["git", "diff", "branch", "status", "changes", "compare"],
         badgeLabel: activeTab === "git" ? "Active" : undefined,
         badgeTone: "active",
         action: () => navigateToTab("git"),
-      },
-      {
-        id: "nav-merge",
-        code: "nm",
-        title: "Open MERGE / Pull request tab",
-        subtitle: "Jump to the pull request review and merge workspace.",
-        group: "Navigation",
-        keywords: ["merge", "pull", "request", "review", "pr", "git"],
-        badgeLabel: activeTab === "merge" ? "Active" : undefined,
-        badgeTone: "active",
-        action: () => navigateToGitSubTab("pull-request"),
       },
       {
         id: "nav-system",
@@ -1246,9 +1215,7 @@ export function Dashboard() {
     busyBranch,
     commandPaletteShortcut,
     environmentSubTab,
-    gitSubTab,
     isTerminalVisible,
-    navigateToGitSubTab,
     navigateToEnvironmentSubTab,
     navigateToProjectManagementSubTab,
     navigateToSystemSubTab,
@@ -1505,8 +1472,6 @@ export function Dashboard() {
             onTabChange={setActiveTab}
             environmentSubTab={environmentSubTab}
             onEnvironmentSubTabChange={setEnvironmentSubTab}
-            gitSubTab={gitSubTab}
-            onGitSubTabChange={() => setGitSubTab("pull-request")}
             gitView={gitView}
             onGitViewChange={setGitView}
             isTerminalVisible={isTerminalVisible}
@@ -1550,8 +1515,6 @@ export function Dashboard() {
             projectManagementAvailableTags={projectManagement?.availableTags ?? []}
             projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
             projectManagementUsers={projectManagementUsers}
-            gitPullRequestDocumentId={gitPullRequestDocumentId}
-            onGitPullRequestDocumentChange={setGitPullRequestDocumentId}
             projectManagementActiveSubTab={projectManagementSubTab}
             projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
             projectManagementDocumentViewMode={projectManagementDocumentViewMode}

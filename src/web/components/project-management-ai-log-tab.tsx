@@ -86,10 +86,6 @@ function getOriginContextTitle(origin: AiCommandOrigin | null | undefined, branc
     return `Git conflict resolution · ${origin.location.branch ?? branch}`;
   }
 
-  if (origin.kind === "git-pull-request-review") {
-    return `Pull request review · ${origin.location.branch ?? branch}`;
-  }
-
   return origin.label;
 }
 

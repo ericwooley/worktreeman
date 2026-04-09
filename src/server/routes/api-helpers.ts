@@ -549,27 +549,6 @@ export function createGitConflictResolutionOrigin(options: {
   };
 }
 
-export function createGitPullRequestReviewOrigin(options: {
-  branch: string;
-  worktreeId?: WorktreeId;
-  baseBranch: string;
-  documentId?: string | null;
-  label?: string;
-}): AiCommandOrigin {
-  return {
-    kind: "git-pull-request-review",
-    label: options.label ?? "Git pull request review",
-    description: `Review the pull request workspace for ${options.branch} against ${options.baseBranch}.`,
-    location: {
-      tab: "git",
-      branch: options.branch,
-      worktreeId: options.worktreeId,
-      gitBaseBranch: options.baseBranch,
-      documentId: options.documentId ?? null,
-    },
-  };
-}
-
 function buildProjectManagementSummaryPrompt(options: {
   branch: string;
   document: ProjectManagementDocumentResponse["document"];

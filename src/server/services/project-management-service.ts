@@ -19,13 +19,11 @@ import type {
   ProjectManagementComment,
   ProjectManagementBatchResponse,
   ProjectManagementDocument,
-  ProjectManagementDocumentKind,
   ProjectManagementDocumentResponse,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
-  ProjectManagementPullRequest,
   ProjectManagementUser,
   ProjectManagementUsersConfig,
   ProjectManagementUsersResponse,
@@ -60,8 +58,6 @@ interface ProjectManagementAutomergeDocument {
   title: string;
   summary: string;
   markdown: string;
-  kind: ProjectManagementDocumentKind;
-  pullRequest: ProjectManagementPullRequest | null;
   tags: string[];
   dependencies: string[];
   status: string;
@@ -80,8 +76,6 @@ interface StoredProjectManagementBatchEntry {
   authorEmail: string;
   title: string;
   summary: string;
-  kind: ProjectManagementDocumentKind;
-  pullRequest: ProjectManagementPullRequest | null;
   tags: string[];
   dependencies: string[];
   status: string;
@@ -216,26 +210,6 @@ function normalizeAssignee(value: string | undefined): string {
 
 function normalizeSummary(value: string | undefined): string {
   return value?.trim() ?? "";
-}
-
-function normalizeDocumentKind(value: ProjectManagementDocumentKind | undefined): ProjectManagementDocumentKind {
-  return value === "pull-request" ? "pull-request" : "document";
-}
-
-function normalizePullRequest(
-  value: ProjectManagementPullRequest | null | undefined,
-  kind: ProjectManagementDocumentKind,
-): ProjectManagementPullRequest | null {
-  if (kind !== "pull-request") {
-    return null;
-  }
-
-  return {
-    baseBranch: value?.baseBranch?.trim() ?? "",
-    compareBranch: value?.compareBranch?.trim() ?? "",
-    state: value?.state === "closed" || value?.state === "merged" ? value.state : "open",
-    draft: Boolean(value?.draft),
-  };
 }
 
 function normalizeCommentBody(value: string): string {
@@ -426,18 +400,6 @@ function decodeChange(change: string): Uint8Array {
   return Uint8Array.from(Buffer.from(change, "base64"));
 }
 
-function serializePullRequest(value: ProjectManagementPullRequest | null): string {
-  return JSON.stringify(value);
-}
-
-function parsePullRequest(value: string): ProjectManagementPullRequest | null {
-  if (!value) {
-    return null;
-  }
-
-  return normalizePullRequest(JSON.parse(value) as ProjectManagementPullRequest | null, "pull-request");
-}
-
 function parseStringArray(value: string): string[] {
   if (!value) {
     return [];
@@ -459,14 +421,11 @@ function parseComments(value: string): ProjectManagementComment[] {
 }
 
 function toSummaryFromRow(row: PersistedProjectManagementDocumentSummaryRow): ProjectManagementDocumentSummary {
-  const kind = normalizeDocumentKind(row.kind as ProjectManagementDocumentKind);
   return {
     id: row.document_id,
     number: row.number,
     title: row.title,
     summary: row.summary,
-    kind,
-    pullRequest: kind === "pull-request" ? parsePullRequest(row.pull_request_json) : null,
     tags: parseStringArray(row.tags_json),
     dependencies: parseStringArray(row.dependencies_json),
     status: row.status,
@@ -757,8 +716,8 @@ async function upsertPersistedDocumentRecord(
       record.document.number,
       record.document.title,
       record.document.summary,
-      record.document.kind,
-      serializePullRequest(record.document.pullRequest),
+      "document",
+      JSON.stringify(null),
       JSON.stringify(record.document.tags),
       JSON.stringify(record.document.dependencies),
       record.document.status,
@@ -1047,11 +1006,6 @@ function serializeDocumentMetadata(document: ProjectManagementDocument | null): 
     `title: ${document?.title ?? ""}`,
     `number: ${document?.number ?? ""}`,
     `summary: ${document?.summary ?? ""}`,
-    `kind: ${document?.kind ?? "document"}`,
-    `pullRequest.baseBranch: ${document?.pullRequest?.baseBranch ?? ""}`,
-    `pullRequest.compareBranch: ${document?.pullRequest?.compareBranch ?? ""}`,
-    `pullRequest.state: ${document?.pullRequest?.state ?? ""}`,
-    `pullRequest.draft: ${document?.pullRequest ? String(document.pullRequest.draft) : ""}`,
     `status: ${document?.status ?? DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS}`,
     `assignee: ${document?.assignee ?? ""}`,
     `archived: ${document?.archived ? "true" : "false"}`,
@@ -1113,15 +1067,12 @@ function clampProjectManagementDiff(diff: string): string {
 }
 
 function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocument>): ProjectManagementDocument {
-  const kind = normalizeDocumentKind(doc.kind);
   return {
     id: doc.id,
     number: doc.number,
     title: doc.title,
     summary: doc.summary || "",
     markdown: doc.markdown,
-    kind,
-    pullRequest: normalizePullRequest(doc.pullRequest, kind),
     tags: Array.from(doc.tags ?? []),
     dependencies: Array.from(doc.dependencies ?? []),
     status: doc.status || DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS,
@@ -1146,7 +1097,6 @@ async function loadStoreDocument(repoRoot: string, documentId: string): Promise<
 
   return {
     ...record.document,
-    pullRequest: record.document.pullRequest ? { ...record.document.pullRequest } : null,
     tags: [...record.document.tags],
     dependencies: [...record.document.dependencies],
     comments: record.document.comments.map((comment) => ({ ...comment })),
@@ -1258,8 +1208,6 @@ function createSeedBatch(now: string, author: ProjectManagementAuthor): StoredPr
     draft.title = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE;
     draft.summary = "";
     draft.markdown = buildSeedMarkdown();
-    draft.kind = "document";
-    draft.pullRequest = null;
     draft.tags = [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG];
     draft.dependencies = [];
     draft.status = DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS;
@@ -1288,8 +1236,6 @@ function createSeedBatch(now: string, author: ProjectManagementAuthor): StoredPr
       authorEmail: author.email,
       title: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE,
       summary: "",
-      kind: "document",
-      pullRequest: null,
       tags: [DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TAG],
       dependencies: [],
       status: DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_STATUS,
@@ -1333,8 +1279,6 @@ function applyDocumentChange(
       title: string;
       summary?: string;
       markdown: string;
-      kind?: ProjectManagementDocumentKind;
-      pullRequest?: ProjectManagementPullRequest | null;
       tags: string[];
       dependencies?: string[];
       status?: string;
@@ -1346,8 +1290,6 @@ function applyDocumentChange(
 ): { nextDoc: Automerge.Doc<ProjectManagementAutomergeDocument>; action: ProjectManagementDocumentAction; change: Uint8Array } {
   const tags = normalizeTags(input.tags);
   const dependencies = normalizeDependencyIds(input.dependencies, documentId);
-  const kind = normalizeDocumentKind(input.kind ?? doc?.kind);
-  const pullRequest = normalizePullRequest(input.pullRequest ?? doc?.pullRequest, kind);
   const status = normalizeStatus(input.status);
   const assignee = normalizeAssignee(input.assignee);
   const summary = input.summary === undefined ? doc?.summary ?? "" : normalizeSummary(input.summary);
@@ -1367,8 +1309,6 @@ function applyDocumentChange(
       draft.markdown = "";
     }
     Automerge.updateText(draft as Automerge.Doc<unknown>, ["markdown"], input.markdown);
-    draft.kind = kind;
-    draft.pullRequest = pullRequest;
     draft.tags = tags;
     draft.dependencies = dependencies;
     draft.status = status;
@@ -1403,8 +1343,6 @@ async function appendEntries(
     title: string;
     summary?: string;
     markdown: string;
-    kind?: ProjectManagementDocumentKind;
-    pullRequest?: ProjectManagementPullRequest | null;
     tags: string[];
     dependencies?: string[];
     status?: string;
@@ -1478,8 +1416,6 @@ async function appendEntries(
           title: entry.title,
           summary: entry.summary,
           markdown: entry.markdown,
-          kind: entry.kind,
-          pullRequest: entry.pullRequest,
           tags: entry.tags,
           dependencies,
           status: entry.status,
@@ -1498,8 +1434,6 @@ async function appendEntries(
         authorEmail: author.email,
         title: nextDoc.title,
         summary: nextDoc.summary || "",
-        kind: normalizeDocumentKind(nextDoc.kind),
-        pullRequest: normalizePullRequest(nextDoc.pullRequest, normalizeDocumentKind(nextDoc.kind)),
         tags: Array.from(nextDoc.tags ?? []),
         dependencies: Array.from(nextDoc.dependencies ?? []),
         status: nextDoc.status,
@@ -1509,14 +1443,11 @@ async function appendEntries(
       });
       documentIds.push(documentId);
       predictedDependencies.set(documentId, [...dependencies]);
-      const predictedKind = normalizeDocumentKind(nextDoc.kind);
       summariesById.set(documentId, {
         id: documentId,
         number: nextDoc.number,
         title: nextDoc.title,
         summary: nextDoc.summary || "",
-        kind: predictedKind,
-        pullRequest: normalizePullRequest(nextDoc.pullRequest, predictedKind),
         tags: Array.from(nextDoc.tags ?? []),
         dependencies: [...dependencies],
         status: nextDoc.status,
@@ -1680,8 +1611,6 @@ export async function createProjectManagementDocument(
     title,
     summary: request.summary,
     markdown: request.markdown,
-    kind: request.kind,
-    pullRequest: request.pullRequest,
     tags: request.tags,
     dependencies: request.dependencies,
     status: request.status,
@@ -1706,8 +1635,6 @@ export async function updateProjectManagementDocument(
     title,
     summary: request.summary,
     markdown: request.markdown,
-    kind: request.kind,
-    pullRequest: request.pullRequest,
     tags: request.tags,
     dependencies: request.dependencies,
     status: request.status,
@@ -1748,8 +1675,6 @@ export async function updateProjectManagementDependencies(
     title: currentDocument.title,
     summary: currentDocument.summary,
     markdown: currentDocument.markdown,
-    kind: currentDocument.kind,
-    pullRequest: currentDocument.pullRequest,
     tags: currentDocument.tags,
     dependencies: normalizedDependencies,
     status: currentDocument.status,
@@ -1773,8 +1698,6 @@ export async function updateProjectManagementStatus(
     title: currentDocument.title,
     summary: currentDocument.summary,
     markdown: currentDocument.markdown,
-    kind: currentDocument.kind,
-    pullRequest: currentDocument.pullRequest,
     tags: currentDocument.tags,
     dependencies: currentDocument.dependencies,
     status,
@@ -1815,8 +1738,6 @@ export async function addProjectManagementComment(
     title: currentDocument.title,
     summary: currentDocument.summary,
     markdown: currentDocument.markdown,
-    kind: currentDocument.kind,
-    pullRequest: currentDocument.pullRequest,
     tags: currentDocument.tags,
     dependencies: currentDocument.dependencies,
     status: currentDocument.status,

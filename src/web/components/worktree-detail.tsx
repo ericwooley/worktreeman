@@ -45,7 +45,6 @@ import {
   WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL,
 } from "./worktree-environment-content";
 import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
-import { GitPullRequestPanel } from "./git-pull-request-panel";
 import { ProjectManagementAiTab } from "./project-management-ai-tab";
 import { ProjectManagementPanel } from "./project-management-panel";
 import { SystemTab } from "./system-tab";
@@ -108,19 +107,6 @@ type DiffTreeSection = {
 };
 
 export type WorktreeEnvironmentSubTab = "terminal" | "background";
-export type WorktreeGitSubTab = "status" | "pull-request";
-
-type PullRequestMutationPayload = {
-  title: string;
-  summary?: string;
-  markdown: string;
-  status?: string;
-  assignee?: string;
-  baseBranch: string;
-  compareBranch: string;
-  draft: boolean;
-  state?: "open" | "closed" | "merged";
-};
 
 function GitDiffAccordionContent({
   file,
@@ -567,12 +553,10 @@ interface WorktreeDetailProps {
   runningCount: number;
   selectedStatusLabel: string;
   onSelectWorktree: (value: string) => void;
-  activeTab: "environment" | "git" | "merge" | "project-management" | "system" | "ai-log";
-  onTabChange: (tab: "environment" | "git" | "merge" | "project-management" | "system" | "ai-log") => void;
+  activeTab: "environment" | "git" | "project-management" | "system" | "ai-log";
+  onTabChange: (tab: "environment" | "git" | "project-management" | "system" | "ai-log") => void;
   environmentSubTab: WorktreeEnvironmentSubTab;
   onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
-  gitSubTab: WorktreeGitSubTab;
-  onGitSubTabChange: (tab: WorktreeGitSubTab) => void;
   gitView: "graph" | "diff";
   onGitViewChange: (view: "graph" | "diff") => void;
   isTerminalVisible: boolean;
@@ -609,8 +593,6 @@ interface WorktreeDetailProps {
   projectManagementAvailableTags: string[];
   projectManagementAvailableStatuses: string[];
   projectManagementUsers: ProjectManagementUsersResponse | null;
-  gitPullRequestDocumentId: string | null;
-  onGitPullRequestDocumentChange: (documentId: string | null) => void;
   projectManagementActiveSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
@@ -657,13 +639,6 @@ interface WorktreeDetailProps {
     tags: string[];
     status?: string;
     assignee?: string;
-    kind?: "document" | "pull-request";
-    pullRequest?: {
-      baseBranch: string;
-      compareBranch: string;
-      state: "open" | "closed" | "merged";
-      draft: boolean;
-    } | null;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDocument: (documentId: string, payload: {
     title: string;
@@ -674,13 +649,6 @@ interface WorktreeDetailProps {
     status?: string;
     assignee?: string;
     archived?: boolean;
-    kind?: "document" | "pull-request";
-    pullRequest?: {
-      baseBranch: string;
-      compareBranch: string;
-      state: "open" | "closed" | "merged";
-      draft: boolean;
-    } | null;
   }) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
   onUpdateProjectManagementStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
@@ -721,8 +689,6 @@ export function WorktreeDetail({
   onTabChange,
   environmentSubTab,
   onEnvironmentSubTabChange,
-  gitSubTab: _gitSubTab,
-  onGitSubTabChange: _onGitSubTabChange,
   gitView,
   onGitViewChange,
   isTerminalVisible,
@@ -759,8 +725,6 @@ export function WorktreeDetail({
   projectManagementAvailableTags,
   projectManagementAvailableStatuses,
   projectManagementUsers,
-  gitPullRequestDocumentId,
-  onGitPullRequestDocumentChange,
   projectManagementActiveSubTab,
   projectManagementSelectedDocumentId,
   projectManagementDocumentViewMode,
@@ -816,16 +780,7 @@ export function WorktreeDetail({
   const isEnvironmentTabActive = activeTab === "environment";
   const isAiLogTabActive = activeTab === "ai-log";
   const isGitTabActive = activeTab === "git";
-  const isMergeTabActive = activeTab === "merge";
   const isSystemTabActive = activeTab === "system";
-  const pullRequestDocuments = useMemo(
-    () => projectManagementDocuments.filter((entry) => entry.kind === "pull-request"),
-    [projectManagementDocuments],
-  );
-  const standardProjectManagementDocuments = useMemo(
-    () => projectManagementDocuments.filter((entry) => entry.kind !== "pull-request"),
-    [projectManagementDocuments],
-  );
   const isBackgroundCommandsActive = isEnvironmentTabActive && environmentSubTab === "background";
   const isRunning = Boolean(worktree?.runtime);
   const deleteAiDisabledReason = useMemo(
@@ -863,12 +818,6 @@ export function WorktreeDetail({
       : null,
     [linkedDocument, projectManagementDocuments],
   );
-  const selectedPullRequestDocument = projectManagementDocument?.kind === "pull-request"
-    ? projectManagementDocument
-    : null;
-  const selectedPullRequestDocumentId = gitPullRequestDocumentId && pullRequestDocuments.some((entry) => entry.id === gitPullRequestDocumentId)
-    ? gitPullRequestDocumentId
-    : pullRequestDocuments[0]?.id ?? null;
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
@@ -1115,7 +1064,7 @@ export function WorktreeDetail({
   }, [backgroundCommands, selectedBackgroundCommandName]);
 
   useEffect(() => {
-    if ((activeTab !== "git" && activeTab !== "merge") || !worktree?.branch) {
+    if (activeTab !== "git" || !worktree?.branch) {
       return;
     }
 
@@ -1356,59 +1305,6 @@ export function WorktreeDetail({
     }
   };
 
-  const createPullRequestDocument = async (payload: PullRequestMutationPayload) => {
-    const nextDocument = await onCreateProjectManagementDocument({
-      title: payload.title,
-      summary: payload.summary,
-      markdown: payload.markdown,
-      tags: ["pull-request"],
-      status: payload.status,
-      assignee: payload.assignee,
-      kind: "pull-request",
-      pullRequest: {
-        baseBranch: payload.baseBranch,
-        compareBranch: payload.compareBranch,
-        state: payload.state ?? "open",
-        draft: payload.draft,
-      },
-    });
-
-    if (nextDocument) {
-      onGitPullRequestDocumentChange(nextDocument.id);
-      await onLoadProjectManagementDocument(nextDocument.id, { silent: true });
-    }
-
-    return nextDocument;
-  };
-
-  const updatePullRequestDocument = async (documentId: string, payload: PullRequestMutationPayload) => {
-    const currentDocument = selectedPullRequestDocument?.id === documentId
-      ? selectedPullRequestDocument
-      : await onLoadProjectManagementDocument(documentId, { silent: true });
-
-    if (!currentDocument) {
-      return null;
-    }
-
-    return onUpdateProjectManagementDocument(documentId, {
-      title: payload.title,
-      summary: payload.summary,
-      markdown: payload.markdown,
-      tags: currentDocument.tags,
-      dependencies: currentDocument.dependencies,
-      status: payload.status,
-      assignee: payload.assignee,
-      archived: currentDocument.archived,
-      kind: "pull-request",
-      pullRequest: {
-        baseBranch: payload.baseBranch,
-        compareBranch: payload.compareBranch,
-        state: payload.state ?? "open",
-        draft: payload.draft,
-      },
-    });
-  };
-
   const openLinkedDocument = async () => {
     if (!linkedDocument?.id) {
       return;
@@ -1441,25 +1337,13 @@ export function WorktreeDetail({
 
     const originTab = origin.location.tab as string;
     if (originTab === "git" || originTab === "merge") {
-      // PR reviews belong on the merge tab; support legacy "git" tab origins too
-      const targetTab = origin.location.documentId ? "merge" : "git";
-      onTabChange(targetTab);
-      if (origin.location.documentId) {
-        onGitPullRequestDocumentChange(origin.location.documentId);
-        await onLoadProjectManagementDocument(origin.location.documentId, { silent: true });
-      }
+      onTabChange("git");
       return;
     }
 
     onTabChange("environment");
     onEnvironmentSubTabChange(origin.location.environmentSubTab ?? "terminal");
   };
-
-  const activePullRequestReviewJob = selectedPullRequestDocument?.id
-    && projectManagementAiJob?.origin?.kind === "git-pull-request-review"
-    && projectManagementAiJob.origin.location.documentId === selectedPullRequestDocument.id
-      ? projectManagementAiJob
-      : null;
 
   const gitDiffView = (
     <>
@@ -1879,50 +1763,18 @@ export function WorktreeDetail({
     </>
   );
 
-  const reviewPullRequestByAi = async (payload: {
-    documentId: string;
-    baseBranch: string;
-    compareBranch: string;
-  }) => {
-    if (!worktree?.branch) {
-      return null;
-    }
-
-    return onRunProjectManagementAiCommand({
-      commandId: "smart",
-      commentDocumentId: payload.documentId,
-      origin: {
-        kind: "git-pull-request-review",
-        label: "Git pull request review",
-        location: {
-          tab: "git",
-          branch: worktree.branch,
-          worktreeId: worktree.id,
-          gitBaseBranch: payload.baseBranch,
-          documentId: payload.documentId,
-        },
-      },
-      input: [
-        `Review the pull request changes from ${payload.compareBranch} into ${payload.baseBranch}.`,
-        "Focus on correctness risks, merge readiness, missing tests, and any reviewer follow-up.",
-        "Return concise review notes suitable for a pull request comment.",
-      ].join(" "),
-    });
-  };
-
   return (
     <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
       <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
-        <MatrixTabs
-          groupId="worktree-detail-tabs"
-          ariaLabel="Worktree detail tabs"
-          activeTabId={activeTab}
-          onChange={onTabChange}
+          <MatrixTabs
+            groupId="worktree-detail-tabs"
+            ariaLabel="Worktree detail tabs"
+            activeTabId={activeTab}
+            onChange={onTabChange}
           className="theme-divider border-b pb-4"
           tabs={[
             { id: "environment", label: WORKTREE_ENVIRONMENT_TAB_LABEL },
             { id: "git", label: "GIT" },
-            { id: "merge", label: "MERGE" },
             { id: "project-management", label: "Project management" },
             { id: "system", label: "System" },
             { id: "ai-log", label: "AI" },
@@ -2202,7 +2054,7 @@ export function WorktreeDetail({
           </>
         ) : activeTab === "project-management" ? (
           <ProjectManagementPanel
-            documents={standardProjectManagementDocuments}
+            documents={projectManagementDocuments}
             worktrees={projectManagementWorktrees}
             availableTags={projectManagementAvailableTags}
             availableStatuses={projectManagementAvailableStatuses}
@@ -2273,35 +2125,8 @@ export function WorktreeDetail({
             />
           </div>
         ) : isGitTabActive ? (
-          <div className="mt-4 space-y-4">
-            {gitDiffView}
-          </div>
-        ) : (
-          <div className="mt-4 space-y-4">
-            <GitPullRequestPanel
-              worktree={worktree}
-              documents={pullRequestDocuments}
-              document={selectedPullRequestDocument}
-              history={selectedPullRequestDocument ? projectManagementHistory : []}
-              loading={projectManagementLoading}
-              saving={projectManagementSaving}
-              availableStatuses={projectManagementAvailableStatuses}
-              selectedDocumentId={selectedPullRequestDocumentId}
-              branchOptions={gitBranchOptions}
-              defaultBaseBranch={selectedGitBaseBranch ?? gitComparison?.baseBranch ?? gitBranchOptions[0]?.value ?? null}
-              comparisonWorkspace={comparisonWorkspace}
-              aiReviewJob={activePullRequestReviewJob}
-              onSelectDocument={async (documentId, options) => {
-                onGitPullRequestDocumentChange(documentId);
-                return onLoadProjectManagementDocument(documentId, options);
-              }}
-              onCreatePullRequest={createPullRequestDocument}
-              onUpdatePullRequest={updatePullRequestDocument}
-              onAddComment={onAddProjectManagementComment}
-              onReviewByAi={reviewPullRequestByAi}
-            />
-          </div>
-        )}
+          <div className="mt-4 space-y-4">{gitDiffView}</div>
+        ) : null}
       </div>
 
       {commitModalOpen ? (

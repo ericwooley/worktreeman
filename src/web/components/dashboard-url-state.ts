@@ -2,9 +2,9 @@ import type { SystemSubTab } from "@shared/types";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
-import type { WorktreeEnvironmentSubTab, WorktreeGitSubTab } from "./worktree-detail";
+import type { WorktreeEnvironmentSubTab } from "./worktree-detail";
 
-export type DashboardActiveTab = "environment" | "git" | "merge" | "project-management" | "system" | "ai-log";
+export type DashboardActiveTab = "environment" | "git" | "project-management" | "system" | "ai-log";
 
 export interface DashboardUrlState {
   selectedBranch: string | null;
@@ -12,9 +12,7 @@ export interface DashboardUrlState {
   aiActivitySubTab: AiActivitySubTab;
   selectedAiLogJobId: string | null;
   environmentSubTab: WorktreeEnvironmentSubTab;
-  gitSubTab: WorktreeGitSubTab;
   gitView: "diff" | "graph";
-  gitPullRequestDocumentId: string | null;
   isTerminalVisible: boolean;
   systemSubTab: SystemSubTab;
   projectManagementSubTab: ProjectManagementSubTab;
@@ -22,10 +20,6 @@ export interface DashboardUrlState {
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
   projectManagementEditFormTab: ProjectManagementDocumentFormViewMode;
   projectManagementCreateFormTab: ProjectManagementDocumentFormViewMode;
-}
-
-export function parseWorktreeGitSubTab(value: string | null): WorktreeGitSubTab {
-  return "pull-request";
 }
 
 export function parseProjectManagementSubTab(value: string | null): ProjectManagementSubTab {
@@ -61,11 +55,9 @@ export function parseSystemSubTab(value: string | null): SystemSubTab {
 export function readDashboardUrlState(search: string = typeof window === "undefined" ? "" : window.location.search): DashboardUrlState {
   const params = new URLSearchParams(search);
   const tab = params.get("tab");
-  const activeTab: DashboardActiveTab = tab === "git"
+  const activeTab: DashboardActiveTab = tab === "git" || tab === "merge"
     ? "git"
-    : tab === "merge"
-      ? "merge"
-      : tab === "system"
+    : tab === "system"
         ? "system"
       : tab === "ai-log"
         ? "ai-log"
@@ -81,11 +73,9 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
     environmentSubTab: tab === "background"
       ? "background"
       : tab === "shell"
-        ? "terminal"
-        : parseWorktreeEnvironmentSubTab(params.get("envTab")),
-    gitSubTab: parseWorktreeGitSubTab(params.get("gitTab")),
+      ? "terminal"
+      : parseWorktreeEnvironmentSubTab(params.get("envTab")),
     gitView: params.get("git") === "diff" ? "diff" : "graph",
-    gitPullRequestDocumentId: params.get("gitPr"),
     isTerminalVisible: params.get("terminal") === "open",
     systemSubTab: parseSystemSubTab(params.get("systemTab")),
     projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),

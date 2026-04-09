@@ -34,8 +34,6 @@ function toLinkedDocumentSummary(document: ProjectManagementDocumentSummary): Wo
     number: document.number,
     title: document.title,
     summary: document.summary,
-    kind: document.kind,
-    pullRequest: document.pullRequest ? { ...document.pullRequest } : null,
     status: document.status,
     archived: document.archived,
   };

@@ -13,8 +13,6 @@ export function buildProjectManagementStatusFallbackPayload(
     title: document.title,
     summary: document.summary || undefined,
     markdown: document.markdown,
-    kind: document.kind,
-    pullRequest: document.pullRequest,
     tags: document.tags,
     dependencies: document.dependencies,
     status,
