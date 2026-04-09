@@ -270,14 +270,15 @@ test("GET /api/system returns host metrics and recent pg-boss jobs", async () =>
   app.use(express.json());
 
   const operationalState = await createOperationalStateStore(repo.repoRoot);
-  app.use("/api", createApiRouter({
+  const apiRouter = createApiRouter({
     repoRoot: repo.repoRoot,
     configPath: repo.configPath,
     configSourceRef: repo.configSourceRef,
     configFile: repo.configFile,
     configWorktreePath: repo.configWorktreePath,
     operationalState,
-  }));
+  });
+  app.use("/api", apiRouter);
 
   const database = await getManagedDatabaseClient(repo.repoRoot, "jobs");
 
@@ -403,6 +404,7 @@ test("GET /api/system returns host metrics and recent pg-boss jobs", async () =>
     assert.equal(payload.jobs.items[0]?.payloadSummary.commandId, "smart");
     assert.equal(payload.jobs.items[0]?.payloadSummary.originLabel, "Project document #12");
   } finally {
+    await apiRouter.dispose();
     await closeManagedDatabaseClient(repo.repoRoot, "jobs").catch(() => undefined);
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }

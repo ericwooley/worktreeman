@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
 import type {
   AiCommandConfig,
@@ -114,6 +116,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const aiProcessPollIntervalMs = options.aiProcessPollIntervalMs ?? 250;
   const aiLogStreamPollIntervalMs = options.aiLogStreamPollIntervalMs ?? 500;
   const stateStreamFullRefreshIntervalMs = options.stateStreamFullRefreshIntervalMs ?? 120_000;
+  const gitWatchDebounceMs = options.gitWatchDebounceMs ?? 150;
   const shouldReconcileAiJobs = process.env.WTM_SERVER_ROLE === "worker" || Boolean(options.aiProcesses);
   const aiJobReadOptions = {
     aiProcesses: {
@@ -193,6 +196,95 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     for (const listener of gitComparisonListeners) {
       listener();
     }
+  };
+
+  const emitGitStateRefresh = () => {
+    emitGitComparisonRefresh();
+    emitStateRefresh();
+  };
+
+  const gitWatchers = new Map<string, fs.FSWatcher>();
+  let gitWatchRefreshTimer: NodeJS.Timeout | null = null;
+
+  const scheduleGitWatchRefresh = () => {
+    if (gitWatchRefreshTimer) {
+      clearTimeout(gitWatchRefreshTimer);
+    }
+
+    gitWatchRefreshTimer = setTimeout(() => {
+      gitWatchRefreshTimer = null;
+      emitGitStateRefresh();
+    }, gitWatchDebounceMs);
+  };
+
+  const addGitWatcher = (watchPath: string) => {
+    const resolvedPath = path.resolve(watchPath);
+    if (gitWatchers.has(resolvedPath)) {
+      return;
+    }
+
+    try {
+      const watcher = fs.watch(resolvedPath, { recursive: true }, () => {
+        scheduleGitWatchRefresh();
+      });
+      watcher.on("error", () => {
+        try {
+          watcher.close();
+        } catch {
+          // Ignore cleanup failures while replacing a broken watcher.
+        }
+        gitWatchers.delete(resolvedPath);
+      });
+      gitWatchers.set(resolvedPath, watcher);
+    } catch {
+      // Ignore unavailable watch roots and fall back to interval refresh.
+    }
+  };
+
+  const refreshGitWatchers = async () => {
+    const nextPaths = new Set<string>([
+      path.join(options.repoRoot, ".git"),
+      path.join(options.repoRoot, "main"),
+    ]);
+    const worktrees = await listWorktrees(options.repoRoot).catch(() => []);
+    for (const worktree of worktrees) {
+      nextPaths.add(worktree.worktreePath);
+    }
+
+    for (const [watchPath, watcher] of gitWatchers.entries()) {
+      if (nextPaths.has(watchPath)) {
+        continue;
+      }
+
+      try {
+        watcher.close();
+      } catch {
+        // Ignore close races while pruning watcher roots.
+      }
+      gitWatchers.delete(watchPath);
+    }
+
+    for (const watchPath of nextPaths) {
+      addGitWatcher(watchPath);
+    }
+  };
+
+  void refreshGitWatchers().catch(() => undefined);
+
+  const dispose = async () => {
+    if (gitWatchRefreshTimer) {
+      clearTimeout(gitWatchRefreshTimer);
+      gitWatchRefreshTimer = null;
+    }
+
+    for (const watcher of gitWatchers.values()) {
+      try {
+        watcher.close();
+      } catch {
+        // Ignore watcher shutdown races.
+      }
+    }
+    gitWatchers.clear();
   };
 
   const subscribeToGitComparisonRefresh = (listener: () => void) => {
@@ -298,7 +390,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       worktree,
       runtime,
     });
-    emitStateRefresh();
+    await refreshGitWatchers();
+    emitGitStateRefresh();
     emitRuntimeRefreshes(worktree.branch);
     logServerEvent("runtime", "start-completed", {
       worktreeId: worktree.id,
@@ -355,7 +448,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     }
 
     await options.operationalState.deleteRuntimeById(runtime.id);
-    emitStateRefresh();
+    await refreshGitWatchers();
+    emitGitStateRefresh();
     emitRuntimeRefreshes(runtime.branch);
 
     if (stopError) {
@@ -693,11 +787,13 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     aiProcessPollIntervalMs,
     aiLogStreamPollIntervalMs,
     stateStreamFullRefreshIntervalMs,
+    gitWatchDebounceMs,
     hasInjectedAiProcesses,
     executionAiProcesses,
     passiveAiProcesses,
     shouldReconcileAiJobs,
     aiJobReadOptions,
+    dispose,
     loadCurrentConfig,
     findWorktree,
     getRunningAiJobForBranch,
@@ -708,6 +804,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     stopWorktreeRuntime,
     restartWorktreeRuntime,
     scheduleRuntimeStopAfterAiJob,
+    emitGitStateRefresh,
     emitStateRefresh,
     subscribeToStateRefresh,
     emitGitComparisonRefresh,

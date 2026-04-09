@@ -212,6 +212,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
         }
       }
 
+      context.emitGitStateRefresh();
       res.json(comparison);
     } catch (error) {
       next(error);
@@ -375,8 +376,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       });
 
       const comparison: GitComparisonResponse = await getGitComparison(context.repoRoot, branch, baseBranch);
-      context.emitGitComparisonRefresh();
-      context.emitStateRefresh();
+      context.emitGitStateRefresh();
       res.json(comparison);
     } catch (error) {
       next(error);
@@ -421,8 +421,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
         env,
         message: typeof body?.message === "string" ? body.message : undefined,
       });
-      context.emitGitComparisonRefresh();
-      context.emitStateRefresh();
+      context.emitGitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);

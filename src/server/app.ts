@@ -97,14 +97,15 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
     res.sendFile(faviconPath);
   });
-  app.use("/api", createApiRouter({
+  const apiRouter = createApiRouter({
     repoRoot: options.repo.repoRoot,
     configPath: options.repo.configPath,
     configSourceRef: options.repo.configSourceRef,
     configFile: options.repo.configFile,
     configWorktreePath: options.repo.configWorktreePath,
     operationalState,
-  }));
+  });
+  app.use("/api", apiRouter);
   app.use("/api", (_req, res) => {
     res.status(404).json({
       message: "API route not found. Restart the server to pick up newly added endpoints.",
@@ -267,6 +268,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       process.stderr.write(`${message}\n`);
       await operationalState.failShutdown(message).catch(() => undefined);
     } finally {
+      await apiRouter.dispose().catch(() => undefined);
       await stopOperationalStateStore(options.repo.repoRoot).catch(() => undefined);
     }
 
@@ -295,6 +297,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       process.stdout.write("[startup] Closing Vite dev server after failed startup...\n");
       await vite.close();
     }
+    await apiRouter.dispose().catch(() => undefined);
     await stopOperationalStateStore(options.repo.repoRoot).catch(() => undefined);
   };
 

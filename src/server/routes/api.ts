@@ -10,7 +10,11 @@ import { registerApiStateRoutes } from "./api-state-routes.js";
 import { registerApiWorktreeRoutes } from "./api-worktree-routes.js";
 import type { ApiRouterOptions } from "./api-types.js";
 
-export function createApiRouter(options: ApiRouterOptions): express.Router {
+export interface ApiRouter extends express.Router {
+  dispose: () => Promise<void>;
+}
+
+export function createApiRouter(options: ApiRouterOptions): ApiRouter {
   const router = express.Router();
   const context = createApiRouterContext(options);
 
@@ -21,5 +25,7 @@ export function createApiRouter(options: ApiRouterOptions): express.Router {
   registerApiWorktreeRoutes(router, context);
   registerApiBackgroundCommandRoutes(router, context);
 
-  return router;
+  return Object.assign(router, {
+    dispose: context.dispose,
+  });
 }

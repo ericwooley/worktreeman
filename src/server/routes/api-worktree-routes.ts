@@ -236,12 +236,12 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
 
       if (sourceRoot) {
         const result = await syncEnvFiles(sourceRoot, worktree.worktreePath);
-        context.emitStateRefresh();
+        context.emitGitStateRefresh();
         res.status(201).json(result);
         return;
       }
 
-      context.emitStateRefresh();
+      context.emitGitStateRefresh();
       res.status(201).json({ copiedFiles: [] });
     } catch (error) {
       next(error);
@@ -283,7 +283,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       const result = await syncEnvFiles(sourceRoot, worktree.worktreePath);
-      context.emitStateRefresh();
+      context.emitGitStateRefresh();
       res.json(result);
     } catch (error) {
       next(error);
@@ -529,7 +529,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       stopAutoStartedRuntimeOnError = false;
 
       const payload: RunAiCommandResponse = { job, runtime };
-      context.emitStateRefresh();
+      context.emitGitStateRefresh();
       res.json(payload);
     } catch (error) {
       const cleanupWorktree = worktree;
@@ -719,7 +719,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       const payload: RunAiCommandResponse = { job: finalJob };
-      context.emitStateRefresh();
+      context.emitGitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);
@@ -951,7 +951,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       if (request.deleteBranch) {
         await deleteBranch(context.repoRoot, worktree.branch);
       }
-      context.emitStateRefresh();
+      context.emitGitStateRefresh();
       res.status(204).send();
     } catch (error) {
       next(error);

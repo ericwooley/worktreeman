@@ -472,7 +472,7 @@ export async function startApiServer(
   const operationalState = await createOperationalStateStore(repo.repoRoot);
   testContextRepoRoots.add(repo.repoRoot);
   const deleteProcess = overrides?.aiProcesses?.deleteProcess ?? deleteAiCommandProcess;
-  app.use("/api", createApiRouter({
+  const apiRouter = createApiRouter({
     repoRoot: repo.repoRoot,
     configPath: repo.configPath,
     configSourceRef: repo.configSourceRef,
@@ -480,7 +480,8 @@ export async function startApiServer(
     configWorktreePath: repo.configWorktreePath,
     operationalState,
     ...(overrides ?? {}),
-  }));
+  });
+  app.use("/api", apiRouter);
 
   let server: http.Server | null = null;
   let liveBaseUrl: string | null = null;
@@ -577,6 +578,7 @@ export async function startApiServer(
           });
         }
       } finally {
+        await apiRouter.dispose().catch(() => undefined);
         await stopRunningAiJobsForRepo(repo.repoRoot, deleteProcess).catch(() => undefined);
         await waitForActiveAiCommandJobs(repo.repoRoot, { timeoutMs: 500 });
         await worker.close();

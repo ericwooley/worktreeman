@@ -28,6 +28,7 @@ export interface ApiRouterOptions {
   aiProcessPollIntervalMs?: number;
   aiLogStreamPollIntervalMs?: number;
   stateStreamFullRefreshIntervalMs?: number;
+  gitWatchDebounceMs?: number;
   aiProcesses?: ApiAiProcesses;
 }
 

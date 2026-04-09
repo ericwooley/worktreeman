@@ -7,6 +7,7 @@ import { worktreeId } from "../../shared/worktree-id.js";
 import {
   createApiTestRepo,
   createFakeAiProcesses,
+  openSse,
   startApiServer,
   startRunningAiJob,
 } from "./api-test-helpers.js";
@@ -458,6 +459,117 @@ test("git compare merge can preserve conflicted worktree state when merging base
     assert.match(payload.workingTreeConflicts[0]?.preview ?? "", /<<<<<<< HEAD|<<<<<<< /);
     assert.equal(payload.mergeIntoCompareStatus.hasConflicts, false);
     assert.equal(payload.mergeIntoCompareStatus.conflicts.length, 0);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare stream emits an update immediately after merge changes the selected branch", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-stream-merge" });
+  const mainPath = path.join(repo.repoRoot, "main");
+  const server = await startApiServer(repo, {
+    stateStreamFullRefreshIntervalMs: 60_000,
+  });
+
+  try {
+    await fs.writeFile(path.join(mainPath, "stream-main.txt"), "from main\n", "utf8");
+    await runCommand("git", ["add", "stream-main.txt"], { cwd: mainPath });
+    await runCommand("git", ["commit", "-m", "stream main change"], {
+      cwd: mainPath,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+    });
+
+    const stream = await openSse(`${await server.url()}/api/git/compare/stream?compareBranch=${encodeURIComponent(feature.branch)}&baseBranch=main`);
+    try {
+      const snapshot = await stream.nextEvent();
+      assert.equal(snapshot.type, "snapshot");
+      const snapshotComparison = (snapshot as { comparison?: { behind?: number } }).comparison;
+      assert.equal(snapshotComparison?.behind, 1);
+
+      const mergeResponse = await server.fetch(`/api/git/compare/main/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseBranch: feature.branch }),
+      });
+      assert.equal(mergeResponse.status, 200);
+
+      const update = await stream.nextEvent(5000);
+      assert.equal(update.type, "update");
+      const updateComparison = (update as {
+        comparison?: {
+          baseBranch?: string;
+          compareBranch?: string;
+          behind?: number;
+          workingTreeSummary?: { dirty?: boolean };
+        };
+      }).comparison;
+      assert.equal(updateComparison?.baseBranch, "main");
+      assert.equal(updateComparison?.compareBranch, feature.branch);
+      assert.equal(updateComparison?.behind, 0);
+      assert.equal(updateComparison?.workingTreeSummary?.dirty, false);
+    } finally {
+      await stream.close();
+    }
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("git compare stream emits an update after an external worktree change without waiting for the fallback interval", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const feature = await createWorktree(repo.repoRoot, config, { branch: "feature-stream-watch" });
+  const server = await startApiServer(repo, {
+    stateStreamFullRefreshIntervalMs: 60_000,
+    gitWatchDebounceMs: 50,
+  });
+
+  try {
+    const stream = await openSse(`${await server.url()}/api/git/compare/stream?compareBranch=${encodeURIComponent(feature.branch)}&baseBranch=main`);
+    try {
+      const snapshot = await stream.nextEvent();
+      assert.equal(snapshot.type, "snapshot");
+      const snapshotComparison = (snapshot as {
+        comparison?: { workingTreeSummary?: { dirty?: boolean }; ahead?: number };
+      }).comparison;
+      assert.equal(snapshotComparison?.workingTreeSummary?.dirty, false);
+      assert.equal(snapshotComparison?.ahead, 0);
+
+      await fs.writeFile(path.join(feature.worktreePath, "external-watch.txt"), "changed outside api\n", "utf8");
+
+      const update = await stream.nextEvent(5000);
+      assert.equal(update.type, "update");
+      const updateComparison = (update as {
+        comparison?: {
+          compareBranch?: string;
+          ahead?: number;
+          workingTreeSummary?: { dirty?: boolean; changedFiles?: number; untrackedFiles?: number };
+        };
+      }).comparison;
+      assert.equal(updateComparison?.compareBranch, feature.branch);
+      assert.equal(updateComparison?.workingTreeSummary?.dirty, true);
+      assert.ok((updateComparison?.workingTreeSummary?.changedFiles ?? 0) >= 1 || (updateComparison?.workingTreeSummary?.untrackedFiles ?? 0) >= 1);
+    } finally {
+      await stream.close();
+    }
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
