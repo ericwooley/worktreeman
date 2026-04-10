@@ -1765,23 +1765,8 @@ export function WorktreeDetail({
   );
 
   return (
-    <section className="min-w-0 space-y-4 xl:flex xl:min-h-[calc(100vh-2rem)] xl:flex-col xl:space-y-4">
-      <div className="matrix-panel rounded-none border-x-0 p-4 sm:p-5">
-          <MatrixTabs
-            groupId="worktree-detail-tabs"
-            ariaLabel="Worktree detail tabs"
-            activeTabId={activeTab}
-            onChange={onTabChange}
-          className="theme-divider border-b pb-4"
-          tabs={[
-            { id: "environment", label: WORKTREE_ENVIRONMENT_TAB_LABEL },
-            { id: "git", label: "GIT" },
-            { id: "project-management", label: "Project management" },
-            { id: "system", label: "System" },
-            { id: "ai-log", label: "AI" },
-          ]}
-        />
-
+    <section className="min-w-0 space-y-3 xl:flex xl:min-h-[calc(100vh-1rem)] xl:flex-col xl:space-y-3">
+      <div className="matrix-panel rounded-none border-x-0 border-t-0 p-4 lg:p-4">
         {isEnvironmentTabActive ? (
           <>
             <MatrixTabs
@@ -1789,7 +1774,7 @@ export function WorktreeDetail({
               ariaLabel="Worktree environment tabs"
               activeTabId={environmentSubTab}
               onChange={onEnvironmentSubTabChange}
-              className="mt-4 theme-divider border-b pb-4"
+              className="theme-divider border-b pb-3"
               tabs={[
                 { id: "terminal", label: WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL },
                 { id: "background", label: WORKTREE_ENVIRONMENT_BACKGROUND_SUB_TAB_LABEL },
@@ -1798,34 +1783,40 @@ export function WorktreeDetail({
 
             {environmentSubTab === "terminal" ? (
               <>
-                <div className="mt-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0 flex-1">
                     <p className="matrix-kicker">{WORKTREE_ENVIRONMENT_KICKER}</p>
-                    <h2 className="mt-1 text-2xl font-semibold theme-text-strong sm:text-3xl">
-                      {worktree?.branch ?? "Select a worktree"}
-                    </h2>
-                    <p className="mt-1 text-sm theme-text-muted">
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <h2 className="text-xl font-semibold theme-text-strong sm:text-2xl">
+                        {worktree?.branch ?? "Select a worktree"}
+                      </h2>
+                      <MatrixBadge tone={worktree?.runtime ? "active" : "idle"} compact>
+                        {worktree?.runtime ? "tmux attached" : "idle"}
+                      </MatrixBadge>
+                      {worktree?.runtime?.runtimeStartedAt ? (
+                        <MatrixBadge tone="active" compact>
+                          live since {new Date(worktree.runtime.runtimeStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </MatrixBadge>
+                      ) : null}
+                      {linkedDocument ? (
+                        <MatrixBadge tone={linkedDocument.archived ? "warning" : "active"} compact>
+                          linked doc #{linkedDocument.number}
+                        </MatrixBadge>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 max-w-3xl text-sm theme-text-muted">
                       {worktree ? WORKTREE_ENVIRONMENT_DESCRIPTION : WORKTREE_ENVIRONMENT_EMPTY_DESCRIPTION}
                     </p>
                   </div>
 
-                  <div className="flex min-w-0 flex-col gap-2 xl:max-w-[52rem] xl:items-end">
-                    <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[24rem] xl:grid-cols-[repeat(3,minmax(0,1fr))]">
+                  <div className="flex min-w-0 flex-col gap-2 xl:max-w-[48rem] xl:items-end">
+                    <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[22rem] xl:grid-cols-[repeat(3,minmax(0,1fr))]">
                       <MatrixMetric label="Worktrees" value={String(worktreeCount)} />
                       <MatrixMetric label="Running" value={String(runningCount)} />
                       <MatrixMetric label="Selected" value={selectedStatusLabel} />
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                      <MatrixBadge tone="neutral">{worktree?.runtime ? "tmux attached" : "idle"}</MatrixBadge>
-                      {worktree?.runtime?.runtimeStartedAt ? (
-                        <MatrixBadge tone="active">live since {new Date(worktree.runtime.runtimeStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</MatrixBadge>
-                      ) : null}
-                      {linkedDocument ? (
-                        <MatrixBadge tone={linkedDocument.archived ? "warning" : "active"}>
-                          linked doc #{linkedDocument.number}
-                        </MatrixBadge>
-                      ) : null}
                       {worktree ? (
                         <>
                           <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
@@ -1845,7 +1836,7 @@ export function WorktreeDetail({
                   </div>
                 </div>
 
-                <div className="mt-5 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
                   <MatrixDetailField label="Path" value={worktree?.worktreePath ?? "-"} mono />
                   <MatrixDetailField label="Head" value={worktree?.headSha ?? "-"} mono />
                   <MatrixDetailField label="Started" value={worktree?.runtime?.runtimeStartedAt ? new Date(worktree.runtime.runtimeStartedAt).toLocaleString() : "-"} />
@@ -1919,13 +1910,13 @@ export function WorktreeDetail({
                 ) : null}
               </>
             ) : (
-              <div className="mt-4 space-y-4">
+              <div className="mt-3 space-y-4">
                 <div className="theme-inline-panel p-4">
                   <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                     <div>
                       <p className="matrix-kicker">{WORKTREE_ENVIRONMENT_KICKER}</p>
-                      <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">{BACKGROUND_COMMAND_CONTROL_TITLE}</h2>
-                      <p className="mt-2 text-sm theme-text-muted">
+                      <h2 className="mt-1 text-xl font-semibold theme-text-strong sm:text-2xl">{BACKGROUND_COMMAND_CONTROL_TITLE}</h2>
+                      <p className="mt-2 max-w-3xl text-sm theme-text-muted">
                         {BACKGROUND_COMMAND_CONTROL_DESCRIPTION}
                       </p>
                     </div>
@@ -2054,49 +2045,51 @@ export function WorktreeDetail({
             )}
           </>
         ) : activeTab === "project-management" ? (
-          <ProjectManagementPanel
-            documents={projectManagementDocuments}
-            worktrees={projectManagementWorktrees}
-            availableTags={projectManagementAvailableTags}
-            availableStatuses={projectManagementAvailableStatuses}
-            projectManagementUsers={projectManagementUsers}
-            activeSubTab={projectManagementActiveSubTab}
-            selectedDocumentId={projectManagementSelectedDocumentId}
-            documentViewMode={projectManagementDocumentViewMode}
-            editFormTab={projectManagementEditFormTab}
-            createFormTab={projectManagementCreateFormTab}
-            document={projectManagementDocument}
-            history={projectManagementHistory}
-            loading={projectManagementLoading}
-            refreshError={projectManagementError}
-            lastUpdatedAt={projectManagementLastUpdatedAt}
-            saving={projectManagementSaving}
-            aiCommands={projectManagementAiCommands}
-            aiJob={projectManagementAiJob}
-            documentRunJob={projectManagementDocumentAiJob}
-            runningAiJobs={projectManagementRunningAiJobs}
-            selectedWorktreeBranch={worktree?.branch ?? null}
-            onSelectWorktree={onSelectWorktree}
-            onSubTabChange={onProjectManagementSubTabChange}
-            onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
-            onEditFormTabChange={onProjectManagementEditFormTabChange}
-            onCreateFormTabChange={onProjectManagementCreateFormTabChange}
-            onSelectDocument={onLoadProjectManagementDocument}
-            onCreateDocument={onCreateProjectManagementDocument}
-            onUpdateDocument={onUpdateProjectManagementDocument}
-            onUpdateDependencies={onUpdateProjectManagementDependencies}
-            onUpdateStatus={onUpdateProjectManagementStatus}
-            onUpdateUsers={onUpdateProjectManagementUsers}
-            onBatchUpdateDocuments={onBatchUpdateProjectManagementDocuments}
-            onAddComment={onAddProjectManagementComment}
-            onRunAiCommand={onRunProjectManagementAiCommand}
-            onRunDocumentAi={onRunProjectManagementDocumentAi}
-            onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
-            onCancelAiCommand={onCancelProjectManagementAiCommand}
-            onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false, includeSelectedDocument: false })}
-          />
+          <div className="pt-3">
+            <ProjectManagementPanel
+              documents={projectManagementDocuments}
+              worktrees={projectManagementWorktrees}
+              availableTags={projectManagementAvailableTags}
+              availableStatuses={projectManagementAvailableStatuses}
+              projectManagementUsers={projectManagementUsers}
+              activeSubTab={projectManagementActiveSubTab}
+              selectedDocumentId={projectManagementSelectedDocumentId}
+              documentViewMode={projectManagementDocumentViewMode}
+              editFormTab={projectManagementEditFormTab}
+              createFormTab={projectManagementCreateFormTab}
+              document={projectManagementDocument}
+              history={projectManagementHistory}
+              loading={projectManagementLoading}
+              refreshError={projectManagementError}
+              lastUpdatedAt={projectManagementLastUpdatedAt}
+              saving={projectManagementSaving}
+              aiCommands={projectManagementAiCommands}
+              aiJob={projectManagementAiJob}
+              documentRunJob={projectManagementDocumentAiJob}
+              runningAiJobs={projectManagementRunningAiJobs}
+              selectedWorktreeBranch={worktree?.branch ?? null}
+              onSelectWorktree={onSelectWorktree}
+              onSubTabChange={onProjectManagementSubTabChange}
+              onDocumentViewModeChange={onProjectManagementDocumentViewModeChange}
+              onEditFormTabChange={onProjectManagementEditFormTabChange}
+              onCreateFormTabChange={onProjectManagementCreateFormTabChange}
+              onSelectDocument={onLoadProjectManagementDocument}
+              onCreateDocument={onCreateProjectManagementDocument}
+              onUpdateDocument={onUpdateProjectManagementDocument}
+              onUpdateDependencies={onUpdateProjectManagementDependencies}
+              onUpdateStatus={onUpdateProjectManagementStatus}
+              onUpdateUsers={onUpdateProjectManagementUsers}
+              onBatchUpdateDocuments={onBatchUpdateProjectManagementDocuments}
+              onAddComment={onAddProjectManagementComment}
+              onRunAiCommand={onRunProjectManagementAiCommand}
+              onRunDocumentAi={onRunProjectManagementDocumentAi}
+              onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
+              onCancelAiCommand={onCancelProjectManagementAiCommand}
+              onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false, includeSelectedDocument: false })}
+            />
+          </div>
         ) : isSystemTabActive ? (
-          <div className="mt-4">
+          <div className="pt-3">
             <SystemTab
               activeSubTab={systemSubTab}
               status={systemStatus}
@@ -2108,7 +2101,7 @@ export function WorktreeDetail({
             />
           </div>
         ) : isAiLogTabActive ? (
-          <div className="mt-4">
+          <div className="pt-3">
             <ProjectManagementAiTab
               activeSubTab={projectManagementAiActiveSubTab}
               logs={projectManagementAiLogs}
@@ -2126,7 +2119,7 @@ export function WorktreeDetail({
             />
           </div>
         ) : isGitTabActive ? (
-          <div className="mt-4 space-y-4">{gitDiffView}</div>
+          <div className="pt-3 space-y-4">{gitDiffView}</div>
         ) : null}
       </div>
 

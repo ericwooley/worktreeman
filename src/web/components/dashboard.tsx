@@ -13,7 +13,6 @@ import {
 import { useDashboardState } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
-import { PwaInstallCard } from "./pwa-install-card";
 import { useTheme } from "./theme-provider";
 import { WorktreeDetail, type WorktreeEnvironmentSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
@@ -108,6 +107,44 @@ function comparePaletteItems(left: CommandPaletteItem, right: CommandPaletteItem
 
   return left.title.localeCompare(right.title);
 }
+
+const PRIMARY_NAV_ITEMS: Array<{
+  id: DashboardActiveTab;
+  shortLabel: string;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "environment",
+    shortLabel: "ENV",
+    label: "Environment",
+    description: "Runtime controls, shell access, and background commands.",
+  },
+  {
+    id: "git",
+    shortLabel: "GIT",
+    label: "Git",
+    description: "Diffs, status, merge readiness, and branch actions.",
+  },
+  {
+    id: "project-management",
+    shortLabel: "PM",
+    label: "Project",
+    description: "Documents, board flow, dependencies, and planning work.",
+  },
+  {
+    id: "system",
+    shortLabel: "SYS",
+    label: "System",
+    description: "Host health, queue activity, and durable process state.",
+  },
+  {
+    id: "ai-log",
+    shortLabel: "AI",
+    label: "AI Activity",
+    description: "Saved logs, active AI jobs, and origin-linked runs.",
+  },
+];
 
 export function Dashboard() {
   const initialUrlState = readDashboardUrlState();
@@ -1276,6 +1313,14 @@ export function Dashboard() {
     : commandPaletteScope === "theme-select"
       ? themeSelectionPaletteItems
       : mainCommandPaletteItems;
+  const activePrimaryNav = PRIMARY_NAV_ITEMS.find((entry) => entry.id === activeTab) ?? PRIMARY_NAV_ITEMS[0];
+  const installButtonLabel = pwaInstallStatus === "available"
+    ? "Install app"
+    : pwaInstallStatus === "installing"
+      ? "Check browser"
+      : pwaInstallStatus === "installed"
+        ? null
+        : "Install pending";
 
   const shortcutSettings = useMemo<CommandPaletteShortcutSetting[]>(() => [
     {
@@ -1320,95 +1365,145 @@ export function Dashboard() {
       className="relative min-h-screen overflow-hidden px-0 pt-0 theme-text"
       style={{ paddingBottom: "calc(var(--terminal-drawer-stowed-height) + var(--terminal-drawer-page-gap))" }}
     >
-      <div className="relative z-10 flex w-full flex-col gap-3">
-        <header className="matrix-panel relative z-30 rounded-none border-x-0 p-3 sm:p-4">
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div className="min-w-0 flex-1 space-y-1">
+      <div className="relative z-10 grid min-h-screen gap-3 lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-0">
+        <aside className="matrix-panel rounded-none border-x-0 border-t-0 p-3 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-l-0 lg:border-r">
+          <div className="flex h-full flex-col gap-3">
+            <div className="border theme-border-faint px-3 py-3">
               <p className="matrix-kicker">Local orchestration cockpit</p>
-              <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
-                <div className="min-w-0 flex-1">
-                  <h1 className="text-2xl font-semibold tracking-tight theme-text-strong sm:text-3xl">worktreeman</h1>
-                  <p className="mt-1 text-sm leading-5 theme-text-muted sm:text-base">
-                    Worktree-first control surface for jumping between branch runtimes without losing the terminal context.
-                  </p>
-                </div>
+              <h1 className="mt-1 text-lg font-semibold tracking-tight theme-text-strong">worktreeman</h1>
+              <p className="mt-1 text-xs leading-5 theme-text-muted">
+                Dense control surface for branch runtimes, Git flow, and AI-assisted project work.
+              </p>
+            </div>
+
+            <MatrixDropdown
+              label="Worktree"
+              value={selected?.branch ?? null}
+              options={worktreeOptions}
+              placeholder="Select worktree"
+              onChange={(value) => {
+                if (value === CREATE_WORKTREE_OPTION_VALUE) {
+                  setCreateWorktreeModalOpen(true);
+                  return;
+                }
+
+                setSelectedBranch(value);
+              }}
+            />
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="theme-border-subtle theme-surface-soft border px-3 py-2">
+                <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">Worktrees</p>
+                <p className="mt-1 text-base font-semibold theme-text-strong">{visibleWorktrees.length}</p>
+              </div>
+              <div className="theme-border-subtle theme-surface-soft border px-3 py-2">
+                <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">Running</p>
+                <p className="mt-1 text-base font-semibold theme-text-strong">{visibleWorktrees.filter((entry) => entry.runtime).length}</p>
               </div>
             </div>
 
-            <div className="flex w-full flex-col gap-2 pt-12 xl:max-w-[40rem] xl:items-end">
-              <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[34rem] xl:grid-cols-[minmax(14rem,1fr)_minmax(14rem,1fr)]">
-                <MatrixDropdown
-                  label="Worktree"
-                  value={selected?.branch ?? null}
-                  options={worktreeOptions}
-                  placeholder="Select worktree"
-                  onChange={(value) => {
-                    if (value === CREATE_WORKTREE_OPTION_VALUE) {
-                      setCreateWorktreeModalOpen(true);
-                      return;
-                    }
+            <nav aria-label="Primary navigation" className="flex flex-col gap-2">
+              {PRIMARY_NAV_ITEMS.map((entry) => {
+                const isActive = entry.id === activeTab;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                      className={`flex items-start gap-3 border px-3 py-2 text-left transition-colors duration-150 ${isActive
+                      ? "theme-tab-active theme-border-subtle"
+                      : "theme-tab-idle theme-border-faint"}`}
+                    onClick={() => navigateToTab(entry.id)}
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <span className="min-w-[2.75rem] font-mono text-[11px] font-semibold uppercase tracking-[0.2em] theme-text-soft">
+                      {entry.shortLabel}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold theme-text-strong">{entry.label}</span>
+                      <span className="mt-1 block text-xs leading-5 theme-text-muted">{entry.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
 
-                    setSelectedBranch(value);
-                  }}
-                />
-                <button
-                  type="button"
-                  className="theme-border-subtle theme-dropdown-trigger flex h-full min-h-[100%] w-full items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150"
-                  onClick={() => openCommandPalette("theme-select")}
-                >
-                  <div className="min-w-0">
-                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">Theme</p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className="theme-text-strong truncate font-mono text-sm">{theme.name}</span>
-                      <MatrixBadge tone="active" compact>{theme.variant}</MatrixBadge>
-                    </div>
-                  </div>
-                  <span className="theme-text-accent-soft font-mono text-sm">/</span>
-                </button>
-                <button
-                  type="button"
-                  className="theme-border-subtle theme-dropdown-trigger flex h-full min-h-[100%] w-full items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150 xl:col-span-2"
-                  onClick={() => void openConfigEditor()}
-                >
-                  <div className="min-w-0">
-                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">Config</p>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className="theme-text-strong truncate font-mono text-sm">{state?.configSourceRef ?? DEFAULT_WORKTREEMAN_SETTINGS_BRANCH}</span>
-                      <MatrixBadge tone="neutral" compact>{state?.configFile ?? "worktree.yml"}</MatrixBadge>
-                    </div>
-                  </div>
-                  <span className="theme-text-accent-soft font-mono text-sm">edit</span>
-                </button>
-                <button
-                  type="button"
-                  className="theme-border-subtle theme-dropdown-trigger flex h-full min-h-[100%] w-full items-center justify-between gap-3 border px-3 py-2 text-left transition-colors duration-150 xl:col-span-2"
-                  onClick={() => void openAiSettings()}
-                >
-                  <div className="min-w-0">
-                    <p className="theme-text-soft text-[0.6rem] uppercase tracking-[0.18em]">AI commands</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      {aiCommandStatusBadges.map((entry) => (
-                        <MatrixBadge key={entry.commandId} tone={entry.ready ? "active" : "warning"} compact>
-                          {entry.label} {entry.ready ? "ready" : "missing"}
-                        </MatrixBadge>
-                      ))}
-                    </div>
-                  </div>
-                  <span className="theme-text-accent-soft font-mono text-sm">magic</span>
-                </button>
-              </div>
-              <PwaInstallCard status={pwaInstallStatus} onInstall={() => void handleInstallPwa()} />
-              <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
-                <MatrixBadge tone="neutral">Command palette</MatrixBadge>
-                <span className="font-mono theme-text-strong">{formatShortcutLabel(commandPaletteShortcut)}</span>
-                <MatrixBadge tone="active">{theme.name}</MatrixBadge>
-                <span>{themes.length} Base16 themes loaded</span>
-              </div>
+            <div className="mt-auto flex flex-col gap-2">
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                onClick={() => setCreateWorktreeModalOpen(true)}
+              >
+                New worktree
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => openCommandPalette("theme-select")}
+              >
+                Theme: {theme.name}
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => void openConfigEditor()}
+              >
+                Edit config
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => void openAiSettings()}
+              >
+                AI commands
+              </button>
             </div>
           </div>
-        </header>
+        </aside>
 
-        <section className="relative z-10 min-w-0">
+        <div className="min-w-0">
+          <header className="matrix-panel relative z-30 rounded-none border-x-0 border-t-0 px-4 py-3 lg:border-l-0">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="matrix-kicker">{activePrimaryNav.shortLabel}</p>
+                  {selected?.branch ? <MatrixBadge tone="active">{selected.branch}</MatrixBadge> : null}
+                  <MatrixBadge tone="neutral">{theme.name}</MatrixBadge>
+                </div>
+                <div className="mt-1 flex flex-col gap-1 lg:flex-row lg:items-baseline lg:gap-3">
+                  <h2 className="text-xl font-semibold tracking-tight theme-text-strong">{activePrimaryNav.label}</h2>
+                  <p className="min-w-0 text-sm theme-text-muted">{activePrimaryNav.description}</p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted xl:justify-end">
+                <span className="border theme-border-faint px-2 py-1 font-mono theme-text-strong">
+                  Palette {formatShortcutLabel(commandPaletteShortcut)}
+                </span>
+                <span className="border theme-border-faint px-2 py-1 font-mono theme-text-strong">
+                  {themes.length} themes
+                </span>
+                {aiCommandStatusBadges.map((entry) => (
+                  <MatrixBadge key={entry.commandId} tone={entry.ready ? "active" : "warning"} compact>
+                    {entry.label} {entry.ready ? "ready" : "missing"}
+                  </MatrixBadge>
+                ))}
+                {installButtonLabel ? (
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-3 py-1.5 text-xs font-semibold"
+                    onClick={() => void handleInstallPwa()}
+                    disabled={pwaInstallStatus !== "available"}
+                  >
+                    {installButtonLabel}
+                  </button>
+                ) : (
+                  <MatrixBadge tone="active">App installed</MatrixBadge>
+                )}
+              </div>
+            </div>
+          </header>
+
+          <section className="relative z-10 min-w-0">
           {shutdownStatus?.active || shutdownStatus?.completed || shutdownStatus?.failed ? (
             <div className="matrix-panel mb-4 rounded-none border-x-0 theme-inline-panel-warning p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1558,7 +1653,8 @@ export function Dashboard() {
             onCreateProjectManagementDocument={createProjectManagementDocument}
             onUpdateProjectManagementDocument={updateProjectManagementDocument}
             onUpdateProjectManagementDependencies={async (documentId, dependencyIds) => {
-              return updateProjectManagementDependencies(documentId, { dependencyIds });
+              await updateProjectManagementDependencies(documentId, { dependencyIds });
+              return null;
             }}
             onUpdateProjectManagementStatus={async (documentId, status) => {
               return updateProjectManagementStatus(documentId, { status });
@@ -1567,7 +1663,10 @@ export function Dashboard() {
             onBatchUpdateProjectManagementDocuments={async (documentIds, overrides) => {
               return batchUpdateProjectManagementDocuments(documentIds, overrides);
             }}
-            onAddProjectManagementComment={addProjectManagementComment}
+            onAddProjectManagementComment={async (documentId, payload) => {
+              await addProjectManagementComment(documentId, payload);
+              return null;
+            }}
             projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
             projectManagementDocumentAiJob={projectManagementDocumentAiJob}
@@ -1609,7 +1708,8 @@ export function Dashboard() {
             }}
             onCancelProjectManagementAiLogJob={async (branch) => cancelAiCommand(branch)}
           />
-        </section>
+          </section>
+        </div>
       </div>
 
       {deleteConfirmation ? (
