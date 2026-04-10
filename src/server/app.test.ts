@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import http from "node:http";
+import net from "node:net";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -60,6 +61,17 @@ async function listenOnEphemeralPort() {
       });
     },
   };
+}
+
+async function assertPortReachable(host: string, port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.connect({ host, port });
+    socket.once("connect", () => {
+      socket.end();
+      resolve();
+    });
+    socket.once("error", reject);
+  });
 }
 
 test("startServer falls back to another available port when the default port is occupied", async () => {
@@ -134,6 +146,32 @@ test("startServer returns localhost URL details for auto fallback", async () => 
 
     assert.equal(startedServer.host, "127.0.0.1");
     assert.equal(startedServer.url, `http://localhost:${startedServer.port}`);
+  } finally {
+    await startedServer?.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer keeps localhost reachable while advertising the preferred auto host", async () => {
+  const { rootDir, repo } = await createTestRepo();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    startedServer = await startServer({
+      repo,
+      host: "auto",
+      port: await listenFreePort(),
+      openBrowser: false,
+      networkInterfaces: {
+        lo0: [{ address: "127.0.0.1", family: "IPv4", internal: true, mac: "", netmask: "255.0.0.0", cidr: "127.0.0.1/8" }],
+        tailscale0: [{ address: "100.101.102.103", family: "IPv4", internal: false, mac: "", netmask: "255.192.0.0", cidr: "100.101.102.103/10" }],
+      },
+    });
+
+    assert.equal(startedServer.host, "100.101.102.103");
+    assert.equal(startedServer.url, `http://100.101.102.103:${startedServer.port}`);
+
+    await assertPortReachable("127.0.0.1", startedServer.port);
   } finally {
     await startedServer?.close();
     await fs.rm(rootDir, { recursive: true, force: true });

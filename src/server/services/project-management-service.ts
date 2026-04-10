@@ -20,6 +20,7 @@ import type {
   ProjectManagementBatchResponse,
   ProjectManagementDocument,
   ProjectManagementDocumentResponse,
+  ProjectManagementDocumentSummaryResponse,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
   ProjectManagementHistoryResponse,
@@ -32,6 +33,7 @@ import type {
 import { loadConfig } from "./config-service.js";
 import { getManagedDatabaseClient, type ManagedDatabaseClient } from "./database-client-service.js";
 import { runCommand } from "../utils/process.js";
+import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 
 const PROJECT_MANAGEMENT_MAX_APPEND_RETRIES = 5;
 const PROJECT_MANAGEMENT_MAX_HISTORY_DIFF_CHARS = 20_000;
@@ -141,6 +143,7 @@ const PROJECT_MANAGEMENT_DOCUMENTS_TABLE = "project_management_documents";
 const PROJECT_MANAGEMENT_HISTORY_TABLE = "project_management_history";
 
 const projectManagementCache = new Map<string, ProjectManagementStoreState>();
+const projectManagementDbState = new Map<string, { db: ManagedDatabaseClient; ready: Promise<void> }>();
 
 function getNextDocumentNumber(documents: Iterable<ProjectManagementDocumentSummary>): number {
   let maxNumber = 0;
@@ -454,51 +457,72 @@ function toDocumentFromRow(row: PersistedProjectManagementDocumentRow): Persiste
 
 async function getProjectManagementDb(repoRoot: string) {
   const db = await getManagedDatabaseClient(repoRoot, PROJECT_MANAGEMENT_CACHE_NAMESPACE);
-  await db.exec(`
-    create table if not exists ${PROJECT_MANAGEMENT_STATE_TABLE} (
-      singleton boolean primary key default true,
-      head_sha text not null,
-      updated_at timestamptz not null default now()
-    );
+  const existing = projectManagementDbState.get(repoRoot);
+  if (!existing || existing.db !== db) {
+    const ready = (async () => {
+      await db.exec(`
+        create table if not exists ${PROJECT_MANAGEMENT_STATE_TABLE} (
+          singleton boolean primary key default true,
+          head_sha text not null,
+          updated_at timestamptz not null default now()
+        );
 
-    create table if not exists ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE} (
-      document_id text primary key,
-      document_order integer not null,
-      number integer not null,
-      title text not null,
-      summary text not null,
-      kind text not null,
-      pull_request_json text not null,
-      tags_json text not null,
-      dependencies_json text not null,
-      status text not null,
-      assignee text not null,
-      archived boolean not null,
-      created_at timestamptz not null,
-      updated_at timestamptz not null,
-      history_count integer not null,
-      markdown text not null,
-      comments_json text not null,
-      automerge_binary text not null
-    );
+        create table if not exists ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE} (
+          document_id text primary key,
+          document_order integer not null,
+          number integer not null,
+          title text not null,
+          summary text not null,
+          kind text not null,
+          pull_request_json text not null,
+          tags_json text not null,
+          dependencies_json text not null,
+          status text not null,
+          assignee text not null,
+          archived boolean not null,
+          created_at timestamptz not null,
+          updated_at timestamptz not null,
+          history_count integer not null,
+          markdown text not null,
+          comments_json text not null,
+          automerge_binary text not null
+        );
 
-    create table if not exists ${PROJECT_MANAGEMENT_HISTORY_TABLE} (
-      document_id text not null,
-      history_order integer not null,
-      created_at timestamptz not null,
-      entry_json text not null,
-      primary key (document_id, history_order)
-    );
+        create table if not exists ${PROJECT_MANAGEMENT_HISTORY_TABLE} (
+          document_id text not null,
+          history_order integer not null,
+          created_at timestamptz not null,
+          entry_json text not null,
+          primary key (document_id, history_order)
+        );
 
-    create index if not exists project_management_documents_order_idx
-      on ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE} (document_order);
-    create index if not exists project_management_history_lookup_idx
-      on ${PROJECT_MANAGEMENT_HISTORY_TABLE} (document_id, history_order);
-  `);
-  await db.exec(`
-    alter table ${PROJECT_MANAGEMENT_STATE_TABLE}
-      add column if not exists snapshot_json text;
-  `);
+        create index if not exists project_management_documents_order_idx
+          on ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE} (document_order);
+        create index if not exists project_management_history_lookup_idx
+          on ${PROJECT_MANAGEMENT_HISTORY_TABLE} (document_id, history_order);
+      `);
+      await db.exec(`
+        alter table ${PROJECT_MANAGEMENT_STATE_TABLE}
+          add column if not exists snapshot_json text;
+      `);
+    })();
+    projectManagementDbState.set(repoRoot, { db, ready });
+  }
+
+  const initialized = projectManagementDbState.get(repoRoot);
+  if (!initialized) {
+    throw new Error("Project management database initialization state was not recorded.");
+  }
+
+  try {
+    await initialized.ready;
+  } catch (error) {
+    if (projectManagementDbState.get(repoRoot)?.db === db) {
+      projectManagementDbState.delete(repoRoot);
+    }
+    throw error;
+  }
+
   return db;
 }
 
@@ -1340,10 +1364,10 @@ async function appendEntries(
   repoRoot: string,
   entries: Array<{
     documentId?: string;
-    title: string;
+    title?: string;
     summary?: string;
-    markdown: string;
-    tags: string[];
+    markdown?: string;
+    tags?: string[];
     dependencies?: string[];
     status?: string;
     assignee?: string;
@@ -1352,12 +1376,31 @@ async function appendEntries(
   }>,
 ): Promise<ProjectManagementBatchResponse> {
   for (let attempt = 1; attempt <= PROJECT_MANAGEMENT_MAX_APPEND_RETRIES; attempt += 1) {
+    const operationStartedAt = Date.now();
+    logServerEvent("project-management-update-timing", "append-entries-started", {
+      attempt,
+      documentIds: entries.map((entry) => entry.documentId?.trim()).filter(Boolean),
+      entryCount: entries.length,
+      commentEntries: entries.filter((entry) => typeof entry.commentBody === "string").length,
+    });
+    const stateStartedAt = Date.now();
+    logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "state" });
     const state = await getReducedProjectManagementState(repoRoot);
+    const stateDurationMs = Date.now() - stateStartedAt;
+    const summariesStartedAt = Date.now();
+    logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "summaries" });
     const summaries = await loadStoreDocuments(repoRoot);
+    const summariesDurationMs = Date.now() - summariesStartedAt;
     const summariesById = new Map(summaries.map((document) => [document.id, document]));
+    const orderStartedAt = Date.now();
+    logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "next-order" });
     let nextDocumentOrder = await getNextDocumentOrder(repoRoot);
+    const orderDurationMs = Date.now() - orderStartedAt;
     const now = new Date().toISOString();
+    const authorStartedAt = Date.now();
+    logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "author" });
     const author = await resolveProjectManagementAuthor(repoRoot);
+    const authorDurationMs = Date.now() - authorStartedAt;
     const commitEnv = buildProjectManagementCommitEnv(author);
     const batchEntries: StoredProjectManagementBatchEntry[] = [];
     const documentIds: string[] = [];
@@ -1368,7 +1411,12 @@ async function appendEntries(
 
     for (const entry of entries) {
       const actorId = createActorId();
-      const documentId = entry.documentId?.trim() || createDocumentId(entry.title);
+      const providedDocumentId = entry.documentId?.trim();
+      const providedTitle = entry.title?.trim();
+      if (!providedDocumentId && !providedTitle) {
+        throw new Error("Document title is required.");
+      }
+      const documentId = providedDocumentId || createDocumentId(providedTitle!);
       const existingRecord = loadedDocs.has(documentId)
         ? loadedDocs.get(documentId) ?? null
         : await loadPersistedDocumentRecord(repoRoot, documentId);
@@ -1377,6 +1425,12 @@ async function appendEntries(
       if (entry.documentId && !existingDoc) {
         throw new Error(`Unknown project management document ${documentId}.`);
       }
+      const title = providedTitle || existingDoc?.title || "";
+      if (!title) {
+        throw new Error("Document title is required.");
+      }
+      const markdown = entry.markdown ?? existingDoc?.markdown ?? "";
+      const tags = entry.tags ?? existingDoc?.tags ?? [];
       const dependencies = normalizeDependencyIds(entry.dependencies ?? existingDoc?.dependencies ?? [], documentId);
       assertValidDependencies(predictedDependencies, summariesById, documentId, dependencies);
 
@@ -1413,14 +1467,14 @@ async function appendEntries(
       } else {
         ({ nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
           number: existingDoc?.number ?? getNextDocumentNumber(summariesById.values()),
-          title: entry.title,
-          summary: entry.summary,
-          markdown: entry.markdown,
-          tags: entry.tags,
+          title,
+          summary: entry.summary ?? existingDoc?.summary,
+          markdown,
+          tags,
           dependencies,
           status: entry.status,
-          assignee: entry.assignee,
-          archived: entry.archived,
+          assignee: entry.assignee ?? existingDoc?.assignee,
+          archived: entry.archived ?? existingDoc?.archived,
           now,
           actorId,
         }));
@@ -1476,21 +1530,48 @@ async function appendEntries(
     };
 
     try {
+      const appendCommitStartedAt = Date.now();
+      logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "append-commit" });
       const commitSha = await appendBatchCommit(repoRoot, state.headSha, batch, commitEnv);
+      const appendCommitDurationMs = Date.now() - appendCommitStartedAt;
+      const applyStoreStartedAt = Date.now();
+      logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "apply-store" });
       await applyBatchToStore(repoRoot, batch, commitSha);
+      const applyStoreDurationMs = Date.now() - applyStoreStartedAt;
       const nextState: ProjectManagementStoreState = {
         branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
         headSha: commitSha,
         updatedAt: now,
       };
+      const persistStateStartedAt = Date.now();
+      logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "persist-state" });
       await persistProjectManagementStoreState(repoRoot, nextState);
+      const persistStateDurationMs = Date.now() - persistStateStartedAt;
       projectManagementCache.set(repoRoot, nextState);
+      logServerEvent("project-management-update-timing", "append-entries-completed", {
+        attempt,
+        documentIds,
+        state: formatDurationMs(stateDurationMs),
+        summaries: formatDurationMs(summariesDurationMs),
+        nextOrder: formatDurationMs(orderDurationMs),
+        author: formatDurationMs(authorDurationMs),
+        appendCommit: formatDurationMs(appendCommitDurationMs),
+        applyStore: formatDurationMs(applyStoreDurationMs),
+        persistState: formatDurationMs(persistStateDurationMs),
+        total: formatDurationMs(Date.now() - operationStartedAt),
+      });
       return {
         branch: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
         headSha: commitSha,
         documentIds,
       };
     } catch (error) {
+      logServerEvent("project-management-update-timing", "append-entries-retry", {
+        attempt,
+        documentIds,
+        duration: formatDurationMs(Date.now() - operationStartedAt),
+        error: error instanceof Error ? error.message : String(error),
+      }, attempt === PROJECT_MANAGEMENT_MAX_APPEND_RETRIES ? "error" : "warn");
       if (attempt === PROJECT_MANAGEMENT_MAX_APPEND_RETRIES) {
         throw error;
       }
@@ -1624,15 +1705,10 @@ export async function updateProjectManagementDocument(
   repoRoot: string,
   documentId: string,
   request: UpdateProjectManagementDocumentRequest,
-): Promise<ProjectManagementDocumentResponse> {
-  const title = request.title.trim();
-  if (!title) {
-    throw new Error("Document title is required.");
-  }
-
-  await appendEntries(repoRoot, [{
+): Promise<ProjectManagementDocumentSummaryResponse> {
+  const result = await appendEntries(repoRoot, [{
     documentId,
-    title,
+    title: request.title,
     summary: request.summary,
     markdown: request.markdown,
     tags: request.tags,
@@ -1642,7 +1718,7 @@ export async function updateProjectManagementDocument(
     archived: request.archived,
   }]);
 
-  return getProjectManagementDocument(repoRoot, documentId);
+  return getProjectManagementDocumentSummary(repoRoot, documentId, result.headSha);
 }
 
 export async function appendProjectManagementBatch(
@@ -1660,7 +1736,7 @@ export async function updateProjectManagementDependencies(
   repoRoot: string,
   documentId: string,
   dependencyIds: string[],
-): Promise<ProjectManagementDocumentResponse> {
+): Promise<ProjectManagementDocumentSummaryResponse> {
   await getReducedProjectManagementState(repoRoot);
   const currentDocument = await loadStoreDocument(repoRoot, documentId);
   const summaries = await loadStoreDocuments(repoRoot);
@@ -1670,7 +1746,7 @@ export async function updateProjectManagementDependencies(
   const normalizedDependencies = normalizeDependencyIds(dependencyIds, documentId);
   assertValidDependencies(dependenciesById, documentsById, documentId, normalizedDependencies);
 
-  await appendEntries(repoRoot, [{
+  const result = await appendEntries(repoRoot, [{
     documentId,
     title: currentDocument.title,
     summary: currentDocument.summary,
@@ -1682,39 +1758,33 @@ export async function updateProjectManagementDependencies(
     archived: currentDocument.archived,
   }]);
 
-  return getProjectManagementDocument(repoRoot, documentId);
+  return getProjectManagementDocumentSummary(repoRoot, documentId, result.headSha);
 }
 
 export async function updateProjectManagementStatus(
   repoRoot: string,
   documentId: string,
   status: string,
-): Promise<ProjectManagementDocumentResponse> {
-  await getReducedProjectManagementState(repoRoot);
-  const currentDocument = await loadStoreDocument(repoRoot, documentId);
-
-  await appendEntries(repoRoot, [{
+): Promise<ProjectManagementDocumentSummaryResponse> {
+  const result = await appendEntries(repoRoot, [{
     documentId,
-    title: currentDocument.title,
-    summary: currentDocument.summary,
-    markdown: currentDocument.markdown,
-    tags: currentDocument.tags,
-    dependencies: currentDocument.dependencies,
     status,
-    assignee: currentDocument.assignee,
-    archived: currentDocument.archived,
   }]);
 
-  return getProjectManagementDocument(repoRoot, documentId);
+  return getProjectManagementDocumentSummary(repoRoot, documentId, result.headSha);
 }
 
 export async function moveProjectManagementDocumentTowardInProgress(
   repoRoot: string,
   documentId: string,
-): Promise<ProjectManagementDocumentResponse> {
+): Promise<ProjectManagementDocumentSummaryResponse> {
   const currentDocument = await getProjectManagementDocument(repoRoot, documentId);
   if (currentDocument.document.status !== "backlog" && currentDocument.document.status !== "todo") {
-    return currentDocument;
+    return {
+      branch: currentDocument.branch,
+      headSha: currentDocument.headSha,
+      document: currentDocument.document,
+    };
   }
 
   return updateProjectManagementStatus(repoRoot, documentId, "in-progress");
@@ -1724,7 +1794,7 @@ export async function addProjectManagementComment(
   repoRoot: string,
   documentId: string,
   request: AddProjectManagementCommentRequest,
-): Promise<ProjectManagementDocumentResponse> {
+): Promise<ProjectManagementDocumentSummaryResponse> {
   await getReducedProjectManagementState(repoRoot);
   const currentDocument = await loadStoreDocument(repoRoot, documentId);
 
@@ -1733,7 +1803,7 @@ export async function addProjectManagementComment(
     throw new Error("Comment body is required.");
   }
 
-  await appendEntries(repoRoot, [{
+  const result = await appendEntries(repoRoot, [{
     documentId,
     title: currentDocument.title,
     summary: currentDocument.summary,
@@ -1746,14 +1816,44 @@ export async function addProjectManagementComment(
     commentBody: body,
   }]);
 
-  return getProjectManagementDocument(repoRoot, documentId);
+  return getProjectManagementDocumentSummary(repoRoot, documentId, result.headSha);
+}
+
+async function getProjectManagementDocumentSummary(
+  repoRoot: string,
+  documentId: string,
+  headSha?: string,
+): Promise<ProjectManagementDocumentSummaryResponse> {
+  const startedAt = Date.now();
+  logServerEvent("project-management-update-timing", "load-document-summary-started", {
+    documentId,
+  });
+  const state = await getReducedProjectManagementState(repoRoot);
+  const documents = await loadStoreDocuments(repoRoot);
+  const document = documents.find((entry) => entry.id === documentId) ?? null;
+  if (!document) {
+    throw new Error(`Unknown project management document ${documentId}.`);
+  }
+
+  logServerEvent("project-management-update-timing", "load-document-summary", {
+    documentId,
+    duration: formatDurationMs(Date.now() - startedAt),
+  });
+
+  return {
+    branch: state.branch,
+    headSha: headSha ?? state.headSha,
+    document,
+  };
 }
 
 export function clearProjectManagementCache(repoRoot?: string): void {
   if (repoRoot) {
     projectManagementCache.delete(repoRoot);
+    projectManagementDbState.delete(repoRoot);
     return;
   }
 
   projectManagementCache.clear();
+  projectManagementDbState.clear();
 }

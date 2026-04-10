@@ -6,9 +6,11 @@ import type {
   AiCommandSettingsResponse,
   ApiStateStreamEvent,
   ConfigDocumentResponse,
+  DashboardEventsStreamEvent,
   ProjectManagementUsersResponse,
   ProjectManagementUsersStreamEvent,
   ShutdownStatus,
+  ShutdownStatusStreamEvent,
   SystemStatusResponse,
   SystemStatusStreamEvent,
   UpdateAiCommandSettingsRequest,
@@ -28,6 +30,269 @@ import { logServerEvent } from "../utils/server-logger.js";
 import type { ApiRouterContext } from "./api-router-context.js";
 
 export function registerApiStateRoutes(router: express.Router, context: ApiRouterContext) {
+  router.get("/events/stream", async (req, res, next) => {
+    try {
+      let currentState = await context.loadState();
+      let currentShutdownStatus = await context.operationalState.getShutdownStatus();
+      let currentSystemStatus = await getSystemStatus(context.repoRoot);
+      const initialConfig = await context.loadCurrentConfig();
+      let currentProjectManagementUsers = await listProjectManagementUsers(context.repoRoot, initialConfig.projectManagement.users);
+      let currentProjectManagementDocuments = await context.listProjectManagementDocuments();
+      let lastStatePayload = JSON.stringify(currentState);
+      let lastShutdownPayload = JSON.stringify(currentShutdownStatus);
+      let lastSystemPayload = JSON.stringify(currentSystemStatus);
+      let lastUsersPayload = JSON.stringify(currentProjectManagementUsers);
+      let lastDocumentsPayload = JSON.stringify(currentProjectManagementDocuments);
+      let rebuildingState = false;
+      let rebuildingShutdown = false;
+      let rebuildingSystem = false;
+      let rebuildingUsers = false;
+      let rebuildingDocuments = false;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      let closed = false;
+
+      const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
+
+      const closeStream = () => {
+        if (closed) {
+          return;
+        }
+
+        closed = true;
+        unsubscribeState();
+        unsubscribeProjectManagementDocuments();
+        unsubscribeProjectManagementUsers();
+        unsubscribeSystemStatus();
+        clearInterval(stateInterval);
+        clearInterval(shutdownInterval);
+        clearInterval(systemInterval);
+        clearInterval(projectManagementUsersInterval);
+        clearInterval(projectManagementDocumentsInterval);
+        clearInterval(keepAlive);
+        if (res.destroyed || res.writableEnded) {
+          return;
+        }
+
+        try {
+          res.end();
+        } catch {
+          // Ignore connection teardown races during SSE cleanup.
+        }
+      };
+
+      const writeEvent = (event: DashboardEventsStreamEvent) => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        } catch {
+          closeStream();
+        }
+      };
+
+      const writeStateEvent = (type: ApiStateStreamEvent["type"], state: Awaited<ReturnType<typeof context.loadState>>) => {
+        writeEvent({ type: "state", event: { type, state } });
+      };
+
+      const writeShutdownEvent = (type: ShutdownStatusStreamEvent["type"], status: ShutdownStatus) => {
+        writeEvent({ type: "shutdown-status", event: { type, status } });
+      };
+
+      const writeSystemEvent = (type: SystemStatusStreamEvent["type"], status: SystemStatusResponse) => {
+        writeEvent({ type: "system-status", event: { type, status } });
+      };
+
+      const writeProjectManagementUsersEvent = (
+        type: ProjectManagementUsersStreamEvent["type"],
+        users: ProjectManagementUsersResponse,
+      ) => {
+        writeEvent({ type: "project-management-users", event: { type, users } });
+      };
+
+      const writeProjectManagementDocumentsEvent = (
+        type: "snapshot" | "update",
+        documents: Awaited<ReturnType<typeof context.listProjectManagementDocuments>>,
+      ) => {
+        writeEvent({ type: "project-management-documents", event: { type, documents } });
+      };
+
+      writeStateEvent("snapshot", currentState);
+      writeShutdownEvent("snapshot", currentShutdownStatus);
+      writeSystemEvent("snapshot", currentSystemStatus);
+      writeProjectManagementUsersEvent("snapshot", currentProjectManagementUsers);
+      writeProjectManagementDocumentsEvent("snapshot", currentProjectManagementDocuments);
+
+      const rebuildAndEmitState = () => {
+        if (rebuildingState || isStreamClosed()) {
+          return;
+        }
+
+        rebuildingState = true;
+        void Promise.resolve().then(async () => {
+          const nextState = await context.loadState();
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentState = nextState;
+          const nextPayload = JSON.stringify(nextState);
+          if (nextPayload !== lastStatePayload) {
+            lastStatePayload = nextPayload;
+            writeStateEvent("update", nextState);
+          }
+        }).catch((error) => {
+          logServerEvent("events-stream", "state-rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuildingState = false;
+        });
+      };
+
+      const rebuildAndEmitShutdown = () => {
+        if (rebuildingShutdown || isStreamClosed()) {
+          return;
+        }
+
+        rebuildingShutdown = true;
+        void Promise.resolve().then(async () => {
+          const nextStatus = await context.operationalState.getShutdownStatus();
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentShutdownStatus = nextStatus;
+          const nextPayload = JSON.stringify(nextStatus);
+          if (nextPayload !== lastShutdownPayload) {
+            lastShutdownPayload = nextPayload;
+            writeShutdownEvent("update", nextStatus);
+          }
+        }).catch((error) => {
+          logServerEvent("events-stream", "shutdown-rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuildingShutdown = false;
+        });
+      };
+
+      const rebuildAndEmitSystem = () => {
+        if (rebuildingSystem || isStreamClosed()) {
+          return;
+        }
+
+        rebuildingSystem = true;
+        void Promise.resolve().then(async () => {
+          const nextStatus = await getSystemStatus(context.repoRoot);
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentSystemStatus = nextStatus;
+          const nextPayload = JSON.stringify(nextStatus);
+          if (nextPayload !== lastSystemPayload) {
+            lastSystemPayload = nextPayload;
+            writeSystemEvent("update", nextStatus);
+          }
+        }).catch((error) => {
+          logServerEvent("events-stream", "system-rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuildingSystem = false;
+        });
+      };
+
+      const rebuildAndEmitProjectManagementUsers = () => {
+        if (rebuildingUsers || isStreamClosed()) {
+          return;
+        }
+
+        rebuildingUsers = true;
+        void Promise.resolve().then(async () => {
+          const nextConfig = await context.loadCurrentConfig();
+          const nextUsers = await listProjectManagementUsers(context.repoRoot, nextConfig.projectManagement.users);
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentProjectManagementUsers = nextUsers;
+          const nextPayload = JSON.stringify(nextUsers);
+          if (nextPayload !== lastUsersPayload) {
+            lastUsersPayload = nextPayload;
+            writeProjectManagementUsersEvent("update", nextUsers);
+          }
+        }).catch((error) => {
+          logServerEvent("events-stream", "project-management-users-rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuildingUsers = false;
+        });
+      };
+
+      const rebuildAndEmitProjectManagementDocuments = () => {
+        if (rebuildingDocuments || isStreamClosed()) {
+          return;
+        }
+
+        rebuildingDocuments = true;
+        void Promise.resolve().then(async () => {
+          const nextDocuments = await context.listProjectManagementDocuments();
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentProjectManagementDocuments = nextDocuments;
+          const nextPayload = JSON.stringify(nextDocuments);
+          if (nextPayload !== lastDocumentsPayload) {
+            lastDocumentsPayload = nextPayload;
+            writeProjectManagementDocumentsEvent("update", nextDocuments);
+          }
+        }).catch((error) => {
+          logServerEvent("events-stream", "project-management-documents-rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuildingDocuments = false;
+        });
+      };
+
+      const unsubscribeState = context.subscribeToStateRefresh(rebuildAndEmitState);
+      const unsubscribeProjectManagementDocuments = context.subscribeToProjectManagementDocumentsRefresh(rebuildAndEmitProjectManagementDocuments);
+      const unsubscribeProjectManagementUsers = context.subscribeToProjectManagementUsersRefresh(rebuildAndEmitProjectManagementUsers);
+      const unsubscribeSystemStatus = context.subscribeToSystemStatusRefresh(rebuildAndEmitSystem);
+      const stateInterval = setInterval(rebuildAndEmitState, context.stateStreamFullRefreshIntervalMs);
+      const shutdownInterval = setInterval(rebuildAndEmitShutdown, context.aiLogStreamPollIntervalMs);
+      const systemInterval = setInterval(rebuildAndEmitSystem, context.stateStreamFullRefreshIntervalMs);
+      const projectManagementUsersInterval = setInterval(rebuildAndEmitProjectManagementUsers, context.stateStreamFullRefreshIntervalMs);
+      const projectManagementDocumentsInterval = setInterval(rebuildAndEmitProjectManagementDocuments, context.stateStreamFullRefreshIntervalMs);
+      const keepAlive = setInterval(() => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        try {
+          res.write(`: keep-alive\n\n`);
+        } catch {
+          closeStream();
+        }
+      }, 15000);
+
+      req.on("close", closeStream);
+      res.on("close", closeStream);
+      res.on("error", closeStream);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/state/stream", async (req, res, next) => {
     try {
       let currentState = await context.loadState();

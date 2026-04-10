@@ -189,6 +189,18 @@ export interface SystemStatusStreamEvent {
   status: SystemStatusResponse;
 }
 
+export interface ShutdownStatusStreamEvent {
+  type: "snapshot" | "update";
+  status: ShutdownStatus;
+}
+
+export type DashboardEventsStreamEvent =
+  | { type: "state"; event: ApiStateStreamEvent }
+  | { type: "shutdown-status"; event: ShutdownStatusStreamEvent }
+  | { type: "project-management-documents"; event: ProjectManagementDocumentsStreamEvent }
+  | { type: "project-management-users"; event: ProjectManagementUsersStreamEvent }
+  | { type: "system-status"; event: SystemStatusStreamEvent };
+
 export interface TmuxClientsStreamEvent {
   type: "snapshot" | "update";
   branch: string;
@@ -465,6 +477,12 @@ export interface ProjectManagementDocumentResponse {
   document: ProjectManagementDocument;
 }
 
+export interface ProjectManagementDocumentSummaryResponse {
+  branch: string;
+  headSha: string;
+  document: ProjectManagementDocumentSummary;
+}
+
 export interface ProjectManagementHistoryResponse {
   branch: string;
   headSha: string;
@@ -509,10 +527,10 @@ export interface CreateProjectManagementDocumentRequest {
 }
 
 export interface UpdateProjectManagementDocumentRequest {
-  title: string;
+  title?: string;
   summary?: string;
-  markdown: string;
-  tags: string[];
+  markdown?: string;
+  tags?: string[];
   dependencies?: string[];
   status?: string;
   assignee?: string;
@@ -521,10 +539,10 @@ export interface UpdateProjectManagementDocumentRequest {
 
 export interface ProjectManagementBatchUpdateEntry {
   documentId?: string;
-  title: string;
+  title?: string;
   summary?: string;
-  markdown: string;
-  tags: string[];
+  markdown?: string;
+  tags?: string[];
   dependencies?: string[];
   status?: string;
   assignee?: string;

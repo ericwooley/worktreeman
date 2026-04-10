@@ -48,6 +48,52 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
   const appRoot = fileURLToPath(new URL("../../", import.meta.url));
   const isDevelopment = process.env.NODE_ENV === "development";
 
+  app.use((req, _res, next) => {
+    const isProjectManagementUpdate = req.method === "POST"
+      && /^\/api\/project-management\/documents\/[^/]+\/updates$/.test(req.originalUrl || req.url);
+
+    if (!isProjectManagementUpdate) {
+      next();
+      return;
+    }
+
+    let receivedBytes = 0;
+    const requestPath = req.originalUrl || req.url;
+    logServerEvent("http-pre-json", "request-started", {
+      method: req.method,
+      path: requestPath,
+      contentType: req.headers["content-type"],
+      contentLength: req.headers["content-length"],
+    });
+
+    req.on("data", (chunk: Buffer | string) => {
+      receivedBytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+    });
+    req.on("end", () => {
+      logServerEvent("http-pre-json", "request-body-complete", {
+        method: req.method,
+        path: requestPath,
+        receivedBytes,
+      });
+    });
+    req.on("aborted", () => {
+      logServerEvent("http-pre-json", "request-aborted", {
+        method: req.method,
+        path: requestPath,
+        receivedBytes,
+      }, "warn");
+    });
+    req.on("close", () => {
+      logServerEvent("http-pre-json", "request-closed", {
+        method: req.method,
+        path: requestPath,
+        receivedBytes,
+        complete: req.complete,
+      });
+    });
+
+    next();
+  });
   app.use(express.json());
   app.use((req, res, next) => {
     const startedAt = Date.now();
@@ -144,7 +190,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     dangerouslyExposeToNetwork: options.dangerouslyExposeToNetwork,
     networkInterfaces: options.networkInterfaces,
   });
-  const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null, resolvedHost.listenHost);
+  const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null, resolvedHost.bindHost);
   const prepareInitialTerminalSession = options.prepareInitialTerminalSession ?? ensureTerminalSession;
 
   const formatStartupError = (error: unknown) => {
@@ -152,7 +198,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : null;
 
     if (code === "EADDRINUSE") {
-      return `Port ${port} is already in use on ${resolvedHost.listenHost}. Stop the existing server or start worktreeman with --port <port>.`;
+          return `Port ${port} is already in use on ${resolvedHost.bindHost}. Stop the existing server or start worktreeman with --port <port>.`;
     }
 
     return message;
@@ -315,7 +361,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
       server.once("error", onError);
       server.once("listening", onListening);
-      server.listen(port, resolvedHost.listenHost);
+      server.listen(port, resolvedHost.bindHost);
     });
 
     terminalService = createTerminalService({
@@ -339,7 +385,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
 
     if (fellBackFrom !== undefined) {
       process.stdout.write(
-        `[startup] Port ${fellBackFrom} is already in use on ${resolvedHost.listenHost}. Using ${port} instead.\n`,
+          `[startup] Port ${fellBackFrom} is already in use on ${resolvedHost.bindHost}. Using ${port} instead.\n`,
       );
     }
 
@@ -347,7 +393,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       process.stdout.write(`${resolvedHost.warning}\n`);
     }
 
-    process.stdout.write(`[startup] Host selection: ${resolvedHost.detail}.\n`);
+    process.stdout.write(`[startup] Host selection: ${resolvedHost.detail}; advertising ${resolvedHost.urlHost}.\n`);
 
     try {
       const projectManagement = await rebuildProjectManagementStateForStartup(options.repo.repoRoot);

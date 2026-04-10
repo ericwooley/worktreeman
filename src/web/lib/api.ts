@@ -13,8 +13,10 @@ import type {
   CommitGitChangesRequest,
   CommitGitChangesResponse,
   ConfigDocumentResponse,
+  DashboardEventsStreamEvent,
   DeleteWorktreeRequest,
   CreateProjectManagementDocumentRequest,
+  ProjectManagementDocumentSummaryResponse,
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
@@ -104,6 +106,36 @@ export function subscribeToState(
   source.onmessage = (event) => {
     onConnectionChange?.(true);
     onEvent(JSON.parse(event.data) as ApiStateStreamEvent);
+  };
+
+  source.onerror = () => {
+    if (closed) {
+      return;
+    }
+
+    onConnectionChange?.(false);
+  };
+
+  return () => {
+    closed = true;
+    source.close();
+  };
+}
+
+export function subscribeToDashboardEvents(
+  onEvent: (event: DashboardEventsStreamEvent) => void,
+  onConnectionChange?: (connected: boolean) => void,
+): () => void {
+  let closed = false;
+  const source = new EventSource("/api/events/stream");
+
+  source.onopen = () => {
+    onConnectionChange?.(true);
+  };
+
+  source.onmessage = (event) => {
+    onConnectionChange?.(true);
+    onEvent(JSON.parse(event.data) as DashboardEventsStreamEvent);
   };
 
   source.onerror = () => {
@@ -384,8 +416,8 @@ export function createProjectManagementDocument(
 export function updateProjectManagementDocument(
   documentId: string,
   payload: UpdateProjectManagementDocumentRequest,
-): Promise<ProjectManagementDocumentResponse> {
-  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/updates`, {
+): Promise<ProjectManagementDocumentSummaryResponse> {
+  return request<ProjectManagementDocumentSummaryResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/updates`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -394,8 +426,8 @@ export function updateProjectManagementDocument(
 export function updateProjectManagementDependencies(
   documentId: string,
   payload: UpdateProjectManagementDependenciesRequest,
-): Promise<ProjectManagementDocumentResponse> {
-  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/dependencies`, {
+): Promise<ProjectManagementDocumentSummaryResponse> {
+  return request<ProjectManagementDocumentSummaryResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/dependencies`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -404,8 +436,8 @@ export function updateProjectManagementDependencies(
 export function updateProjectManagementStatus(
   documentId: string,
   payload: UpdateProjectManagementStatusRequest,
-): Promise<ProjectManagementDocumentResponse> {
-  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/status`, {
+): Promise<ProjectManagementDocumentSummaryResponse> {
+  return request<ProjectManagementDocumentSummaryResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/status`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -414,8 +446,8 @@ export function updateProjectManagementStatus(
 export function addProjectManagementComment(
   documentId: string,
   payload: AddProjectManagementCommentRequest,
-): Promise<ProjectManagementDocumentResponse> {
-  return request<ProjectManagementDocumentResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+): Promise<ProjectManagementDocumentSummaryResponse> {
+  return request<ProjectManagementDocumentSummaryResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

@@ -24,6 +24,7 @@ export interface ResolveServerHostOptions {
 export interface ResolvedServerHost {
   listenHost: string;
   urlHost: string;
+  bindHost: string;
   category: "tailscale" | "wireguard" | "lan" | "loopback" | "custom" | "wildcard";
   source: "auto" | "manual";
   warning?: string;
@@ -44,6 +45,7 @@ export function resolveServerHost(options: ResolveServerHostOptions = {}): Resol
     return {
       listenHost: "127.0.0.1",
       urlHost: "localhost",
+      bindHost: "127.0.0.1",
       category: "loopback",
       source: "auto",
       detail: "default localhost",
@@ -65,6 +67,7 @@ export function resolveServerHost(options: ResolveServerHostOptions = {}): Resol
     return {
       listenHost: requestedHost,
       urlHost: net.isIP(requestedHost) === 6 ? "::1" : "127.0.0.1",
+      bindHost: requestedHost,
       category: "wildcard",
       source: "manual",
       warning:
@@ -76,6 +79,7 @@ export function resolveServerHost(options: ResolveServerHostOptions = {}): Resol
   return {
     listenHost: requestedHost,
     urlHost: requestedHost,
+    bindHost: requestedHost,
     category: isLoopbackHost(requestedHost) ? "loopback" : "custom",
     source: "manual",
     detail: `manual host ${requestedHost}`,
@@ -98,6 +102,7 @@ function resolveAutoServerHost(networkInterfaces: ReturnType<typeof os.networkIn
     return {
       listenHost: "127.0.0.1",
       urlHost: "localhost",
+      bindHost: "127.0.0.1",
       category: "loopback",
       source: "auto",
       detail: "auto fallback to localhost",
@@ -108,9 +113,10 @@ function resolveAutoServerHost(networkInterfaces: ReturnType<typeof os.networkIn
   return {
     listenHost: selected.address,
     urlHost: selected.address,
+    bindHost: selected.family === "IPv6" ? "::" : "0.0.0.0",
     category: selected.category,
     source: "auto",
-    detail: `auto selected ${selected.category} interface ${selected.name} (${selected.address})`,
+    detail: `auto selected ${selected.category} interface ${selected.name} (${selected.address}) and bound on all ${selected.family} interfaces`,
   };
 }
 

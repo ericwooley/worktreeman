@@ -20,7 +20,7 @@
   "scripts": {
     "clean:server-dist": "node --input-type=module -e \"import fs from 'node:fs'; for (const target of ['dist/cli.js', 'dist/server', 'dist/shared']) fs.rmSync(target, { recursive: true, force: true });\"",
     "clean:web-dist": "node --input-type=module -e \"import fs from 'node:fs'; fs.rmSync('dist/web', { recursive: true, force: true });\"",
-    "dev": "NODE_ENV=development tsx src/cli.ts",
+    "dev": "NODE_ENV=development ./node_modules/.bin/tsx src/cli.ts",
     "dev:watch": "NODE_ENV=development node --import tsx src/server/entrypoints/dev-entrypoint.ts",
     "test": "vitest run",
     "test:watch": "vitest",

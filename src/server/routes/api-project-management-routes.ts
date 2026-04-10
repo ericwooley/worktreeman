@@ -9,6 +9,7 @@ import type {
   CreateProjectManagementDocumentRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
+  ProjectManagementDocumentSummaryResponse,
   ProjectManagementDocumentsStreamEvent,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
@@ -51,7 +52,7 @@ import {
   setWorktreeDocumentLink,
 } from "../services/worktree-link-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
-import { logServerEvent } from "../utils/server-logger.js";
+import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 import {
   buildAiEnvironmentContext,
   buildProjectManagementExecutionAiPrompt,
@@ -224,7 +225,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         });
 
         if (generatedSummary) {
-          payload = await updateProjectManagementDocument(context.repoRoot, payload.document.id, {
+          await updateProjectManagementDocument(context.repoRoot, payload.document.id, {
             title: payload.document.title,
             summary: generatedSummary,
             markdown: payload.document.markdown,
@@ -234,6 +235,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
             assignee: payload.document.assignee,
             archived: payload.document.archived,
           });
+          payload = await getProjectManagementDocument(context.repoRoot, payload.document.id);
         }
       }
 
@@ -246,31 +248,47 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
   });
 
   router.post("/project-management/documents/:id/updates", async (req, res, next) => {
+    const startedAt = Date.now();
+    const documentId = decodeURIComponent(req.params.id);
     try {
       const body = req.body as UpdateProjectManagementDocumentRequest;
-      if (!body?.title?.trim()) {
-        res.status(400).json({ message: "Document title is required." });
-        return;
-      }
-
-      const payload: ProjectManagementDocumentResponse = await updateProjectManagementDocument(
+      logServerEvent("project-management-update-route", "started", {
+        documentId,
+        hasTitle: typeof body?.title === "string",
+        hasSummary: typeof body?.summary === "string",
+        hasMarkdown: typeof body?.markdown === "string",
+        hasTags: Array.isArray(body?.tags),
+        hasDependencies: Array.isArray(body?.dependencies),
+        status: typeof body?.status === "string" ? body.status : undefined,
+      });
+      const payload: ProjectManagementDocumentSummaryResponse = await updateProjectManagementDocument(
         context.repoRoot,
-        decodeURIComponent(req.params.id),
+        documentId,
         {
-          title: body.title,
+          title: typeof body.title === "string" ? body.title : undefined,
           summary: typeof body.summary === "string" ? body.summary : undefined,
-          markdown: typeof body.markdown === "string" ? body.markdown : "",
-          tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : [],
-          dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : [],
+          markdown: typeof body.markdown === "string" ? body.markdown : undefined,
+          tags: Array.isArray(body.tags) ? body.tags.map((entry) => String(entry)) : undefined,
+          dependencies: Array.isArray(body.dependencies) ? body.dependencies.map((entry) => String(entry)) : undefined,
           status: typeof body.status === "string" ? body.status : undefined,
           assignee: typeof body.assignee === "string" ? body.assignee : undefined,
           archived: typeof body.archived === "boolean" ? body.archived : undefined,
         },
       );
+      logServerEvent("project-management-update-route", "completed", {
+        documentId,
+        duration: formatDurationMs(Date.now() - startedAt),
+        status: payload.document.status,
+      });
       context.emitStateRefresh();
       context.emitProjectManagementDocumentsRefresh();
       res.json(payload);
     } catch (error) {
+      logServerEvent("project-management-update-route", "failed", {
+        documentId,
+        duration: formatDurationMs(Date.now() - startedAt),
+        error: error instanceof Error ? error.message : String(error),
+      }, "error");
       next(error);
     }
   });
@@ -283,17 +301,17 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         return;
       }
 
-      const payload: ProjectManagementBatchResponse = await appendProjectManagementBatch(context.repoRoot, {
-        entries: body.entries.map((entry) => ({
-          documentId: typeof entry.documentId === "string" ? entry.documentId : undefined,
-          title: String(entry.title ?? ""),
-          summary: typeof entry.summary === "string" ? entry.summary : undefined,
-          markdown: typeof entry.markdown === "string" ? entry.markdown : "",
-          tags: Array.isArray(entry.tags) ? entry.tags.map((tag) => String(tag)) : [],
-          dependencies: Array.isArray(entry.dependencies) ? entry.dependencies.map((dependencyId) => String(dependencyId)) : [],
-          status: typeof entry.status === "string" ? entry.status : undefined,
-          assignee: typeof entry.assignee === "string" ? entry.assignee : undefined,
-          archived: typeof entry.archived === "boolean" ? entry.archived : undefined,
+        const payload: ProjectManagementBatchResponse = await appendProjectManagementBatch(context.repoRoot, {
+          entries: body.entries.map((entry) => ({
+            documentId: typeof entry.documentId === "string" ? entry.documentId : undefined,
+            title: typeof entry.title === "string" ? entry.title : undefined,
+            summary: typeof entry.summary === "string" ? entry.summary : undefined,
+            markdown: typeof entry.markdown === "string" ? entry.markdown : undefined,
+            tags: Array.isArray(entry.tags) ? entry.tags.map((tag) => String(tag)) : undefined,
+            dependencies: Array.isArray(entry.dependencies) ? entry.dependencies.map((dependencyId) => String(dependencyId)) : undefined,
+            status: typeof entry.status === "string" ? entry.status : undefined,
+            assignee: typeof entry.assignee === "string" ? entry.assignee : undefined,
+            archived: typeof entry.archived === "boolean" ? entry.archived : undefined,
         })),
       });
       context.emitStateRefresh();
@@ -307,7 +325,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
   router.post("/project-management/documents/:id/dependencies", async (req, res, next) => {
     try {
       const body = req.body as UpdateProjectManagementDependenciesRequest;
-      const payload: ProjectManagementDocumentResponse = await updateProjectManagementDependencies(
+      const payload: ProjectManagementDocumentSummaryResponse = await updateProjectManagementDependencies(
         context.repoRoot,
         decodeURIComponent(req.params.id),
         Array.isArray(body?.dependencyIds) ? body.dependencyIds.map((entry) => String(entry)) : [],
@@ -328,7 +346,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         return;
       }
 
-      const payload: ProjectManagementDocumentResponse = await updateProjectManagementStatus(
+      const payload: ProjectManagementDocumentSummaryResponse = await updateProjectManagementStatus(
         context.repoRoot,
         decodeURIComponent(req.params.id),
         body.status,
@@ -349,7 +367,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         return;
       }
 
-      const payload: ProjectManagementDocumentResponse = await addProjectManagementComment(
+      const payload: ProjectManagementDocumentSummaryResponse = await addProjectManagementComment(
         context.repoRoot,
         decodeURIComponent(req.params.id),
         { body: body.body },

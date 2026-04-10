@@ -59,6 +59,48 @@ test("GET /api/state returns favicon and preferred port config", async () => {
   }
 });
 
+test("GET /api/events/stream multiplexes initial dashboard snapshots", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const stream = await openSse(`${await server.url()}/api/events/stream`);
+
+    try {
+      const stateSnapshot = await stream.nextEvent() as unknown as { type: "state"; event: { type: string; state: { worktrees: unknown[] } } };
+      const shutdownSnapshot = await stream.nextEvent() as unknown as { type: "shutdown-status"; event: { type: string; status: { active: boolean } } };
+      const systemSnapshot = await stream.nextEvent() as unknown as { type: "system-status"; event: { type: string; status: { capturedAt: string } } };
+      const usersSnapshot = await stream.nextEvent() as unknown as { type: "project-management-users"; event: { type: string; users: { users: unknown[] } } };
+      const documentsSnapshot = await stream.nextEvent() as unknown as { type: "project-management-documents"; event: { type: string; documents: { documents: unknown[] } } };
+
+      assert.equal(stateSnapshot.type, "state");
+      assert.equal(stateSnapshot.event.type, "snapshot");
+      assert.ok(Array.isArray(stateSnapshot.event.state.worktrees));
+
+      assert.equal(shutdownSnapshot.type, "shutdown-status");
+      assert.equal(shutdownSnapshot.event.type, "snapshot");
+      assert.equal(typeof shutdownSnapshot.event.status.active, "boolean");
+
+      assert.equal(systemSnapshot.type, "system-status");
+      assert.equal(systemSnapshot.event.type, "snapshot");
+      assert.equal(typeof systemSnapshot.event.status.capturedAt, "string");
+
+      assert.equal(usersSnapshot.type, "project-management-users");
+      assert.equal(usersSnapshot.event.type, "snapshot");
+      assert.ok(Array.isArray(usersSnapshot.event.users.users));
+
+      assert.equal(documentsSnapshot.type, "project-management-documents");
+      assert.equal(documentsSnapshot.event.type, "snapshot");
+      assert.ok(Array.isArray(documentsSnapshot.event.documents.documents));
+    } finally {
+      await stream.close();
+      await server.close();
+    }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("GET /api/state/stream emits runtime updates after the runtime starts", async () => {
   const repo = await createApiTestRepo();
 

@@ -14,6 +14,8 @@ test("resolveServerHost auto prefers Tailscale over WireGuard, LAN, and localhos
   });
 
   assert.equal(resolved.listenHost, "100.101.102.103");
+  assert.equal(resolved.bindHost, "0.0.0.0");
+  assert.equal(resolved.urlHost, "100.101.102.103");
   assert.equal(resolved.category, "tailscale");
   assert.equal(resolved.source, "auto");
 });
@@ -23,6 +25,7 @@ test("resolveServerHost defaults to localhost when no host is requested", () => 
 
   assert.equal(resolved.listenHost, "127.0.0.1");
   assert.equal(resolved.urlHost, "localhost");
+  assert.equal(resolved.bindHost, "127.0.0.1");
   assert.equal(resolved.category, "loopback");
   assert.equal(resolved.source, "auto");
   assert.equal(resolved.detail, "default localhost");
@@ -33,6 +36,7 @@ test("resolveServerHost treats local as localhost", () => {
 
   assert.equal(resolved.listenHost, "localhost");
   assert.equal(resolved.urlHost, "localhost");
+  assert.equal(resolved.bindHost, "localhost");
   assert.equal(resolved.category, "loopback");
   assert.equal(resolved.source, "manual");
   assert.equal(resolved.detail, "manual host localhost");
@@ -48,6 +52,7 @@ test("resolveServerHost auto prefers WireGuard over LAN when Tailscale is unavai
   });
 
   assert.equal(resolved.listenHost, "10.10.0.2");
+  assert.equal(resolved.bindHost, "0.0.0.0");
   assert.equal(resolved.category, "wireguard");
 });
 
@@ -61,6 +66,7 @@ test("resolveServerHost auto falls back to localhost when no external private in
 
   assert.equal(resolved.listenHost, "127.0.0.1");
   assert.equal(resolved.urlHost, "localhost");
+  assert.equal(resolved.bindHost, "127.0.0.1");
   assert.equal(resolved.category, "loopback");
 });
 
@@ -81,9 +87,11 @@ test("resolveServerHost allows wildcard hosts with dangerous exposure flag and w
 
   assert.equal(ipv4.listenHost, "0.0.0.0");
   assert.equal(ipv4.urlHost, "127.0.0.1");
+  assert.equal(ipv4.bindHost, "0.0.0.0");
   assert.match(ipv4.warning ?? "", /exposes the worktreeman server/);
   assert.equal(ipv6.listenHost, "::");
   assert.equal(ipv6.urlHost, "::1");
+  assert.equal(ipv6.bindHost, "::");
 });
 
 test("isWildcardHost recognizes IPv4 and IPv6 unspecified addresses", () => {

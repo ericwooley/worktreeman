@@ -15,6 +15,7 @@ import { sortProjectManagementDocuments } from "./project-management-document-br
 import {
   getCompletedAiDocumentRefreshTarget,
   getProjectManagementDocumentRunDefaults,
+  moveBoardDocument,
   ProjectManagementPanel,
 } from "./project-management-panel";
 import {
@@ -559,6 +560,38 @@ test("document rail keeps the selected card first even when another document was
   assert.notEqual(selectedIndex, -1);
   assert.notEqual(newerDocumentIndex, -1);
   assert.ok(selectedIndex < newerDocumentIndex);
+});
+
+test("moveBoardDocument updates the lane without forcing a document reselect", async () => {
+  const calls: Array<{ documentId: string; status: string }> = [];
+  const result = await moveBoardDocument({
+    documents: [...sampleDocuments],
+    documentId: "doc-1",
+    nextStatus: "done",
+    onUpdateStatus: async (documentId, status) => {
+      calls.push({ documentId, status });
+      return { ...sampleDocument, status };
+    },
+  });
+
+  assert.deepEqual(calls, [{ documentId: "doc-1", status: "done" }]);
+  assert.equal(result?.status, "done");
+});
+
+test("moveBoardDocument skips redundant lane moves", async () => {
+  let called = false;
+  const result = await moveBoardDocument({
+    documents: [...sampleDocuments],
+    documentId: "doc-1",
+    nextStatus: "todo",
+    onUpdateStatus: async () => {
+      called = true;
+      return sampleDocument;
+    },
+  });
+
+  assert.equal(called, false);
+  assert.equal(result, null);
 });
 
 test("document worktree run in another branch does not lock this worktree UI", () => {

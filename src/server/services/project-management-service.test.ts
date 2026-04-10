@@ -121,10 +121,8 @@ test("comments use the repo git user for attribution and history", async () => {
       body: "  Waiting on final QA verification.  ",
     });
 
-    assert.equal(commented.document.comments.length, 1);
-    assert.equal(commented.document.comments[0]?.body, "Waiting on final QA verification.");
-    assert.equal(commented.document.comments[0]?.authorName, "Casey Reviewer");
-    assert.equal(commented.document.comments[0]?.authorEmail, "casey@example.com");
+    assert.equal(commented.document.summary, "Collect feedback before shipping.");
+    assert.equal(commented.document.historyCount, 2);
 
     const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
     assert.equal(history.history.at(-1)?.action, "comment");
@@ -134,6 +132,12 @@ test("comments use the repo git user for attribution and history", async () => {
 
     const commit = await runCommand("git", ["show", "-s", "--format=%an <%ae>", commented.headSha], { cwd: repoRoot });
     assert.equal(commit.stdout.trim(), "Casey Reviewer <casey@example.com>");
+
+    const persisted = await getProjectManagementDocument(repoRoot, created.document.id);
+    assert.equal(persisted.document.comments.length, 1);
+    assert.equal(persisted.document.comments[0]?.body, "Waiting on final QA verification.");
+    assert.equal(persisted.document.comments[0]?.authorName, "Casey Reviewer");
+    assert.equal(persisted.document.comments[0]?.authorEmail, "casey@example.com");
   } finally {
     await destroyTestRepo(repoRoot);
   }
@@ -167,12 +171,15 @@ exec ${realGit} "$@"
       body: "Git config lookup failures should not break comment writes.",
     });
 
-    assert.equal(commented.document.comments.at(-1)?.authorName, "worktreeman");
-    assert.equal(commented.document.comments.at(-1)?.authorEmail, "worktreeman@example.com");
+    assert.equal(commented.document.historyCount, 2);
 
     const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
     assert.equal(history.history.at(-1)?.authorName, "worktreeman");
     assert.equal(history.history.at(-1)?.authorEmail, "worktreeman@example.com");
+
+    const persisted = await getProjectManagementDocument(repoRoot, created.document.id);
+    assert.equal(persisted.document.comments.at(-1)?.authorName, "worktreeman");
+    assert.equal(persisted.document.comments.at(-1)?.authorEmail, "worktreeman@example.com");
   } finally {
     process.env.PATH = originalPath;
     await fs.rm(shimDir, { recursive: true, force: true });
@@ -428,6 +435,34 @@ test("status can be updated independently without changing dependencies or summa
     const history = await getProjectManagementDocumentHistory(repoRoot, dependent.document.id);
     assert.match(history.history.at(-1)?.diff ?? "", /-status: todo/);
     assert.match(history.history.at(-1)?.diff ?? "", /\+status: in-progress/);
+  } finally {
+    await destroyTestRepo(repoRoot);
+  }
+});
+
+test("status updates reuse persisted document fields when only a lane change is requested", async () => {
+  const repoRoot = await createTestRepo();
+
+  try {
+    const created = await createProjectManagementDocument(repoRoot, {
+      title: "Board Move",
+      summary: "Keep the existing document contents while moving lanes.",
+      markdown: "# Board Move\n\nPreserve me.\n",
+      tags: ["plan", "board"],
+      status: "todo",
+      assignee: "Taylor",
+    });
+
+    const updated = await updateProjectManagementStatus(repoRoot, created.document.id, "done");
+
+    assert.equal(updated.document.status, "done");
+    assert.equal(updated.document.title, "Board Move");
+    assert.equal(updated.document.summary, "Keep the existing document contents while moving lanes.");
+    assert.deepEqual(updated.document.tags, ["plan", "board"]);
+    assert.equal(updated.document.assignee, "Taylor");
+
+    const persisted = await getProjectManagementDocument(repoRoot, created.document.id);
+    assert.equal(persisted.document.markdown, "# Board Move\n\nPreserve me.\n");
   } finally {
     await destroyTestRepo(repoRoot);
   }

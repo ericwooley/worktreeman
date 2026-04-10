@@ -426,14 +426,11 @@ test("project-management routes preserve summary and add attributed comments", {
     const commentPayload = await commentResponse.json() as {
       document: {
         summary: string;
-        comments: Array<{ body: string; authorName: string; authorEmail: string }>;
+        historyCount: number;
       };
     };
     assert.equal(commentPayload.document.summary, "Track the document comments launch.");
-    assert.equal(commentPayload.document.comments.length, 1);
-    assert.equal(commentPayload.document.comments[0]?.body, "Need one more pass on author attribution.");
-    assert.equal(commentPayload.document.comments[0]?.authorName, "Riley Maintainer");
-    assert.equal(commentPayload.document.comments[0]?.authorEmail, "riley@example.com");
+    assert.equal(commentPayload.document.historyCount, 2);
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, documentId);
     assert.equal(history.history.at(-1)?.action, "comment");
@@ -443,6 +440,9 @@ test("project-management routes preserve summary and add attributed comments", {
     const updatedDocument = await getProjectManagementDocument(repo.repoRoot, documentId);
     assert.equal(updatedDocument.document.summary, "Track the document comments launch.");
     assert.equal(updatedDocument.document.comments.length, 1);
+    assert.equal(updatedDocument.document.comments[0]?.body, "Need one more pass on author attribution.");
+    assert.equal(updatedDocument.document.comments[0]?.authorName, "Riley Maintainer");
+    assert.equal(updatedDocument.document.comments[0]?.authorEmail, "riley@example.com");
 
     const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
       method: "POST",
@@ -503,12 +503,14 @@ test("project-management status route updates only the lane state", { concurrenc
         summary: string;
         dependencies: string[];
         assignee: string;
+        historyCount: number;
       };
     };
     assert.equal(statusPayload.document.status, "done");
     assert.equal(statusPayload.document.summary, "Deliver the feature after foundation work lands.");
     assert.deepEqual(statusPayload.document.dependencies, [foundationPayload.document.id]);
     assert.equal(statusPayload.document.assignee, "Taylor");
+    assert.equal(statusPayload.document.historyCount, 2);
 
     const updatedDocument = await getProjectManagementDocument(repo.repoRoot, dependentPayload.document.id);
     assert.equal(updatedDocument.document.status, "done");
@@ -523,6 +525,102 @@ test("project-management status route updates only the lane state", { concurrenc
     assert.equal(invalidStatusResponse.status, 400);
     const invalidStatusPayload = await invalidStatusResponse.json() as { message: string };
     assert.equal(invalidStatusPayload.message, "Document status is required.");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management status route supports repeated lane moves for the same document", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const createResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Repeated Lane Moves",
+        markdown: "# Repeated Lane Moves\n",
+        tags: ["plan"],
+        status: "backlog",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createPayload = await createResponse.json() as { document: { id: string } };
+
+    for (const status of ["todo", "in-progress", "done", "todo"]) {
+      const statusResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(createPayload.document.id)}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      assert.equal(statusResponse.status, 200);
+      const statusPayload = await statusResponse.json() as { document: { status: string } };
+      assert.equal(statusPayload.document.status, status);
+    }
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, createPayload.document.id);
+    assert.equal(updatedDocument.document.status, "todo");
+
+    const history = await getProjectManagementDocumentHistory(repo.repoRoot, createPayload.document.id);
+    assert.equal(history.history.length, 6);
+    assert.equal(history.history.at(-1)?.status, "todo");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management updates route accepts status-only patches for existing documents", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const server = await startApiServer(repo);
+
+  try {
+    const createResponse = await server.fetch(`/api/project-management/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Status Only Update",
+        summary: "Keep the rest of the document intact.",
+        markdown: "# Status Only Update\n",
+        tags: ["plan", "board"],
+        dependencies: [],
+        status: "todo",
+        assignee: "Taylor",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createPayload = await createResponse.json() as { document: { id: string } };
+
+    const updateResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(createPayload.document.id)}/updates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+    assert.equal(updateResponse.status, 200);
+    const updatePayload = await updateResponse.json() as {
+      document: {
+        title: string;
+        summary: string;
+        tags: string[];
+        status: string;
+        assignee: string;
+      };
+    };
+    assert.equal(updatePayload.document.title, "Status Only Update");
+    assert.equal(updatePayload.document.summary, "Keep the rest of the document intact.");
+    assert.deepEqual(updatePayload.document.tags, ["plan", "board"]);
+    assert.equal(updatePayload.document.status, "done");
+    assert.equal(updatePayload.document.assignee, "Taylor");
+
+    const persisted = await getProjectManagementDocument(repo.repoRoot, createPayload.document.id);
+    assert.equal(persisted.document.title, "Status Only Update");
+    assert.equal(persisted.document.summary, "Keep the rest of the document intact.");
+    assert.equal(persisted.document.markdown, "# Status Only Update\n");
+    assert.deepEqual(persisted.document.tags, ["plan", "board"]);
+    assert.equal(persisted.document.status, "done");
+    assert.equal(persisted.document.assignee, "Taylor");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

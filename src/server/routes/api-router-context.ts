@@ -813,6 +813,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     subscribeToProjectManagementDocumentsRefresh,
     emitProjectManagementUsersRefresh,
     subscribeToProjectManagementUsersRefresh,
+    listProjectManagementDocuments: () => listProjectManagementDocuments(options.repoRoot),
     emitSystemStatusRefresh,
     subscribeToSystemStatusRefresh,
     emitTmuxClientsRefresh,

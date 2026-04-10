@@ -7,6 +7,7 @@ import type {
   ProjectManagementUser,
   RunAiCommandRequest,
   ProjectManagementDocument,
+  ProjectManagementDocumentSummaryResponse,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
   ProjectManagementUsersResponse,
@@ -89,14 +90,14 @@ interface ProjectManagementPanelProps {
     assignee?: string;
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
-  onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
-  onUpdateStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
+  onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocumentSummaryResponse | null>;
+  onUpdateStatus: (documentId: string, status: string) => Promise<ProjectManagementDocumentSummaryResponse | null>;
   onUpdateUsers: (payload: UpdateProjectManagementUsersRequest) => Promise<ProjectManagementUsersResponse | null>;
   onBatchUpdateDocuments: (documentIds: string[], overrides: {
     status?: string;
     archived?: boolean;
   }) => Promise<boolean>;
-  onAddComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
+  onAddComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentSummaryResponse | null>;
   onRunAiCommand: (payload: RunAiCommandRequest & {
     input: string;
     documentId: string;
@@ -178,6 +179,20 @@ export function getProjectManagementDocumentRunDefaults(options: {
     defaultStrategy: currentLinkedWorktree ? "continue-current" as const : "new" as const,
     generatedWorktreeName: options.document ? createProjectManagementDocumentWorktreeBranch(options.document) : "",
   };
+}
+
+export async function moveBoardDocument(options: {
+  documents: ProjectManagementDocumentSummary[];
+  documentId: string;
+  nextStatus: string;
+  onUpdateStatus: (documentId: string, status: string) => Promise<ProjectManagementDocumentSummaryResponse | null>;
+}) {
+  const targetDocument = options.documents.find((entry) => entry.id === options.documentId) ?? null;
+  if (!targetDocument || targetDocument.status === options.nextStatus) {
+    return null;
+  }
+
+  return options.onUpdateStatus(options.documentId, options.nextStatus);
 }
 
 export function ProjectManagementPanel({
@@ -382,9 +397,9 @@ export function ProjectManagementPanel({
         documentId: document?.id ?? null,
         hasWorkspaceRefresh: Boolean(onRetryRefresh),
       });
-      if (refreshTarget === "workspace") {
+      if (refreshTarget === "workspace" && (activeSubTab === "document" || activeSubTab === "history")) {
         void onRetryRefresh?.();
-      } else if (refreshTarget === "document" && document) {
+      } else if (refreshTarget === "document" && document && (activeSubTab === "document" || activeSubTab === "history")) {
         void onSelectDocument(document.id, { silent: true });
       }
       return;
@@ -394,7 +409,7 @@ export function ProjectManagementPanel({
       setAiRunSummary(null);
       setAiFailureToast(aiJob.error || aiJob.stderr || "⚡ request failed. Check the AI logs for details.");
     }
-  }, [aiJob, document, onRetryRefresh, onSelectDocument]);
+  }, [activeSubTab, aiJob, document, onRetryRefresh, onSelectDocument]);
 
   useEffect(() => {
     if (!documentRunJob) {
@@ -537,14 +552,6 @@ export function ProjectManagementPanel({
           : "Create a document to start outlining the project.";
 
   useEffect(() => {
-    if (documents.length === 0 || document || selectedDocumentId) {
-      return;
-    }
-
-    void onSelectDocument(documents[0].id, { silent: true });
-  }, [document, documents, onSelectDocument, selectedDocumentId]);
-
-  useEffect(() => {
     if (selectedDocumentAiOutput) {
       return;
     }
@@ -644,16 +651,12 @@ export function ProjectManagementPanel({
   }
 
   async function handleMoveDocument(documentId: string, nextStatus: string) {
-    const targetDocument = documents.find((entry) => entry.id === documentId) ?? null;
-    if (!targetDocument || targetDocument.status === nextStatus) {
-      return;
-    }
-
-    const updated = await onUpdateStatus(documentId, nextStatus);
-
-    if (updated && document?.id === documentId) {
-      void onSelectDocument(documentId, { silent: true });
-    }
+    await moveBoardDocument({
+      documents,
+      documentId,
+      nextStatus,
+      onUpdateStatus,
+    });
   }
 
   async function handleBatchBoardUpdate(documentIds: string[], overrides: {
@@ -665,7 +668,7 @@ export function ProjectManagementPanel({
     }
 
     const updated = await onBatchUpdateDocuments(documentIds, overrides);
-    if (updated && document && documentIds.includes(document.id)) {
+    if (updated && document && documentIds.includes(document.id) && (activeSubTab === "document" || activeSubTab === "history")) {
       void onSelectDocument(document.id, { silent: true });
     }
     return updated;
@@ -699,7 +702,7 @@ export function ProjectManagementPanel({
 
     const updated = await onUpdateDependencies(document.id, nextDependencies);
     if (updated) {
-      setDependencySelection(updated.dependencies);
+      setDependencySelection(updated.document.dependencies);
     }
   }
 

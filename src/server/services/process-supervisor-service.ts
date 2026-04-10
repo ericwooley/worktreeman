@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 export type ManagedRuntimeRole = "server" | "worker";
@@ -34,6 +35,7 @@ export interface ManagedRuntimeProcess {
 export type ManagedRuntimeRestartMode = "serial" | "overlap";
 
 const CHILD_STOP_TIMEOUT_MS = 65_000;
+const require = createRequire(import.meta.url);
 
 function resolveEntrypointPath(role: ManagedRuntimeRole) {
   const currentFilePath = fileURLToPath(import.meta.url);
@@ -42,10 +44,14 @@ function resolveEntrypointPath(role: ManagedRuntimeRole) {
   return path.resolve(path.dirname(currentFilePath), "..", "entrypoints", `${role}-entrypoint${entrypointExtension}`);
 }
 
-function buildChildCommand(role: ManagedRuntimeRole, options: StartManagedRuntimeProcessOptions) {
+function resolveTsxLoaderPath() {
+  return path.join(path.dirname(require.resolve("tsx/package.json")), "dist", "loader.mjs");
+}
+
+export function buildChildCommand(role: ManagedRuntimeRole, options: StartManagedRuntimeProcessOptions) {
   const entrypointPath = resolveEntrypointPath(role);
   const isSourceEntrypoint = entrypointPath.endsWith(".ts");
-  const args = isSourceEntrypoint ? ["--import", "tsx", entrypointPath] : [entrypointPath];
+  const args = isSourceEntrypoint ? ["--import", resolveTsxLoaderPath(), entrypointPath] : [entrypointPath];
 
   args.push("--cwd", options.cwd, "--database-url", options.databaseUrl);
 

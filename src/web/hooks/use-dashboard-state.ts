@@ -15,11 +15,13 @@ import type {
   CommitGitChangesResponse,
   ConfigDocumentResponse,
   CreateProjectManagementDocumentRequest,
+  DashboardEventsStreamEvent,
   DeleteWorktreeRequest,
   GenerateGitCommitMessageResponse,
   GitComparisonResponse,
   ProjectManagementBatchUpdateEntry,
   ProjectManagementDocument,
+  ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
   ProjectManagementUsersResponse,
@@ -52,7 +54,6 @@ import {
   getAiCommandLogs as fetchAiCommandLogs,
   getGitComparison as fetchGitComparison,
   getSystemStatus as fetchSystemStatus,
-  subscribeToState,
   cancelAiCommand as cancelAiCommandRequest,
   commitGitChanges as commitGitChangesRequest,
   mergeGitBranch as mergeGitBranchRequest,
@@ -69,23 +70,17 @@ import {
   subscribeToAiCommandJob,
   subscribeToAiCommandLog,
   subscribeToBackgroundCommandLogs,
+  subscribeToDashboardEvents,
   subscribeToGitComparison as subscribeToGitComparisonStream,
-  subscribeToProjectManagementDocuments,
-  subscribeToProjectManagementUsers,
-  subscribeToShutdownStatus,
-  subscribeToSystemStatus,
   syncEnvFiles,
   updateProjectManagementDependencies as updateProjectManagementDependenciesRequest,
   updateProjectManagementDocument as updateProjectManagementDocumentRequest,
-  updateProjectManagementStatus as updateProjectManagementStatusRequest,
   updateProjectManagementUsers as updateProjectManagementUsersRequest,
   type EnvSyncResponse,
 } from "../lib/api";
 import { startSequentialPoll } from "../lib/sequential-poll";
 import {
-  buildProjectManagementStatusFallbackPayload,
   mergeUpdatedProjectManagementDocumentIntoList,
-  shouldFallbackProjectManagementStatusUpdate,
 } from "../lib/project-management-status-update";
 import { useAiCommandLogStream } from "./useAiCommandLogStream";
 
@@ -128,6 +123,79 @@ function areGitComparisonsEqual(left: GitComparisonResponse | null, right: GitCo
   }
 
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function applyDashboardEventsStreamEvent(options: {
+  event: DashboardEventsStreamEvent;
+  setState: React.Dispatch<React.SetStateAction<ApiStateResponse | null>>;
+  setHasLoadedInitialState: React.Dispatch<React.SetStateAction<boolean>>;
+  setLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  setStateStreamConnected: React.Dispatch<React.SetStateAction<boolean>>;
+  setShutdownStatus: React.Dispatch<React.SetStateAction<ShutdownStatus | null>>;
+  setSystemStatus: React.Dispatch<React.SetStateAction<SystemStatusResponse | null>>;
+  setSystemError: React.Dispatch<React.SetStateAction<string | null>>;
+  setSystemLastUpdatedAt: React.Dispatch<React.SetStateAction<string | null>>;
+  setSystemLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  setProjectManagement: React.Dispatch<React.SetStateAction<ProjectManagementListResponse | null>>;
+  setProjectManagementUsers: React.Dispatch<React.SetStateAction<ProjectManagementUsersResponse | null>>;
+  setProjectManagementError: React.Dispatch<React.SetStateAction<string | null>>;
+  setProjectManagementLastUpdatedAt: React.Dispatch<React.SetStateAction<string | null>>;
+  setProjectManagementLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  setError: React.Dispatch<React.SetStateAction<string | null>>;
+}) {
+  const timestamp = new Date().toISOString();
+  const {
+    event,
+    setState,
+    setHasLoadedInitialState,
+    setLoading,
+    setStateStreamConnected,
+    setShutdownStatus,
+    setSystemStatus,
+    setSystemError,
+    setSystemLastUpdatedAt,
+    setSystemLoading,
+    setProjectManagement,
+    setProjectManagementUsers,
+    setProjectManagementError,
+    setProjectManagementLastUpdatedAt,
+    setProjectManagementLoading,
+    setError,
+  } = options;
+
+  switch (event.type) {
+    case "state":
+      setState(event.event.state);
+      setHasLoadedInitialState(true);
+      setLoading(false);
+      setStateStreamConnected(true);
+      setError(null);
+      return;
+    case "shutdown-status":
+      setShutdownStatus(event.event.status);
+      return;
+    case "system-status":
+      setSystemStatus(event.event.status);
+      setSystemError(null);
+      setSystemLastUpdatedAt(timestamp);
+      setSystemLoading(false);
+      setError(null);
+      return;
+    case "project-management-documents":
+      setProjectManagement(event.event.documents);
+      setProjectManagementError(null);
+      setProjectManagementLastUpdatedAt(timestamp);
+      setProjectManagementLoading(false);
+      setError(null);
+      return;
+    case "project-management-users":
+      setProjectManagementUsers(event.event.users);
+      setProjectManagementError(null);
+      setProjectManagementLastUpdatedAt(timestamp);
+      setProjectManagementLoading(false);
+      setError(null);
+      return;
+  }
 }
 
 export type CommitChangesPayload = {
@@ -180,13 +248,26 @@ function useDashboardStateInternal() {
   const trackedAiCommandBranchRef = useRef<string | null>(null);
   const trackedProjectManagementDocumentAiBranchRef = useRef<string | null>(null);
 
-  useEffect(() => subscribeToState(
-    (event: ApiStateStreamEvent) => {
-      setState(event.state);
-      setHasLoadedInitialState(true);
-      setLoading(false);
-      setStateStreamConnected(true);
-      setError(null);
+  useEffect(() => subscribeToDashboardEvents(
+    (event) => {
+      applyDashboardEventsStreamEvent({
+        event,
+        setState,
+        setHasLoadedInitialState,
+        setLoading,
+        setStateStreamConnected,
+        setShutdownStatus,
+        setSystemStatus,
+        setSystemError,
+        setSystemLastUpdatedAt,
+        setSystemLoading,
+        setProjectManagement,
+        setProjectManagementUsers,
+        setProjectManagementError,
+        setProjectManagementLastUpdatedAt,
+        setProjectManagementLoading,
+        setError,
+      });
     },
     (connected) => {
       setStateStreamConnected(connected);
@@ -195,32 +276,6 @@ function useDashboardStateInternal() {
       }
     },
   ), []);
-
-  useEffect(() => subscribeToShutdownStatus(setShutdownStatus), []);
-
-  useEffect(() => subscribeToProjectManagementDocuments((event) => {
-    setProjectManagement(event.documents);
-    setProjectManagementError(null);
-    setProjectManagementLastUpdatedAt(new Date().toISOString());
-    setProjectManagementLoading(false);
-    setError(null);
-  }), []);
-
-  useEffect(() => subscribeToProjectManagementUsers((event) => {
-    setProjectManagementUsers(event.users);
-    setProjectManagementError(null);
-    setProjectManagementLastUpdatedAt(new Date().toISOString());
-    setProjectManagementLoading(false);
-    setError(null);
-  }), []);
-
-  useEffect(() => subscribeToSystemStatus((event) => {
-    setSystemStatus(event.status);
-    setSystemError(null);
-    setSystemLastUpdatedAt(new Date().toISOString());
-    setSystemLoading(false);
-    setError(null);
-  }), []);
 
   useEffect(() => {
     const refreshIfVisible = () => {
@@ -463,6 +518,11 @@ function useDashboardStateInternal() {
         setProjectManagementLoading(false);
       }
     }
+  }, []);
+
+  const applyProjectManagementSummary = useCallback((summary: ProjectManagementDocumentSummary) => {
+    setProjectManagement((current) => mergeUpdatedProjectManagementDocumentIntoList(current, summary));
+    setProjectManagementLastUpdatedAt(new Date().toISOString());
   }, []);
 
   const loadSystemStatusState = useCallback(async (options?: { silent?: boolean }) => {
@@ -933,12 +993,11 @@ function useDashboardStateInternal() {
         setProjectManagementSaving(true);
         try {
           const response = await updateProjectManagementDocumentRequest(documentId, payload);
-          await loadProjectManagementDocumentsState({ silent: true });
-          setProjectManagementDocument(response.document);
-          const history = await fetchProjectManagementHistory(documentId);
-          setProjectManagementHistory(history.history);
+          applyProjectManagementSummary(response.document);
           setError(null);
-          return response.document;
+          return projectManagementDocument?.id === documentId
+            ? await loadProjectManagementDocumentState(documentId, { silent: true })
+            : null;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management document.");
           return null;
@@ -950,12 +1009,11 @@ function useDashboardStateInternal() {
         setProjectManagementSaving(true);
         try {
           const response = await updateProjectManagementDependenciesRequest(documentId, payload);
-          await loadProjectManagementDocumentsState({ silent: true });
-          setProjectManagementDocument(response.document);
-          const history = await fetchProjectManagementHistory(documentId);
-          setProjectManagementHistory(history.history);
+          applyProjectManagementSummary(response.document);
           setError(null);
-          return response.document;
+          return projectManagementDocument?.id === documentId
+            ? await loadProjectManagementDocumentState(documentId, { silent: true })
+            : null;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management dependencies.");
           return null;
@@ -966,32 +1024,10 @@ function useDashboardStateInternal() {
       async updateProjectManagementStatus(documentId: string, payload: UpdateProjectManagementStatusRequest) {
         setProjectManagementSaving(true);
         try {
-          let response;
-          try {
-            response = await updateProjectManagementStatusRequest(documentId, payload);
-          } catch (err) {
-            if (shouldFallbackProjectManagementStatusUpdate(err)) {
-              const currentDocument = projectManagementDocument?.id === documentId
-                ? projectManagementDocument
-                : (await fetchProjectManagementDocument(documentId)).document;
-
-              response = await updateProjectManagementDocumentRequest(
-                documentId,
-                buildProjectManagementStatusFallbackPayload(currentDocument, payload.status),
-              );
-            } else {
-              throw err;
-            }
-          }
-          setProjectManagement((current) => mergeUpdatedProjectManagementDocumentIntoList(current, response.document));
-          setProjectManagementLastUpdatedAt(new Date().toISOString());
-          if (projectManagementDocument?.id === documentId) {
-            setProjectManagementDocument(response.document);
-            const history = await fetchProjectManagementHistory(documentId);
-            setProjectManagementHistory(history.history);
-          }
+          const response = await updateProjectManagementDocumentRequest(documentId, { status: payload.status });
+          applyProjectManagementSummary(response.document);
           setError(null);
-          return response.document;
+          return null;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management status.");
           return null;
@@ -1010,22 +1046,19 @@ function useDashboardStateInternal() {
 
         setProjectManagementSaving(true);
         try {
-          const documentsToUpdate = await Promise.all(
-            uniqueDocumentIds.map(async (documentId) => {
-              if (projectManagementDocument?.id === documentId) {
-                return projectManagementDocument;
-              }
-
-              const response = await fetchProjectManagementDocument(documentId);
-              return response.document;
-            }),
+          const documentsToUpdate = uniqueDocumentIds.map((documentId) =>
+            projectManagement?.documents.find((entry) => entry.id === documentId) ?? null,
           );
+          if (documentsToUpdate.some((document) => !document)) {
+            throw new Error("Failed to locate project management documents for the requested batch update.");
+          }
 
-          const entries: ProjectManagementBatchUpdateEntry[] = documentsToUpdate.map((document) => ({
+          const resolvedDocuments = documentsToUpdate.filter((document): document is ProjectManagementDocumentSummary => Boolean(document));
+          const entries: ProjectManagementBatchUpdateEntry[] = resolvedDocuments.map((document) => ({
             documentId: document.id,
             title: document.title,
             summary: document.summary || undefined,
-            markdown: document.markdown,
+            markdown: undefined,
             tags: document.tags,
             dependencies: document.dependencies,
             status: overrides.status ?? document.status,
@@ -1034,18 +1067,7 @@ function useDashboardStateInternal() {
           }));
 
           await appendProjectManagementBatchRequest({ entries });
-          const listResponse = await loadProjectManagementDocumentsState({ silent: true });
-          const currentSelectedDocumentId = projectManagementDocument?.id;
-          if (currentSelectedDocumentId && uniqueDocumentIds.includes(currentSelectedDocumentId)) {
-            const refreshedDocument = await fetchProjectManagementDocument(currentSelectedDocumentId);
-            setProjectManagementDocument(refreshedDocument.document);
-            const history = await fetchProjectManagementHistory(currentSelectedDocumentId);
-            setProjectManagementHistory(history.history);
-          }
-
-          if (!currentSelectedDocumentId && listResponse && projectManagementDocument) {
-            setProjectManagementDocument(null);
-          }
+          await loadProjectManagementDocumentsState({ silent: true });
 
           setError(null);
           return true;
@@ -1060,12 +1082,11 @@ function useDashboardStateInternal() {
         setProjectManagementSaving(true);
         try {
           const response = await addProjectManagementCommentRequest(documentId, payload);
-          await loadProjectManagementDocumentsState({ silent: true });
-          setProjectManagementDocument(response.document);
-          const history = await fetchProjectManagementHistory(documentId);
-          setProjectManagementHistory(history.history);
+          applyProjectManagementSummary(response.document);
           setError(null);
-          return response.document;
+          return projectManagementDocument?.id === documentId
+            ? await loadProjectManagementDocumentState(documentId, { silent: true })
+            : null;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to add project management comment.");
           return null;
@@ -1090,7 +1111,7 @@ function useDashboardStateInternal() {
         }
       },
     }),
-    [appendBackgroundLogs, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, loadSystemStatusState, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, applyProjectManagementSummary, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, loadSystemStatusState, projectManagement?.documents, projectManagementDocument?.id, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {

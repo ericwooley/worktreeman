@@ -93,14 +93,14 @@ const startCommand = command({
 
       workerProcess = startManagedRuntimeProcess({
         role: "worker",
-        cwd,
+        cwd: repo.repoRoot,
         databaseUrl: databaseConnectionString,
       });
       await workerProcess.ready;
 
       serverProcess = startManagedRuntimeProcess({
         role: "server",
-        cwd,
+        cwd: repo.repoRoot,
         databaseUrl: databaseConnectionString,
         port,
         host,

@@ -15,6 +15,7 @@ import type {
   GitComparisonResponse,
   ProjectManagementDocument,
   ProjectManagementDocumentSummary,
+  ProjectManagementDocumentSummaryResponse,
   ProjectManagementHistoryEntry,
   ProjectManagementUsersResponse,
   RunAiCommandRequest,
@@ -650,14 +651,14 @@ interface WorktreeDetailProps {
     assignee?: string;
     archived?: boolean;
   }) => Promise<ProjectManagementDocument | null>;
-  onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
-  onUpdateProjectManagementStatus: (documentId: string, status: string) => Promise<ProjectManagementDocument | null>;
+  onUpdateProjectManagementDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocumentSummaryResponse | null>;
+  onUpdateProjectManagementStatus: (documentId: string, status: string) => Promise<ProjectManagementDocumentSummaryResponse | null>;
   onUpdateProjectManagementUsers: (payload: UpdateProjectManagementUsersRequest) => Promise<ProjectManagementUsersResponse | null>;
   onBatchUpdateProjectManagementDocuments: (documentIds: string[], overrides: {
     status?: string;
     archived?: boolean;
   }) => Promise<boolean>;
-  onAddProjectManagementComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocument | null>;
+  onAddProjectManagementComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentSummaryResponse | null>;
   onRunProjectManagementAiCommand: (payload: RunAiCommandRequest & {
     input: string;
     documentId?: string;
@@ -2092,7 +2093,7 @@ export function WorktreeDetail({
             onRunDocumentAi={onRunProjectManagementDocumentAi}
             onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
             onCancelAiCommand={onCancelProjectManagementAiCommand}
-            onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false })}
+            onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false, includeSelectedDocument: false })}
           />
         ) : isSystemTabActive ? (
           <div className="mt-4">

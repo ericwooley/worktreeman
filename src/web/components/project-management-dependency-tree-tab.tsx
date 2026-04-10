@@ -12,7 +12,7 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { ProjectManagementDocument, ProjectManagementDocumentSummary } from "@shared/types";
+import type { ProjectManagementDocument, ProjectManagementDocumentSummary, ProjectManagementDocumentSummaryResponse } from "@shared/types";
 import { MatrixBadge } from "./matrix-primitives";
 
 type DependencyTreeDocument = Pick<
@@ -25,7 +25,7 @@ interface ProjectManagementDependencyTreeTabProps {
   selectedDocumentId: string | null;
   saving: boolean;
   onSelectDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
-  onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocument | null>;
+  onUpdateDependencies: (documentId: string, dependencyIds: string[]) => Promise<ProjectManagementDocumentSummaryResponse | null>;
 }
 
 function normalizeDependencyTreeDocuments(documents: ProjectManagementDocumentSummary[]): DependencyTreeDocument[] {

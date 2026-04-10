@@ -675,12 +675,16 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!projectManagementSelectedDocumentId || activeTab !== "project-management") {
+    if (
+      !projectManagementSelectedDocumentId
+      || activeTab !== "project-management"
+      || (projectManagementSubTab !== "document" && projectManagementSubTab !== "history")
+    ) {
       return;
     }
 
     void loadProjectManagementDocument(projectManagementSelectedDocumentId, { silent: true });
-  }, [activeTab, loadProjectManagementDocument, projectManagementSelectedDocumentId]);
+  }, [activeTab, loadProjectManagementDocument, projectManagementSelectedDocumentId, projectManagementSubTab]);
 
   useEffect(() => {
     if (!selectedAiLogJobId || activeTab !== "ai-log") {
@@ -1554,18 +1558,13 @@ export function Dashboard() {
             onCreateProjectManagementDocument={createProjectManagementDocument}
             onUpdateProjectManagementDocument={updateProjectManagementDocument}
             onUpdateProjectManagementDependencies={async (documentId, dependencyIds) => {
-              setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementDependencies(documentId, { dependencyIds });
             }}
             onUpdateProjectManagementStatus={async (documentId, status) => {
-              setProjectManagementSelectedDocumentId(documentId);
               return updateProjectManagementStatus(documentId, { status });
             }}
             onUpdateProjectManagementUsers={updateProjectManagementUsers}
             onBatchUpdateProjectManagementDocuments={async (documentIds, overrides) => {
-              if (projectManagementSelectedDocumentId && documentIds.includes(projectManagementSelectedDocumentId)) {
-                setProjectManagementSelectedDocumentId(projectManagementSelectedDocumentId);
-              }
               return batchUpdateProjectManagementDocuments(documentIds, overrides);
             }}
             onAddProjectManagementComment={addProjectManagementComment}
