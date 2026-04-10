@@ -1,4 +1,8 @@
-import type { ProjectManagementDocument, UpdateProjectManagementDocumentRequest } from "@shared/types";
+import type {
+  ProjectManagementDocument,
+  ProjectManagementListResponse,
+  UpdateProjectManagementDocumentRequest,
+} from "@shared/types";
 import { ApiError } from "./api";
 
 export function shouldFallbackProjectManagementStatusUpdate(error: unknown): boolean {
@@ -18,5 +22,23 @@ export function buildProjectManagementStatusFallbackPayload(
     status,
     assignee: document.assignee,
     archived: document.archived,
+  };
+}
+
+export function mergeUpdatedProjectManagementDocumentIntoList(
+  current: ProjectManagementListResponse | null,
+  document: ProjectManagementDocument,
+): ProjectManagementListResponse | null {
+  if (!current) {
+    return current;
+  }
+
+  const documents = current.documents.map((entry) => entry.id === document.id ? document : entry);
+  const availableTags = [...new Set(documents.flatMap((entry) => entry.tags))].sort((left, right) => left.localeCompare(right));
+
+  return {
+    ...current,
+    documents,
+    availableTags,
   };
 }

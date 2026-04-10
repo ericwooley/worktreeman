@@ -84,6 +84,7 @@ import {
 import { startSequentialPoll } from "../lib/sequential-poll";
 import {
   buildProjectManagementStatusFallbackPayload,
+  mergeUpdatedProjectManagementDocumentIntoList,
   shouldFallbackProjectManagementStatusUpdate,
 } from "../lib/project-management-status-update";
 import { useAiCommandLogStream } from "./useAiCommandLogStream";
@@ -982,10 +983,13 @@ function useDashboardStateInternal() {
               throw err;
             }
           }
-          await loadProjectManagementDocumentsState({ silent: true });
-          setProjectManagementDocument(response.document);
-          const history = await fetchProjectManagementHistory(documentId);
-          setProjectManagementHistory(history.history);
+          setProjectManagement((current) => mergeUpdatedProjectManagementDocumentIntoList(current, response.document));
+          setProjectManagementLastUpdatedAt(new Date().toISOString());
+          if (projectManagementDocument?.id === documentId) {
+            setProjectManagementDocument(response.document);
+            const history = await fetchProjectManagementHistory(documentId);
+            setProjectManagementHistory(history.history);
+          }
           setError(null);
           return response.document;
         } catch (err) {

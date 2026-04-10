@@ -649,9 +649,9 @@ export function ProjectManagementPanel({
       return;
     }
 
-    await onUpdateStatus(documentId, nextStatus);
+    const updated = await onUpdateStatus(documentId, nextStatus);
 
-    if (document?.id === documentId) {
+    if (updated && document?.id === documentId) {
       void onSelectDocument(documentId, { silent: true });
     }
   }
