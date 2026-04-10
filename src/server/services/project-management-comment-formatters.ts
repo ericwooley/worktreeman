@@ -24,25 +24,29 @@ function formatLogBlock(value: string, options?: { maxCharacters?: number; maxLi
     joined = `${joined}\n…`;
   }
 
-  return joined
-    .split("\n")
-    .map((line) => line ? `> ${line}` : ">")
-    .join("\n");
+  return joined;
 }
 
-function formatLogAccordion(title: string, value: string): string | null {
+function countNonEmptyLines(value: string): number {
+  return value
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0)
+    .length;
+}
+
+function formatLogSection(title: string, value: string): string | null {
   const block = formatLogBlock(value);
   if (!block) {
     return null;
   }
 
   return [
-    `<details>`,
-    `<summary>${title}</summary>`,
+    `#### ${title}`,
     "",
+    "```text",
     block,
+    "```",
     "",
-    `</details>`,
   ].join("\n");
 }
 
@@ -81,27 +85,30 @@ export function buildWorktreeAiCompletedComment(details: {
   stdout: string;
   stderr: string;
 }) {
+  const stdoutLineCount = countNonEmptyLines(details.stdout);
+  const stderrLineCount = countNonEmptyLines(details.stderr);
   const lines = [
     "## Worktree AI completed",
     "",
     `- Branch: \`${details.branch}\``,
     `- Command: \`${details.commandId}\``,
+    `- Output: ${stdoutLineCount} stdout line${stdoutLineCount === 1 ? "" : "s"}, ${stderrLineCount} stderr line${stderrLineCount === 1 ? "" : "s"}`,
   ];
 
   if (details.requestSummary?.trim()) {
     lines.push(`- Request: ${normalizeInlineText(details.requestSummary)}`);
   }
 
-  const stdoutAccordion = formatLogAccordion("Stdout", details.stdout);
-  const stderrAccordion = formatLogAccordion("Stderr", details.stderr);
-  if (stdoutAccordion || stderrAccordion) {
+  const stdoutSection = formatLogSection("Stdout", details.stdout);
+  const stderrSection = formatLogSection("Stderr", details.stderr);
+  if (stdoutSection || stderrSection) {
     lines.push("", "### Output");
   }
-  if (stdoutAccordion) {
-    lines.push("", stdoutAccordion);
+  if (stdoutSection) {
+    lines.push("", stdoutSection);
   }
-  if (stderrAccordion) {
-    lines.push("", stderrAccordion);
+  if (stderrSection) {
+    lines.push("", stderrSection);
   }
 
   return lines.join("\n");
