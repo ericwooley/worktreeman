@@ -86,7 +86,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(listPayload.runningJobs[0].fileName, fileName);
     assert.equal(listPayload.runningJobs[0].branch, "feature-ai-log");
     assert.equal(listPayload.runningJobs[0].status, "running");
-    assert.equal(listPayload.runningJobs[0].pid ?? null, null);
+    assert.equal(listPayload.runningJobs[0].pid ?? null, 7331);
     assert.deepEqual(listPayload.runningJobs[0].origin, origin);
 
     const detailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(listPayload.runningJobs[0].jobId)}`);
@@ -113,7 +113,7 @@ test("AI log routes list logs and expose running jobs", { concurrency: false }, 
     assert.equal(detailPayload.log.fileName, listPayload.runningJobs[0].fileName);
     assert.equal(detailPayload.log.branch, "feature-ai-log");
     assert.equal(detailPayload.log.status, "running");
-    assert.equal(detailPayload.log.pid ?? null, null);
+    assert.equal(detailPayload.log.pid ?? null, 7331);
     assert.deepEqual(detailPayload.log.origin, origin);
     assert.equal(detailPayload.log.request, "summarize the work");
     assert.equal(detailPayload.log.response.stdout, "");
@@ -453,13 +453,13 @@ test("stale persisted running AI jobs reconcile on the worktree stream and no lo
       const snapshot = await stream.nextEvent();
       const snapshotJob = (snapshot as {
         type: string;
-        job?: { status?: string; error?: string | null; stdout?: string; branch?: string } | null;
+        job?: { status?: string; error?: string | null; stderr?: string; branch?: string } | null;
       }).job;
 
       assert.equal(snapshot.type, "snapshot");
       assert.equal(snapshotJob?.branch, "feature-ai-restart");
       assert.equal(snapshotJob?.status, "failed");
-      assert.equal(snapshotJob?.stdout, "partial output");
+      assert.match(snapshotJob?.stderr ?? "", /no longer available/);
       assert.match(snapshotJob?.error ?? "", /no longer available/);
     } finally {
       await stream.close();

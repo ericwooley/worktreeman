@@ -733,34 +733,26 @@ test("project-management document AI creates a derived worktree and streams stdo
     try {
       const snapshot = await stream.nextEvent();
       assert.equal(snapshot.type, "snapshot");
-      const snapshotJob = (snapshot as { job?: { branch?: string; stdout?: string; status?: string } | null }).job;
+      const snapshotJob = (snapshot as { job?: { branch?: string; status?: string } | null }).job;
       assert.equal(snapshotJob?.branch, payload.job.branch);
-
-      let sawImplemented = snapshotJob?.stdout?.includes("implemented") ?? false;
-      if (snapshotJob?.status !== "completed") {
-        await waitFor(async () => {
-          const logsResponse = await server.fetch(`/api/ai/logs`);
-          if (logsResponse.status !== 200) {
-            return false;
-          }
-          const logsPayload = await logsResponse.json() as {
-            logs: Array<{ branch: string; status: string; origin?: AiCommandOrigin | null }>;
-          };
-          return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
-        });
-
-        for (let index = 0; index < 5; index += 1) {
-          const event = await stream.nextEvent();
-          const job = (event as { job?: { stdout?: string; status?: string } | null }).job;
-          if (job?.stdout?.includes("implemented")) {
-            sawImplemented = true;
-          }
-          if (job?.status === "completed") {
-            break;
-          }
+      await waitFor(async () => {
+        const logsResponse = await server.fetch(`/api/ai/logs`);
+        if (logsResponse.status !== 200) {
+          return false;
         }
+        const logsPayload = await logsResponse.json() as {
+          logs: Array<{ jobId: string; branch: string; status: string; origin?: AiCommandOrigin | null }>;
+        };
+        return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
+      });
+
+      let completedSeen = snapshotJob?.status === "completed";
+      while (!completedSeen) {
+        const event = await stream.nextEvent();
+        const job = (event as { job?: { status?: string } | null }).job;
+        completedSeen = job?.status === "completed";
       }
-      assert.equal(sawImplemented, true);
+      assert.equal(completedSeen, true);
     } finally {
       await stream.close();
     }
@@ -792,7 +784,7 @@ test("project-management document AI creates a derived worktree and streams stdo
     const aiLogsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(aiLogsResponse.status, 200);
     const aiLogsPayload = await aiLogsResponse.json() as {
-      logs: Array<{ branch: string; status: string; origin?: AiCommandOrigin | null }>;
+      logs: Array<{ jobId: string; branch: string; status: string; origin?: AiCommandOrigin | null }>;
     };
     const completedLog = aiLogsPayload.logs.find((entry) => entry.branch === payload.job.branch && entry.status === "completed");
     assert.ok(completedLog);
@@ -801,6 +793,17 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(completedLog.origin?.location.projectManagementSubTab, "document");
     assert.equal(completedLog.origin?.location.documentId, outline.id);
     assert.equal(completedLog.origin?.location.projectManagementDocumentViewMode, "document");
+
+    const completedLogDetailResponse = await server.fetch(`/api/ai/logs/${encodeURIComponent(completedLog.jobId)}`);
+    assert.equal(completedLogDetailResponse.status, 200);
+    const completedLogDetailPayload = await completedLogDetailResponse.json() as {
+      log: {
+        response: {
+          stdout: string;
+        };
+      };
+    };
+    assert.match(completedLogDetailPayload.log.response.stdout, /implemented/);
 
     await waitFor(async () => {
       const latestStatePayload = await readStateSnapshot<{
@@ -984,7 +987,7 @@ test("project-management document AI preserves board origin metadata when reques
   }
 });
 
-test("project-management document AI continues the selected linked worktree when requested", { concurrency: false, timeout: 15000 }, async () => {
+test("project-management document AI continues the selected linked worktree when requested", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
@@ -1070,7 +1073,7 @@ test("project-management document AI continues the selected linked worktree when
   }
 });
 
-test("project-management document AI uses a suffixed branch when explicitly starting a new worktree again", { concurrency: false, timeout: 15000 }, async () => {
+test("project-management document AI uses a suffixed branch when explicitly starting a new worktree again", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([

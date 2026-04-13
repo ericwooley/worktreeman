@@ -64,9 +64,20 @@ export function createFakeAiProcesses() {
     snapshots: FakeAiProcessSnapshot[];
     cursor: number;
     current: number;
+    completion: Promise<FakeAiProcessSnapshot | null>;
+    settleCompletion: {
+      resolve: (snapshot: FakeAiProcessSnapshot | null) => void;
+      reject: (error: unknown) => void;
+    };
   }>();
   const manualStates = new Map<string, FakeAiProcessSnapshot>();
+  const manualCompletions = new Map<string, {
+    promise: Promise<FakeAiProcessSnapshot | null>;
+    resolve: (snapshot: FakeAiProcessSnapshot | null) => void;
+    reject: (error: unknown) => void;
+  }>();
   const deletedProcesses: string[] = [];
+  const isActiveStatus = (status: string | null | undefined) => status === "online" || status === "launching";
 
   const normalizeSnapshot = (snapshot?: FakeAiProcessSnapshot): FakeAiProcessSnapshot => ({
     status: snapshot?.status ?? null,
@@ -90,12 +101,61 @@ export function createFakeAiProcesses() {
   };
 
   const aiProcesses: InjectedAiProcesses = {
-    async startProcess({ processName }) {
+    async startProcess({ processName, hooks }) {
       const snapshots = queuedScripts.shift()?.map(normalizeSnapshot) ?? [
         normalizeSnapshot({ status: "online" }),
         normalizeSnapshot({ status: "stopped", exitCode: 0 }),
       ];
-      scriptedStates.set(processName, { snapshots, cursor: 0, current: 0 });
+      let resolveCompletion!: (snapshot: FakeAiProcessSnapshot | null) => void;
+      let rejectCompletion!: (error: unknown) => void;
+      const completion = new Promise<FakeAiProcessSnapshot | null>((resolve, reject) => {
+        resolveCompletion = resolve;
+        rejectCompletion = reject;
+      });
+      scriptedStates.set(processName, {
+        snapshots,
+        cursor: 0,
+        current: 0,
+        completion,
+        settleCompletion: {
+          resolve: resolveCompletion,
+          reject: rejectCompletion,
+        },
+      });
+
+      void Promise.resolve().then(async () => {
+        let previous = normalizeSnapshot();
+        for (const snapshot of snapshots) {
+          const normalized = normalizeSnapshot(snapshot);
+          const stdout = normalized.stdout ?? "";
+          const previousStdout = previous.stdout ?? "";
+          const stderr = normalized.stderr ?? "";
+          const previousStderr = previous.stderr ?? "";
+
+          if (hooks?.onStdout) {
+            const chunk = stdout.startsWith(previousStdout) ? stdout.slice(previousStdout.length) : stdout;
+            if (chunk) {
+              await hooks.onStdout(chunk);
+            }
+          }
+
+          if (hooks?.onStderr) {
+            const chunk = stderr.startsWith(previousStderr) ? stderr.slice(previousStderr.length) : stderr;
+            if (chunk) {
+              await hooks.onStderr(chunk);
+            }
+          }
+
+          previous = normalized;
+        }
+
+        if (!isActiveStatus(previous.status)) {
+          scriptedStates.get(processName)?.settleCompletion.resolve(previous);
+        }
+      }).catch((error) => {
+        scriptedStates.get(processName)?.settleCompletion.reject(error);
+      });
+
       return toProcessDescription(processName, snapshots[0]) ?? {
         name: processName,
         status: "stopped",
@@ -120,42 +180,32 @@ export function createFakeAiProcesses() {
       }
       return toProcessDescription(processName, state.snapshots[index]);
     },
-    async readProcessLogs(processInfo) {
-      if (!processInfo) {
-        return { stdout: "", stderr: "" };
+    async waitForProcess(processName) {
+      const manualCompletion = manualCompletions.get(processName);
+      if (manualCompletion) {
+        const snapshot = await manualCompletion.promise;
+        return toProcessDescription(processName, snapshot ?? undefined);
       }
 
-      const manual = manualStates.get(processInfo.name);
-      if (manual) {
-        return {
-          stdout: manual.stdout ?? "",
-          stderr: manual.stderr ?? "",
-        };
-      }
-
-      const state = scriptedStates.get(processInfo.name);
+      const state = scriptedStates.get(processName);
       if (!state) {
-        return { stdout: "", stderr: "" };
+        return null;
       }
 
-      const snapshot = state.snapshots[state.current] ?? normalizeSnapshot();
-      if (state.current < state.snapshots.length - 1) {
-        state.current += 1;
-      }
-      return {
-        stdout: snapshot.stdout ?? "",
-        stderr: snapshot.stderr ?? "",
-      };
+      const snapshot = await state.completion;
+      return toProcessDescription(processName, snapshot ?? undefined);
     },
     async deleteProcess(processName) {
       deletedProcesses.push(processName);
       const manual = manualStates.get(processName);
       if (manual) {
-        manualStates.set(processName, {
+        const nextManual = {
           ...manual,
           status: "stopped",
           exitCode: manual.exitCode ?? null,
-        });
+        };
+        manualStates.set(processName, nextManual);
+        manualCompletions.get(processName)?.resolve(nextManual);
         return;
       }
 
@@ -169,10 +219,11 @@ export function createFakeAiProcesses() {
         }];
         state.cursor = 0;
         state.current = 0;
+        state.settleCompletion.resolve(state.snapshots[0] ?? null);
       }
     },
     isProcessActive(status) {
-      return status === "online" || status === "launching";
+      return isActiveStatus(status);
     },
   };
 
@@ -184,13 +235,26 @@ export function createFakeAiProcesses() {
     },
     setManualProcess(processName: string, snapshot: FakeAiProcessSnapshot) {
       manualStates.set(processName, normalizeSnapshot(snapshot));
+      if (!manualCompletions.has(processName)) {
+        let resolve!: (snapshot: FakeAiProcessSnapshot | null) => void;
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<FakeAiProcessSnapshot | null>((nextResolve, nextReject) => {
+          resolve = nextResolve;
+          reject = nextReject;
+        });
+        manualCompletions.set(processName, { promise, resolve, reject });
+      }
     },
     updateManualProcess(processName: string, updates: Partial<FakeAiProcessSnapshot>) {
       const current = manualStates.get(processName) ?? normalizeSnapshot();
-      manualStates.set(processName, normalizeSnapshot({
+      const nextSnapshot = normalizeSnapshot({
         ...current,
         ...updates,
-      }));
+      });
+      manualStates.set(processName, nextSnapshot);
+      if (nextSnapshot.status && nextSnapshot.status !== "online" && nextSnapshot.status !== "launching") {
+        manualCompletions.get(processName)?.resolve(nextSnapshot);
+      }
     },
   };
 }

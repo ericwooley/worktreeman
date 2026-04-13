@@ -10,6 +10,31 @@ import {
   readAiCommandLogEntryByIdentifier,
 } from "./api-helpers.js";
 import type { ApiRouterContext } from "./api-router-context.js";
+import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service.js";
+
+function buildAiLogChangeKey(log: AiCommandLogEntry | null): string {
+  if (!log) {
+    return "null";
+  }
+
+  const events = log.response.events ?? [];
+  const lastEvent = events.at(-1);
+  return [
+    log.jobId,
+    log.status,
+    log.completedAt ?? "",
+    log.pid ?? "",
+    log.exitCode ?? "",
+    log.processName ?? "",
+    log.error?.message ?? "",
+    log.response.stdout.length,
+    log.response.stderr.length,
+    events.length,
+    lastEvent?.id ?? "",
+    lastEvent?.timestamp ?? "",
+    lastEvent?.text.length ?? 0,
+  ].join(":");
+}
 
 export function registerApiAiLogRoutes(router: express.Router, context: ApiRouterContext) {
   router.get("/ai/logs", async (_req, res, next) => {
@@ -54,7 +79,7 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
       }
 
       let currentLog: AiCommandLogEntry | null = null;
-      let lastPayload = "null";
+      let lastChangeKey = "null";
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -94,8 +119,15 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
           return;
         }
         const event: AiCommandLogStreamEvent = { type, log };
+        const payload = JSON.stringify(event);
+        noteAiSsePayloadSize({
+          stream: "ai-log-detail",
+          identifier: jobId,
+          eventType: type,
+          payloadBytes: Buffer.byteLength(payload, "utf8"),
+        });
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
@@ -109,18 +141,18 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
           }
 
           currentLog = nextLog;
-          const nextPayload = JSON.stringify(nextLog);
-          if (nextPayload !== lastPayload) {
-            const eventType = lastPayload === "null" ? "snapshot" : "update";
-            lastPayload = nextPayload;
+          const nextChangeKey = buildAiLogChangeKey(nextLog);
+          if (nextChangeKey !== lastChangeKey) {
+            const eventType = lastChangeKey === "null" ? "snapshot" : "update";
+            lastChangeKey = nextChangeKey;
             writeEvent(eventType, nextLog);
           }
         } catch (error) {
           const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
           if (code === "ENOENT") {
             currentLog = null;
-            if (lastPayload !== "null") {
-              lastPayload = "null";
+            if (lastChangeKey !== "null") {
+              lastChangeKey = "null";
               writeEvent("update", null);
             }
             return;

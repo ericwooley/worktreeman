@@ -30,6 +30,7 @@ import { syncEnvFiles } from "../services/env-sync-service.js";
 import {
   failAiCommandJob,
   getAiCommandJob,
+  subscribeToAiCommandJob,
   waitForAiCommandJob,
 } from "../services/ai-command-service.js";
 import {
@@ -48,8 +49,8 @@ import {
   setWorktreeDocumentLink,
 } from "../services/worktree-link-service.js";
 import { logServerEvent } from "../utils/server-logger.js";
+import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service.js";
 import {
-  appendAiCommandOutputEvents,
   buildAiEnvironmentContext,
   buildProjectManagementAiPrompt,
   buildWorktreeAiPrompt,
@@ -67,6 +68,40 @@ import {
   toRunningAiCommandJob,
 } from "./api-helpers.js";
 import type { ApiRouterContext } from "./api-router-context.js";
+
+function buildAiJobChangeKey(job: RunAiCommandResponse["job"] | null): string {
+  if (!job) {
+    return "null";
+  }
+
+  return [
+    job.jobId,
+    job.status,
+    job.completedAt ?? "",
+    job.pid ?? "",
+    job.exitCode ?? "",
+    job.processName ?? "",
+    job.error ?? "",
+    job.stderr.length,
+  ].join(":");
+}
+
+function appendCancellationEvent(log: {
+  jobId: string;
+  response: { events?: Array<{ id: string; runId?: string; entry?: number; source: "stdout" | "stderr"; text: string; timestamp: string }> };
+}, text: string) {
+  return [
+    ...(log.response.events ?? []),
+    {
+      id: `${log.jobId}:cancelled`,
+      runId: log.jobId,
+      entry: (log.response.events?.length ?? 0) + 1,
+      source: "stderr" as const,
+      text,
+      timestamp: new Date().toISOString(),
+    },
+  ];
+}
 
 export function registerApiWorktreeRoutes(router: express.Router, context: ApiRouterContext) {
   const loadTmuxClients = async (branch: string) => {
@@ -107,7 +142,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       let currentJob = await getAiCommandJob(context.repoRoot, worktree.id, context.aiJobReadOptions);
-      let lastPayload = JSON.stringify(currentJob);
+      let lastChangeKey = buildAiJobChangeKey(currentJob);
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -116,6 +151,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       let closed = false;
       let interval: ReturnType<typeof setInterval>;
       let keepAlive: ReturnType<typeof setInterval>;
+      let unsubscribe = () => {};
 
       const isStreamClosed = () => closed || req.destroyed || res.destroyed || res.writableEnded;
 
@@ -127,6 +163,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         closed = true;
         clearInterval(interval);
         clearInterval(keepAlive);
+        unsubscribe();
         if (res.destroyed || res.writableEnded) {
           return;
         }
@@ -146,14 +183,38 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           type,
           job,
         };
+        const payload = JSON.stringify(event);
+        noteAiSsePayloadSize({
+          stream: "worktree-ai-command",
+          identifier: branch,
+          eventType: type,
+          payloadBytes: Buffer.byteLength(payload, "utf8"),
+        });
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
       };
 
-      writeEvent("snapshot", currentJob);
+      const emitIfChanged = (nextJob: typeof currentJob, type: "snapshot" | "update" = "update") => {
+        currentJob = nextJob;
+        const nextChangeKey = buildAiJobChangeKey(nextJob);
+        if (type === "snapshot" || nextChangeKey !== lastChangeKey) {
+          lastChangeKey = nextChangeKey;
+          writeEvent(type, nextJob);
+        }
+      };
+
+      emitIfChanged(currentJob, "snapshot");
+
+      unsubscribe = subscribeToAiCommandJob(context.repoRoot, worktree.id, (job) => {
+        if (isStreamClosed()) {
+          return;
+        }
+
+        emitIfChanged(job, "update");
+      });
 
       let polling = false;
       interval = setInterval(() => {
@@ -167,12 +228,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           if (isStreamClosed()) {
             return;
           }
-          currentJob = nextJob;
-          const nextPayload = JSON.stringify(nextJob);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
-            writeEvent("update", nextJob);
-          }
+          emitIfChanged(nextJob, "update");
         }, (error) => {
           logServerEvent("ai-command-stream", "poll-failed", {
             branch,
@@ -596,34 +652,10 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
             worktreeId: worktree.id,
             jobId: job.jobId,
             error: cancellationMessage,
-            outputEvents: appendAiCommandOutputEvents(job.jobId, job.outputEvents, "stderr", cancellationMessage),
           })
         : null;
 
-      if (failedJob) {
-        await safeWriteAiRequestLog({
-          fileName: failedJob.fileName,
-          jobId: failedJob.jobId,
-          repoRoot: context.repoRoot,
-          worktreeId: failedJob.worktreeId,
-          branch: failedJob.branch,
-          documentId: failedJob.documentId ?? null,
-          commandId: failedJob.commandId,
-          origin: failedJob.origin ?? null,
-          worktreePath: persistedLog?.worktreePath ?? worktree.worktreePath,
-          renderedCommand: failedJob.command,
-          input: failedJob.input,
-          stdout: failedJob.stdout,
-          stderr: failedJob.stderr,
-          events: failedJob.outputEvents,
-          startedAt: failedJob.startedAt,
-          completedAt: failedJob.completedAt,
-          pid: failedJob.pid ?? null,
-          exitCode: failedJob.exitCode ?? null,
-          processName: failedJob.processName,
-          error: failedJob.error ? new Error(failedJob.error) : null,
-        });
-      } else if (persistedLog) {
+      if (!failedJob && persistedLog) {
         await safeWriteAiRequestLog({
           fileName: persistedLog.fileName,
           jobId: persistedLog.jobId,
@@ -638,7 +670,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           input: persistedLog.request,
           stdout: persistedLog.response.stdout,
           stderr: `${persistedLog.response.stderr}${cancellationMessage}`,
-          events: appendAiCommandOutputEvents(persistedLog.jobId, persistedLog.response.events, "stderr", cancellationMessage),
+          events: appendCancellationEvent(persistedLog, cancellationMessage),
           startedAt: persistedLog.timestamp,
           completedAt: new Date().toISOString(),
           pid: persistedLog.pid ?? null,
@@ -706,7 +738,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           stderr: nextStderr,
           events: hasCancellationEvent
             ? resolvedLog.response.events
-            : appendAiCommandOutputEvents(resolvedLog.jobId, resolvedLog.response.events, "stderr", cancellationMessage),
+            : appendCancellationEvent(resolvedLog, cancellationMessage),
           startedAt: resolvedLog.timestamp,
           completedAt: resolvedLog.completedAt ?? finalJob.completedAt ?? new Date().toISOString(),
           pid: finalJob.pid ?? resolvedLog.pid ?? null,

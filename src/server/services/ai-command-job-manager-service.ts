@@ -4,7 +4,7 @@ import type { WorktreeId } from "../../shared/worktree-id.js";
 import { beginAiCommandJob, continueAiCommandJob, type StartedAiCommandJob } from "./ai-command-service.js";
 import { closeManagedDatabaseClient, getManagedDatabaseClient } from "./database-client-service.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
-import { getAiCommandProcessName, startAiCommandProcess, getAiCommandProcess, readAiCommandProcessLogs, isAiCommandProcessActive } from "./ai-command-process-service.js";
+import { getAiCommandProcessName, startAiCommandProcess, waitForAiCommandProcess } from "./ai-command-process-service.js";
 import { completeAiCommandRun } from "./ai-command-completion-service.js";
 
 const PROJECT_MANAGEMENT_AI_QUEUE = "project-management-ai-update";
@@ -82,6 +82,7 @@ async function runManagedAiProcess(options: {
         input: options.payload.input,
         worktreePath: options.payload.worktreePath,
         env: options.payload.env,
+        hooks: payload.hooks,
       });
 
       await payload.hooks.onSpawn?.({
@@ -89,55 +90,15 @@ async function runManagedAiProcess(options: {
         processName,
       });
 
-      let lastStdout = "";
-      let lastStderr = "";
+      const completedProcess = await waitForAiCommandProcess(processName);
+      if (!completedProcess) {
+        await payload.hooks.onExit?.({ exitCode: null });
+        throw new Error("AI process no longer available.");
+      }
 
-      while (true) {
-        const nextProcess = await getAiCommandProcess(processName);
-        const logs = await readAiCommandProcessLogs(nextProcess ?? processInfo);
-
-        if (logs.stdout.startsWith(lastStdout)) {
-          const chunk = logs.stdout.slice(lastStdout.length);
-          if (chunk) {
-            await payload.hooks.onStdout?.(chunk);
-          }
-        } else if (logs.stdout !== lastStdout) {
-          const chunk = logs.stdout.slice(Math.min(lastStdout.length, logs.stdout.length));
-          if (chunk) {
-            await payload.hooks.onStdout?.(chunk);
-          }
-        }
-
-        if (logs.stderr.startsWith(lastStderr)) {
-          const chunk = logs.stderr.slice(lastStderr.length);
-          if (chunk) {
-            await payload.hooks.onStderr?.(chunk);
-          }
-        } else if (logs.stderr !== lastStderr) {
-          const chunk = logs.stderr.slice(Math.min(lastStderr.length, logs.stderr.length));
-          if (chunk) {
-            await payload.hooks.onStderr?.(chunk);
-          }
-        }
-
-        lastStdout = logs.stdout;
-        lastStderr = logs.stderr;
-
-        if (!nextProcess) {
-          await payload.hooks.onExit?.({ exitCode: null });
-          throw new Error("AI process no longer available.");
-        }
-
-        if (!isAiCommandProcessActive(nextProcess.status)) {
-          await payload.hooks.onExit?.({ exitCode: nextProcess.exitCode ?? null });
-          if ((nextProcess.exitCode ?? 0) !== 0) {
-            throw new Error(`AI process exited with code ${nextProcess.exitCode ?? "unknown"}.`);
-          }
-
-          return logs;
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 250));
+      await payload.hooks.onExit?.({ exitCode: completedProcess.exitCode ?? null });
+      if ((completedProcess.exitCode ?? 0) !== 0) {
+        throw new Error(`AI process exited with code ${completedProcess.exitCode ?? "unknown"}.`);
       }
     },
     onComplete: async ({ stdout, stderr }) => {

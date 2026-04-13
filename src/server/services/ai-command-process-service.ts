@@ -4,11 +4,21 @@ import type { Readable } from "node:stream";
 
 const ANSI_ESCAPE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 
+export interface AiCommandProcessHooks {
+  onStdout?: (chunk: string) => void | Promise<void>;
+  onStderr?: (chunk: string) => void | Promise<void>;
+}
+
 interface ManagedAiCommandProcess {
   description: AiCommandProcessDescription;
   child: ChildProcessByStdio<null, Readable, Readable> | null;
-  stdout: string;
-  stderr: string;
+  callbackQueue: Promise<void>;
+  completion: Promise<AiCommandProcessDescription>;
+  settleCompletion: {
+    resolve: (processInfo: AiCommandProcessDescription) => void;
+    reject: (error: unknown) => void;
+  };
+  hookError: unknown;
 }
 
 const aiCommandProcesses = new Map<string, ManagedAiCommandProcess>();
@@ -59,18 +69,23 @@ function sanitizeAiCommandOutput(raw: string): string {
     .replace(ANSI_ESCAPE_PATTERN, "");
 }
 
-function appendManagedOutput(processName: string, source: "stdout" | "stderr", chunk: string) {
+function enqueueManagedCallback(processName: string, callback: () => void | Promise<void>) {
   const managed = aiCommandProcesses.get(processName);
   if (!managed) {
     return;
   }
 
-  if (source === "stdout") {
-    managed.stdout += chunk;
-    return;
-  }
-
-  managed.stderr += chunk;
+  managed.callbackQueue = managed.callbackQueue
+    .then(async () => {
+      await callback();
+    })
+    .catch((error) => {
+      managed.hookError ??= error;
+      const child = managed.child;
+      if (child && !child.killed) {
+        child.kill("SIGTERM");
+      }
+    });
 }
 
 export async function listAiCommandProcesses(): Promise<Map<string, AiCommandProcessDescription>> {
@@ -106,6 +121,7 @@ export async function startAiCommandProcess(options: {
   input: string;
   worktreePath: string;
   env: NodeJS.ProcessEnv;
+  hooks?: AiCommandProcessHooks;
 }): Promise<AiCommandProcessDescription> {
   await deleteAiCommandProcess(options.processName).catch(() => undefined);
 
@@ -127,22 +143,44 @@ export async function startAiCommandProcess(options: {
     createdAt: new Date().toISOString(),
     exitCode: null,
   };
+  let resolveCompletion!: (processInfo: AiCommandProcessDescription) => void;
+  let rejectCompletion!: (error: unknown) => void;
+  const completion = new Promise<AiCommandProcessDescription>((resolve, reject) => {
+    resolveCompletion = resolve;
+    rejectCompletion = reject;
+  });
   aiCommandProcesses.set(options.processName, {
     description,
     child,
-    stdout: "",
-    stderr: "",
+    callbackQueue: Promise.resolve(),
+    completion,
+    settleCompletion: {
+      resolve: resolveCompletion,
+      reject: rejectCompletion,
+    },
+    hookError: null,
   });
 
   let settled = false;
 
   const finalize = async (status: string, exitCode: number | null) => {
     const managed = aiCommandProcesses.get(options.processName);
-    if (managed) {
-      managed.description.status = status;
-      managed.description.exitCode = exitCode;
-      managed.child = null;
+    if (!managed) {
+      return;
     }
+
+    managed.description.status = status;
+    managed.description.exitCode = exitCode;
+    managed.child = null;
+    await managed.callbackQueue.catch(() => undefined);
+
+    const snapshot = cloneProcessDescription(managed.description);
+    if (managed.hookError) {
+      managed.settleCompletion.reject(managed.hookError);
+      return;
+    }
+
+    managed.settleCompletion.resolve(snapshot);
   };
 
   child.stdout.on("data", (chunk) => {
@@ -151,7 +189,9 @@ export async function startAiCommandProcess(options: {
       return;
     }
 
-    appendManagedOutput(options.processName, "stdout", sanitized);
+    if (options.hooks?.onStdout) {
+      enqueueManagedCallback(options.processName, () => options.hooks?.onStdout?.(sanitized));
+    }
   });
 
   child.stderr.on("data", (chunk) => {
@@ -160,7 +200,9 @@ export async function startAiCommandProcess(options: {
       return;
     }
 
-    appendManagedOutput(options.processName, "stderr", sanitized);
+    if (options.hooks?.onStderr) {
+      enqueueManagedCallback(options.processName, () => options.hooks?.onStderr?.(sanitized));
+    }
   });
 
   child.on("spawn", () => {
@@ -178,7 +220,9 @@ export async function startAiCommandProcess(options: {
 
     settled = true;
     const sanitized = sanitizeAiCommandOutput(error.message);
-    appendManagedOutput(options.processName, "stderr", `${sanitized}\n`);
+    if (sanitized && options.hooks?.onStderr) {
+      enqueueManagedCallback(options.processName, () => options.hooks?.onStderr?.(`${sanitized}\n`));
+    }
     void finalize("errored", null);
   });
 
@@ -196,21 +240,11 @@ export async function startAiCommandProcess(options: {
   return cloneProcessDescription(description);
 }
 
-export async function readAiCommandProcessLogs(processInfo: AiCommandProcessDescription | null): Promise<{ stdout: string; stderr: string }> {
-  if (!processInfo) {
-    return { stdout: "", stderr: "" };
+export async function waitForAiCommandProcess(processName: string): Promise<AiCommandProcessDescription | null> {
+  const managed = aiCommandProcesses.get(processName);
+  if (!managed) {
+    return null;
   }
 
-  const managed = aiCommandProcesses.get(processInfo.name);
-  if (managed) {
-    return {
-      stdout: managed.stdout,
-      stderr: managed.stderr,
-    };
-  }
-
-  return {
-    stdout: "",
-    stderr: "",
-  };
+  return await managed.completion;
 }

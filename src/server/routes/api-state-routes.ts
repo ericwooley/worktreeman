@@ -33,6 +33,15 @@ import { logServerEvent } from "../utils/server-logger.js";
 import type { ApiRouterContext } from "./api-router-context.js";
 
 export function registerApiStateRoutes(router: express.Router, context: ApiRouterContext) {
+  router.get("/state", async (_req, res, next) => {
+    try {
+      const payload = await context.loadState();
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/events/stream", async (req, res, next) => {
     try {
       let currentState = await context.loadState();

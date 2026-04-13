@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 import test from "#test-runtime";
 import {
   deleteAiCommandProcess,
@@ -11,6 +12,14 @@ import {
   startAiCommandProcess,
   stopAllAiCommandProcesses,
 } from "./ai-command-process-service.js";
+import { getAiDiagnosticsThresholdsForTest, resetAiDiagnosticsForTest } from "./ai-command-diagnostics-service.js";
+
+function createLineCollector(target: string[]) {
+  return (chunk: string | Uint8Array) => {
+    target.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  };
+}
 
 async function waitForProcessToExit(processName: string, timeoutMs = 20000) {
   const startedAt = Date.now();
@@ -177,6 +186,38 @@ test("stopAllAiCommandProcesses terminates managed running processes", async () 
     assert.equal(afterStop, null);
   } finally {
     await stopAllAiCommandProcesses().catch(() => undefined);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("AI command process diagnostics log when retained output gets large", async () => {
+  resetAiDiagnosticsForTest();
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
+  const processName = `wtm:ai:test-large-output-${Date.now()}`;
+  const stdoutLines: string[] = [];
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = createLineCollector(stdoutLines) as typeof process.stdout.write;
+  const warnBytes = getAiDiagnosticsThresholdsForTest().processOutputWarnBytes;
+  const largeChunk = "x".repeat(warnBytes + 1024);
+
+  try {
+    await startAiCommandProcess({
+      processName,
+      command: `node -e "process.stdout.write('x'.repeat(${largeChunk.length}))"`,
+      input: "",
+      worktreePath: tempDir,
+      env: process.env,
+    });
+
+    await waitForProcessToExit(processName);
+
+    const output = stdoutLines.join("");
+    assert.match(output, /\[ai-command-diagnostics\] process-output-retained/);
+    assert.match(output, new RegExp(`processName=${processName}`));
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    resetAiDiagnosticsForTest();
+    await deleteAiCommandProcess(processName).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });

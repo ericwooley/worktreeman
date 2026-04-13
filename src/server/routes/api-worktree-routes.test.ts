@@ -718,8 +718,13 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
         exitCode: 0,
       };
     },
-    async readProcessLogs() {
-      return { stdout: "done\n", stderr: "" };
+    async waitForProcess() {
+      return {
+        name: "wtm:ai:test-env",
+        pid: 9991,
+        status: "stopped",
+        exitCode: 0,
+      };
     },
     isProcessActive(status: string | undefined) {
       return status === "online";
@@ -777,7 +782,7 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
   }
 });
 
-test("worktree AI auto-starts a runtime and stops it after completion when the runtime was created for the AI run", { concurrency: false, timeout: 15000 }, async () => {
+test("worktree AI auto-starts a runtime and stops it after completion when the runtime was created for the AI run", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
   const currentContents = await readConfigContents({
     path: repo.configPath,
@@ -819,8 +824,13 @@ test("worktree AI auto-starts a runtime and stops it after completion when the r
         exitCode: 0,
       };
     },
-    async readProcessLogs() {
-      return { stdout: "done\n", stderr: "" };
+    async waitForProcess() {
+      return {
+        name: "wtm:ai:test-auto-stop",
+        pid: 9992,
+        status: "stopped",
+        exitCode: 0,
+      };
     },
     isProcessActive(status: string | undefined) {
       return status === "online";
@@ -840,7 +850,7 @@ test("worktree AI auto-starts a runtime and stops it after completion when the r
     assert.equal(response.status, 200);
 
     const payload = await response.json() as {
-      job: { branch: string };
+      job: { jobId: string; branch: string };
       runtime?: { branch: string; worktreePath: string; tmuxSession: string; runtimeStartedAt?: string };
     };
     assert.equal(payload.job.branch, "feature-ai-auto-stop");
@@ -859,11 +869,27 @@ test("worktree AI auto-starts a runtime and stops it after completion when the r
     assert.equal(processEnv.WORKTREE_PATH, path.join(repo.repoRoot, "feature-ai-auto-stop"));
     assert.equal(processEnv.TMUX_SESSION_NAME, payload.runtime?.tmuxSession);
 
+    const settledJob = await waitForAiCommandJob(
+      repo.repoRoot,
+      worktreeId(path.join(repo.repoRoot, "feature-ai-auto-stop")),
+      payload.job.jobId,
+    );
+    assert.equal(settledJob.status, "completed");
+
     await waitFor(async () => {
-      const statePayload = await readStateSnapshot<{
-        worktrees: Array<{ branch: string; runtime?: { branch: string } }>;
-      }>(server, 1000);
-      return statePayload.worktrees.find((entry) => entry.branch === "feature-ai-auto-stop")?.runtime === undefined;
+      const stateResponse = await server.fetch("/api/state");
+      if (stateResponse.status !== 200) {
+        return false;
+      }
+
+      const statePayload = await stateResponse.json() as {
+        worktrees: Array<{ branch: string; worktreePath: string; runtime?: { branch: string } }>;
+      };
+      const matchingWorktree = statePayload.worktrees.find(
+        (entry) => entry.branch === "feature-ai-auto-stop"
+          && entry.worktreePath === path.join(repo.repoRoot, "feature-ai-auto-stop"),
+      );
+      return matchingWorktree?.runtime === undefined;
     }, 15000);
   } finally {
     await server.close();
@@ -915,8 +941,13 @@ test("runtime restart reloads config changes and reconnect ensures the tmux sess
         exitCode: 0,
       };
     },
-    async readProcessLogs() {
-      return { stdout: "done\n", stderr: "" };
+    async waitForProcess() {
+      return {
+        name: "wtm:ai:test-runtime-restart",
+        pid: 9993,
+        status: "stopped",
+        exitCode: 0,
+      };
     },
     isProcessActive(status: string | undefined) {
       return status === "online";

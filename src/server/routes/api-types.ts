@@ -1,4 +1,4 @@
-import type { AiCommandProcessDescription } from "../services/ai-command-process-service.js";
+import type { AiCommandProcessHooks, AiCommandProcessDescription } from "../services/ai-command-process-service.js";
 import type { OperationalStateStore } from "../services/operational-state-service.js";
 
 export interface ApiAiProcesses {
@@ -8,13 +8,11 @@ export interface ApiAiProcesses {
     input: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
+    hooks?: AiCommandProcessHooks;
   }) => Promise<AiCommandProcessDescription>;
   getProcess: (processName: string) => Promise<AiCommandProcessDescription | null>;
+  waitForProcess: (processName: string) => Promise<AiCommandProcessDescription | null>;
   deleteProcess: (processName: string) => Promise<void>;
-  readProcessLogs: (processInfo: AiCommandProcessDescription | null) => Promise<{
-    stdout: string;
-    stderr: string;
-  }>;
   isProcessActive: (status: string | undefined) => boolean;
 }
 

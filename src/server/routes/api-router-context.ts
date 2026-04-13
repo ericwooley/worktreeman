@@ -41,8 +41,8 @@ import {
   getAiCommandProcess,
   getAiCommandProcessName,
   isAiCommandProcessActive,
-  readAiCommandProcessLogs,
   startAiCommandProcess,
+  waitForAiCommandProcess,
 } from "../services/ai-command-process-service.js";
 import { enqueueProjectManagementAiJob } from "../services/ai-command-job-manager-service.js";
 import { completeAiCommandRun } from "../services/ai-command-completion-service.js";
@@ -97,8 +97,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const defaultAiProcesses: ApiAiProcesses = {
     startProcess: startAiCommandProcess,
     getProcess: getAiCommandProcess,
+    waitForProcess: waitForAiCommandProcess,
     deleteProcess: deleteAiCommandProcess,
-    readProcessLogs: readAiCommandProcessLogs,
     isProcessActive: isAiCommandProcessActive,
   };
   const executionAiProcesses = options.aiProcesses ?? defaultAiProcesses;
@@ -110,7 +110,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       : {
           ...defaultAiProcesses,
           getProcess: async () => null,
-          readProcessLogs: async () => ({ stdout: "", stderr: "" }),
+          waitForProcess: async () => null,
           isProcessActive: () => false,
         };
   const aiProcessPollIntervalMs = options.aiProcessPollIntervalMs ?? 250;
@@ -121,7 +121,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const aiJobReadOptions = {
     aiProcesses: {
       getProcess: passiveAiProcesses.getProcess,
-      readProcessLogs: passiveAiProcesses.readProcessLogs,
+      waitForProcess: passiveAiProcesses.waitForProcess,
       isProcessActive: passiveAiProcesses.isProcessActive,
     },
     reconcile: shouldReconcileAiJobs,
@@ -608,6 +608,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
         input: details.input,
         worktreePath: details.worktreePath,
         env: details.env,
+        hooks: payload.hooks,
       });
 
       await payload.hooks.onSpawn?.({
@@ -615,55 +616,15 @@ export function createApiRouterContext(options: ApiRouterOptions) {
         processName,
       });
 
-      let lastStdout = "";
-      let lastStderr = "";
+      const completedProcess = await executionAiProcesses.waitForProcess(processName);
+      if (!completedProcess) {
+        await payload.hooks.onExit?.({ exitCode: null });
+        throw new Error("AI process no longer available.");
+      }
 
-      while (true) {
-        const nextProcess = await executionAiProcesses.getProcess(processName);
-        const logs = await executionAiProcesses.readProcessLogs(nextProcess ?? processInfo);
-
-        if (logs.stdout.startsWith(lastStdout)) {
-          const chunk = logs.stdout.slice(lastStdout.length);
-          if (chunk) {
-            await payload.hooks.onStdout?.(chunk);
-          }
-        } else if (logs.stdout !== lastStdout) {
-          const chunk = logs.stdout.slice(Math.min(lastStdout.length, logs.stdout.length));
-          if (chunk) {
-            await payload.hooks.onStdout?.(chunk);
-          }
-        }
-
-        if (logs.stderr.startsWith(lastStderr)) {
-          const chunk = logs.stderr.slice(lastStderr.length);
-          if (chunk) {
-            await payload.hooks.onStderr?.(chunk);
-          }
-        } else if (logs.stderr !== lastStderr) {
-          const chunk = logs.stderr.slice(Math.min(lastStderr.length, logs.stderr.length));
-          if (chunk) {
-            await payload.hooks.onStderr?.(chunk);
-          }
-        }
-
-        lastStdout = logs.stdout;
-        lastStderr = logs.stderr;
-
-        if (!nextProcess) {
-          await payload.hooks.onExit?.({ exitCode: null });
-          throw new Error("AI process no longer available.");
-        }
-
-        if (!executionAiProcesses.isProcessActive(nextProcess.status)) {
-          await payload.hooks.onExit?.({ exitCode: nextProcess.exitCode ?? null });
-          if ((nextProcess.exitCode ?? 0) !== 0) {
-            throw new Error(`AI process exited with code ${nextProcess.exitCode ?? "unknown"}.`);
-          }
-
-          return logs;
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, aiProcessPollIntervalMs));
+      await payload.hooks.onExit?.({ exitCode: completedProcess.exitCode ?? null });
+      if ((completedProcess.exitCode ?? 0) !== 0) {
+        throw new Error(`AI process exited with code ${completedProcess.exitCode ?? "unknown"}.`);
       }
     },
     onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId || details.autoCommitDirtyWorktree

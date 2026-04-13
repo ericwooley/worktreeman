@@ -737,7 +737,7 @@ export async function buildAiCommandLogsResponse(options: {
 
   return {
     logs: toHistoricalAiCommandLogSummaries(reconciledEntries),
-    runningJobs: rawEntries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
+    runningJobs: reconciledEntries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
   };
 }
 
@@ -768,9 +768,9 @@ export function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
     status: entry.status,
     startedAt: entry.timestamp,
     completedAt: entry.completedAt,
-    stdout: entry.response.stdout,
-    stderr: entry.response.stderr,
-    outputEvents: entry.response.events?.map((event) => ({ ...event })) ?? [],
+    stdout: "",
+    stderr: entry.status === "failed" ? (entry.error?.message ?? entry.response.stderr) : "",
+    outputEvents: [],
     pid: entry.pid,
     exitCode: entry.exitCode,
     processName: entry.processName,
@@ -783,18 +783,15 @@ export function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
 function hasObservedAiCommandLogProcess(entry: AiCommandLogEntry): boolean {
   return entry.pid != null
     || entry.exitCode != null
-    || entry.response.stdout.length > 0
-    || entry.response.stderr.length > 0
-    || (entry.response.events?.length ?? 0) > 0;
+    || typeof entry.completedAt === "string"
+    || Boolean(entry.processName);
 }
 
 function hasObservedAiCommandJobProcess(job: AiCommandJob): boolean {
   return job.pid != null
     || job.exitCode != null
     || typeof job.completedAt === "string"
-    || job.stdout.length > 0
-    || job.stderr.length > 0
-    || (job.outputEvents?.length ?? 0) > 0;
+    || Boolean(job.processName);
 }
 
 function mergeAiCommandLogEntryWithJob(entry: AiCommandLogEntry, job: AiCommandJob): AiCommandLogEntry {
@@ -803,11 +800,7 @@ function mergeAiCommandLogEntryWithJob(entry: AiCommandLogEntry, job: AiCommandJ
     documentId: job.documentId ?? entry.documentId ?? null,
     origin: job.origin ?? entry.origin ?? null,
     worktreePath: job.worktreePath ?? entry.worktreePath,
-    response: {
-      stdout: job.stdout,
-      stderr: job.stderr,
-      events: job.outputEvents?.map((event) => ({ ...event })) ?? [],
-    },
+    response: entry.response,
     status: job.status,
     pid: job.pid ?? null,
     exitCode: job.exitCode ?? null,
@@ -822,9 +815,7 @@ function shouldPreferAiCommandJobState(entry: AiCommandLogEntry, job: AiCommandJ
     || entry.completedAt !== job.completedAt
     || entry.pid !== (job.pid ?? null)
     || entry.exitCode !== (job.exitCode ?? null)
-    || entry.response.stdout !== job.stdout
-    || entry.response.stderr !== job.stderr
-    || (entry.response.events?.length ?? 0) !== (job.outputEvents?.length ?? 0)
+    || entry.processName !== (job.processName ?? null)
     || (entry.error?.message ?? null) !== (job.error ?? null)
     || (entry.documentId ?? null) !== (job.documentId ?? null);
 }
@@ -866,57 +857,32 @@ export async function reconcileAiCommandLogEntry(options: {
   aiProcesses: ApiAiProcesses;
   reconcileJobs?: boolean;
 }): Promise<AiCommandLogEntry> {
-  if (options.entry.status !== "running") {
-    return options.entry;
-  }
-
-  if (!hasObservedAiCommandLogProcess(options.entry)) {
-    if (!options.reconcileJobs) {
-      return options.entry;
-    }
-
-    const store = await createOperationalStateStore(options.repoRoot);
-    const currentJob = await store.getAiCommandJobById(options.entry.worktreeId);
-    if (!currentJob || currentJob.jobId !== options.entry.jobId) {
-      return options.entry;
-    }
-
-    if (currentJob.status === "running" && !hasObservedAiCommandJobProcess(currentJob)) {
-      return options.entry;
-    }
-
-    const reconciledJob = currentJob.status === "running"
-      ? await getAiCommandJob(options.repoRoot, options.entry.worktreeId, {
-          aiProcesses: {
-            getProcess: options.aiProcesses.getProcess,
-            readProcessLogs: options.aiProcesses.readProcessLogs,
-            isProcessActive: options.aiProcesses.isProcessActive,
-          },
-          reconcile: true,
-        })
-      : currentJob;
-    const refreshedEntry = await readAiCommandLogEntryByJobId(options.repoRoot, options.entry.jobId).catch(() => null);
-    const preferredJob = reconciledJob && reconciledJob.jobId === options.entry.jobId ? reconciledJob : currentJob;
-    if (refreshedEntry && !shouldPreferAiCommandJobState(refreshedEntry, preferredJob)) {
-      return refreshedEntry;
-    }
-
-    return mergeAiCommandLogEntryWithJob(refreshedEntry ?? options.entry, preferredJob);
+  const refreshedEntry = await readAiCommandLogEntryByJobId(options.repoRoot, options.entry.jobId).catch(() => options.entry);
+  if (refreshedEntry.status !== "running") {
+    return refreshedEntry;
   }
 
   if (!options.reconcileJobs) {
-    return options.entry;
+    return refreshedEntry;
   }
-  const reconciledJob = await getAiCommandJob(options.repoRoot, options.entry.worktreeId, {
+
+  const reconciledJob = await getAiCommandJob(options.repoRoot, refreshedEntry.worktreeId, {
     aiProcesses: {
       getProcess: options.aiProcesses.getProcess,
-      readProcessLogs: options.aiProcesses.readProcessLogs,
+      waitForProcess: options.aiProcesses.waitForProcess,
       isProcessActive: options.aiProcesses.isProcessActive,
     },
     reconcile: options.reconcileJobs ?? true,
   });
-  const refreshedEntry = await readAiCommandLogEntryByJobId(options.repoRoot, options.entry.jobId);
-  if (reconciledJob && reconciledJob.jobId === options.entry.jobId && shouldPreferAiCommandJobState(refreshedEntry, reconciledJob)) {
+  if (!reconciledJob || reconciledJob.jobId !== refreshedEntry.jobId) {
+    return refreshedEntry;
+  }
+
+  if (!hasObservedAiCommandLogProcess(refreshedEntry) && !hasObservedAiCommandJobProcess(reconciledJob)) {
+    return refreshedEntry;
+  }
+
+  if (shouldPreferAiCommandJobState(refreshedEntry, reconciledJob)) {
     return mergeAiCommandLogEntryWithJob(refreshedEntry, reconciledJob);
   }
 

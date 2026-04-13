@@ -169,6 +169,15 @@ function cloneAiCommandLogEntry(entry: AiCommandLogEntry | null): AiCommandLogEn
   };
 }
 
+function toStoredAiCommandJob(job: AiCommandJob): AiCommandJob {
+  return {
+    ...cloneAiCommandJob(job)!,
+    stdout: "",
+    stderr: job.status === "failed" ? (job.stderr || job.error || "") : "",
+    outputEvents: [],
+  };
+}
+
 function cloneShutdownStatus(status: ShutdownStatus): ShutdownStatus {
   return {
     ...status,
@@ -729,7 +738,7 @@ export class OperationalStateStore {
         where ${AI_JOB_STATE_TABLE}.status <> 'running'
         returning worktree_id
       `,
-      [job.worktreeId, job.jobId, job.status, JSON.stringify(cloneAiCommandJob(job))],
+      [job.worktreeId, job.jobId, job.status, JSON.stringify(toStoredAiCommandJob(job))],
     );
     return result.rows.length > 0;
   }
@@ -746,7 +755,7 @@ export class OperationalStateStore {
             snapshot_json = excluded.snapshot_json,
             updated_at = now()
       `,
-      [job.worktreeId, job.jobId, job.status, JSON.stringify(cloneAiCommandJob(job))],
+      [job.worktreeId, job.jobId, job.status, JSON.stringify(toStoredAiCommandJob(job))],
     );
   }
 
@@ -770,12 +779,14 @@ export class OperationalStateStore {
     await managed.db.query(`delete from ${AI_JOB_STATE_TABLE}`);
   }
 
-  async upsertAiCommandLogEntry(entry: AiCommandLogEntry): Promise<void> {
+  async upsertAiCommandLogEntry(entry: AiCommandLogEntry, options?: { preserveOutputText?: boolean }): Promise<void> {
     const managed = await ensureManagedStore(this.repoRoot);
     const nextEntry = cloneAiCommandLogEntry(entry);
     if (!nextEntry) {
       return;
     }
+
+    const preserveOutputText = options?.preserveOutputText ?? false;
 
     await managed.db.query(
       `
@@ -817,8 +828,8 @@ export class OperationalStateStore {
             command_text = excluded.command_text,
             request_text = excluded.request_text,
             status = excluded.status,
-            stdout_text = excluded.stdout_text,
-            stderr_text = excluded.stderr_text,
+            stdout_text = case when $20 then ${AI_RUN_LOGS_TABLE}.stdout_text else excluded.stdout_text end,
+            stderr_text = case when $20 then ${AI_RUN_LOGS_TABLE}.stderr_text else excluded.stderr_text end,
             pid = excluded.pid,
             exit_code = excluded.exit_code,
             process_name = excluded.process_name,
@@ -846,6 +857,7 @@ export class OperationalStateStore {
         nextEntry.processName ?? null,
         nextEntry.completedAt ?? null,
         nextEntry.error ? JSON.stringify(nextEntry.error) : null,
+        preserveOutputText,
       ],
     );
 
@@ -856,6 +868,89 @@ export class OperationalStateStore {
       jobId: nextEntry.jobId,
       type: "run",
     });
+  }
+
+  async appendAiCommandOutputChunk(options: {
+    jobId: string;
+    fileName: string;
+    worktreeId: WorktreeId;
+    branch: string;
+    source: AiCommandOutputEvent["source"];
+    text: string;
+    eventId?: string;
+    timestamp?: string;
+  }): Promise<AiCommandOutputEvent | null> {
+    if (!options.text) {
+      return null;
+    }
+
+    const managed = await ensureManagedStore(this.repoRoot);
+    const event = await managed.db.transaction(async (db) => {
+      const entryResult = await db.query<{ next_entry: number }>(
+        `select coalesce(max(entry_number), 0) + 1 as next_entry from ${AI_RUN_OUTPUT_TABLE} where job_id = $1`,
+        [options.jobId],
+      );
+      const nextEntry = entryResult.rows[0]?.next_entry ?? 1;
+      const eventId = options.eventId ?? `${options.jobId}:${nextEntry}`;
+      const timestamp = options.timestamp ?? new Date().toISOString();
+
+      await db.query(
+        `
+          update ${AI_RUN_LOGS_TABLE}
+          set ${options.source === "stdout" ? "stdout_text" : "stderr_text"} = ${options.source === "stdout" ? "stdout_text" : "stderr_text"} || $2,
+              updated_at = now()
+          where job_id = $1
+        `,
+        [options.jobId, options.text],
+      );
+
+      await db.query(
+        `
+          insert into ${AI_RUN_OUTPUT_TABLE} (
+            job_id,
+            file_name,
+            worktree_id,
+            branch,
+            entry_number,
+            event_id,
+            source,
+            text,
+            timestamp
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `,
+        [
+          options.jobId,
+          options.fileName,
+          options.worktreeId,
+          options.branch,
+          nextEntry,
+          eventId,
+          options.source,
+          options.text,
+          timestamp,
+        ],
+      );
+
+      return {
+        id: eventId,
+        runId: options.jobId,
+        entry: nextEntry,
+        source: options.source,
+        text: options.text,
+        timestamp,
+      } satisfies AiCommandOutputEvent;
+    });
+
+    await notifyAiCommandLogUpdate(this.repoRoot, {
+      fileName: options.fileName,
+      worktreeId: options.worktreeId,
+      branch: options.branch,
+      jobId: options.jobId,
+      type: "output",
+    });
+
+    return event;
   }
 
   async syncAiCommandOutputEvents(
