@@ -19,6 +19,11 @@ import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
+import {
+  buildProjectManagementDocumentPath,
+  readProjectManagementDocumentPath,
+  type ProjectManagementDocumentPresentation,
+} from "./project-management-document-route";
 import { confirmWorktreeDeletion, type DeleteConfirmationState } from "./dashboard-delete";
 import { getVisibleWorktrees } from "./dashboard-worktrees";
 import { getWorktreeDeleteAiDisabledReason } from "./worktree-action-guards";
@@ -147,7 +152,10 @@ const PRIMARY_NAV_ITEMS: Array<{
 ];
 
 export function Dashboard() {
-  const initialUrlState = readDashboardUrlState();
+  const initialUrlState = readDashboardUrlState(
+    typeof window === "undefined" ? "/" : window.location.pathname,
+    typeof window === "undefined" ? "" : window.location.search,
+  );
   const {
     state,
     error,
@@ -237,6 +245,9 @@ export function Dashboard() {
     initialUrlState.projectManagementSubTab,
   );
   const [projectManagementSelectedDocumentId, setProjectManagementSelectedDocumentId] = useState<string | null>(initialUrlState.projectManagementSelectedDocumentId);
+  const [projectManagementDocumentPresentation, setProjectManagementDocumentPresentation] = useState<ProjectManagementDocumentPresentation>(
+    initialUrlState.projectManagementDocumentPresentation,
+  );
   const [projectManagementDocumentViewMode, setProjectManagementDocumentViewMode] = useState<ProjectManagementDocumentViewMode>(
     initialUrlState.projectManagementDocumentViewMode,
   );
@@ -588,6 +599,7 @@ export function Dashboard() {
   }, [closeCommandPalette, commandPaletteOpen, commandPaletteShortcut, openCommandPalette, terminalShortcut, toggleTerminalVisibility]);
 
   useEffect(() => {
+    const currentDocumentRoute = readProjectManagementDocumentPath(window.location.pathname);
     const params = new URLSearchParams(window.location.search);
 
     if (selectedBranch) {
@@ -658,7 +670,15 @@ export function Dashboard() {
       params.delete("terminal");
     }
 
-    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
+    const nextPathname = activeTab === "project-management"
+      && projectManagementSubTab === "document"
+      && projectManagementSelectedDocumentId
+      && projectManagementDocumentPresentation === "page"
+      ? buildProjectManagementDocumentPath(projectManagementSelectedDocumentId)
+      : currentDocumentRoute.presentation === "page"
+        ? "/"
+        : window.location.pathname;
+    const nextUrl = `${nextPathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash}`;
 
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     if (nextUrl === currentUrl) {
@@ -681,6 +701,7 @@ export function Dashboard() {
     gitView,
     isTerminalVisible,
     projectManagementCreateFormTab,
+    projectManagementDocumentPresentation,
     projectManagementDocumentViewMode,
     projectManagementEditFormTab,
     projectManagementSelectedDocumentId,
@@ -691,7 +712,7 @@ export function Dashboard() {
 
   useEffect(() => {
     const handlePopState = () => {
-      const nextUrlState = readDashboardUrlState();
+      const nextUrlState = readDashboardUrlState(window.location.pathname, window.location.search);
       setSelectedBranch(nextUrlState.selectedBranch);
       setActiveTab(nextUrlState.activeTab);
       setAiActivitySubTab(nextUrlState.aiActivitySubTab);
@@ -702,6 +723,7 @@ export function Dashboard() {
       setSystemSubTab(nextUrlState.systemSubTab);
       setProjectManagementSubTab(nextUrlState.projectManagementSubTab);
       setProjectManagementSelectedDocumentId(nextUrlState.projectManagementSelectedDocumentId);
+      setProjectManagementDocumentPresentation(nextUrlState.projectManagementDocumentPresentation);
       setProjectManagementDocumentViewMode(nextUrlState.projectManagementDocumentViewMode);
       setProjectManagementEditFormTab(nextUrlState.projectManagementEditFormTab);
       setProjectManagementCreateFormTab(nextUrlState.projectManagementCreateFormTab);
@@ -905,6 +927,7 @@ export function Dashboard() {
   ) => {
     navigateToTab("project-management");
     setProjectManagementSubTab(tab);
+    setProjectManagementDocumentPresentation("modal");
     if (options && "documentId" in options) {
       setProjectManagementSelectedDocumentId(options.documentId ?? null);
     }
@@ -921,6 +944,10 @@ export function Dashboard() {
   const handleProjectManagementSubTabChange = useCallback((tab: ProjectManagementSubTab) => {
     setProjectManagementSubTab(tab);
     if (tab !== "document") {
+      setProjectManagementDocumentPresentation("modal");
+      setProjectManagementSelectedDocumentId(null);
+    }
+    if (tab !== "document") {
       setProjectManagementDocumentViewMode("document");
     }
   }, []);
@@ -929,8 +956,34 @@ export function Dashboard() {
   const aiCommandDraftValues = normalizeAiCommands(aiCommandDrafts);
   const handleLoadProjectManagementDocument = useCallback(async (documentId: string, options?: { silent?: boolean }) => {
     setProjectManagementSelectedDocumentId(documentId);
+    setProjectManagementDocumentPresentation("modal");
+    setProjectManagementSubTab("document");
     return loadProjectManagementDocument(documentId, options);
   }, [loadProjectManagementDocument]);
+
+  const handleOpenProjectManagementDocumentPage = useCallback((
+    documentId: string,
+    options?: { viewMode?: ProjectManagementDocumentViewMode },
+  ) => {
+    navigateToTab("project-management");
+    setProjectManagementSubTab("document");
+    setProjectManagementSelectedDocumentId(documentId);
+    setProjectManagementDocumentPresentation("page");
+    setProjectManagementDocumentViewMode(options?.viewMode ?? "document");
+  }, []);
+
+  const handleCloseProjectManagementDocument = useCallback(() => {
+    setProjectManagementDocumentViewMode("document");
+    if (projectManagementDocumentPresentation === "page") {
+      setProjectManagementDocumentPresentation("modal");
+      setProjectManagementSelectedDocumentId(null);
+      setProjectManagementSubTab("document");
+      navigateToTab("project-management");
+      return;
+    }
+
+    setProjectManagementSelectedDocumentId(null);
+  }, [projectManagementDocumentPresentation]);
 
   const handleLoadProjectManagementAiLog = useCallback(async (jobId: string, options?: { silent?: boolean }) => {
     setSelectedAiLogJobId(jobId);
@@ -1577,6 +1630,7 @@ export function Dashboard() {
             projectManagementUsers={projectManagementUsers}
             projectManagementActiveSubTab={projectManagementSubTab}
             projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
+            projectManagementDocumentPresentation={projectManagementDocumentPresentation}
             projectManagementDocumentViewMode={projectManagementDocumentViewMode}
             projectManagementEditFormTab={projectManagementEditFormTab}
             projectManagementCreateFormTab={projectManagementCreateFormTab}
@@ -1605,6 +1659,8 @@ export function Dashboard() {
             onProjectManagementDocumentViewModeChange={setProjectManagementDocumentViewMode}
             onProjectManagementEditFormTabChange={setProjectManagementEditFormTab}
             onProjectManagementCreateFormTabChange={setProjectManagementCreateFormTab}
+            onProjectManagementOpenDocumentPage={handleOpenProjectManagementDocumentPage}
+            onProjectManagementCloseDocument={handleCloseProjectManagementDocument}
             onLoadProjectManagementDocuments={loadProjectManagementDocuments}
             onLoadProjectManagementUsers={loadProjectManagementUsers}
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
