@@ -23,8 +23,6 @@ import {
 import { findRepoContext } from "./server/utils/paths.js";
 import { initRepository } from "./server/services/init-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees, resolveCloneRootDir } from "./server/services/repository-layout-service.js";
-import { configureDatabaseConnection } from "./server/services/database-connection-service.js";
-import { startDatabaseSocketServer, stopDatabaseSocketServer } from "./server/services/database-socket-service.js";
 import { startManagedRuntimeProcess, type ManagedRuntimeProcess } from "./server/services/process-supervisor-service.js";
 
 const normalizedArgv = normalizeArgv(process.argv.slice(2));
@@ -82,22 +80,72 @@ const startCommand = command({
   },
   handler: async ({ cwd, port, host, dangerouslyExposeToNetwork, open, noOpen }) => {
     const repo = await findRepoContext(cwd);
+    let databaseProcess: ManagedRuntimeProcess | null = null;
     let serverProcess: ManagedRuntimeProcess | null = null;
     let workerProcess: ManagedRuntimeProcess | null = null;
     let databaseConnectionString: string | null = null;
+    let shuttingDown = false;
+    const restartTimers = new Map<"database" | "server" | "worker", NodeJS.Timeout>();
 
-    try {
-      const database = await startDatabaseSocketServer(repo.repoRoot);
-      databaseConnectionString = database.connectionString;
-      configureDatabaseConnection(databaseConnectionString);
+    const clearRestartTimers = () => {
+      for (const timer of restartTimers.values()) {
+        clearTimeout(timer);
+      }
+      restartTimers.clear();
+    };
 
+    const launchDatabase = async () => {
+      databaseProcess = startManagedRuntimeProcess({
+        role: "database",
+        cwd: repo.repoRoot,
+        onExit: () => {
+          if (shuttingDown) {
+            return;
+          }
+          databaseProcess = null;
+          databaseConnectionString = null;
+          if (serverProcess || workerProcess) {
+            void Promise.allSettled([
+              serverProcess?.stop() ?? Promise.resolve(),
+              workerProcess?.stop() ?? Promise.resolve(),
+            ]).finally(() => {
+              serverProcess = null;
+              workerProcess = null;
+            });
+          }
+          scheduleRestart("database");
+        },
+      });
+      const ready = await databaseProcess.ready;
+      databaseConnectionString = ready.connectionString ?? null;
+      if (!databaseConnectionString) {
+        throw new Error("Database process did not provide a connection string.");
+      }
+    };
+
+    const launchWorker = async () => {
+      if (!databaseConnectionString) {
+        throw new Error("Cannot start worker without database connection string.");
+      }
       workerProcess = startManagedRuntimeProcess({
         role: "worker",
         cwd: repo.repoRoot,
         databaseUrl: databaseConnectionString,
+        onExit: () => {
+          if (shuttingDown) {
+            return;
+          }
+          workerProcess = null;
+          scheduleRestart("worker");
+        },
       });
       await workerProcess.ready;
+    };
 
+    const launchServer = async (openBrowser: boolean) => {
+      if (!databaseConnectionString) {
+        throw new Error("Cannot start server without database connection string.");
+      }
       serverProcess = startManagedRuntimeProcess({
         role: "server",
         cwd: repo.repoRoot,
@@ -105,22 +153,73 @@ const startCommand = command({
         port,
         host,
         dangerouslyExposeToNetwork,
-        openBrowser: noOpen ? false : open,
+        openBrowser,
+        onExit: () => {
+          if (shuttingDown) {
+            return;
+          }
+          serverProcess = null;
+          scheduleRestart("server");
+        },
       });
       const serverReady = await serverProcess.ready;
       process.stdout.write(`worktreeman running at ${serverReady.url}\n`);
+    };
+
+    const restartRole = (role: "database" | "server" | "worker") => {
+      if (shuttingDown || restartTimers.has(role)) {
+        return;
+      }
+      const timer = setTimeout(() => {
+        restartTimers.delete(role);
+        void (async () => {
+          try {
+            if (role === "database") {
+              await launchDatabase();
+              if (!workerProcess) {
+                await launchWorker();
+              }
+              if (!serverProcess) {
+                await launchServer(false);
+              }
+              return;
+            }
+
+            if (role === "worker" && !workerProcess) {
+              await launchWorker();
+            }
+
+            if (role === "server" && !serverProcess) {
+              await launchServer(false);
+            }
+          } catch (error) {
+            process.stderr.write(`[supervisor] Failed to restart ${role}: ${error instanceof Error ? error.message : String(error)}\n`);
+            restartRole(role);
+          }
+        })();
+      }, 1000);
+      restartTimers.set(role, timer);
+    };
+
+    const scheduleRestart = (role: "database" | "server" | "worker") => {
+      restartRole(role);
+    };
+
+    try {
+      await launchDatabase();
+      await launchWorker();
+      await launchServer(noOpen ? false : open);
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       await Promise.allSettled([
+        databaseProcess?.stop() ?? Promise.resolve(),
         serverProcess?.stop() ?? Promise.resolve(),
         workerProcess?.stop() ?? Promise.resolve(),
-        stopDatabaseSocketServer(repo.repoRoot),
       ]);
       process.exit(1);
       return;
     }
 
-    let shuttingDown = false;
     const cleanupListeners = () => {
       process.off("SIGINT", handleSigint);
       process.off("SIGTERM", handleSigterm);
@@ -136,15 +235,15 @@ const startCommand = command({
       }
 
       shuttingDown = true;
+      clearRestartTimers();
       process.stdout.write(`${reason}\n`);
 
       try {
         await Promise.allSettled([
+          databaseProcess?.stop() ?? Promise.resolve(),
           serverProcess?.stop() ?? Promise.resolve(),
           workerProcess?.stop() ?? Promise.resolve(),
         ]);
-        configureDatabaseConnection(null);
-        await stopDatabaseSocketServer(repo.repoRoot);
         cleanupListeners();
         process.exit(exitCode);
       } catch (error) {

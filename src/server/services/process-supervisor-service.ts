@@ -4,7 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-export type ManagedRuntimeRole = "server" | "worker";
+export type ManagedRuntimeRole = "server" | "worker" | "database";
 
 export interface ManagedRuntimeProcessReadyEvent {
   role: ManagedRuntimeRole;
@@ -12,12 +12,13 @@ export interface ManagedRuntimeProcessReadyEvent {
   port?: number;
   host?: string;
   repoRoot?: string;
+  connectionString?: string;
 }
 
 export interface StartManagedRuntimeProcessOptions {
   role: ManagedRuntimeRole;
   cwd: string;
-  databaseUrl: string;
+  databaseUrl?: string;
   port?: number;
   host?: string;
   dangerouslyExposeToNetwork?: boolean;
@@ -53,7 +54,14 @@ export function buildChildCommand(role: ManagedRuntimeRole, options: StartManage
   const isSourceEntrypoint = entrypointPath.endsWith(".ts");
   const args = isSourceEntrypoint ? ["--import", resolveTsxLoaderPath(), entrypointPath] : [entrypointPath];
 
-  args.push("--cwd", options.cwd, "--database-url", options.databaseUrl);
+  args.push("--cwd", options.cwd);
+
+  if (role !== "database") {
+    if (!options.databaseUrl) {
+      throw new Error(`Managed runtime role ${role} requires a database connection string.`);
+    }
+    args.push("--database-url", options.databaseUrl);
+  }
 
   if (role === "server") {
     if (typeof options.port === "number") {
@@ -141,7 +149,24 @@ export function startManagedRuntimeProcess(options: StartManagedRuntimeProcessOp
 
   const tryHandleReadyLine = (line: string) => {
     try {
-      const parsed = JSON.parse(line) as { type?: string; url?: string; port?: number; host?: string; repoRoot?: string };
+      const parsed = JSON.parse(line) as {
+        type?: string;
+        url?: string;
+        port?: number;
+        host?: string;
+        repoRoot?: string;
+        connectionString?: string;
+      };
+      if (options.role === "database" && parsed.type === "database-ready" && typeof parsed.connectionString === "string") {
+        readyResolved = true;
+        resolveReady({
+          role: "database",
+          repoRoot: parsed.repoRoot,
+          connectionString: parsed.connectionString,
+        });
+        return true;
+      }
+
       if (options.role === "server" && parsed.type === "server-ready" && typeof parsed.url === "string") {
         readyResolved = true;
         resolveReady({

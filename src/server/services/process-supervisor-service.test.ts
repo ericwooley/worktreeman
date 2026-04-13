@@ -3,7 +3,7 @@ import test from "#test-runtime";
 import type { ChildProcess } from "node:child_process";
 import { restartManagedRuntimeProcess, buildChildCommand, type ManagedRuntimeProcess } from "./process-supervisor-service.js";
 
-function createManagedProcess(role: "server" | "worker", events: string[], name: string): ManagedRuntimeProcess {
+function createManagedProcess(role: "server" | "worker" | "database", events: string[], name: string): ManagedRuntimeProcess {
   return {
     role,
     process: {} as ChildProcess,
@@ -100,4 +100,29 @@ test("buildChildCommand uses the installed tsx loader for source entrypoints", (
     "--database-url",
     "postgres://postgres:postgres@127.0.0.1:5432/postgres",
   ]);
+});
+
+test("buildChildCommand omits database url for database role", () => {
+  const command = buildChildCommand("database", {
+    role: "database",
+    cwd: "/tmp/repo-root",
+  });
+
+  assert.equal(command.command, process.execPath);
+  assert.equal(command.args[0], "--import");
+  assert.match(command.args[2] ?? "", /server[\\/]entrypoints[\\/]database-entrypoint\.ts$/);
+  assert.deepEqual(command.args.slice(3), [
+    "--cwd",
+    "/tmp/repo-root",
+  ]);
+});
+
+test("buildChildCommand requires database url for non-database roles", () => {
+  assert.throws(
+    () => buildChildCommand("server", {
+      role: "server",
+      cwd: "/tmp/repo-root",
+    }),
+    /requires a database connection string/,
+  );
 });

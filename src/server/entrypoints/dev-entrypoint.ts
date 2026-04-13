@@ -3,8 +3,6 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
-import { configureDatabaseConnection } from "../services/database-connection-service.js";
-import { startDatabaseSocketServer, stopDatabaseSocketServer } from "../services/database-socket-service.js";
 import { restartManagedRuntimeProcess, startManagedRuntimeProcess, type ManagedRuntimeProcess, type ManagedRuntimeRole } from "../services/process-supervisor-service.js";
 import { findRepoContext } from "../utils/paths.js";
 
@@ -77,6 +75,13 @@ export function classifyChangedPath(repoRoot: string, filePath: string): Managed
   }
 
   if (
+    relativePath === "src/server/services/database-socket-service.ts"
+    || relativePath === "src/server/entrypoints/database-entrypoint.ts"
+  ) {
+    return "both";
+  }
+
+  if (
     relativePath === "src/server/app.ts"
     || relativePath.startsWith("src/server/routes/")
     || relativePath === "src/server/entrypoints/server-entrypoint.ts"
@@ -127,23 +132,32 @@ async function collectWatchDirectories(rootPath: string): Promise<string[]> {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const repo = await findRepoContext(args.cwd);
-  const database = await startDatabaseSocketServer(repo.repoRoot);
-  configureDatabaseConnection(database.connectionString);
 
   let openBrowserOnNextServerStart = args.openBrowser;
+  let databaseProcess: ManagedRuntimeProcess | null = null;
   let serverProcess: ManagedRuntimeProcess | null = null;
   let workerProcess: ManagedRuntimeProcess | null = null;
+  let databaseConnectionString: string | null = null;
   let shuttingDown = false;
   let restartTimer: NodeJS.Timeout | null = null;
-  let pendingRestart: ManagedRuntimeRole | "both" | null = null;
+  let pendingRestart: ManagedRuntimeRole | "database" | "both" | null = null;
   let restartInFlight = false;
   const watchers = new Map<string, fs.FSWatcher>();
 
   const isCurrentProcess = (role: ManagedRuntimeRole, child: ManagedRuntimeProcess) => {
+    if (role === "database") {
+      return databaseProcess === child;
+    }
     return role === "server" ? serverProcess === child : workerProcess === child;
   };
 
   const handleRoleReady = (role: ManagedRuntimeRole, child: ManagedRuntimeProcess, ready: Awaited<ManagedRuntimeProcess["ready"]>) => {
+    if (role === "database") {
+      databaseProcess = child;
+      databaseConnectionString = ready.connectionString ?? null;
+      return;
+    }
+
     if (role === "server") {
       serverProcess = child;
       openBrowserOnNextServerStart = false;
@@ -161,7 +175,7 @@ async function main() {
     child = startManagedRuntimeProcess({
       role,
       cwd: repo.repoRoot,
-      databaseUrl: database.connectionString,
+      databaseUrl: role === "database" ? undefined : (databaseConnectionString ?? undefined),
       port: args.port,
       host: args.host,
       dangerouslyExposeToNetwork: args.dangerouslyExposeToNetwork,
@@ -171,12 +185,22 @@ async function main() {
           return;
         }
 
-        process.stderr.write(`[dev] ${exitedRole} exited with ${code ?? signal ?? "unknown"}. Waiting for file changes to restart.\n`);
+        process.stderr.write(`[dev] ${exitedRole} exited with ${code ?? signal ?? "unknown"}. Restarting automatically.\n`);
+        if (exitedRole === "database") {
+          databaseProcess = null;
+          databaseConnectionString = null;
+          workerProcess = null;
+          serverProcess = null;
+          scheduleRestart("database");
+          return;
+        }
+
         if (exitedRole === "server") {
           serverProcess = null;
         } else {
           workerProcess = null;
         }
+        scheduleRestart(exitedRole);
       },
     });
     const ready = await child.ready;
@@ -190,6 +214,23 @@ async function main() {
   };
 
   const restartRole = async (role: ManagedRuntimeRole) => {
+    if (role === "database") {
+      process.stdout.write("[dev] Restarting database...\n");
+      await restartManagedRuntimeProcess({
+        mode: "serial",
+        current: databaseProcess,
+        start: async () => {
+          const { child, ready } = await launchRole("database");
+          handleRoleReady("database", child, ready);
+          return child;
+        },
+      });
+
+      await restartRole("worker");
+      await restartRole("server");
+      return;
+    }
+
     const current = role === "server" ? serverProcess : workerProcess;
     const mode = role === "worker" ? "overlap" : "serial" as const;
     process.stdout.write(
@@ -227,6 +268,21 @@ async function main() {
         pendingRestart = null;
 
         if (restartTarget === "both") {
+          await restartRole("database");
+          continue;
+        }
+
+        if (restartTarget === "database") {
+          await restartRole("database");
+          continue;
+        }
+
+        if (!databaseProcess || !databaseConnectionString) {
+          pendingRestart = "database";
+          continue;
+        }
+
+        if (restartTarget === "both") {
           await restartRole("worker");
           await restartRole("server");
           continue;
@@ -239,7 +295,7 @@ async function main() {
     }
   };
 
-  const scheduleRestart = (target: ManagedRuntimeRole | "both") => {
+  const scheduleRestart = (target: ManagedRuntimeRole | "database" | "both") => {
     pendingRestart = pendingRestart === "both" || target === "both"
       ? "both"
       : pendingRestart ?? target;
@@ -313,14 +369,14 @@ async function main() {
     watchers.clear();
 
     await Promise.allSettled([
+      databaseProcess?.stop() ?? Promise.resolve(),
       serverProcess?.stop() ?? Promise.resolve(),
       workerProcess?.stop() ?? Promise.resolve(),
     ]);
-    configureDatabaseConnection(null);
-    await stopDatabaseSocketServer(repo.repoRoot);
   };
 
   try {
+    await startRole("database");
     await startRole("worker");
     await startRole("server");
     await refreshWatchers();
