@@ -217,6 +217,44 @@ export function MatrixMetric({
   );
 }
 
+export function MatrixSectionIntro({
+  kicker,
+  title,
+  description,
+  status,
+  metrics,
+  actions,
+  className = "",
+}: {
+  kicker: ReactNode;
+  title: ReactNode;
+  description?: ReactNode;
+  status?: ReactNode;
+  metrics?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`theme-border-subtle border p-4 ${className}`.trim()}>
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1">
+          <p className="matrix-kicker">{kicker}</p>
+          <h3 className="mt-2 text-lg font-semibold theme-text-strong sm:text-xl">{title}</h3>
+          {description ? <p className="mt-1 max-w-3xl text-sm theme-text-muted">{description}</p> : null}
+        </div>
+
+        {(status || metrics || actions) ? (
+          <div className="flex min-w-0 flex-col gap-2 xl:max-w-[48rem] xl:items-end">
+            {status ? <div className="flex flex-wrap items-center gap-2 text-xs xl:justify-end">{status}</div> : null}
+            {metrics ? <div className="w-full xl:w-auto">{metrics}</div> : null}
+            {actions ? <div className="flex flex-wrap items-center gap-2 xl:justify-end">{actions}</div> : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function MatrixModal({
   kicker,
   title,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { SystemJobRecord, SystemStatusResponse, SystemSubTab } from "@shared/types";
 
 import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
-import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
+import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSectionIntro, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
 
 function formatBytes(value: number) {
@@ -155,44 +155,34 @@ export function SystemTab({
         ]}
       />
 
-      <div className="flex items-start justify-between gap-3 border theme-border-subtle p-4">
-        <div>
-          <p className="matrix-kicker">System</p>
-          <h3 className="mt-2 text-lg font-semibold theme-text-strong">Host performance and queue activity</h3>
-          <p className="mt-1 text-sm theme-text-muted">
-            Watch runtime health, inspect recent pg-boss jobs, and keep durable background work in view.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2 text-xs">
-          {error ? (
-            <>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <MatrixBadge tone="danger" compact>Sync issue</MatrixBadge>
-                {onRetry ? (
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-2 py-1 text-xs"
-                    onClick={() => void onRetry()}
-                  >
-                    Retry
-                  </button>
-                ) : null}
-              </div>
-              <span className="text-right theme-text-danger">{error}</span>
-            </>
-          ) : (
-            <>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                {loading ? <MatrixBadge tone="warning">Loading…</MatrixBadge> : null}
-                <MatrixBadge tone={activeSubTab === "jobs" && activeJobCount > 0 ? "warning" : "neutral"} compact>
-                  {activeSubTab === "jobs" && activeJobCount > 0 ? "Live updates on" : "Idle"}
-                </MatrixBadge>
-              </div>
-              <span className="theme-text-muted">{refreshStatusLabel}</span>
-            </>
-          )}
-        </div>
-      </div>
+      <MatrixSectionIntro
+        kicker="System"
+        title="Host performance and queue activity"
+        description="Watch runtime health, inspect recent pg-boss jobs, and keep durable background work in view."
+        status={error ? (
+          <>
+            <MatrixBadge tone="danger" compact>Sync issue</MatrixBadge>
+            {onRetry ? (
+              <button
+                type="button"
+                className="matrix-button rounded-none px-2 py-1 text-xs"
+                onClick={() => void onRetry()}
+              >
+                Retry
+              </button>
+            ) : null}
+            <span className="text-right theme-text-danger">{error}</span>
+          </>
+        ) : (
+          <>
+            {loading ? <MatrixBadge tone="warning">Loading…</MatrixBadge> : null}
+            <MatrixBadge tone={activeSubTab === "jobs" && activeJobCount > 0 ? "warning" : "neutral"} compact>
+              {activeSubTab === "jobs" && activeJobCount > 0 ? "Live updates on" : "Idle"}
+            </MatrixBadge>
+            <span className="theme-text-muted">{refreshStatusLabel}</span>
+          </>
+        )}
+      />
 
       {activeSubTab === "performance" ? (
         <div

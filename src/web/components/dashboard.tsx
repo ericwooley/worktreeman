@@ -927,12 +927,6 @@ export function Dashboard() {
 
   const configuredAiCommands = normalizeAiCommands(aiCommandSettings?.aiCommands);
   const aiCommandDraftValues = normalizeAiCommands(aiCommandDrafts);
-  const aiCommandStatusBadges = (["smart", "simple"] as const).map((commandId) => ({
-    commandId,
-    label: getAiCommandLabel(commandId),
-    ready: isAiCommandTemplateReady(configuredAiCommands[commandId]),
-  }));
-
   const handleLoadProjectManagementDocument = useCallback(async (documentId: string, options?: { silent?: boolean }) => {
     setProjectManagementSelectedDocumentId(documentId);
     return loadProjectManagementDocument(documentId, options);
@@ -1313,15 +1307,6 @@ export function Dashboard() {
     : commandPaletteScope === "theme-select"
       ? themeSelectionPaletteItems
       : mainCommandPaletteItems;
-  const activePrimaryNav = PRIMARY_NAV_ITEMS.find((entry) => entry.id === activeTab) ?? PRIMARY_NAV_ITEMS[0];
-  const installButtonLabel = pwaInstallStatus === "available"
-    ? "Install app"
-    : pwaInstallStatus === "installing"
-      ? "Check browser"
-      : pwaInstallStatus === "installed"
-        ? null
-        : "Install pending";
-
   const shortcutSettings = useMemo<CommandPaletteShortcutSetting[]>(() => [
     {
       id: "command-palette",
@@ -1442,6 +1427,24 @@ export function Dashboard() {
               >
                 Theme: {theme.name}
               </button>
+              {pwaInstallStatus === "installed" ? (
+                <div className="border theme-border-faint px-3 py-2 text-xs font-mono theme-text-strong">
+                  App installed
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="matrix-button rounded-none px-3 py-2 text-sm"
+                  onClick={() => void handleInstallPwa()}
+                  disabled={pwaInstallStatus !== "available"}
+                >
+                  {pwaInstallStatus === "available"
+                    ? "Install app"
+                    : pwaInstallStatus === "installing"
+                      ? "Check browser"
+                      : "Install pending"}
+                </button>
+              )}
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm"
@@ -1461,48 +1464,6 @@ export function Dashboard() {
         </aside>
 
         <div className="min-w-0">
-          <header className="matrix-panel relative z-30 rounded-none border-x-0 border-t-0 px-4 py-3 lg:border-l-0">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="matrix-kicker">{activePrimaryNav.shortLabel}</p>
-                  {selected?.branch ? <MatrixBadge tone="active">{selected.branch}</MatrixBadge> : null}
-                  <MatrixBadge tone="neutral">{theme.name}</MatrixBadge>
-                </div>
-                <div className="mt-1 flex flex-col gap-1 lg:flex-row lg:items-baseline lg:gap-3">
-                  <h2 className="text-xl font-semibold tracking-tight theme-text-strong">{activePrimaryNav.label}</h2>
-                  <p className="min-w-0 text-sm theme-text-muted">{activePrimaryNav.description}</p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted xl:justify-end">
-                <span className="border theme-border-faint px-2 py-1 font-mono theme-text-strong">
-                  Palette {formatShortcutLabel(commandPaletteShortcut)}
-                </span>
-                <span className="border theme-border-faint px-2 py-1 font-mono theme-text-strong">
-                  {themes.length} themes
-                </span>
-                {aiCommandStatusBadges.map((entry) => (
-                  <MatrixBadge key={entry.commandId} tone={entry.ready ? "active" : "warning"} compact>
-                    {entry.label} {entry.ready ? "ready" : "missing"}
-                  </MatrixBadge>
-                ))}
-                {installButtonLabel ? (
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-3 py-1.5 text-xs font-semibold"
-                    onClick={() => void handleInstallPwa()}
-                    disabled={pwaInstallStatus !== "available"}
-                  >
-                    {installButtonLabel}
-                  </button>
-                ) : (
-                  <MatrixBadge tone="active">App installed</MatrixBadge>
-                )}
-              </div>
-            </div>
-          </header>
-
           <section className="relative z-10 min-w-0">
           {shutdownStatus?.active || shutdownStatus?.completed || shutdownStatus?.failed ? (
             <div className="matrix-panel mb-4 rounded-none border-x-0 theme-inline-panel-warning p-4 sm:p-5">

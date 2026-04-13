@@ -3,7 +3,7 @@ import type { AiCommandJob, AiCommandLogEntry, AiCommandLogSummary, AiCommandOri
 
 import { ProjectManagementAiLogTab } from "./project-management-ai-log-tab";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
-import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
+import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixSectionIntro, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { CardLoadingBadge } from "./loading";
 import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 
@@ -135,24 +135,21 @@ export function ProjectManagementAiTab({
           role="tabpanel"
           aria-labelledby="project-management-ai-activity-active-worktrees-tab"
         >
-          <div className="grid gap-3 md:grid-cols-3">
-            <MatrixMetric label="Running jobs" value={String(runningJobs.length)} />
-            <MatrixMetric label="Active worktrees" value={String(activeWorktreeCount)} />
-            <MatrixMetric label="Saved logs" value={String(logs.length)} />
-          </div>
+          <MatrixSectionIntro
+            kicker="AI"
+            title="Live work across worktrees"
+            description="Track long-running AI work, inspect live mixed output, and jump back to where each run started."
+            status={loading ? <CardLoadingBadge label="Loading" compact /> : undefined}
+            metrics={(
+              <div className="grid gap-3 md:grid-cols-3">
+                <MatrixMetric label="Running jobs" value={String(runningJobs.length)} />
+                <MatrixMetric label="Active worktrees" value={String(activeWorktreeCount)} />
+                <MatrixMetric label="Saved logs" value={String(logs.length)} />
+              </div>
+            )}
+          />
 
-          <div className="flex items-start justify-between gap-3 border theme-border-subtle p-4">
-            <div>
-              <p className="matrix-kicker">AI</p>
-              <h3 className="mt-2 text-lg font-semibold theme-text-strong">Live work across worktrees</h3>
-              <p className="mt-1 text-sm theme-text-muted">
-                Track long-running AI work, inspect live mixed output, and jump back to where each run started.
-              </p>
-            </div>
-            {loading ? <CardLoadingBadge label="Loading" compact /> : null}
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
+          <div className="mt-4 grid gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
             <div className="border theme-border-subtle p-4">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] theme-text-soft">Active AI worktrees</p>

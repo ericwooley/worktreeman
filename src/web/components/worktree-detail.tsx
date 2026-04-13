@@ -32,7 +32,7 @@ import { getTmuxSessionName } from "../lib/tmux";
 import { startSequentialPoll } from "../lib/sequential-poll";
 import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
-import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixTabs } from "./matrix-primitives";
+import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixSectionIntro, MatrixTabs } from "./matrix-primitives";
 import { MatrixCard, MatrixCardFooter, MatrixCardHeader } from "./matrix-card";
 import { WorktreeTerminal } from "./worktree-terminal";
 import {
@@ -1349,49 +1349,50 @@ export function WorktreeDetail({
   const gitDiffView = (
     <>
       <div className="theme-inline-panel p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <p className="matrix-kicker">Git / Diff</p>
-            <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Branch diff</h2>
-            <p className="mt-2 text-sm theme-text-muted">
-              Review the diff between this worktree and the base branch, including staged, unstaged, and untracked local changes.
-            </p>
-          </div>
+        <MatrixTabs
+          groupId="worktree-diff-view-tabs"
+          ariaLabel="Git view tabs"
+          activeTabId={gitView}
+          onChange={onGitViewChange}
+          className="theme-divider border-b pb-3"
+          tabs={[
+            { id: "graph", label: "Graph" },
+            { id: "diff", label: "Diff" },
+          ]}
+        />
 
-          <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto] xl:min-w-[36rem] xl:grid-cols-[minmax(16rem,1fr)_auto_auto_auto]">
-            <MatrixDropdown
-              label="Base branch"
-              value={selectedGitBaseBranch}
-              options={gitBranchOptions}
-              placeholder="Choose base branch"
-              disabled={!gitBranchOptions.length}
-              emptyLabel="No branches available"
-              onChange={setSelectedGitBaseBranch}
-            />
-            <MatrixTabs
-              groupId="worktree-diff-view-tabs"
-              ariaLabel="Git view tabs"
-              activeTabId={gitView}
-              onChange={onGitViewChange}
-              tabs={[
-                { id: "graph", label: "Graph" },
-                { id: "diff", label: "Diff" },
-              ]}
-            />
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              disabled={!canCommitDiffChanges || gitComparisonLoading || !worktree?.branch}
-              onClick={() => {
-                if (!worktree?.branch || !gitComparison) {
-                  return;
-                }
-                void openCommitModal();
-              }}
-            >
-              Commit
-            </button>
-          </div>
+        <div className="mt-3">
+          <MatrixSectionIntro
+            kicker="Git / Diff"
+            title="Branch diff"
+            description="Review the diff between this worktree and the base branch, including staged, unstaged, and untracked local changes."
+            actions={(
+              <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto] xl:min-w-[24rem] xl:grid-cols-[minmax(16rem,1fr)_auto]">
+                <MatrixDropdown
+                  label="Base branch"
+                  value={selectedGitBaseBranch}
+                  options={gitBranchOptions}
+                  placeholder="Choose base branch"
+                  disabled={!gitBranchOptions.length}
+                  emptyLabel="No branches available"
+                  onChange={setSelectedGitBaseBranch}
+                />
+                <button
+                  type="button"
+                  className="matrix-button rounded-none px-3 py-2 text-sm"
+                  disabled={!canCommitDiffChanges || gitComparisonLoading || !worktree?.branch}
+                  onClick={() => {
+                    if (!worktree?.branch || !gitComparison) {
+                      return;
+                    }
+                    void openCommitModal();
+                  }}
+                >
+                  Commit
+                </button>
+              </div>
+            )}
+          />
         </div>
 
         {gitComparison ? (
@@ -1599,7 +1600,19 @@ export function WorktreeDetail({
   const comparisonWorkspace = (
     <>
       <div className="theme-inline-panel p-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <MatrixTabs
+          groupId="worktree-merge-view-tabs"
+          ariaLabel="Git view tabs"
+          activeTabId={gitView}
+          onChange={onGitViewChange}
+          className="theme-divider border-b pb-3"
+          tabs={[
+            { id: "graph", label: "Graph" },
+            { id: "diff", label: "Diff" },
+          ]}
+        />
+
+        <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <p className="matrix-kicker">Pull request / Changes</p>
             <h2 className="mt-2 text-2xl font-semibold theme-text-strong sm:text-3xl">Branch comparison</h2>
@@ -1608,7 +1621,7 @@ export function WorktreeDetail({
             </p>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto] xl:min-w-[42rem] xl:grid-cols-[minmax(16rem,1fr)_auto_auto_auto_auto]">
+          <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto_auto] xl:min-w-[42rem] xl:grid-cols-[minmax(16rem,1fr)_auto_auto_auto_auto]">
             <MatrixDropdown
               label="Base branch"
               value={selectedGitBaseBranch}
@@ -1617,16 +1630,6 @@ export function WorktreeDetail({
               disabled={!gitBranchOptions.length}
               emptyLabel="No branches available"
               onChange={setSelectedGitBaseBranch}
-            />
-            <MatrixTabs
-              groupId="worktree-merge-view-tabs"
-              ariaLabel="Git view tabs"
-              activeTabId={gitView}
-              onChange={onGitViewChange}
-              tabs={[
-                { id: "graph", label: "Graph" },
-                { id: "diff", label: "Diff" },
-              ]}
             />
             <button
               type="button"
@@ -1783,13 +1786,12 @@ export function WorktreeDetail({
 
             {environmentSubTab === "terminal" ? (
               <>
-                <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <p className="matrix-kicker">{WORKTREE_ENVIRONMENT_KICKER}</p>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <h2 className="text-xl font-semibold theme-text-strong sm:text-2xl">
-                        {worktree?.branch ?? "Select a worktree"}
-                      </h2>
+                <MatrixSectionIntro
+                  className="mt-3"
+                  kicker={WORKTREE_ENVIRONMENT_KICKER}
+                  title={(
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span>{worktree?.branch ?? "Select a worktree"}</span>
                       <MatrixBadge tone={worktree?.runtime ? "active" : "idle"} compact>
                         {worktree?.runtime ? "tmux attached" : "idle"}
                       </MatrixBadge>
@@ -1804,37 +1806,31 @@ export function WorktreeDetail({
                         </MatrixBadge>
                       ) : null}
                     </div>
-                    <p className="mt-2 max-w-3xl text-sm theme-text-muted">
-                      {worktree ? WORKTREE_ENVIRONMENT_DESCRIPTION : WORKTREE_ENVIRONMENT_EMPTY_DESCRIPTION}
-                    </p>
-                  </div>
-
-                  <div className="flex min-w-0 flex-col gap-2 xl:max-w-[48rem] xl:items-end">
+                  )}
+                  description={worktree ? WORKTREE_ENVIRONMENT_DESCRIPTION : WORKTREE_ENVIRONMENT_EMPTY_DESCRIPTION}
+                  metrics={(
                     <div className="grid w-full gap-2 text-left xl:w-auto xl:min-w-[22rem] xl:grid-cols-[repeat(3,minmax(0,1fr))]">
                       <MatrixMetric label="Worktrees" value={String(worktreeCount)} />
                       <MatrixMetric label="Running" value={String(runningCount)} />
                       <MatrixMetric label="Selected" value={selectedStatusLabel} />
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                      {worktree ? (
-                        <>
-                          <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
-                          <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
-                          <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
-                          <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={Boolean(deleteDisabledReason)} onClick={onDelete} title={deleteDisabledReason ?? undefined}>
-                            Delete
-                          </button>
-                        </>
-                      ) : null}
+                  )}
+                  actions={worktree ? (
+                    <>
+                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
+                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
+                      <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
+                      <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={Boolean(deleteDisabledReason)} onClick={onDelete} title={deleteDisabledReason ?? undefined}>
+                        Delete
+                      </button>
+                    </>
+                  ) : undefined}
+                  status={deleteDisabledReason ? (
+                    <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
+                      {deleteDisabledReason}
                     </div>
-                    {deleteDisabledReason ? (
-                      <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
-                        {deleteDisabledReason}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
+                  ) : undefined}
+                />
 
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
                   <MatrixDetailField label="Path" value={worktree?.worktreePath ?? "-"} mono />
@@ -1912,54 +1908,51 @@ export function WorktreeDetail({
             ) : (
               <div className="mt-3 space-y-4">
                 <div className="theme-inline-panel p-4">
-                  <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-                    <div>
-                      <p className="matrix-kicker">{WORKTREE_ENVIRONMENT_KICKER}</p>
-                      <h2 className="mt-1 text-xl font-semibold theme-text-strong sm:text-2xl">{BACKGROUND_COMMAND_CONTROL_TITLE}</h2>
-                      <p className="mt-2 max-w-3xl text-sm theme-text-muted">
-                        {BACKGROUND_COMMAND_CONTROL_DESCRIPTION}
-                      </p>
-                    </div>
+                  <MatrixSectionIntro
+                    kicker={WORKTREE_ENVIRONMENT_KICKER}
+                    title={BACKGROUND_COMMAND_CONTROL_TITLE}
+                    description={BACKGROUND_COMMAND_CONTROL_DESCRIPTION}
+                    actions={(
+                      <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto] xl:min-w-[48rem]">
+                        <MatrixDropdown
+                          label="Command"
+                          value={selectedBackgroundCommand?.name ?? null}
+                          options={backgroundCommandOptions}
+                          placeholder="No commands"
+                          disabled={!backgroundCommands.length}
+                          emptyLabel="No background commands are configured yet."
+                          onChange={setSelectedBackgroundCommandName}
+                        />
 
-                    <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto_auto_auto] xl:min-w-[48rem]">
-                      <MatrixDropdown
-                        label="Command"
-                        value={selectedBackgroundCommand?.name ?? null}
-                        options={backgroundCommandOptions}
-                        placeholder="No commands"
-                        disabled={!backgroundCommands.length}
-                        emptyLabel="No background commands are configured yet."
-                        onChange={setSelectedBackgroundCommandName}
-                      />
+                        <button
+                          type="button"
+                          className="matrix-button rounded-none px-3 py-2 text-sm"
+                          disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || selectedBackgroundCommand.running || isBusy}
+                          onClick={() => worktree && selectedBackgroundCommand ? void onStartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                        >
+                          Start
+                        </button>
 
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-2 text-sm"
-                        disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || selectedBackgroundCommand.running || isBusy}
-                        onClick={() => worktree && selectedBackgroundCommand ? void onStartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
-                      >
-                        Start
-                      </button>
+                        <button
+                          type="button"
+                          className="matrix-button rounded-none px-3 py-2 text-sm"
+                          disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.running || isBusy}
+                          onClick={() => worktree && selectedBackgroundCommand ? void onStopBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                        >
+                          Stop
+                        </button>
 
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-2 text-sm"
-                        disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.running || isBusy}
-                        onClick={() => worktree && selectedBackgroundCommand ? void onStopBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
-                      >
-                        Stop
-                      </button>
-
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-2 text-sm"
-                        disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || isBusy}
-                        onClick={() => worktree && selectedBackgroundCommand ? void onRestartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
-                      >
-                        Restart
-                      </button>
-                    </div>
-                  </div>
+                        <button
+                          type="button"
+                          className="matrix-button rounded-none px-3 py-2 text-sm"
+                          disabled={!worktree?.branch || !selectedBackgroundCommand || !selectedBackgroundCommand.canStart || isBusy}
+                          onClick={() => worktree && selectedBackgroundCommand ? void onRestartBackgroundCommand(worktree.branch, selectedBackgroundCommand.name) : undefined}
+                        >
+                          Restart
+                        </button>
+                      </div>
+                    )}
+                  />
 
                   {selectedBackgroundCommand ? (
                     <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
@@ -2045,7 +2038,7 @@ export function WorktreeDetail({
             )}
           </>
         ) : activeTab === "project-management" ? (
-          <div className="pt-3">
+          <div>
             <ProjectManagementPanel
               documents={projectManagementDocuments}
               worktrees={projectManagementWorktrees}
@@ -2089,7 +2082,7 @@ export function WorktreeDetail({
             />
           </div>
         ) : isSystemTabActive ? (
-          <div className="pt-3">
+          <div>
             <SystemTab
               activeSubTab={systemSubTab}
               status={systemStatus}
@@ -2101,7 +2094,7 @@ export function WorktreeDetail({
             />
           </div>
         ) : isAiLogTabActive ? (
-          <div className="pt-3">
+          <div>
             <ProjectManagementAiTab
               activeSubTab={projectManagementAiActiveSubTab}
               logs={projectManagementAiLogs}
@@ -2119,7 +2112,7 @@ export function WorktreeDetail({
             />
           </div>
         ) : isGitTabActive ? (
-          <div className="pt-3 space-y-4">{gitDiffView}</div>
+          <div className="space-y-4">{gitDiffView}</div>
         ) : null}
       </div>
 

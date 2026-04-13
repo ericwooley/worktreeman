@@ -31,7 +31,7 @@ import {
 } from "./project-management-document-browser";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
-import { MatrixBadge, MatrixModal, MatrixSkeletonCard, MatrixSpinner, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
+import { MatrixBadge, MatrixModal, MatrixSectionIntro, MatrixSkeletonCard, MatrixSpinner, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
 import { formatAutoRefreshStatus } from "../lib/auto-refresh-status";
@@ -965,13 +965,12 @@ export function ProjectManagementPanel({
 
   const documentRail = (
     <div className="theme-inline-panel p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="matrix-kicker">Project management</p>
-          <h2 className="mt-1 text-xl font-semibold theme-text-strong">Documents</h2>
-          <div className="mt-2">{refreshStatus}</div>
-        </div>
-      </div>
+      <MatrixSectionIntro
+        kicker="Project management"
+        title="Documents"
+        status={refreshStatus}
+        className="mb-3"
+      />
 
       <ProjectManagementDocumentBrowser
         documents={documents}
@@ -1052,33 +1051,30 @@ export function ProjectManagementPanel({
   );
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="space-y-4">
       <div className="theme-inline-panel p-4">
-        <div className="flex items-center justify-between gap-3 border-b theme-border-subtle pb-4">
-          <div>
-            <p className="matrix-kicker">Project management</p>
-            <h2 className="mt-2 text-2xl font-semibold theme-text-strong">Workspace</h2>
-          </div>
-          <div className="shrink-0">{refreshStatus}</div>
-        </div>
+        <MatrixTabs
+          groupId="project-management-workspace"
+          ariaLabel="Project management workspace tabs"
+          activeTabId={activeSubTab}
+          onChange={onSubTabChange}
+          className="theme-divider border-b pb-3"
+          tabs={[
+            { id: "document", label: "Document", panelId: getMatrixTabPanelId("project-management-workspace", "document") },
+            { id: "board", label: "Board", panelId: getMatrixTabPanelId("project-management-workspace", "board") },
+            { id: "dependency-tree", label: "Dependency tree", panelId: getMatrixTabPanelId("project-management-workspace", "dependency-tree") },
+            { id: "history", label: "History", panelId: getMatrixTabPanelId("project-management-workspace", "history") },
+            { id: "users", label: "Users", panelId: getMatrixTabPanelId("project-management-workspace", "users") },
+            { id: "create", label: "Create", panelId: getMatrixTabPanelId("project-management-workspace", "create") },
+          ]}
+        />
 
-        <div className="theme-inline-panel p-4">
-          <div className="border-b theme-border-subtle pb-4">
-            <MatrixTabs
-              groupId="project-management-workspace"
-              ariaLabel="Project management workspace tabs"
-              activeTabId={activeSubTab}
-              onChange={onSubTabChange}
-              tabs={[
-                { id: "document", label: "Document", panelId: getMatrixTabPanelId("project-management-workspace", "document") },
-                { id: "board", label: "Board", panelId: getMatrixTabPanelId("project-management-workspace", "board") },
-                { id: "dependency-tree", label: "Dependency tree", panelId: getMatrixTabPanelId("project-management-workspace", "dependency-tree") },
-                { id: "history", label: "History", panelId: getMatrixTabPanelId("project-management-workspace", "history") },
-                { id: "users", label: "Users", panelId: getMatrixTabPanelId("project-management-workspace", "users") },
-                { id: "create", label: "Create", panelId: getMatrixTabPanelId("project-management-workspace", "create") },
-              ]}
-            />
-          </div>
+        <MatrixSectionIntro
+          kicker="Project management"
+          title="Workspace"
+          status={refreshStatus}
+          className="mt-3"
+        />
 
           {activeSubTab === "document" ? (
             <div id={getMatrixTabPanelId("project-management-workspace", "document")} role="tabpanel" aria-labelledby="project-management-workspace-document-tab" className="grid gap-4 pt-4 xl:grid-cols-[18rem_minmax(0,1fr)]">
@@ -1110,87 +1106,90 @@ export function ProjectManagementPanel({
                   </div>
                 ) : null}
 
-                <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
-                  <div>
-                    <p className="matrix-kicker">Markdown document</p>
-                    <h2 className="mt-1 text-2xl font-semibold theme-text-strong">{document?.title ?? "Select a document"}</h2>
-                    {document ? (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {compactDocumentSummary.map((item) => <MatrixBadge key={item} tone="neutral" compact>{item}</MatrixBadge>)}
-                        {document.tags.map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
-                        <MatrixBadge tone="neutral" compact>
-                          {document.dependencies.length} dependenc{document.dependencies.length === 1 ? "y" : "ies"}
-                        </MatrixBadge>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {document ? (
-                      <MatrixTabs
-                        groupId="project-management-document-view"
-                        ariaLabel="Project document view tabs"
-                        activeTabId={documentViewMode}
-                        onChange={onDocumentViewModeChange}
-                        tabs={[
-                          { id: "document", label: "Document", panelId: getMatrixTabPanelId("project-management-document-view", "document") },
-                          { id: "edit", label: "Edit", panelId: getMatrixTabPanelId("project-management-document-view", "edit") },
-                        ]}
-                      />
-                    ) : null}
-                    {documentViewMode === "document" ? (
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${activeDocumentRunInSelectedWorktree ? "pm-ai-button-running" : ""}`}
-                          onClick={openDocumentWorktreeModal}
-                          title={activeDocumentRunInSelectedWorktree ? "Worktree AI is running" : "Start worktree AI"}
-                          disabled={!document || activeDocumentRunForSelectedDocument}
-                        >
-                          {activeDocumentRunInSelectedWorktree ? "Start Worktree AI (running)" : "Start Worktree AI"}
-                        </button>
-                        {activeDocumentRunInSelectedWorktree && documentRunJob?.branch ? (
+                {document ? (
+                  <MatrixTabs
+                    groupId="project-management-document-view"
+                    ariaLabel="Project document view tabs"
+                    activeTabId={documentViewMode}
+                    onChange={onDocumentViewModeChange}
+                    className="theme-divider border-b pb-3"
+                    tabs={[
+                      { id: "document", label: "Document", panelId: getMatrixTabPanelId("project-management-document-view", "document") },
+                      { id: "edit", label: "Edit", panelId: getMatrixTabPanelId("project-management-document-view", "edit") },
+                    ]}
+                  />
+                ) : null}
+
+                <MatrixSectionIntro
+                  kicker="Markdown document"
+                  title={document?.title ?? "Select a document"}
+                  status={document ? (
+                    <div className="flex flex-wrap gap-1">
+                      {compactDocumentSummary.map((item) => <MatrixBadge key={item} tone="neutral" compact>{item}</MatrixBadge>)}
+                      {document.tags.map((tag) => <MatrixBadge key={tag} tone="active" compact>{tag}</MatrixBadge>)}
+                      <MatrixBadge tone="neutral" compact>
+                        {document.dependencies.length} dependenc{document.dependencies.length === 1 ? "y" : "ies"}
+                      </MatrixBadge>
+                    </div>
+                  ) : undefined}
+                  actions={(
+                    <>
+                      {documentViewMode === "document" ? (
+                        <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            className="matrix-button rounded-none px-3 py-2 text-sm"
-                            onClick={() => void onCancelDocumentAiCommand(documentRunJob.branch)}
+                            className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${activeDocumentRunInSelectedWorktree ? "pm-ai-button-running" : ""}`}
+                            onClick={openDocumentWorktreeModal}
+                            title={activeDocumentRunInSelectedWorktree ? "Worktree AI is running" : "Start worktree AI"}
+                            disabled={!document || activeDocumentRunForSelectedDocument}
                           >
-                            Cancel worktree AI
+                            {activeDocumentRunInSelectedWorktree ? "Start Worktree AI (running)" : "Start Worktree AI"}
                           </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {documentViewMode === "edit" ? (
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${aiRunning ? "pm-ai-button-running" : ""}`}
-                          onClick={() => setAiRequestModalOpen(true)}
-                          title={aiRunning ? "⚡ is running" : "Open AI request"}
-                          disabled={!document || aiRunning}
-                        >
-                          {aiRunning ? "⚡ Running..." : "⚡ AI"}
-                        </button>
-                        {aiRunning ? (
+                          {activeDocumentRunInSelectedWorktree && documentRunJob?.branch ? (
+                            <button
+                              type="button"
+                              className="matrix-button rounded-none px-3 py-2 text-sm"
+                              onClick={() => void onCancelDocumentAiCommand(documentRunJob.branch)}
+                            >
+                              Cancel worktree AI
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {documentViewMode === "edit" ? (
+                        <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            className="matrix-button rounded-none px-3 py-2 text-sm"
-                            onClick={() => void onCancelAiCommand()}
+                            className={`matrix-button rounded-none px-3 py-2 text-sm font-semibold ${aiRunning ? "pm-ai-button-running" : ""}`}
+                            onClick={() => setAiRequestModalOpen(true)}
+                            title={aiRunning ? "⚡ is running" : "Open AI request"}
+                            disabled={!document || aiRunning}
                           >
-                            Cancel AI
+                            {aiRunning ? "⚡ Running..." : "⚡ AI"}
                           </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-                      disabled={!document || saving || aiRunning || documentViewMode !== "edit"}
-                      onClick={() => void handleSaveDocument()}
-                    >
-                      Save document
-                    </button>
-                  </div>
-                </div>
+                          {aiRunning ? (
+                            <button
+                              type="button"
+                              className="matrix-button rounded-none px-3 py-2 text-sm"
+                              onClick={() => void onCancelAiCommand()}
+                            >
+                              Cancel AI
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                        disabled={!document || saving || aiRunning || documentViewMode !== "edit"}
+                        onClick={() => void handleSaveDocument()}
+                      >
+                        Save document
+                      </button>
+                    </>
+                  )}
+                  className="mt-3"
+                />
 
                 {document ? (
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
@@ -1641,7 +1640,6 @@ export function ProjectManagementPanel({
               </Suspense>
             </div>
           )}
-        </div>
       </div>
 
       {aiRequestModalOpen && document && documentViewMode === "edit" ? (
