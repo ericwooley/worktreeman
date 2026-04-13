@@ -29,7 +29,6 @@ import type { ProjectManagementDocumentFormViewMode } from "./project-management
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import { getTmuxSessionName } from "../lib/tmux";
-import { startSequentialPoll } from "../lib/sequential-poll";
 import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixDetailField, MatrixMetric, MatrixModal, MatrixSectionIntro, MatrixTabs } from "./matrix-primitives";
@@ -60,7 +59,6 @@ function getCssVariable(name: string, fallback: string): string {
   return value || fallback;
 }
 
-const AI_LOG_POLL_INTERVAL_MS = 3000;
 const DIFF_RENDER_MAX_CHARS = 350_000;
 const DIFF_RENDER_MAX_LINES = 8_000;
 const DIFF_RENDER_MAX_FILES = 80;
@@ -1117,44 +1115,6 @@ export function WorktreeDetail({
       return gitDiffTree.directoryPaths;
     });
   }, [expandedGitDiffDirectories.length, gitDiffTree.directoryPaths]);
-
-  useEffect(() => {
-    if (activeTab !== "ai-log") {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadAiLogState = async () => {
-      await refreshAiLogs({ silent: true });
-      if (cancelled) {
-        return;
-      }
-    };
-
-    const pollController = startSequentialPoll(loadAiLogState, {
-      intervalMs: AI_LOG_POLL_INTERVAL_MS,
-      runImmediately: document.visibilityState === "visible",
-    });
-
-    const handleVisibilityRefresh = () => {
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      pollController.trigger();
-    };
-
-    window.addEventListener("focus", handleVisibilityRefresh);
-    document.addEventListener("visibilitychange", handleVisibilityRefresh);
-
-    return () => {
-      cancelled = true;
-      pollController.stop();
-      window.removeEventListener("focus", handleVisibilityRefresh);
-      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
-    };
-  }, [activeTab, refreshAiLogs]);
 
   useEffect(() => {
     if (!isBackgroundCommandsActive || !worktree?.branch) {
