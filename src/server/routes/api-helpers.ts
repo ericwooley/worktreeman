@@ -788,16 +788,20 @@ export async function buildAiCommandLogsResponse(options: {
 
 export async function listAiCommandLogEntries(repoRoot: string): Promise<AiCommandLogEntry[]> {
   const entries = await (await createOperationalStateStore(repoRoot)).listAiCommandLogEntries();
-  return entries.filter((entry) => isAiCommandLogEntryInRepo(repoRoot, entry));
+  return entries.filter((entry) => isWorktreePathInRepo(repoRoot, entry.worktreePath));
 }
 
-function isAiCommandLogEntryInRepo(repoRoot: string, entry: AiCommandLogEntry): boolean {
-  if (!entry.worktreePath) {
+function isWorktreePathInRepo(repoRoot: string, worktreePath: string | null | undefined): boolean {
+  if (!worktreePath) {
     return false;
   }
 
-  const relative = path.relative(path.resolve(repoRoot), path.resolve(entry.worktreePath));
+  const relative = path.relative(path.resolve(repoRoot), path.resolve(worktreePath));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isAiCommandLogEntryInRepo(repoRoot: string, entry: AiCommandLogEntry): boolean {
+  return isWorktreePathInRepo(repoRoot, entry.worktreePath);
 }
 
 export function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {

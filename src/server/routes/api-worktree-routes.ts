@@ -69,23 +69,6 @@ import {
 } from "./api-helpers.js";
 import type { ApiRouterContext } from "./api-router-context.js";
 
-function buildAiJobChangeKey(job: RunAiCommandResponse["job"] | null): string {
-  if (!job) {
-    return "null";
-  }
-
-  return [
-    job.jobId,
-    job.status,
-    job.completedAt ?? "",
-    job.pid ?? "",
-    job.exitCode ?? "",
-    job.processName ?? "",
-    job.error ?? "",
-    job.stderr.length,
-  ].join(":");
-}
-
 function appendCancellationEvent(log: {
   jobId: string;
   response: { events?: Array<{ id: string; runId?: string; entry?: number; source: "stdout" | "stderr"; text: string; timestamp: string }> };
@@ -142,7 +125,6 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       let currentJob = await getAiCommandJob(context.repoRoot, worktree.id, context.aiJobReadOptions);
-      let lastChangeKey = buildAiJobChangeKey(currentJob);
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -197,23 +179,19 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         }
       };
 
-      const emitIfChanged = (nextJob: typeof currentJob, type: "snapshot" | "update" = "update") => {
+      const emitJob = (nextJob: typeof currentJob, type: "snapshot" | "update" = "update") => {
         currentJob = nextJob;
-        const nextChangeKey = buildAiJobChangeKey(nextJob);
-        if (type === "snapshot" || nextChangeKey !== lastChangeKey) {
-          lastChangeKey = nextChangeKey;
-          writeEvent(type, nextJob);
-        }
+        writeEvent(type, nextJob);
       };
 
-      emitIfChanged(currentJob, "snapshot");
+      emitJob(currentJob, "snapshot");
 
       unsubscribe = subscribeToAiCommandJob(context.repoRoot, worktree.id, (job) => {
         if (isStreamClosed()) {
           return;
         }
 
-        emitIfChanged(job, "update");
+        emitJob(job, "update");
       });
 
       let polling = false;
@@ -228,7 +206,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           if (isStreamClosed()) {
             return;
           }
-          emitIfChanged(nextJob, "update");
+          emitJob(nextJob, "update");
         }, (error) => {
           logServerEvent("ai-command-stream", "poll-failed", {
             branch,
@@ -826,7 +804,6 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       let currentClients = initialPayload.clients;
-      let lastPayload = JSON.stringify(currentClients);
       let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -885,11 +862,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           }
 
           currentClients = nextPayload.clients;
-          const nextSerialized = JSON.stringify(nextPayload.clients);
-          if (nextSerialized !== lastPayload) {
-            lastPayload = nextSerialized;
-            writeEvent("update", nextPayload.clients);
-          }
+          writeEvent("update", nextPayload.clients);
         }).catch((error) => {
           logServerEvent("tmux-clients-stream", "rebuild-failed", {
             branch,

@@ -769,9 +769,14 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     assert.equal(capturedPrompt.includes("inspect the runtime"), true);
 
     await waitFor(async () => {
-      const statePayload = await readStateSnapshot<{
+      const stateResponse = await server.fetch("/api/state");
+      if (stateResponse.status !== 200) {
+        return false;
+      }
+
+      const statePayload = await stateResponse.json() as {
         worktrees: Array<{ branch: string; runtime?: { branch: string; tmuxSession: string } }>;
-      }>(server, 1000);
+      };
       const runtime = statePayload.worktrees.find((entry) => entry.branch === "feature-ai-env")?.runtime;
       return runtime?.branch === "feature-ai-env" && runtime.tmuxSession === payload.runtime?.tmuxSession;
     });

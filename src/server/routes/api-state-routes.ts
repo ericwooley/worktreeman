@@ -36,100 +36,6 @@ import {
 } from "../utils/server-logger.js";
 import type { ApiRouterContext } from "./api-router-context.js";
 
-function buildStateChangeKey(state: Awaited<ReturnType<ApiRouterContext["loadState"]>>): string {
-  const worktrees = state.worktrees;
-  return [
-    state.config.favicon,
-    state.config.preferredPort ?? "",
-    worktrees.length,
-    ...worktrees.map((worktree) => [
-      worktree.id,
-      worktree.branch,
-      worktree.worktreePath,
-      worktree.headSha ?? "",
-      worktree.runtime?.tmuxSession ?? "",
-      worktree.runtime?.runtimeStartedAt ?? "",
-      worktree.runtime ? "1" : "0",
-      worktree.deletion?.canDelete ? "1" : "0",
-      worktree.deletion?.reason ?? "",
-    ].join(":")),
-  ].join("|");
-}
-
-function buildShutdownChangeKey(status: ShutdownStatus): string {
-  const lastLog = status.logs.at(-1);
-  return [
-    status.active ? "1" : "0",
-    status.completed ? "1" : "0",
-    status.failed ? "1" : "0",
-    status.logs.length,
-    lastLog?.id ?? "",
-    lastLog?.timestamp ?? "",
-    lastLog?.level ?? "",
-  ].join(":");
-}
-
-function buildSystemChangeKey(status: SystemStatusResponse): string {
-  const firstJob = status.jobs.items[0];
-  return [
-    status.capturedAt,
-    status.performance.memory.usedBytes,
-    status.performance.memory.freeBytes,
-    status.performance.worktrees.total,
-    status.performance.worktrees.runtimeCount,
-    status.jobs.available ? "1" : "0",
-    status.jobs.total,
-    firstJob?.id ?? "",
-    firstJob?.state ?? "",
-    firstJob?.heartbeatAt ?? "",
-  ].join(":");
-}
-
-function buildAiCommandLogsChangeKey(logs: AiCommandLogsResponse): string {
-  const historicalTail = logs.logs.slice(0, 10);
-  const runningTail = logs.runningJobs.slice(0, 10);
-  return [
-    logs.logs.length,
-    logs.runningJobs.length,
-    ...historicalTail.map((entry) => [entry.jobId, entry.status, entry.timestamp, entry.pid ?? "", entry.origin?.kind ?? ""].join(":")),
-    ...runningTail.map((entry) => [
-      entry.jobId,
-      entry.status,
-      entry.completedAt ?? "",
-      entry.pid ?? "",
-      entry.exitCode ?? "",
-      entry.processName ?? "",
-      entry.error ?? "",
-    ].join(":")),
-  ].join("|");
-}
-
-function buildProjectManagementUsersChangeKey(users: ProjectManagementUsersResponse): string {
-  const lastUser = users.users.at(-1);
-  return [
-    users.users.length,
-    users.config.customUsers.length,
-    users.config.archivedUserIds.length,
-    lastUser?.id ?? "",
-    lastUser?.archived ? "1" : "0",
-    lastUser?.lastCommitAt ?? "",
-  ].join(":");
-}
-
-function buildProjectManagementDocumentsChangeKey(
-  documents: Awaited<ReturnType<ApiRouterContext["listProjectManagementDocuments"]>>,
-): string {
-  const lastDocument = documents.documents.at(-1);
-  return [
-    documents.documents.length,
-    documents.availableTags.length,
-    documents.availableStatuses.length,
-    lastDocument?.id ?? "",
-    lastDocument?.updatedAt ?? "",
-    lastDocument?.historyCount ?? "",
-  ].join(":");
-}
-
 function noteDashboardRebuild(scope: string, details: Record<string, unknown>) {
   const memory = snapshotProcessMemoryUsage();
   logServerEvent(scope, "rebuild", {
@@ -181,12 +87,6 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       });
       let currentProjectManagementUsers = await listProjectManagementUsers(context.repoRoot, initialConfig.projectManagement.users);
       let currentProjectManagementDocuments = await context.listProjectManagementDocuments();
-      let lastStateChangeKey = buildStateChangeKey(currentState);
-      let lastShutdownChangeKey = buildShutdownChangeKey(currentShutdownStatus);
-      let lastSystemChangeKey = buildSystemChangeKey(currentSystemStatus);
-      let lastAiCommandLogsChangeKey = buildAiCommandLogsChangeKey(currentAiCommandLogs);
-      let lastUsersChangeKey = buildProjectManagementUsersChangeKey(currentProjectManagementUsers);
-      let lastDocumentsChangeKey = buildProjectManagementDocumentsChangeKey(currentProjectManagementDocuments);
       let rebuildingState = false;
       let rebuildingShutdown = false;
       let rebuildingSystem = false;
@@ -296,16 +196,12 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentState = nextState;
-          const nextChangeKey = buildStateChangeKey(nextState);
           noteDashboardRebuild("events-stream", {
             section: "state",
             stage: "done",
             worktrees: nextState.worktrees.length,
           });
-          if (nextChangeKey !== lastStateChangeKey) {
-            lastStateChangeKey = nextChangeKey;
-            writeStateEvent("update", nextState);
-          }
+          writeStateEvent("update", nextState);
         }).catch((error) => {
           logServerEvent("events-stream", "state-rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -328,11 +224,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentShutdownStatus = nextStatus;
-          const nextChangeKey = buildShutdownChangeKey(nextStatus);
-          if (nextChangeKey !== lastShutdownChangeKey) {
-            lastShutdownChangeKey = nextChangeKey;
-            writeShutdownEvent("update", nextStatus);
-          }
+          writeShutdownEvent("update", nextStatus);
         }).catch((error) => {
           logServerEvent("events-stream", "shutdown-rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -356,16 +248,12 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentSystemStatus = nextStatus;
-          const nextChangeKey = buildSystemChangeKey(nextStatus);
           noteDashboardRebuild("events-stream", {
             section: "system",
             stage: "done",
             jobs: nextStatus.jobs.total,
           });
-          if (nextChangeKey !== lastSystemChangeKey) {
-            lastSystemChangeKey = nextChangeKey;
-            writeSystemEvent("update", nextStatus);
-          }
+          writeSystemEvent("update", nextStatus);
         }).catch((error) => {
           logServerEvent("events-stream", "system-rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -393,17 +281,13 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentAiCommandLogs = nextLogs;
-          const nextChangeKey = buildAiCommandLogsChangeKey(nextLogs);
           noteDashboardRebuild("events-stream", {
             section: "ai-logs",
             stage: "done",
             logs: nextLogs.logs.length,
             runningJobs: nextLogs.runningJobs.length,
           });
-          if (nextChangeKey !== lastAiCommandLogsChangeKey) {
-            lastAiCommandLogsChangeKey = nextChangeKey;
-            writeAiCommandLogsEvent("update", nextLogs);
-          }
+          writeAiCommandLogsEvent("update", nextLogs);
         }).catch((error) => {
           logServerEvent("events-stream", "ai-logs-rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -427,11 +311,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentProjectManagementUsers = nextUsers;
-          const nextChangeKey = buildProjectManagementUsersChangeKey(nextUsers);
-          if (nextChangeKey !== lastUsersChangeKey) {
-            lastUsersChangeKey = nextChangeKey;
-            writeProjectManagementUsersEvent("update", nextUsers);
-          }
+          writeProjectManagementUsersEvent("update", nextUsers);
         }).catch((error) => {
           logServerEvent("events-stream", "project-management-users-rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -454,11 +334,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentProjectManagementDocuments = nextDocuments;
-          const nextChangeKey = buildProjectManagementDocumentsChangeKey(nextDocuments);
-          if (nextChangeKey !== lastDocumentsChangeKey) {
-            lastDocumentsChangeKey = nextChangeKey;
-            writeProjectManagementDocumentsEvent("update", nextDocuments);
-          }
+          writeProjectManagementDocumentsEvent("update", nextDocuments);
         }).catch((error) => {
           logServerEvent("events-stream", "project-management-documents-rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -504,7 +380,6 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
   router.get("/state/stream", async (req, res, next) => {
     try {
       let currentState = await context.loadState();
-      let lastChangeKey = buildStateChangeKey(currentState);
       let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -567,16 +442,12 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
             return;
           }
           currentState = nextState;
-          const nextChangeKey = buildStateChangeKey(nextState);
           noteDashboardRebuild("state-stream", {
             section: "state",
             stage: "done",
             worktrees: nextState.worktrees.length,
           });
-          if (nextChangeKey !== lastChangeKey) {
-            lastChangeKey = nextChangeKey;
-            writeEvent("update", nextState);
-          }
+          writeEvent("update", nextState);
         }).catch((error) => {
           logServerEvent("state-stream", "rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -610,7 +481,6 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
   router.get("/shutdown-status", async (req, res, next) => {
     try {
       let currentStatus = await context.operationalState.getShutdownStatus();
-      let lastPayload = JSON.stringify(currentStatus);
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -618,7 +488,8 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       res.flushHeaders?.();
 
       const writeStatus = (status: ShutdownStatus) => {
-        res.write(`data: ${JSON.stringify(status)}\n\n`);
+        const payload = JSON.stringify(status);
+        res.write(`data: ${payload}\n\n`);
       };
 
       writeStatus(currentStatus);
@@ -633,11 +504,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         void Promise.resolve().then(async () => {
           const nextStatus = await context.operationalState.getShutdownStatus();
           currentStatus = nextStatus;
-          const nextPayload = JSON.stringify(nextStatus);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
-            writeStatus(nextStatus);
-          }
+          writeStatus(nextStatus);
         }).catch((error) => {
           logServerEvent("shutdown-status", "poll-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -672,7 +539,6 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
   router.get("/system/stream", async (_req, res, next) => {
     try {
       let currentStatus = await getSystemStatus(context.repoRoot);
-      let lastPayload = JSON.stringify(currentStatus);
       let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -710,7 +576,8 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
 
         const event: SystemStatusStreamEvent = { type, status };
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          const payload = JSON.stringify(event);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
@@ -731,11 +598,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentStatus = nextStatus;
-          const nextPayload = JSON.stringify(nextStatus);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
-            writeEvent("update", nextStatus);
-          }
+          writeEvent("update", nextStatus);
         }).catch((error) => {
           logServerEvent("system-status-stream", "rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),
@@ -878,7 +741,6 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
     try {
       const config = await context.loadCurrentConfig();
       let currentUsers = await listProjectManagementUsers(context.repoRoot, config.projectManagement.users);
-      let lastPayload = JSON.stringify(currentUsers);
       let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -916,7 +778,8 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
 
         const event: ProjectManagementUsersStreamEvent = { type, users };
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          const payload = JSON.stringify(event);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
@@ -938,11 +801,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentUsers = nextUsers;
-          const nextPayload = JSON.stringify(nextUsers);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
-            writeEvent("update", nextUsers);
-          }
+          writeEvent("update", nextUsers);
         }).catch((error) => {
           logServerEvent("project-management-users-stream", "rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),

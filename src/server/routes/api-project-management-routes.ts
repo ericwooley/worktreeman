@@ -69,7 +69,6 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
   router.get("/project-management/documents/stream", async (_req, res, next) => {
     try {
       let currentDocuments = await listProjectManagementDocuments(context.repoRoot);
-      let lastPayload = JSON.stringify(currentDocuments);
       let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -107,7 +106,8 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
 
         const event: ProjectManagementDocumentsStreamEvent = { type, documents };
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          const payload = JSON.stringify(event);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
@@ -128,11 +128,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
           }
 
           currentDocuments = nextDocuments;
-          const nextPayload = JSON.stringify(nextDocuments);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
-            writeEvent("update", nextDocuments);
-          }
+          writeEvent("update", nextDocuments);
         }).catch((error) => {
           logServerEvent("project-management-documents-stream", "rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),

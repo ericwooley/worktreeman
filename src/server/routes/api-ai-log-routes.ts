@@ -12,30 +12,6 @@ import {
 import type { ApiRouterContext } from "./api-router-context.js";
 import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service.js";
 
-function buildAiLogChangeKey(log: AiCommandLogEntry | null): string {
-  if (!log) {
-    return "null";
-  }
-
-  const events = log.response.events ?? [];
-  const lastEvent = events.at(-1);
-  return [
-    log.jobId,
-    log.status,
-    log.completedAt ?? "",
-    log.pid ?? "",
-    log.exitCode ?? "",
-    log.processName ?? "",
-    log.error?.message ?? "",
-    log.response.stdout.length,
-    log.response.stderr.length,
-    events.length,
-    lastEvent?.id ?? "",
-    lastEvent?.timestamp ?? "",
-    lastEvent?.text.length ?? 0,
-  ].join(":");
-}
-
 export function registerApiAiLogRoutes(router: express.Router, context: ApiRouterContext) {
   router.get("/ai/logs", async (_req, res, next) => {
     try {
@@ -79,7 +55,6 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
       }
 
       let currentLog: AiCommandLogEntry | null = null;
-      let lastChangeKey = "null";
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -135,26 +110,20 @@ export function registerApiAiLogRoutes(router: express.Router, context: ApiRoute
 
       const refreshLog = async () => {
         try {
+          const hadLog = currentLog !== null;
           const nextLog = await readAiCommandLogEntryByIdentifier(context.repoRoot, jobId);
           if (isStreamClosed()) {
             return;
           }
 
           currentLog = nextLog;
-          const nextChangeKey = buildAiLogChangeKey(nextLog);
-          if (nextChangeKey !== lastChangeKey) {
-            const eventType = lastChangeKey === "null" ? "snapshot" : "update";
-            lastChangeKey = nextChangeKey;
-            writeEvent(eventType, nextLog);
-          }
+          const eventType = hadLog ? "update" : "snapshot";
+          writeEvent(eventType, nextLog);
         } catch (error) {
           const code = error instanceof Error && "code" in error ? (error as NodeJS.ErrnoException).code : undefined;
           if (code === "ENOENT") {
             currentLog = null;
-            if (lastChangeKey !== "null") {
-              lastChangeKey = "null";
-              writeEvent("update", null);
-            }
+            writeEvent("update", null);
             return;
           }
 

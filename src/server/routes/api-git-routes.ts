@@ -52,7 +52,6 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       }
 
       let currentComparison = await getGitComparison(context.repoRoot, compareBranch, baseBranch);
-      let lastPayload = JSON.stringify(currentComparison);
       let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -90,7 +89,8 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
 
         const event: GitComparisonStreamEvent = { type, comparison };
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          const payload = JSON.stringify(event);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
@@ -111,11 +111,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
           }
 
           currentComparison = nextComparison;
-          const nextPayload = JSON.stringify(nextComparison);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
-            writeEvent("update", nextComparison);
-          }
+          writeEvent("update", nextComparison);
         }).catch((error) => {
           logServerEvent("git-comparison-stream", "rebuild-failed", {
             compareBranch,
