@@ -7,6 +7,7 @@ import type {
   AiCommandId,
   AiCommandJob,
   AiCommandLogEntry,
+  AiCommandLogsResponse,
   AiCommandLogSummary,
   AiCommandOrigin,
   AiCommandOutputEvent,
@@ -717,6 +718,27 @@ export function isAiCommandLogActivelyRunning(entry: AiCommandLogEntry): boolean
 
 export function toHistoricalAiCommandLogSummaries(entries: AiCommandLogEntry[]): AiCommandLogSummary[] {
   return entries.filter((entry) => entry.status !== "running" || isAiCommandLogFinalizing(entry)).map(toAiCommandLogSummary);
+}
+
+export async function buildAiCommandLogsResponse(options: {
+  repoRoot: string;
+  aiProcesses: ApiAiProcesses;
+  reconcileJobs?: boolean;
+}): Promise<AiCommandLogsResponse> {
+  const rawEntries = await listAiCommandLogEntries(options.repoRoot);
+  const reconciledEntries = await Promise.all(
+    rawEntries.map((entry) => resolveHistoricalAiCommandLogEntry({
+      entry,
+      repoRoot: options.repoRoot,
+      aiProcesses: options.aiProcesses,
+      reconcileJobs: options.reconcileJobs,
+    })),
+  );
+
+  return {
+    logs: toHistoricalAiCommandLogSummaries(reconciledEntries),
+    runningJobs: rawEntries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
+  };
 }
 
 export async function listAiCommandLogEntries(repoRoot: string): Promise<AiCommandLogEntry[]> {

@@ -3,6 +3,7 @@ import type {
   AddProjectManagementCommentRequest,
   AiCommandLogEntry,
   AiCommandLogSummary,
+  AiCommandLogsResponse,
   AiCommandLogStreamEvent,
   ApiStateResponse,
   ApiStateStreamEvent,
@@ -141,6 +142,14 @@ function applyDashboardEventsStreamEvent(options: {
   setProjectManagementError: React.Dispatch<React.SetStateAction<string | null>>;
   setProjectManagementLastUpdatedAt: React.Dispatch<React.SetStateAction<string | null>>;
   setProjectManagementLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  setAiCommandLogs: React.Dispatch<React.SetStateAction<AiCommandLogSummary[]>>;
+  setRunningAiCommandJobs: React.Dispatch<React.SetStateAction<AiCommandJob[]>>;
+  setAiCommandLogsError: React.Dispatch<React.SetStateAction<string | null>>;
+  setAiCommandLogsLastUpdatedAt: React.Dispatch<React.SetStateAction<string | null>>;
+  setAiCommandLogsLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  setAiCommandLogDetail: React.Dispatch<React.SetStateAction<AiCommandLogEntry | null>>;
+  getTrackedAiCommandLogJobId: () => string | null;
+  clearTrackedAiCommandLogSubscription: () => void;
   setError: React.Dispatch<React.SetStateAction<string | null>>;
 }) {
   const timestamp = new Date().toISOString();
@@ -160,6 +169,14 @@ function applyDashboardEventsStreamEvent(options: {
     setProjectManagementError,
     setProjectManagementLastUpdatedAt,
     setProjectManagementLoading,
+    setAiCommandLogs,
+    setRunningAiCommandJobs,
+    setAiCommandLogsError,
+    setAiCommandLogsLastUpdatedAt,
+    setAiCommandLogsLoading,
+    setAiCommandLogDetail,
+    getTrackedAiCommandLogJobId,
+    clearTrackedAiCommandLogSubscription,
     setError,
   } = options;
 
@@ -181,6 +198,27 @@ function applyDashboardEventsStreamEvent(options: {
       setSystemLoading(false);
       setError(null);
       return;
+    case "ai-logs": {
+      const payload = event.event.logs;
+      setAiCommandLogs(payload.logs);
+      setRunningAiCommandJobs(payload.runningJobs);
+
+      const trackedAiCommandLogJobId = getTrackedAiCommandLogJobId();
+      if (trackedAiCommandLogJobId) {
+        const selectedStillExists = payload.logs.some((entry) => entry.jobId === trackedAiCommandLogJobId)
+          || payload.runningJobs.some((entry) => entry.jobId === trackedAiCommandLogJobId);
+        if (!selectedStillExists) {
+          clearTrackedAiCommandLogSubscription();
+          setAiCommandLogDetail(null);
+        }
+      }
+
+      setAiCommandLogsError(null);
+      setAiCommandLogsLastUpdatedAt(timestamp);
+      setAiCommandLogsLoading(false);
+      setError(null);
+      return;
+    }
     case "project-management-documents":
       setProjectManagement(event.event.documents);
       setProjectManagementError(null);
@@ -227,7 +265,7 @@ function useDashboardStateInternal() {
   const [projectManagementDocumentAiRunningBranch, setProjectManagementDocumentAiRunningBranch] = useState<string | null>(null);
   const [aiCommandLogs, setAiCommandLogs] = useState<AiCommandLogSummary[]>([]);
   const [aiCommandLogDetail, setAiCommandLogDetail] = useState<AiCommandLogEntry | null>(null);
-  const [aiCommandLogsLoading, setAiCommandLogsLoading] = useState(false);
+  const [aiCommandLogsLoading, setAiCommandLogsLoading] = useState(true);
   const [aiCommandLogsError, setAiCommandLogsError] = useState<string | null>(null);
   const [aiCommandLogsLastUpdatedAt, setAiCommandLogsLastUpdatedAt] = useState<string | null>(null);
   const [runningAiCommandJobs, setRunningAiCommandJobs] = useState<AiCommandJob[]>([]);
@@ -266,6 +304,14 @@ function useDashboardStateInternal() {
         setProjectManagementError,
         setProjectManagementLastUpdatedAt,
         setProjectManagementLoading,
+        setAiCommandLogs,
+        setRunningAiCommandJobs,
+        setAiCommandLogsError,
+        setAiCommandLogsLastUpdatedAt,
+        setAiCommandLogsLoading,
+        setAiCommandLogDetail,
+        getTrackedAiCommandLogJobId,
+        clearTrackedAiCommandLogSubscription,
         setError,
       });
     },
@@ -375,6 +421,26 @@ function useDashboardStateInternal() {
       return next.sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
     });
   }, []);
+
+  const applyAiCommandLogsPayload = useCallback((payload: AiCommandLogsResponse) => {
+    setAiCommandLogs(payload.logs);
+    setRunningAiCommandJobs(payload.runningJobs);
+
+    const trackedAiCommandLogJobId = getTrackedAiCommandLogJobId();
+    if (trackedAiCommandLogJobId) {
+      const selectedStillExists = payload.logs.some((entry) => entry.jobId === trackedAiCommandLogJobId)
+        || payload.runningJobs.some((entry) => entry.jobId === trackedAiCommandLogJobId);
+      if (!selectedStillExists) {
+        clearTrackedAiCommandLogSubscription();
+        setAiCommandLogDetail(null);
+      }
+    }
+
+    setAiCommandLogsError(null);
+    setAiCommandLogsLastUpdatedAt(new Date().toISOString());
+    setAiCommandLogsLoading(false);
+    setError(null);
+  }, [clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId]);
 
   const trackAiCommandJob = useCallback((branch: string | null) => {
     if (trackedAiCommandBranchRef.current === branch) {
@@ -873,20 +939,7 @@ function useDashboardStateInternal() {
 
         try {
           const payload = await fetchAiCommandLogs();
-          setAiCommandLogs(payload.logs);
-          setRunningAiCommandJobs(payload.runningJobs);
-          const trackedAiCommandLogJobId = getTrackedAiCommandLogJobId();
-          if (trackedAiCommandLogJobId) {
-            const selectedStillExists = payload.logs.some((entry) => entry.jobId === trackedAiCommandLogJobId)
-              || payload.runningJobs.some((entry) => entry.jobId === trackedAiCommandLogJobId);
-            if (!selectedStillExists) {
-              clearTrackedAiCommandLogSubscription();
-              setAiCommandLogDetail(null);
-            }
-          }
-          setAiCommandLogsError(null);
-          setAiCommandLogsLastUpdatedAt(new Date().toISOString());
-          setError(null);
+          applyAiCommandLogsPayload(payload);
           return payload;
         } catch (err) {
           const message = err instanceof Error ? err.message : "Failed to load AI logs.";
@@ -942,9 +995,7 @@ function useDashboardStateInternal() {
           setProjectManagementDocumentAiJob(result.job);
           setProjectManagementDocumentAiRunningBranch(result.job.status === "running" ? branch : null);
           upsertRunningAiJob(result.job);
-          const payload = await fetchAiCommandLogs();
-          setAiCommandLogs(payload.logs);
-          setRunningAiCommandJobs(payload.runningJobs);
+          applyAiCommandLogsPayload(await fetchAiCommandLogs());
           setError(null);
           return result.job;
         } catch (err) {
@@ -958,9 +1009,7 @@ function useDashboardStateInternal() {
           setAiCommandJob(result.job);
           setAiCommandRunningBranch(result.job.status === "running" ? branch : null);
           upsertRunningAiJob(result.job);
-          const payload = await fetchAiCommandLogs();
-          setAiCommandLogs(payload.logs);
-          setRunningAiCommandJobs(payload.runningJobs);
+          applyAiCommandLogsPayload(await fetchAiCommandLogs());
           setError(null);
           return result.job;
         } catch (err) {
@@ -1111,7 +1160,7 @@ function useDashboardStateInternal() {
         }
       },
     }),
-    [appendBackgroundLogs, applyProjectManagementSummary, clearTrackedAiCommandLogSubscription, getTrackedAiCommandLogJobId, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, loadSystemStatusState, projectManagement?.documents, projectManagementDocument?.id, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, applyAiCommandLogsPayload, applyProjectManagementSummary, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, loadSystemStatusState, projectManagement?.documents, projectManagementDocument?.id, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {

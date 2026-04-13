@@ -197,6 +197,7 @@ export interface ShutdownStatusStreamEvent {
 export type DashboardEventsStreamEvent =
   | { type: "state"; event: ApiStateStreamEvent }
   | { type: "shutdown-status"; event: ShutdownStatusStreamEvent }
+  | { type: "ai-logs"; event: AiCommandLogsStreamEvent }
   | { type: "project-management-documents"; event: ProjectManagementDocumentsStreamEvent }
   | { type: "project-management-users"; event: ProjectManagementUsersStreamEvent }
   | { type: "system-status"; event: SystemStatusStreamEvent };
@@ -705,6 +706,11 @@ export interface AiCommandLogEntry {
 export interface AiCommandLogsResponse {
   logs: AiCommandLogSummary[];
   runningJobs: AiCommandJob[];
+}
+
+export interface AiCommandLogsStreamEvent {
+  type: "snapshot" | "update";
+  logs: AiCommandLogsResponse;
 }
 
 export interface AiCommandLogResponse {

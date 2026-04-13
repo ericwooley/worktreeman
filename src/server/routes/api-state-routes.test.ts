@@ -15,6 +15,7 @@ import {
   openSse,
   readStateSnapshot,
   startApiServer,
+  writeAiLogFixture,
 } from "./api-test-helpers.js";
 import { loadConfig } from "../services/config-service.js";
 import { createWorktree } from "../services/git-service.js";
@@ -24,7 +25,7 @@ import { findWorktreePathForRef } from "../utils/paths.js";
 import { runCommand } from "../utils/process.js";
 import { startServer } from "../app.js";
 import { resolveTmuxSessionName } from "../services/terminal-service.js";
-import type { SystemStatusResponse } from "../../shared/types.js";
+import type { AiCommandOrigin, SystemStatusResponse } from "../../shared/types.js";
 
 test("GET /api/state returns favicon and preferred port config", async () => {
   const repo = await createApiTestRepo();
@@ -70,6 +71,7 @@ test("GET /api/events/stream multiplexes initial dashboard snapshots", async () 
       const stateSnapshot = await stream.nextEvent() as unknown as { type: "state"; event: { type: string; state: { worktrees: unknown[] } } };
       const shutdownSnapshot = await stream.nextEvent() as unknown as { type: "shutdown-status"; event: { type: string; status: { active: boolean } } };
       const systemSnapshot = await stream.nextEvent() as unknown as { type: "system-status"; event: { type: string; status: { capturedAt: string } } };
+      const aiLogsSnapshot = await stream.nextEvent() as unknown as { type: "ai-logs"; event: { type: string; logs: { logs: unknown[]; runningJobs: unknown[] } } };
       const usersSnapshot = await stream.nextEvent() as unknown as { type: "project-management-users"; event: { type: string; users: { users: unknown[] } } };
       const documentsSnapshot = await stream.nextEvent() as unknown as { type: "project-management-documents"; event: { type: string; documents: { documents: unknown[] } } };
 
@@ -85,6 +87,11 @@ test("GET /api/events/stream multiplexes initial dashboard snapshots", async () 
       assert.equal(systemSnapshot.event.type, "snapshot");
       assert.equal(typeof systemSnapshot.event.status.capturedAt, "string");
 
+      assert.equal(aiLogsSnapshot.type, "ai-logs");
+      assert.equal(aiLogsSnapshot.event.type, "snapshot");
+      assert.ok(Array.isArray(aiLogsSnapshot.event.logs.logs));
+      assert.ok(Array.isArray(aiLogsSnapshot.event.logs.runningJobs));
+
       assert.equal(usersSnapshot.type, "project-management-users");
       assert.equal(usersSnapshot.event.type, "snapshot");
       assert.ok(Array.isArray(usersSnapshot.event.users.users));
@@ -92,6 +99,129 @@ test("GET /api/events/stream multiplexes initial dashboard snapshots", async () 
       assert.equal(documentsSnapshot.type, "project-management-documents");
       assert.equal(documentsSnapshot.event.type, "snapshot");
       assert.ok(Array.isArray(documentsSnapshot.event.documents.documents));
+    } finally {
+      await stream.close();
+      await server.close();
+    }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const worktreePath = path.join(repo.repoRoot, "feature-ai-log");
+  const fileName = `${worktreeId(worktreePath)}-events-stream-log.json`;
+  const origin: AiCommandOrigin = {
+    kind: "worktree-environment",
+    label: "Worktree environment",
+    description: "Started from feature-ai-log.",
+    location: {
+      tab: "environment",
+      branch: "feature-ai-log",
+      environmentSubTab: "terminal",
+    },
+  };
+
+  await writeAiLogFixture({
+    repoRoot: repo.repoRoot,
+    fileName,
+    branch: "feature-ai-log",
+    origin,
+    worktreePath,
+    command: "printf %s 'events stream me'",
+    request: "events stream me",
+    processName: "wtm:ai:events-stream-log",
+    pid: 9010,
+    stdout: "first line\n",
+  });
+
+  try {
+    const server = await startApiServer(repo, { aiLogStreamPollIntervalMs: 10 });
+    const stream = await openSse(`${await server.url()}/api/events/stream`);
+
+    try {
+      let aiLogsSnapshot: {
+        type: "ai-logs";
+        event: {
+          type: string;
+          logs: {
+            logs: Array<{ fileName: string; status: string }>;
+            runningJobs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
+          };
+        };
+      } | null = null;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const event = await stream.nextEvent() as unknown as {
+          type: string;
+          event?: {
+            type: string;
+            logs: {
+              logs: Array<{ fileName: string; status: string }>;
+              runningJobs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
+            };
+          };
+        };
+
+        if (event.type === "ai-logs" && event.event) {
+          aiLogsSnapshot = event as typeof aiLogsSnapshot;
+          break;
+        }
+      }
+
+      assert.ok(aiLogsSnapshot);
+
+      assert.equal(aiLogsSnapshot.type, "ai-logs");
+      assert.equal(aiLogsSnapshot.event.type, "snapshot");
+      assert.equal(aiLogsSnapshot.event.logs.logs.some((entry) => entry.fileName === fileName), false);
+      assert.equal(aiLogsSnapshot.event.logs.runningJobs.length, 1);
+      assert.equal(aiLogsSnapshot.event.logs.runningJobs[0].fileName, fileName);
+      assert.equal(aiLogsSnapshot.event.logs.runningJobs[0].status, "running");
+      assert.deepEqual(aiLogsSnapshot.event.logs.runningJobs[0].origin, origin);
+
+      await writeAiLogFixture({
+        repoRoot: repo.repoRoot,
+        fileName,
+        branch: "feature-ai-log",
+        origin,
+        worktreePath,
+        command: "printf %s 'events stream me'",
+        request: "events stream me",
+        processName: "wtm:ai:events-stream-log",
+        pid: 9010,
+        stdout: "first line\nsecond line\n",
+        exitCode: 0,
+        completedAt: "2026-03-27T10:01:30.000Z",
+      });
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const event = await stream.nextEvent() as unknown as {
+          type: string;
+          event?: {
+            type: string;
+            logs: {
+              logs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
+              runningJobs: Array<{ fileName: string; status: string }>;
+            };
+          };
+        };
+
+        if (event.type !== "ai-logs") {
+          continue;
+        }
+
+        const completedLog = event.event?.logs.logs.find((entry) => entry.fileName === fileName);
+        if (!completedLog || completedLog.status !== "completed") {
+          continue;
+        }
+
+        assert.equal(event.event?.type, "update");
+        assert.deepEqual(completedLog.origin, origin);
+        assert.equal(event.event?.logs.runningJobs.every((entry) => entry.fileName !== fileName), true);
+        return;
+      }
+
+      assert.fail("Did not receive the expected multiplexed AI log update.");
     } finally {
       await stream.close();
       await server.close();

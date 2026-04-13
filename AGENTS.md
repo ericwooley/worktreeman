@@ -7,6 +7,7 @@
 - Keep this file up to date as features evolve so operational conventions and UI interaction rules remain documented alongside the code.
 - Treat operational server state as durable repo-backed data. Runtime state, AI job state, shutdown status, and similar server lifecycle data must survive a server restart for the same repo.
 - Prefer server-sent events backed by durable snapshots for shared dashboard state. Polling is a resilience fallback, not the primary live-update path.
+- For dashboard live data, extend the shared `/api/events/stream` multiplex and `DashboardEventsStreamEvent` instead of adding one-off SSE connections for each panel. Keep a single dashboard EventSource when the data belongs to the shared dashboard surface.
 - Prefer the shared matrix card pattern for list-style UI collections (AI logs, board lanes, dependency pickers, document rails, and similar index views) so titles, metadata, actions, and overflow handling stay consistent.
 - When a list item needs a heading area, use the shared `MatrixCardHeader` inside `MatrixCard` instead of recreating ad-hoc title/badge/action layouts. Keep item actions visually attached to the same card header so users do not need to scan around for the right control.
 - Never let ordinary command failures escalate to process-wide shutdown. CLI errors such as missing binaries, non-zero exits, missing process metadata, or post-processing failures must settle as request errors or durable job failures that surface in logs/UI.

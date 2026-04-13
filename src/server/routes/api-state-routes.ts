@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type {
   AiCommandConfig,
+  AiCommandLogsResponse,
+  AiCommandLogsStreamEvent,
   AiCommandSettingsResponse,
   ApiStateStreamEvent,
   ConfigDocumentResponse,
@@ -25,6 +27,7 @@ import {
   updateAiCommandInConfigContents,
   updateProjectManagementUsersInConfigContents,
 } from "../services/config-service.js";
+import { buildAiCommandLogsResponse } from "./api-helpers.js";
 import { getSystemStatus } from "../services/system-status-service.js";
 import { logServerEvent } from "../utils/server-logger.js";
 import type { ApiRouterContext } from "./api-router-context.js";
@@ -36,16 +39,23 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       let currentShutdownStatus = await context.operationalState.getShutdownStatus();
       let currentSystemStatus = await getSystemStatus(context.repoRoot);
       const initialConfig = await context.loadCurrentConfig();
+      let currentAiCommandLogs = await buildAiCommandLogsResponse({
+        repoRoot: context.repoRoot,
+        aiProcesses: context.passiveAiProcesses,
+        reconcileJobs: context.shouldReconcileAiJobs,
+      });
       let currentProjectManagementUsers = await listProjectManagementUsers(context.repoRoot, initialConfig.projectManagement.users);
       let currentProjectManagementDocuments = await context.listProjectManagementDocuments();
       let lastStatePayload = JSON.stringify(currentState);
       let lastShutdownPayload = JSON.stringify(currentShutdownStatus);
       let lastSystemPayload = JSON.stringify(currentSystemStatus);
+      let lastAiCommandLogsPayload = JSON.stringify(currentAiCommandLogs);
       let lastUsersPayload = JSON.stringify(currentProjectManagementUsers);
       let lastDocumentsPayload = JSON.stringify(currentProjectManagementDocuments);
       let rebuildingState = false;
       let rebuildingShutdown = false;
       let rebuildingSystem = false;
+      let rebuildingAiCommandLogs = false;
       let rebuildingUsers = false;
       let rebuildingDocuments = false;
 
@@ -64,12 +74,14 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
 
         closed = true;
         unsubscribeState();
+        void unsubscribeAiCommandLogs().catch(() => undefined);
         unsubscribeProjectManagementDocuments();
         unsubscribeProjectManagementUsers();
         unsubscribeSystemStatus();
         clearInterval(stateInterval);
         clearInterval(shutdownInterval);
         clearInterval(systemInterval);
+        clearInterval(aiCommandLogsInterval);
         clearInterval(projectManagementUsersInterval);
         clearInterval(projectManagementDocumentsInterval);
         clearInterval(keepAlive);
@@ -108,6 +120,10 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         writeEvent({ type: "system-status", event: { type, status } });
       };
 
+      const writeAiCommandLogsEvent = (type: AiCommandLogsStreamEvent["type"], logs: AiCommandLogsResponse) => {
+        writeEvent({ type: "ai-logs", event: { type, logs } });
+      };
+
       const writeProjectManagementUsersEvent = (
         type: ProjectManagementUsersStreamEvent["type"],
         users: ProjectManagementUsersResponse,
@@ -125,6 +141,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       writeStateEvent("snapshot", currentState);
       writeShutdownEvent("snapshot", currentShutdownStatus);
       writeSystemEvent("snapshot", currentSystemStatus);
+      writeAiCommandLogsEvent("snapshot", currentAiCommandLogs);
       writeProjectManagementUsersEvent("snapshot", currentProjectManagementUsers);
       writeProjectManagementDocumentsEvent("snapshot", currentProjectManagementDocuments);
 
@@ -209,6 +226,37 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         });
       };
 
+      const rebuildAndEmitAiCommandLogs = () => {
+        if (rebuildingAiCommandLogs || isStreamClosed()) {
+          return;
+        }
+
+        rebuildingAiCommandLogs = true;
+        void Promise.resolve().then(async () => {
+          const nextLogs = await buildAiCommandLogsResponse({
+            repoRoot: context.repoRoot,
+            aiProcesses: context.passiveAiProcesses,
+            reconcileJobs: context.shouldReconcileAiJobs,
+          });
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentAiCommandLogs = nextLogs;
+          const nextPayload = JSON.stringify(nextLogs);
+          if (nextPayload !== lastAiCommandLogsPayload) {
+            lastAiCommandLogsPayload = nextPayload;
+            writeAiCommandLogsEvent("update", nextLogs);
+          }
+        }).catch((error) => {
+          logServerEvent("events-stream", "ai-logs-rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuildingAiCommandLogs = false;
+        });
+      };
+
       const rebuildAndEmitProjectManagementUsers = () => {
         if (rebuildingUsers || isStreamClosed()) {
           return;
@@ -265,12 +313,16 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       };
 
       const unsubscribeState = context.subscribeToStateRefresh(rebuildAndEmitState);
+      const unsubscribeAiCommandLogs = await context.operationalState.subscribeToAiCommandLogNotifications(() => {
+        rebuildAndEmitAiCommandLogs();
+      });
       const unsubscribeProjectManagementDocuments = context.subscribeToProjectManagementDocumentsRefresh(rebuildAndEmitProjectManagementDocuments);
       const unsubscribeProjectManagementUsers = context.subscribeToProjectManagementUsersRefresh(rebuildAndEmitProjectManagementUsers);
       const unsubscribeSystemStatus = context.subscribeToSystemStatusRefresh(rebuildAndEmitSystem);
       const stateInterval = setInterval(rebuildAndEmitState, context.stateStreamFullRefreshIntervalMs);
       const shutdownInterval = setInterval(rebuildAndEmitShutdown, context.aiLogStreamPollIntervalMs);
       const systemInterval = setInterval(rebuildAndEmitSystem, context.stateStreamFullRefreshIntervalMs);
+      const aiCommandLogsInterval = setInterval(rebuildAndEmitAiCommandLogs, context.aiLogStreamPollIntervalMs);
       const projectManagementUsersInterval = setInterval(rebuildAndEmitProjectManagementUsers, context.stateStreamFullRefreshIntervalMs);
       const projectManagementDocumentsInterval = setInterval(rebuildAndEmitProjectManagementDocuments, context.stateStreamFullRefreshIntervalMs);
       const keepAlive = setInterval(() => {

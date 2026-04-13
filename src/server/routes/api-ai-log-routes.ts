@@ -2,38 +2,23 @@ import express from "express";
 import type {
   AiCommandLogEntry,
   AiCommandLogResponse,
-  AiCommandLogsResponse,
   AiCommandLogStreamEvent,
 } from "../../shared/types.js";
 import { logServerEvent } from "../utils/server-logger.js";
 import {
-  isAiCommandLogActivelyRunning,
-  listAiCommandLogEntries,
+  buildAiCommandLogsResponse,
   readAiCommandLogEntryByIdentifier,
-  resolveHistoricalAiCommandLogEntry,
-  toHistoricalAiCommandLogSummaries,
-  toRunningAiCommandJob,
 } from "./api-helpers.js";
 import type { ApiRouterContext } from "./api-router-context.js";
 
 export function registerApiAiLogRoutes(router: express.Router, context: ApiRouterContext) {
   router.get("/ai/logs", async (_req, res, next) => {
     try {
-      const rawEntries = await listAiCommandLogEntries(context.repoRoot);
-      const reconciledEntries = await Promise.all(
-        rawEntries.map((entry) => resolveHistoricalAiCommandLogEntry({
-          entry,
-          repoRoot: context.repoRoot,
-          aiProcesses: context.passiveAiProcesses,
-          reconcileJobs: context.shouldReconcileAiJobs,
-        })),
-      );
-
-      const payload: AiCommandLogsResponse = {
-        logs: toHistoricalAiCommandLogSummaries(reconciledEntries),
-        runningJobs: rawEntries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
-      };
-      res.json(payload);
+      res.json(await buildAiCommandLogsResponse({
+        repoRoot: context.repoRoot,
+        aiProcesses: context.passiveAiProcesses,
+        reconcileJobs: context.shouldReconcileAiJobs,
+      }));
     } catch (error) {
       next(error);
     }
