@@ -37,6 +37,7 @@ import { getAiCommandJob } from "../services/ai-command-service.js";
 import { listWorktrees } from "../services/git-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
+import type { AiCommandLogIndexEntry } from "../services/operational-state-service.js";
 import { runCommand } from "../utils/process.js";
 import {
   formatDurationMs,
@@ -708,12 +709,39 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
   };
 }
 
+function toAiCommandLogSummaryFromIndex(entry: AiCommandLogIndexEntry): AiCommandLogSummary {
+  const historicalStatus = isAiCommandLogIndexFinalizing(entry) && entry.documentId ? "completed" : entry.status;
+  return {
+    jobId: entry.jobId,
+    fileName: entry.fileName,
+    timestamp: entry.timestamp,
+    worktreeId: entry.worktreeId,
+    branch: entry.branch,
+    documentId: entry.documentId ?? null,
+    commandId: entry.commandId,
+    worktreePath: entry.worktreePath,
+    command: entry.command,
+    requestPreview: toAiCommandLogPreview(entry.request),
+    status: historicalStatus,
+    pid: entry.pid ?? null,
+    origin: entry.origin ?? null,
+  };
+}
+
 function isAiCommandLogFinalizing(entry: AiCommandLogEntry): boolean {
+  return entry.status === "running" && typeof entry.completedAt === "string";
+}
+
+function isAiCommandLogIndexFinalizing(entry: AiCommandLogIndexEntry): boolean {
   return entry.status === "running" && typeof entry.completedAt === "string";
 }
 
 export function isAiCommandLogActivelyRunning(entry: AiCommandLogEntry): boolean {
   return entry.status === "running" && !isAiCommandLogFinalizing(entry);
+}
+
+function isAiCommandLogIndexActivelyRunning(entry: AiCommandLogIndexEntry): boolean {
+  return entry.status === "running" && !isAiCommandLogIndexFinalizing(entry);
 }
 
 export function toHistoricalAiCommandLogSummaries(entries: AiCommandLogEntry[]): AiCommandLogSummary[] {
@@ -725,19 +753,36 @@ export async function buildAiCommandLogsResponse(options: {
   aiProcesses: ApiAiProcesses;
   reconcileJobs?: boolean;
 }): Promise<AiCommandLogsResponse> {
-  const rawEntries = await listAiCommandLogEntries(options.repoRoot);
+  const store = await createOperationalStateStore(options.repoRoot);
+  const rawEntries = (await store.listAiCommandLogIndexEntries()).filter((entry) => isAiCommandLogEntryInRepo(options.repoRoot, entry));
+  const runningEntries = rawEntries.filter(isAiCommandLogIndexActivelyRunning);
   const reconciledEntries = await Promise.all(
-    rawEntries.map((entry) => resolveHistoricalAiCommandLogEntry({
-      entry,
-      repoRoot: options.repoRoot,
-      aiProcesses: options.aiProcesses,
-      reconcileJobs: options.reconcileJobs,
-    })),
+    runningEntries.map(async (entry) => {
+      const fullEntry = await store.getAiCommandLogEntryByJobId(entry.jobId);
+      if (!fullEntry || !isAiCommandLogEntryInRepo(options.repoRoot, fullEntry)) {
+        return null;
+      }
+
+      return await resolveHistoricalAiCommandLogEntry({
+        entry: fullEntry,
+        repoRoot: options.repoRoot,
+        aiProcesses: options.aiProcesses,
+        reconcileJobs: options.reconcileJobs,
+      });
+    }),
   );
+  const resolvedRunningEntries = reconciledEntries.filter((entry): entry is AiCommandLogEntry => entry !== null);
+  const completedRunningLogs = resolvedRunningEntries
+    .filter((entry) => !isAiCommandLogActivelyRunning(entry))
+    .map(toAiCommandLogSummary);
+  const historicalLogs = rawEntries
+    .filter((entry) => !isAiCommandLogIndexActivelyRunning(entry) || isAiCommandLogIndexFinalizing(entry))
+    .map(toAiCommandLogSummaryFromIndex)
+    .filter((entry) => completedRunningLogs.every((resolved) => resolved.jobId !== entry.jobId));
 
   return {
-    logs: toHistoricalAiCommandLogSummaries(reconciledEntries),
-    runningJobs: reconciledEntries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
+    logs: [...completedRunningLogs, ...historicalLogs],
+    runningJobs: resolvedRunningEntries.filter(isAiCommandLogActivelyRunning).map(toRunningAiCommandJob),
   };
 }
 

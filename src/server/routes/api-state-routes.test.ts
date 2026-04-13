@@ -325,7 +325,7 @@ test("GET /api/state/stream rebuilds state on the fallback interval for out-of-b
         runtimeStartedAt: new Date().toISOString(),
       });
 
-      const update = await stream.nextEvent() as unknown as {
+      const update = await stream.nextEvent(10_000) as unknown as {
         type: string;
         state: { worktrees: Array<{ branch: string; runtime?: { branch: string; tmuxSession: string } }> };
       };

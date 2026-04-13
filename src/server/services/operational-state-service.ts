@@ -60,6 +60,46 @@ interface AiCommandLogRow {
   error_json: string | null;
 }
 
+interface AiCommandLogIndexRow {
+  job_id: string;
+  file_name: string;
+  timestamp: string;
+  worktree_id: string;
+  branch: string;
+  document_id: string | null;
+  command_id: string;
+  origin_json: string | null;
+  worktree_path: string;
+  command_text: string;
+  request_text: string;
+  status: string;
+  pid: number | null;
+  exit_code: number | null;
+  process_name: string | null;
+  completed_at: string | null;
+  error_json: string | null;
+}
+
+export interface AiCommandLogIndexEntry {
+  jobId: string;
+  fileName: string;
+  timestamp: string;
+  worktreeId: WorktreeId;
+  branch: string;
+  documentId?: string | null;
+  commandId: "smart" | "simple";
+  origin?: AiCommandOrigin | null;
+  worktreePath: string;
+  command: string;
+  request: string;
+  status: "running" | "completed" | "failed";
+  pid?: number | null;
+  exitCode?: number | null;
+  processName?: string | null;
+  completedAt?: string;
+  error: AiCommandLogError | null;
+}
+
 interface AiCommandOutputRow {
   job_id: string;
   worktree_id: string;
@@ -308,6 +348,33 @@ function toAiCommandLogEntry(row: AiCommandLogRow, events: AiCommandOutputEvent[
       stderr: row.stderr_text,
       events,
     },
+    status: row.status === "completed" ? "completed" : row.status === "failed" ? "failed" : "running",
+    pid: row.pid,
+    exitCode: row.exit_code,
+    processName: row.process_name,
+    completedAt: row.completed_at ?? undefined,
+    error: row.error_json ? toAiCommandLogError(JSON.parse(row.error_json)) : null,
+  };
+}
+
+function toAiCommandLogIndexEntry(row: AiCommandLogIndexRow): AiCommandLogIndexEntry {
+  const worktreeId = parseWorktreeId(row.worktree_id);
+  if (!worktreeId) {
+    throw new Error(`AI command log ${row.job_id} is missing a valid worktree id.`);
+  }
+
+  return {
+    jobId: row.job_id,
+    fileName: row.file_name,
+    timestamp: row.timestamp,
+    worktreeId,
+    branch: row.branch,
+    documentId: row.document_id,
+    commandId: row.command_id === "simple" ? "simple" : "smart",
+    origin: row.origin_json ? parseAiCommandOrigin(JSON.parse(row.origin_json)) : null,
+    worktreePath: row.worktree_path,
+    command: row.command_text,
+    request: row.request_text,
     status: row.status === "completed" ? "completed" : row.status === "failed" ? "failed" : "running",
     pid: row.pid,
     exitCode: row.exit_code,
@@ -1060,6 +1127,37 @@ export class OperationalStateStore {
     return toAiCommandLogEntry(row, events);
   }
 
+  async getAiCommandLogIndexEntryByJobId(jobId: string): Promise<AiCommandLogIndexEntry | null> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<AiCommandLogIndexRow>(
+      `
+        select
+          job_id,
+          file_name,
+          timestamp,
+          worktree_id,
+          branch,
+          document_id,
+          command_id,
+          origin_json,
+          worktree_path,
+          command_text,
+          request_text,
+          status,
+          pid,
+          exit_code,
+          process_name,
+          completed_at,
+          error_json
+        from ${AI_RUN_LOGS_TABLE}
+        where job_id = $1
+      `,
+      [jobId],
+    );
+    const row = result.rows[0];
+    return row ? toAiCommandLogIndexEntry(row) : null;
+  }
+
   async getAiCommandLogEntryByFileName(fileName: string): Promise<AiCommandLogEntry | null> {
     const managed = await ensureManagedStore(this.repoRoot);
     const result = await managed.db.query<AiCommandLogRow>(
@@ -1141,6 +1239,36 @@ export class OperationalStateStore {
       });
       return toAiCommandLogEntry(row, events);
     }));
+  }
+
+  async listAiCommandLogIndexEntries(): Promise<AiCommandLogIndexEntry[]> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<AiCommandLogIndexRow>(
+      `
+        select
+          job_id,
+          file_name,
+          timestamp,
+          worktree_id,
+          branch,
+          document_id,
+          command_id,
+          origin_json,
+          worktree_path,
+          command_text,
+          request_text,
+          status,
+          pid,
+          exit_code,
+          process_name,
+          completed_at,
+          error_json
+        from ${AI_RUN_LOGS_TABLE}
+        order by updated_at desc, file_name desc
+      `,
+    );
+
+    return result.rows.map(toAiCommandLogIndexEntry);
   }
 
   async subscribeToAiCommandLogNotifications(

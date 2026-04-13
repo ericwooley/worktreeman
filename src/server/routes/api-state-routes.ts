@@ -29,8 +29,134 @@ import {
 } from "../services/config-service.js";
 import { buildAiCommandLogsResponse } from "./api-helpers.js";
 import { getSystemStatus } from "../services/system-status-service.js";
-import { logServerEvent } from "../utils/server-logger.js";
+import {
+  formatBytes,
+  logServerEvent,
+  snapshotProcessMemoryUsage,
+} from "../utils/server-logger.js";
 import type { ApiRouterContext } from "./api-router-context.js";
+
+function buildStateChangeKey(state: Awaited<ReturnType<ApiRouterContext["loadState"]>>): string {
+  const worktrees = state.worktrees;
+  return [
+    state.config.favicon,
+    state.config.preferredPort ?? "",
+    worktrees.length,
+    ...worktrees.map((worktree) => [
+      worktree.id,
+      worktree.branch,
+      worktree.worktreePath,
+      worktree.headSha ?? "",
+      worktree.runtime?.tmuxSession ?? "",
+      worktree.runtime?.runtimeStartedAt ?? "",
+      worktree.runtime ? "1" : "0",
+      worktree.deletion?.canDelete ? "1" : "0",
+      worktree.deletion?.reason ?? "",
+    ].join(":")),
+  ].join("|");
+}
+
+function buildShutdownChangeKey(status: ShutdownStatus): string {
+  const lastLog = status.logs.at(-1);
+  return [
+    status.active ? "1" : "0",
+    status.completed ? "1" : "0",
+    status.failed ? "1" : "0",
+    status.logs.length,
+    lastLog?.id ?? "",
+    lastLog?.timestamp ?? "",
+    lastLog?.level ?? "",
+  ].join(":");
+}
+
+function buildSystemChangeKey(status: SystemStatusResponse): string {
+  const firstJob = status.jobs.items[0];
+  return [
+    status.capturedAt,
+    status.performance.memory.usedBytes,
+    status.performance.memory.freeBytes,
+    status.performance.worktrees.total,
+    status.performance.worktrees.runtimeCount,
+    status.jobs.available ? "1" : "0",
+    status.jobs.total,
+    firstJob?.id ?? "",
+    firstJob?.state ?? "",
+    firstJob?.heartbeatAt ?? "",
+  ].join(":");
+}
+
+function buildAiCommandLogsChangeKey(logs: AiCommandLogsResponse): string {
+  const historicalTail = logs.logs.slice(0, 10);
+  const runningTail = logs.runningJobs.slice(0, 10);
+  return [
+    logs.logs.length,
+    logs.runningJobs.length,
+    ...historicalTail.map((entry) => [entry.jobId, entry.status, entry.timestamp, entry.pid ?? "", entry.origin?.kind ?? ""].join(":")),
+    ...runningTail.map((entry) => [
+      entry.jobId,
+      entry.status,
+      entry.completedAt ?? "",
+      entry.pid ?? "",
+      entry.exitCode ?? "",
+      entry.processName ?? "",
+      entry.error ?? "",
+    ].join(":")),
+  ].join("|");
+}
+
+function buildProjectManagementUsersChangeKey(users: ProjectManagementUsersResponse): string {
+  const lastUser = users.users.at(-1);
+  return [
+    users.users.length,
+    users.config.customUsers.length,
+    users.config.archivedUserIds.length,
+    lastUser?.id ?? "",
+    lastUser?.archived ? "1" : "0",
+    lastUser?.lastCommitAt ?? "",
+  ].join(":");
+}
+
+function buildProjectManagementDocumentsChangeKey(
+  documents: Awaited<ReturnType<ApiRouterContext["listProjectManagementDocuments"]>>,
+): string {
+  const lastDocument = documents.documents.at(-1);
+  return [
+    documents.documents.length,
+    documents.availableTags.length,
+    documents.availableStatuses.length,
+    lastDocument?.id ?? "",
+    lastDocument?.updatedAt ?? "",
+    lastDocument?.historyCount ?? "",
+  ].join(":");
+}
+
+function noteDashboardRebuild(scope: string, details: Record<string, unknown>) {
+  const memory = snapshotProcessMemoryUsage();
+  logServerEvent(scope, "rebuild", {
+    ...details,
+    rss: formatBytes(memory.rssBytes),
+    heapUsed: formatBytes(memory.heapUsedBytes),
+    heapTotal: formatBytes(memory.heapTotalBytes),
+    heapRatio: memory.heapUsedRatio ?? "n/a",
+  });
+}
+
+function noteDashboardPayload(scope: string, eventType: DashboardEventsStreamEvent["type"], payload: string) {
+  const payloadBytes = Buffer.byteLength(payload, "utf8");
+  if (payloadBytes < 512 * 1024) {
+    return;
+  }
+
+  const memory = snapshotProcessMemoryUsage();
+  logServerEvent(scope, "large-payload", {
+    eventType,
+    payloadBytes,
+    payload: formatBytes(payloadBytes),
+    heapUsed: formatBytes(memory.heapUsedBytes),
+    heapTotal: formatBytes(memory.heapTotalBytes),
+    heapRatio: memory.heapUsedRatio ?? "n/a",
+  }, payloadBytes >= 2 * 1024 * 1024 ? "warn" : "info");
+}
 
 export function registerApiStateRoutes(router: express.Router, context: ApiRouterContext) {
   router.get("/state", async (_req, res, next) => {
@@ -55,12 +181,12 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       });
       let currentProjectManagementUsers = await listProjectManagementUsers(context.repoRoot, initialConfig.projectManagement.users);
       let currentProjectManagementDocuments = await context.listProjectManagementDocuments();
-      let lastStatePayload = JSON.stringify(currentState);
-      let lastShutdownPayload = JSON.stringify(currentShutdownStatus);
-      let lastSystemPayload = JSON.stringify(currentSystemStatus);
-      let lastAiCommandLogsPayload = JSON.stringify(currentAiCommandLogs);
-      let lastUsersPayload = JSON.stringify(currentProjectManagementUsers);
-      let lastDocumentsPayload = JSON.stringify(currentProjectManagementDocuments);
+      let lastStateChangeKey = buildStateChangeKey(currentState);
+      let lastShutdownChangeKey = buildShutdownChangeKey(currentShutdownStatus);
+      let lastSystemChangeKey = buildSystemChangeKey(currentSystemStatus);
+      let lastAiCommandLogsChangeKey = buildAiCommandLogsChangeKey(currentAiCommandLogs);
+      let lastUsersChangeKey = buildProjectManagementUsersChangeKey(currentProjectManagementUsers);
+      let lastDocumentsChangeKey = buildProjectManagementDocumentsChangeKey(currentProjectManagementDocuments);
       let rebuildingState = false;
       let rebuildingShutdown = false;
       let rebuildingSystem = false;
@@ -111,7 +237,9 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         }
 
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          const payload = JSON.stringify(event);
+          noteDashboardPayload("events-stream", event.type, payload);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
@@ -161,15 +289,21 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
 
         rebuildingState = true;
         void Promise.resolve().then(async () => {
+          noteDashboardRebuild("events-stream", { section: "state", stage: "start" });
           const nextState = await context.loadState();
           if (isStreamClosed()) {
             return;
           }
 
           currentState = nextState;
-          const nextPayload = JSON.stringify(nextState);
-          if (nextPayload !== lastStatePayload) {
-            lastStatePayload = nextPayload;
+          const nextChangeKey = buildStateChangeKey(nextState);
+          noteDashboardRebuild("events-stream", {
+            section: "state",
+            stage: "done",
+            worktrees: nextState.worktrees.length,
+          });
+          if (nextChangeKey !== lastStateChangeKey) {
+            lastStateChangeKey = nextChangeKey;
             writeStateEvent("update", nextState);
           }
         }).catch((error) => {
@@ -194,9 +328,9 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentShutdownStatus = nextStatus;
-          const nextPayload = JSON.stringify(nextStatus);
-          if (nextPayload !== lastShutdownPayload) {
-            lastShutdownPayload = nextPayload;
+          const nextChangeKey = buildShutdownChangeKey(nextStatus);
+          if (nextChangeKey !== lastShutdownChangeKey) {
+            lastShutdownChangeKey = nextChangeKey;
             writeShutdownEvent("update", nextStatus);
           }
         }).catch((error) => {
@@ -215,15 +349,21 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
 
         rebuildingSystem = true;
         void Promise.resolve().then(async () => {
+          noteDashboardRebuild("events-stream", { section: "system", stage: "start" });
           const nextStatus = await getSystemStatus(context.repoRoot);
           if (isStreamClosed()) {
             return;
           }
 
           currentSystemStatus = nextStatus;
-          const nextPayload = JSON.stringify(nextStatus);
-          if (nextPayload !== lastSystemPayload) {
-            lastSystemPayload = nextPayload;
+          const nextChangeKey = buildSystemChangeKey(nextStatus);
+          noteDashboardRebuild("events-stream", {
+            section: "system",
+            stage: "done",
+            jobs: nextStatus.jobs.total,
+          });
+          if (nextChangeKey !== lastSystemChangeKey) {
+            lastSystemChangeKey = nextChangeKey;
             writeSystemEvent("update", nextStatus);
           }
         }).catch((error) => {
@@ -242,6 +382,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
 
         rebuildingAiCommandLogs = true;
         void Promise.resolve().then(async () => {
+          noteDashboardRebuild("events-stream", { section: "ai-logs", stage: "start" });
           const nextLogs = await buildAiCommandLogsResponse({
             repoRoot: context.repoRoot,
             aiProcesses: context.passiveAiProcesses,
@@ -252,9 +393,15 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentAiCommandLogs = nextLogs;
-          const nextPayload = JSON.stringify(nextLogs);
-          if (nextPayload !== lastAiCommandLogsPayload) {
-            lastAiCommandLogsPayload = nextPayload;
+          const nextChangeKey = buildAiCommandLogsChangeKey(nextLogs);
+          noteDashboardRebuild("events-stream", {
+            section: "ai-logs",
+            stage: "done",
+            logs: nextLogs.logs.length,
+            runningJobs: nextLogs.runningJobs.length,
+          });
+          if (nextChangeKey !== lastAiCommandLogsChangeKey) {
+            lastAiCommandLogsChangeKey = nextChangeKey;
             writeAiCommandLogsEvent("update", nextLogs);
           }
         }).catch((error) => {
@@ -280,9 +427,9 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentProjectManagementUsers = nextUsers;
-          const nextPayload = JSON.stringify(nextUsers);
-          if (nextPayload !== lastUsersPayload) {
-            lastUsersPayload = nextPayload;
+          const nextChangeKey = buildProjectManagementUsersChangeKey(nextUsers);
+          if (nextChangeKey !== lastUsersChangeKey) {
+            lastUsersChangeKey = nextChangeKey;
             writeProjectManagementUsersEvent("update", nextUsers);
           }
         }).catch((error) => {
@@ -307,9 +454,9 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }
 
           currentProjectManagementDocuments = nextDocuments;
-          const nextPayload = JSON.stringify(nextDocuments);
-          if (nextPayload !== lastDocumentsPayload) {
-            lastDocumentsPayload = nextPayload;
+          const nextChangeKey = buildProjectManagementDocumentsChangeKey(nextDocuments);
+          if (nextChangeKey !== lastDocumentsChangeKey) {
+            lastDocumentsChangeKey = nextChangeKey;
             writeProjectManagementDocumentsEvent("update", nextDocuments);
           }
         }).catch((error) => {
@@ -331,7 +478,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       const stateInterval = setInterval(rebuildAndEmitState, context.stateStreamFullRefreshIntervalMs);
       const shutdownInterval = setInterval(rebuildAndEmitShutdown, context.aiLogStreamPollIntervalMs);
       const systemInterval = setInterval(rebuildAndEmitSystem, context.stateStreamFullRefreshIntervalMs);
-      const aiCommandLogsInterval = setInterval(rebuildAndEmitAiCommandLogs, context.aiLogStreamPollIntervalMs);
+      const aiCommandLogsInterval = setInterval(rebuildAndEmitAiCommandLogs, Math.max(context.aiLogStreamPollIntervalMs * 6, 30000));
       const projectManagementUsersInterval = setInterval(rebuildAndEmitProjectManagementUsers, context.stateStreamFullRefreshIntervalMs);
       const projectManagementDocumentsInterval = setInterval(rebuildAndEmitProjectManagementDocuments, context.stateStreamFullRefreshIntervalMs);
       const keepAlive = setInterval(() => {
@@ -357,7 +504,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
   router.get("/state/stream", async (req, res, next) => {
     try {
       let currentState = await context.loadState();
-      let lastPayload = JSON.stringify(currentState);
+      let lastChangeKey = buildStateChangeKey(currentState);
       let rebuilding = false;
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -394,7 +541,9 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         }
         const event: ApiStateStreamEvent = { type, state };
         try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          const payload = JSON.stringify(event);
+          noteDashboardPayload("state-stream", "state", payload);
+          res.write(`data: ${payload}\n\n`);
         } catch {
           closeStream();
         }
@@ -412,14 +561,20 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           if (isStreamClosed()) {
             return;
           }
+          noteDashboardRebuild("state-stream", { section: "state", stage: "start" });
           const nextState = await context.loadState();
           if (isStreamClosed()) {
             return;
           }
           currentState = nextState;
-          const nextPayload = JSON.stringify(nextState);
-          if (nextPayload !== lastPayload) {
-            lastPayload = nextPayload;
+          const nextChangeKey = buildStateChangeKey(nextState);
+          noteDashboardRebuild("state-stream", {
+            section: "state",
+            stage: "done",
+            worktrees: nextState.worktrees.length,
+          });
+          if (nextChangeKey !== lastChangeKey) {
+            lastChangeKey = nextChangeKey;
             writeEvent("update", nextState);
           }
         }).catch((error) => {
