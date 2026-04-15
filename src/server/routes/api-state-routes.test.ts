@@ -164,7 +164,10 @@ test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }
         };
 
         if (event.type === "ai-logs" && event.event) {
-          aiLogsSnapshot = event as typeof aiLogsSnapshot;
+          aiLogsSnapshot = {
+            type: "ai-logs",
+            event: event.event,
+          };
           break;
         }
       }
@@ -173,7 +176,7 @@ test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }
 
       assert.equal(aiLogsSnapshot.type, "ai-logs");
       assert.equal(aiLogsSnapshot.event.type, "snapshot");
-      assert.equal(aiLogsSnapshot.event.logs.logs.some((entry) => entry.fileName === fileName), false);
+      assert.equal(aiLogsSnapshot.event.logs.logs.some((entry: { fileName: string; status: string }) => entry.fileName === fileName), false);
       assert.equal(aiLogsSnapshot.event.logs.runningJobs.length, 1);
       assert.equal(aiLogsSnapshot.event.logs.runningJobs[0].fileName, fileName);
       assert.equal(aiLogsSnapshot.event.logs.runningJobs[0].status, "running");

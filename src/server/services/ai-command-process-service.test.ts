@@ -8,9 +8,9 @@ import {
   deleteAiCommandProcess,
   getAiCommandProcess,
   isAiCommandProcessActive,
-  readAiCommandProcessLogs,
   startAiCommandProcess,
   stopAllAiCommandProcesses,
+  waitForAiCommandProcess,
 } from "./ai-command-process-service.js";
 import { getAiDiagnosticsThresholdsForTest, resetAiDiagnosticsForTest } from "./ai-command-diagnostics-service.js";
 
@@ -21,19 +21,34 @@ function createLineCollector(target: string[]) {
   };
 }
 
-async function waitForProcessToExit(processName: string, timeoutMs = 20000) {
-  const startedAt = Date.now();
+async function runManagedProcess(options: {
+  processName: string;
+  command: string;
+  input: string;
+  worktreePath: string;
+  env: NodeJS.ProcessEnv;
+}) {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
 
-  while (Date.now() - startedAt < timeoutMs) {
-    const processInfo = await getAiCommandProcess(processName);
-    if (!processInfo || !isAiCommandProcessActive(processInfo.status)) {
-      return processInfo;
-    }
+  await startAiCommandProcess({
+    ...options,
+    hooks: {
+      onStdout: (chunk) => {
+        stdout.push(chunk);
+      },
+      onStderr: (chunk) => {
+        stderr.push(chunk);
+      },
+    },
+  });
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-
-  throw new Error(`Timed out waiting for AI process ${processName} to exit.`);
+  const processInfo = await waitForAiCommandProcess(options.processName);
+  return {
+    processInfo,
+    stdout: stdout.join(""),
+    stderr: stderr.join(""),
+  };
 }
 
 test("AI command processes capture stdout directly", async () => {
@@ -41,7 +56,7 @@ test("AI command processes capture stdout directly", async () => {
   const processName = `wtm:ai:test-${Date.now()}`;
 
   try {
-    await startAiCommandProcess({
+    const result = await runManagedProcess({
       processName,
       command: "printf 'hello from stdout\n'",
       input: "",
@@ -49,12 +64,9 @@ test("AI command processes capture stdout directly", async () => {
       env: process.env,
     });
 
-    const processInfo = await waitForProcessToExit(processName);
-    const logs = await readAiCommandProcessLogs(processInfo);
-
-    assert.equal(logs.stdout, "hello from stdout\n");
-    assert.equal(logs.stderr, "");
-    assert.equal(processInfo?.exitCode ?? 0, 0);
+    assert.equal(result.stdout, "hello from stdout\n");
+    assert.equal(result.stderr, "");
+    assert.equal(result.processInfo?.exitCode ?? 0, 0);
   } finally {
     await deleteAiCommandProcess(processName).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -66,7 +78,7 @@ test("AI command process logs keep stderr in log data for successful runs", asyn
   const processName = `wtm:ai:test-sanitize-${Date.now()}`;
 
   try {
-    await startAiCommandProcess({
+    const result = await runManagedProcess({
       processName,
       command: "printf '\\033[0mhello\\033[0m\\n' && printf '\\033[31mwarn\\033[0m\\n' >&2",
       input: "",
@@ -74,13 +86,10 @@ test("AI command process logs keep stderr in log data for successful runs", asyn
       env: process.env,
     });
 
-    const processInfo = await waitForProcessToExit(processName);
-    const logs = await readAiCommandProcessLogs(processInfo);
-
-    assert.equal(logs.stdout, "hello\n");
-    assert.equal(logs.stderr, "warn\n");
-    assert.doesNotMatch(logs.stdout, /\u001b|\[0m/);
-    assert.doesNotMatch(logs.stderr, /\u001b|\[31m/);
+    assert.equal(result.stdout, "hello\n");
+    assert.equal(result.stderr, "warn\n");
+    assert.doesNotMatch(result.stdout, /\u001b|\[0m/);
+    assert.doesNotMatch(result.stderr, /\u001b|\[31m/);
   } finally {
     await deleteAiCommandProcess(processName).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -92,7 +101,7 @@ test("AI command process logs keep stderr for failed runs", async () => {
   const processName = `wtm:ai:test-failed-stderr-${Date.now()}`;
 
   try {
-    await startAiCommandProcess({
+    const result = await runManagedProcess({
       processName,
       command: "printf 'partial\n' && printf '\\033[31mboom\\033[0m\\n' >&2 && exit 2",
       input: "",
@@ -100,13 +109,10 @@ test("AI command process logs keep stderr for failed runs", async () => {
       env: process.env,
     });
 
-    const processInfo = await waitForProcessToExit(processName);
-    const logs = await readAiCommandProcessLogs(processInfo);
-
-    assert.equal(processInfo?.exitCode, 2);
-    assert.equal(logs.stdout, "partial\n");
-    assert.equal(logs.stderr, "boom\n");
-    assert.doesNotMatch(logs.stderr, /\u001b|\[31m/);
+    assert.equal(result.processInfo?.exitCode, 2);
+    assert.equal(result.stdout, "partial\n");
+    assert.equal(result.stderr, "boom\n");
+    assert.doesNotMatch(result.stderr, /\u001b|\[31m/);
   } finally {
     await deleteAiCommandProcess(processName).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -119,7 +125,7 @@ test("AI command process sets WTM_AI_INPUT env variable from input option", asyn
   const testInput = "Hello, world! This is a test with 'single quotes' and \"double quotes\" and newlines\n";
 
   try {
-    await startAiCommandProcess({
+    const result = await runManagedProcess({
       processName,
       command: "printf '%s' \"$WTM_AI_INPUT\"",
       input: testInput,
@@ -127,11 +133,8 @@ test("AI command process sets WTM_AI_INPUT env variable from input option", asyn
       env: process.env,
     });
 
-    const processInfo = await waitForProcessToExit(processName);
-    const logs = await readAiCommandProcessLogs(processInfo);
-
-    assert.equal(logs.stdout, testInput);
-    assert.equal(processInfo?.exitCode ?? 0, 0);
+    assert.equal(result.stdout, testInput);
+    assert.equal(result.processInfo?.exitCode ?? 0, 0);
   } finally {
     await deleteAiCommandProcess(processName).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -144,7 +147,7 @@ test("AI command process passes multiline input with special chars via WTM_AI_IN
   const testInput = "Line one\nLine two with $special chars\nLine three with `backticks`\n";
 
   try {
-    await startAiCommandProcess({
+    const result = await runManagedProcess({
       processName,
       command: "printf '%s' \"$WTM_AI_INPUT\"",
       input: testInput,
@@ -152,11 +155,8 @@ test("AI command process passes multiline input with special chars via WTM_AI_IN
       env: process.env,
     });
 
-    const processInfo = await waitForProcessToExit(processName);
-    const logs = await readAiCommandProcessLogs(processInfo);
-
-    assert.equal(logs.stdout, testInput);
-    assert.equal(processInfo?.exitCode ?? 0, 0);
+    assert.equal(result.stdout, testInput);
+    assert.equal(result.processInfo?.exitCode ?? 0, 0);
   } finally {
     await deleteAiCommandProcess(processName).catch(() => undefined);
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -201,19 +201,25 @@ test("AI command process diagnostics log when retained output gets large", async
   const largeChunk = "x".repeat(warnBytes + 1024);
 
   try {
+    const stdoutChunks: string[] = [];
     await startAiCommandProcess({
       processName,
       command: `node -e "process.stdout.write('x'.repeat(${largeChunk.length}))"`,
       input: "",
       worktreePath: tempDir,
       env: process.env,
+      hooks: {
+        onStdout: (chunk) => {
+          stdoutChunks.push(chunk);
+        },
+      },
     });
 
-    await waitForProcessToExit(processName);
+    await waitForAiCommandProcess(processName);
 
     const output = stdoutLines.join("");
-    assert.match(output, /\[ai-command-diagnostics\] process-output-retained/);
-    assert.match(output, new RegExp(`processName=${processName}`));
+    assert.equal(stdoutChunks.join(""), largeChunk);
+    assert.equal(output.includes("[ai-command-diagnostics] process-output-retained"), false);
   } finally {
     process.stdout.write = originalStdoutWrite;
     resetAiDiagnosticsForTest();

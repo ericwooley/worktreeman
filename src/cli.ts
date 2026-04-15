@@ -205,17 +205,26 @@ const startCommand = command({
       restartRole(role);
     };
 
+    const stopManagedProcess = (child: ManagedRuntimeProcess | null): Promise<void> | null => {
+      if (!child) {
+        return null;
+      }
+
+      return child.stop();
+    };
+
     try {
       await launchDatabase();
       await launchWorker();
       await launchServer(noOpen ? false : open);
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      await Promise.allSettled([
-        databaseProcess?.stop() ?? Promise.resolve(),
-        serverProcess?.stop() ?? Promise.resolve(),
-        workerProcess?.stop() ?? Promise.resolve(),
-      ]);
+      const stopPromises = [
+        stopManagedProcess(databaseProcess),
+        stopManagedProcess(serverProcess),
+        stopManagedProcess(workerProcess),
+      ].filter((promise): promise is Promise<void> => promise !== null);
+      await Promise.allSettled(stopPromises);
       process.exit(1);
       return;
     }

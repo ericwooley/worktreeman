@@ -38,6 +38,10 @@
 - Load the ux skill if you are doing ui work. And it's important that you keep the buttons and forms and warnings near each other. Don't make the user scroll or look around for error messages.
 - Don't use polling for things, use sse, and an event system on the server.
 
+## ALWAYS DO THESE
+
+Any time you make any edits, make sure the builds all work before you respond to the user.
+
 ## UI Instructions
 
 - Do not use gradients. They look dated, and the text contrast can be hard to read. Stick to solid colors with good contrast from the themes that are loaded.

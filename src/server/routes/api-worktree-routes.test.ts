@@ -637,7 +637,7 @@ test("AI cancel route can cancel a running job before the process spawns", { con
     command: "printf %s 'wait'",
     repoRoot: repo.repoRoot,
     worktreePath: featureAiNoProcess.worktreePath,
-    execute: async () => await new Promise<{ stdout: string; stderr: string }>(() => {}),
+      execute: async () => await new Promise<void>(() => {}),
   })).started;
   const server = await startApiServer(repo);
 

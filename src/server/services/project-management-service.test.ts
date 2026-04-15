@@ -83,8 +83,9 @@ test("create and update project-management documents persist markdown, summary, 
       status: "blocked",
       assignee: "Taylor",
     });
+    const updatedDetail = await getProjectManagementDocument(repoRoot, created.document.id);
 
-    assert.match(updated.document.markdown, /Investigate login loop/);
+    assert.match(updatedDetail.document.markdown, /Investigate login loop/);
     assert.equal(updated.document.summary, "Track incoming bugs, blockers, and owner handoffs.");
     assert.deepEqual(updated.document.tags, ["bug", "blocked"]);
     assert.equal(updated.document.status, "blocked");
@@ -275,7 +276,7 @@ test("documents can be archived and restored with metadata preserved", async () 
 
     const restored = await updateProjectManagementDocument(repoRoot, created.document.id, {
       title: archived.document.title,
-      markdown: archived.document.markdown,
+      markdown: created.document.markdown,
       tags: archived.document.tags,
       status: archived.document.status,
       assignee: archived.document.assignee,

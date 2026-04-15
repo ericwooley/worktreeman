@@ -282,12 +282,6 @@ async function main() {
           continue;
         }
 
-        if (restartTarget === "both") {
-          await restartRole("worker");
-          await restartRole("server");
-          continue;
-        }
-
         await restartRole(restartTarget);
       }
     } finally {

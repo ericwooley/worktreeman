@@ -754,7 +754,7 @@ export async function buildAiCommandLogsResponse(options: {
   reconcileJobs?: boolean;
 }): Promise<AiCommandLogsResponse> {
   const store = await createOperationalStateStore(options.repoRoot);
-  const rawEntries = (await store.listAiCommandLogIndexEntries()).filter((entry) => isAiCommandLogEntryInRepo(options.repoRoot, entry));
+  const rawEntries = (await store.listAiCommandLogIndexEntries()).filter((entry) => isWorktreePathInRepo(options.repoRoot, entry.worktreePath));
   const runningEntries = rawEntries.filter(isAiCommandLogIndexActivelyRunning);
   const reconciledEntries = await Promise.all(
     runningEntries.map(async (entry) => {

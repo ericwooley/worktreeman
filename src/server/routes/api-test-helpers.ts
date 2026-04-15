@@ -528,7 +528,7 @@ export async function createApiTestRepo(): Promise<ApiTestRepo> {
 
 export async function startApiServer(
   repo: ApiTestRepo,
-  overrides?: Partial<Pick<RouterOptions, "aiProcesses" | "aiProcessPollIntervalMs" | "aiLogStreamPollIntervalMs" | "stateStreamFullRefreshIntervalMs">>,
+  overrides?: Partial<Pick<RouterOptions, "aiProcesses" | "aiProcessPollIntervalMs" | "aiLogStreamPollIntervalMs" | "stateStreamFullRefreshIntervalMs" | "gitWatchDebounceMs">>,
 ) {
   const worker = await startProjectManagementAiWorker({ repoRoot: repo.repoRoot });
   const app = express();
