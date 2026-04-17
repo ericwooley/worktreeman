@@ -160,6 +160,7 @@ function toAiCommandLogEntry(job: AiCommandJob): AiCommandLogEntry {
     timestamp: job.startedAt,
     worktreeId: job.worktreeId,
     branch: job.branch,
+    sessionId: job.sessionId ?? null,
     documentId: job.documentId ?? null,
     commandId: job.commandId,
     origin: job.origin ?? null,
@@ -183,6 +184,7 @@ function toAiCommandLogEntry(job: AiCommandJob): AiCommandLogEntry {
 function createAiCommandJobRecord(options: {
   worktreeId: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   origin?: AiCommandOrigin | null;
@@ -197,6 +199,7 @@ function createAiCommandJobRecord(options: {
     fileName: buildAiCommandLogFileName(options.worktreeId, new Date(startedAt)),
     worktreeId: options.worktreeId,
     branch: options.branch,
+    sessionId: options.sessionId ?? null,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
     origin: options.origin ?? null,
@@ -402,6 +405,7 @@ export async function beginAiCommandJob(options: {
   repoRoot: string;
   worktreeId: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   origin?: AiCommandOrigin | null;
@@ -844,6 +848,7 @@ export async function continueAiCommandJob(options: {
 export async function startAiCommandJob(options: {
   worktreeId: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   origin?: AiCommandOrigin | null;
@@ -858,6 +863,7 @@ export async function startAiCommandJob(options: {
     repoRoot: options.repoRoot,
     worktreeId: options.worktreeId,
     branch: options.branch,
+    sessionId: options.sessionId ?? null,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
     origin: options.origin ?? null,

@@ -34,8 +34,8 @@ test("project-management AI runs update the saved document on the server", { con
     },
   };
   fakeAiProcesses.queueStartScript([
-    { status: "online", pid: 5012, stdout: "# Updated By AI\n\n- durable update\n", stderr: "" },
-    { status: "stopped", pid: 5012, stdout: "# Updated By AI\n\n- durable update\n", stderr: "", exitCode: 0 },
+    { status: "online", pid: 5012, stdout: "<wtm-new-document># Updated By AI\n\n- durable update\n</wtm-new-document>\n", stderr: "" },
+    { status: "stopped", pid: 5012, stdout: "<wtm-new-document># Updated By AI\n\n- durable update\n</wtm-new-document>\n", stderr: "", exitCode: 0 },
   ]);
   const server = await startApiServer(repo, {
     aiProcesses,
@@ -77,7 +77,7 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(capturedCommand.includes("tighten this plan"), true);
     assert.equal(capturedPrompt.includes("You are rewriting the project-management markdown document"), true);
     assert.equal(capturedPrompt.includes("Requested change: tighten this plan"), true);
-    assert.equal(capturedPrompt.includes("Output format: return only the complete updated markdown document body as plain text."), true);
+    assert.equal(capturedPrompt.includes("Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>."), true);
     assert.equal(capturedPrompt.includes("You are not creating files, not writing a .md file"), true);
     assert.equal(capturedPrompt.includes("Document history is the rollback mechanism."), true);
     assert.equal(capturedPrompt.includes("Environment wrapper:"), true);
@@ -199,8 +199,8 @@ test("project-management AI document updates ignore stderr while logs retain it"
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
-    { status: "online", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n" },
-    { status: "stopped", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n", exitCode: 0 },
+    { status: "online", pid: 5013, stdout: "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n", stderr: "> build · gpt-4.1\n" },
+    { status: "stopped", pid: 5013, stdout: "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n", stderr: "> build · gpt-4.1\n", exitCode: 0 },
   ]);
   const server = await startApiServer(repo, {
     aiProcesses: fakeAiProcesses.aiProcesses,
@@ -253,10 +253,10 @@ test("project-management AI document updates ignore stderr while logs retain it"
       };
     };
 
-    assert.equal(detailPayload.log.response.stdout, "# Clean Markdown\n\nOnly stdout belongs here.\n");
+    assert.equal(detailPayload.log.response.stdout, "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n");
     assert.equal(detailPayload.log.response.stderr, "> build · gpt-4.1\n");
     assert.deepEqual(detailPayload.log.response.events?.map((event) => ({ source: event.source, text: event.text })), [
-      { source: "stdout", text: "# Clean Markdown\n\nOnly stdout belongs here.\n" },
+      { source: "stdout", text: "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n" },
       { source: "stderr", text: "> build · gpt-4.1\n" },
     ]);
   } finally {
@@ -324,7 +324,7 @@ test("project-management AI document update failures settle the job without taki
       };
 
       return detailPayload.log.status === "failed"
-        && detailPayload.log.error?.message === "AI command finished without returning updated markdown.";
+        && detailPayload.log.error?.message === "AI command finished without returning <wtm-new-document>...</wtm-new-document>. Inspect the saved AI log output to see the raw response.";
     });
 
     const unchanged = await getProjectManagementDocument(repo.repoRoot, outline.id);
@@ -345,8 +345,8 @@ test("project-management AI document update failures settle the job without taki
 
     assert.equal(detailPayload.log.status, "failed");
     assert.equal(detailPayload.log.response.stdout, "");
-    assert.equal(detailPayload.log.response.stderr, "AI command finished without returning updated markdown.");
-    assert.equal(detailPayload.log.error?.message, "AI command finished without returning updated markdown.");
+    assert.equal(detailPayload.log.response.stderr, "AI command finished without returning <wtm-new-document>...</wtm-new-document>. Inspect the saved AI log output to see the raw response.");
+    assert.equal(detailPayload.log.error?.message, "AI command finished without returning <wtm-new-document>...</wtm-new-document>. Inspect the saved AI log output to see the raw response.");
 
     const followUpResponse = await server.fetch(`/api/project-management/documents`);
     assert.equal(followUpResponse.status, 200);
@@ -728,7 +728,7 @@ test("project-management document AI creates a derived worktree and streams stdo
       firstSessionMatch[1],
       buildAiCommandProcessEnv({
         repoRoot: repo.repoRoot,
-        worktreeId: createdWorktree.id,
+        worktreeId: worktreeId(createdWorktree.worktreePath),
         documentId: outline.id,
         worktreePath: createdWorktree.worktreePath,
         env: {},

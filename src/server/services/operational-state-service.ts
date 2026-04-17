@@ -44,6 +44,7 @@ interface AiCommandLogRow {
   timestamp: string;
   worktree_id: string;
   branch: string;
+  session_id: string | null;
   document_id: string | null;
   command_id: string;
   origin_json: string | null;
@@ -66,6 +67,7 @@ interface AiCommandLogIndexRow {
   timestamp: string;
   worktree_id: string;
   branch: string;
+  session_id: string | null;
   document_id: string | null;
   command_id: string;
   origin_json: string | null;
@@ -86,6 +88,7 @@ export interface AiCommandLogIndexEntry {
   timestamp: string;
   worktreeId: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: "smart" | "simple";
   origin?: AiCommandOrigin | null;
@@ -337,6 +340,7 @@ function toAiCommandLogEntry(row: AiCommandLogRow, events: AiCommandOutputEvent[
     timestamp: row.timestamp,
     worktreeId,
     branch: row.branch,
+    sessionId: row.session_id,
     documentId: row.document_id,
     commandId: row.command_id === "simple" ? "simple" : "smart",
     origin: row.origin_json ? parseAiCommandOrigin(JSON.parse(row.origin_json)) : null,
@@ -369,6 +373,7 @@ function toAiCommandLogIndexEntry(row: AiCommandLogIndexRow): AiCommandLogIndexE
     timestamp: row.timestamp,
     worktreeId,
     branch: row.branch,
+    sessionId: row.session_id,
     documentId: row.document_id,
     commandId: row.command_id === "simple" ? "simple" : "smart",
     origin: row.origin_json ? parseAiCommandOrigin(JSON.parse(row.origin_json)) : null,
@@ -497,6 +502,7 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
         timestamp text not null,
         worktree_id text not null,
         branch text not null,
+        session_id text,
         document_id text,
         command_id text not null,
         origin_json text,
@@ -562,6 +568,9 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
 
       create index if not exists background_command_metadata_worktree_idx
         on ${BACKGROUND_COMMAND_METADATA_TABLE} (worktree_id, updated_at desc);
+
+      alter table ${AI_RUN_LOGS_TABLE}
+        add column if not exists session_id text;
     `);
 
     await db.query(
@@ -863,6 +872,7 @@ export class OperationalStateStore {
           timestamp,
           worktree_id,
           branch,
+          session_id,
           document_id,
           command_id,
           origin_json,
@@ -881,13 +891,14 @@ export class OperationalStateStore {
         )
         values (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, $19, now()
+          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, now()
         )
         on conflict (job_id) do update
         set file_name = excluded.file_name,
             timestamp = excluded.timestamp,
             worktree_id = excluded.worktree_id,
             branch = excluded.branch,
+            session_id = excluded.session_id,
             document_id = excluded.document_id,
             command_id = excluded.command_id,
             origin_json = excluded.origin_json,
@@ -895,8 +906,8 @@ export class OperationalStateStore {
             command_text = excluded.command_text,
             request_text = excluded.request_text,
             status = excluded.status,
-            stdout_text = case when $20 then ${AI_RUN_LOGS_TABLE}.stdout_text else excluded.stdout_text end,
-            stderr_text = case when $20 then ${AI_RUN_LOGS_TABLE}.stderr_text else excluded.stderr_text end,
+            stdout_text = case when $21 then ${AI_RUN_LOGS_TABLE}.stdout_text else excluded.stdout_text end,
+            stderr_text = case when $21 then ${AI_RUN_LOGS_TABLE}.stderr_text else excluded.stderr_text end,
             pid = excluded.pid,
             exit_code = excluded.exit_code,
             process_name = excluded.process_name,
@@ -910,6 +921,7 @@ export class OperationalStateStore {
         nextEntry.timestamp,
         nextEntry.worktreeId,
         nextEntry.branch,
+        nextEntry.sessionId ?? null,
         nextEntry.documentId ?? null,
         nextEntry.commandId,
         nextEntry.origin ? JSON.stringify(nextEntry.origin) : null,
@@ -1094,6 +1106,7 @@ export class OperationalStateStore {
           timestamp,
           worktree_id,
           branch,
+          session_id,
           document_id,
           command_id,
           origin_json,
@@ -1137,6 +1150,7 @@ export class OperationalStateStore {
           timestamp,
           worktree_id,
           branch,
+          session_id,
           document_id,
           command_id,
           origin_json,
@@ -1168,6 +1182,7 @@ export class OperationalStateStore {
           timestamp,
           worktree_id,
           branch,
+          session_id,
           document_id,
           command_id,
           origin_json,
@@ -1211,6 +1226,7 @@ export class OperationalStateStore {
           timestamp,
           worktree_id,
           branch,
+          session_id,
           document_id,
           command_id,
           origin_json,
@@ -1251,6 +1267,7 @@ export class OperationalStateStore {
           timestamp,
           worktree_id,
           branch,
+          session_id,
           document_id,
           command_id,
           origin_json,

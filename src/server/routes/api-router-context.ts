@@ -68,6 +68,7 @@ import {
 } from "../utils/server-logger.js";
 import {
   createAiLogIdentifiers as createAiLogIdentifiersFromHelpers,
+  readAiSessionIdFromEnv,
   reconcileAiCommandLogEntry,
   readAiCommandLogEntryByIdentifier,
   resolveAiLogWorktreeId,
@@ -545,6 +546,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const writeImmediateAiFailureLog = async (details: {
     worktreeId?: WorktreeId;
     branch: string;
+    sessionId?: string | null;
     documentId?: string | null;
     commandId: AiCommandId;
     origin?: AiCommandOrigin | null;
@@ -560,6 +562,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       repoRoot: options.repoRoot,
       worktreeId: details.worktreeId,
       branch: details.branch,
+      sessionId: details.sessionId ?? null,
       documentId: details.documentId ?? null,
       commandId: details.commandId,
       origin: details.origin ?? null,
@@ -578,6 +581,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const startAiProcessJob = async (details: {
     worktreeId: WorktreeId;
     branch: string;
+    sessionId?: string | null;
     documentId?: string | null;
     commandId: AiCommandId;
     aiCommands: AiCommandConfig;
@@ -593,6 +597,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   }): Promise<StartedAiCommandJob> => startAiCommandJob({
     worktreeId: details.worktreeId,
     branch: details.branch,
+    sessionId: details.sessionId ?? readAiSessionIdFromEnv(details.env),
     documentId: details.documentId ?? null,
     commandId: details.commandId,
     origin: details.origin ?? null,

@@ -595,6 +595,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         worktreeId: worktree.id,
         branch,
         documentId,
+        sessionId: env.AI_SESSION_ID ?? null,
         commandId,
         aiCommands: config.aiCommands,
         origin,

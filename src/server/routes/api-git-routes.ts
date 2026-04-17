@@ -37,6 +37,7 @@ import {
   createAiLogIdentifiers,
   createGitConflictResolutionOrigin,
   parseAiCommandId,
+  readAiSessionIdFromEnv,
   safeWriteAiRequestLog,
 } from "./api-helpers.js";
 import type { ApiRouterContext } from "./api-router-context.js";
@@ -266,6 +267,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
 
       const commandId = parseAiCommandId(body?.commandId ?? "smart");
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
+      const sessionId = readAiSessionIdFromEnv(env);
       const origin = createGitConflictResolutionOrigin({
         branch: worktree.branch,
         worktreeId: worktree.id,
@@ -279,6 +281,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
           branch: worktree.branch,
           commandId,
           origin,
+          sessionId,
           worktreePath: worktree.worktreePath,
           renderedCommand: template,
           input: "",
@@ -294,6 +297,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
           branch: worktree.branch,
           commandId,
           origin,
+          sessionId,
           worktreePath: worktree.worktreePath,
           renderedCommand: template,
           input: "",
@@ -331,6 +335,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
             branch: worktree.branch,
             commandId,
             origin,
+            sessionId,
             worktreePath: worktree.worktreePath,
             renderedCommand,
             input,
@@ -352,6 +357,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
             branch: worktree.branch,
             commandId,
             origin,
+            sessionId,
             worktreePath: worktree.worktreePath,
             renderedCommand,
             input,

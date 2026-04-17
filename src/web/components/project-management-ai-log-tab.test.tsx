@@ -25,6 +25,7 @@ const summaryLog: AiCommandLogSummary = {
   worktreeId: WORKTREE_ID,
   branch: "feature-ai-log",
   commandId: "smart",
+  sessionId: "ai-session-123",
   worktreePath: "/repo/feature-ai-log",
   command: "runner --prompt",
   requestPreview: "This preview should not be the primary card content.",
@@ -40,6 +41,7 @@ const detailLog: AiCommandLogEntry = {
   worktreeId: WORKTREE_ID,
   branch: "feature-ai-log",
   commandId: "smart",
+  sessionId: "ai-session-123",
   worktreePath: "/repo/feature-ai-log",
   command: "runner --prompt",
   request: "Summarize the work.",
@@ -102,6 +104,10 @@ test("AI log detail renders a mixed output timeline instead of split stdout and 
   assert.doesNotMatch(markup, /pm-markdown text-sm theme-text/);
   assert.match(markup, /theme-ai-output-entry/);
   assert.match(markup, /theme-ai-output-entry-secondary/);
+  assert.match(markup, /Session ID/);
+  assert.match(markup, /ai-session-123/);
+  assert.match(markup, /Command/);
+  assert.match(markup, /runner --prompt/);
   assert.doesNotMatch(markup, /theme-log-entry-error/);
   assert.match(markup, />stderr</);
   assert.doesNotMatch(markup, /theme-badge-warning[^>]*>stderr</);
@@ -123,6 +129,7 @@ test("running entries are not duplicated in the saved logs list", () => {
     worktreeId: WORKTREE_ID,
     branch: "feature-ai-log",
     commandId: "smart",
+    sessionId: "ai-session-123",
     command: "runner --prompt",
     input: "Summarize the work.",
     status: "running",
