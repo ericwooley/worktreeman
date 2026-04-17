@@ -51,6 +51,7 @@ import {
 import { logServerEvent } from "../utils/server-logger.js";
 import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service.js";
 import {
+  buildAiCommandProcessEnv,
   buildAiEnvironmentContext,
   buildProjectManagementAiPrompt,
   buildWorktreeAiPrompt,
@@ -510,7 +511,13 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         });
       }
 
-      const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
+      const env = buildAiCommandProcessEnv({
+        repoRoot: context.repoRoot,
+        worktreeId: worktree.id,
+        documentId: explicitDocumentId,
+        worktreePath,
+        env: runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env },
+      });
 
       renderedCommand = renderAiCommand(template, input);
       const runDetails = {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -83,6 +83,35 @@ export function resolveAiLogWorktreeId(options: {
   worktreePath: string;
 }): WorktreeId {
   return options.worktreeId ?? createWorktreeId(options.worktreePath);
+}
+
+function createAiSessionId(options: {
+  repoRoot: string;
+  worktreeId: WorktreeId;
+  documentId?: string | null;
+}): string {
+  const scope = typeof options.documentId === "string" && options.documentId
+    ? `document:${options.documentId}`
+    : `worktree:${options.worktreeId}`;
+  return createHash("sha256").update(`${options.repoRoot}\u0000${scope}`).digest("hex");
+}
+
+export function buildAiCommandProcessEnv(options: {
+  repoRoot: string;
+  worktreePath: string;
+  worktreeId?: WorktreeId;
+  documentId?: string | null;
+  env: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  const worktreeId = resolveAiLogWorktreeId(options);
+  return {
+    ...options.env,
+    AI_SESSION_ID: createAiSessionId({
+      repoRoot: options.repoRoot,
+      worktreeId,
+      documentId: options.documentId,
+    }),
+  };
 }
 
 async function writeAiRequestLog(options: {
@@ -603,13 +632,17 @@ export async function generateProjectManagementDocumentSummary(options: {
   try {
     const { stdout } = await runCommand("bash", ["-lc", renderedCommand], {
       cwd: options.repoRoot,
-      env: {
-        ...process.env,
-        ...options.config.env,
-        WTM_AI_INPUT: input,
-        WORKTREE_BRANCH: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
-        WORKTREE_PATH: options.repoRoot,
-      },
+      env: buildAiCommandProcessEnv({
+        repoRoot: options.repoRoot,
+        worktreePath: options.repoRoot,
+        env: {
+          ...process.env,
+          ...options.config.env,
+          WTM_AI_INPUT: input,
+          WORKTREE_BRANCH: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+          WORKTREE_PATH: options.repoRoot,
+        },
+      }),
     });
     const summary = stdout.trim();
     logServerEvent("project-management-summary", "generated", {

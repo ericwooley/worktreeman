@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "#test-runtime";
 import { worktreeId } from "../../shared/worktree-id.js";
+import { buildAiCommandProcessEnv } from "./api-helpers.js";
 import {
   createApiTestRepo,
   createFakeAiProcesses,
@@ -126,7 +127,7 @@ test("creating a project-management document auto-generates a short summary with
   const nextContents = updateAiCommandInConfigContents(currentContents, {
     smart: "printf %s $WTM_AI_INPUT",
     simple:
-      "node -e \"const fs = require('node:fs'); fs.writeFileSync('summary-prompt.txt', process.argv[1]); console.log('Generated UI summary.');\" $WTM_AI_INPUT",
+      "node -e \"const fs = require('node:fs'); fs.writeFileSync('summary-prompt.txt', process.argv[1]); fs.writeFileSync('summary-ai-session.txt', process.env.AI_SESSION_ID || ''); console.log('Generated UI summary.');\" $WTM_AI_INPUT",
     autoStartRuntime: false,
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
@@ -165,6 +166,7 @@ test("creating a project-management document auto-generates a short summary with
     assert.equal(saved.document.summary, "Generated UI summary.");
 
     const prompt = await fs.readFile(path.join(repo.repoRoot, "summary-prompt.txt"), "utf8");
+    const summarySessionId = await fs.readFile(path.join(repo.repoRoot, "summary-ai-session.txt"), "utf8");
     assert.equal(prompt.includes('You are writing the short summary for the project-management document "Launch Checklist"'), true);
     assert.equal(prompt.includes("Return only the final short summary as raw text."), true);
     assert.equal(prompt.includes("Write 1-2 sentences that make the document easy to scan in the UI."), true);
@@ -173,6 +175,15 @@ test("creating a project-management document auto-generates a short summary with
     assert.equal(prompt.includes("Assignee: Avery"), true);
     assert.equal(prompt.includes("Tags: release, ops"), true);
     assert.equal(prompt.includes("Current markdown:"), true);
+    assert.equal(summarySessionId.length > 0, true);
+    assert.equal(
+      summarySessionId,
+      buildAiCommandProcessEnv({
+        repoRoot: repo.repoRoot,
+        worktreePath: repo.repoRoot,
+        env: {},
+      }).AI_SESSION_ID,
+    );
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, payload.document.id);
     assert.equal(history.history.length, 2);
@@ -707,9 +718,22 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(createdWorktree.runtime?.tmuxSession?.length ? true : false, true);
     const capturedCommand = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-input"), "utf8");
     const capturedEnv = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-env"), "utf8");
+    const firstSessionMatch = capturedEnv.match(/^AI_SESSION_ID=(.*)$/m);
     assert.equal(capturedEnv.includes(`WORKTREE_BRANCH=${payload.job.branch}`), true);
     assert.equal(capturedEnv.includes(`WORKTREE_PATH=${createdWorktree.worktreePath}`), true);
     assert.equal(capturedEnv.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
+    assert.ok(firstSessionMatch);
+    assert.equal(firstSessionMatch[1]?.length ? true : false, true);
+    assert.equal(
+      firstSessionMatch[1],
+      buildAiCommandProcessEnv({
+        repoRoot: repo.repoRoot,
+        worktreeId: createdWorktree.id,
+        documentId: outline.id,
+        worktreePath: createdWorktree.worktreePath,
+        env: {},
+      }).AI_SESSION_ID,
+    );
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
     assert.equal(capturedCommand.includes("Environment wrapper:"), true);
     assert.equal(capturedCommand.includes(`- Repository root: ${repo.repoRoot}`), true);
@@ -804,6 +828,15 @@ test("project-management document AI creates a derived worktree and streams stdo
       };
     };
     assert.match(completedLogDetailPayload.log.response.stdout, /implemented/);
+
+    const alternateSessionId = buildAiCommandProcessEnv({
+      repoRoot: repo.repoRoot,
+      worktreeId: worktreeId(path.join(repo.repoRoot, "pm-project-outline-project-outline-2")),
+      documentId: outline.id,
+      worktreePath: path.join(repo.repoRoot, "pm-project-outline-project-outline-2"),
+      env: {},
+    }).AI_SESSION_ID;
+    assert.equal(alternateSessionId, firstSessionMatch[1]);
 
     await waitFor(async () => {
       const latestStatePayload = await readStateSnapshot<{
