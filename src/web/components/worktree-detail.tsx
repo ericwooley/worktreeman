@@ -1604,42 +1604,42 @@ export function WorktreeDetail({
             >
               Commit
             </button>
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              disabled={!canMergeWorktreeIntoBase || gitComparisonLoading || !worktree?.branch || !gitComparison?.baseBranch}
-              title={mergeIntoBaseButtonDisabledReason ?? `Merge ${worktree?.branch ?? "worktree"} into ${gitComparison?.baseBranch ?? "base"}`}
-              aria-label={mergeIntoBaseButtonDisabledReason
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                disabled={!canMergeWorktreeIntoBase || gitComparisonLoading || !worktree?.branch || !gitComparison?.baseBranch}
+                title={mergeIntoBaseButtonDisabledReason ?? `Merge ${worktree?.branch ?? "worktree"} into ${gitComparison?.baseBranch ?? "base"}`}
+                aria-label={mergeIntoBaseButtonDisabledReason
                 ? `Merge disabled: ${mergeIntoBaseButtonDisabledReason}`
                 : `Merge ${worktree?.branch ?? "worktree"} into ${gitComparison?.baseBranch ?? "base"}`
               }
-              onClick={() => {
-                if (!worktree?.branch) {
-                  return;
-                }
-                void onMergeWorktreeIntoBase(worktree.branch, gitComparison?.baseBranch);
-              }}
-            >
-              Merge worktree into base
-            </button>
-            <button
-              type="button"
-              className="matrix-button rounded-none px-3 py-2 text-sm"
-              disabled={!canMergeBaseIntoWorktree || gitComparisonLoading || !worktree?.branch || !gitComparison?.baseBranch}
+                onClick={() => {
+                  if (!worktree?.branch) {
+                    return;
+                  }
+                  void onMergeWorktreeIntoBase(worktree.branch, gitComparison?.baseBranch);
+                }}
+              >
+                Merge into base
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                disabled={!canMergeBaseIntoWorktree || gitComparisonLoading || !worktree?.branch || !gitComparison?.baseBranch}
               title={mergeButtonDisabledReason ?? `Merge ${gitComparison?.baseBranch ?? "base"} into ${worktree?.branch ?? "worktree"}`}
               aria-label={mergeButtonDisabledReason
                 ? `Merge disabled: ${mergeButtonDisabledReason}`
                 : `Merge ${gitComparison?.baseBranch ?? "base"} into ${worktree?.branch ?? "worktree"}`
               }
-              onClick={() => {
-                if (!worktree?.branch || !gitComparison?.baseBranch) {
-                  return;
-                }
-                void onMergeBaseIntoWorktree(worktree.branch, gitComparison.baseBranch);
-              }}
-            >
-              Merge base into worktree
-            </button>
+                onClick={() => {
+                  if (!worktree?.branch || !gitComparison?.baseBranch) {
+                    return;
+                  }
+                  void onMergeBaseIntoWorktree(worktree.branch, gitComparison.baseBranch);
+                }}
+              >
+                Merge base into main
+              </button>
             <button
               type="button"
               className="matrix-button rounded-none px-3 py-2 text-sm"
@@ -1665,7 +1665,7 @@ export function WorktreeDetail({
 
         {!canMergeBaseIntoWorktree && mergeActionState.reason ? (
           <div className="mt-3 text-xs theme-text-danger">
-            Merge into worktree disabled: {mergeActionState.reason}
+            Merge base into main disabled: {mergeActionState.reason}
           </div>
         ) : null}
 
@@ -2072,7 +2072,7 @@ export function WorktreeDetail({
             />
           </div>
         ) : isGitTabActive ? (
-          <div className="space-y-4">{gitDiffView}</div>
+          <div className="space-y-4">{comparisonWorkspace}</div>
         ) : null}
       </div>
 
