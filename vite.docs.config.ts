@@ -33,6 +33,7 @@ function emitDocPages(): Plugin {
 export default defineConfig({
   root: path.resolve(__dirname, "docs-site"),
   publicDir: path.resolve(__dirname, "public"),
+  base: process.env.DOCS_BASE ?? "/",
   plugins: [react(), emitDocPages()],
   build: {
     outDir: path.resolve(__dirname, "dist/docs"),

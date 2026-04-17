@@ -34,6 +34,7 @@ const docs = Object.entries(markdownModules)
   });
 
 const docsBySlug = new Map(docs.map((doc) => [doc.slug, doc]));
+const docsBasePath = normalizeBasePath(import.meta.env.BASE_URL);
 
 export function DocsSite() {
   const currentSlug = getCurrentSlug();
@@ -89,7 +90,8 @@ export function DocsSite() {
 }
 
 function getCurrentSlug(): string {
-  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const sitePath = stripBasePath(window.location.pathname, docsBasePath);
+  const path = sitePath.replace(/\/+$/, "") || "/";
   const segments = path.split("/").filter(Boolean);
   const lastSegment = segments.at(-1);
 
@@ -102,10 +104,26 @@ function getCurrentSlug(): string {
 
 function toDocHref(slug: string | undefined): string {
   if (!slug) {
+    return docsBasePath;
+  }
+
+  return slug === docs[0]?.slug ? docsBasePath : `${docsBasePath}${slug}/`;
+}
+
+function normalizeBasePath(baseUrl: string): string {
+  if (!baseUrl || baseUrl === "/") {
     return "/";
   }
 
-  return slug === docs[0]?.slug ? "/" : `/${slug}/`;
+  return `/${baseUrl.replace(/^\/+|\/+$/g, "")}/`;
+}
+
+function stripBasePath(pathname: string, basePath: string): string {
+  if (basePath === "/") {
+    return pathname;
+  }
+
+  return pathname.startsWith(basePath) ? pathname.slice(basePath.length - 1) || "/" : pathname;
 }
 
 function extractExcerpt(markdown: string): string {
