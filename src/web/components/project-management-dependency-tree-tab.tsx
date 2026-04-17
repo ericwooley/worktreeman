@@ -14,6 +14,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import type { ProjectManagementDocument, ProjectManagementDocumentSummary, ProjectManagementDocumentSummaryResponse } from "@shared/types";
 import { MatrixBadge } from "./matrix-primitives";
+import { buildProjectManagementDocumentPath } from "./project-management-document-route";
 
 type DependencyTreeDocument = Pick<
   ProjectManagementDocumentSummary,
@@ -169,10 +170,7 @@ function getDependencyError(documents: DependencyTreeDocument[], dependencyId: s
 }
 
 function openDependencyDocumentInNewTab(documentId: string) {
-  const nextUrl = new URL(window.location.href);
-  nextUrl.searchParams.set("tab", "project-management");
-  nextUrl.searchParams.set("pmTab", "document");
-  nextUrl.searchParams.set("pmDoc", documentId);
+  const nextUrl = new URL(buildProjectManagementDocumentPath(documentId), window.location.origin);
   window.open(nextUrl.toString(), "_blank", "noopener,noreferrer");
 }
 
