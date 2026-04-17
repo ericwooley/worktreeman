@@ -42,22 +42,17 @@ set -as terminal-overrides ',xterm-256color:Ms=\E]52;%p1%s;%p2%s\a'
 
 ## Install the CLI
 
-Install `worktreeman` globally with npm:
+Run the CLI without installing it globally (recommended for one-off use):
+
+```bash
+npx -y worktreeman start
+```
+
+If you prefer a global install for repeated local use:
 
 ```bash
 npm install -g worktreeman
-```
-
-Check that the command is available:
-
-```bash
 worktreeman --help
-```
-
-Or run it without a global install:
-
-```bash
-npx worktreeman --help
 ```
 
 ## Initialize a repository

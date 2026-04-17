@@ -49,12 +49,20 @@ pnpm run build
 
 ## Package distribution
 
+Run without installing globally (recommended for one-off use):
+
+```bash
+npx -y worktreeman start
+```
+
+Or install globally for repeated local use:
+
 ```bash
 npm install -g worktreeman
 worktreeman --help
 ```
 
-- `npx worktreeman --help` runs the published CLI without a global install
+- `npx -y worktreeman start` runs the published CLI without a global install and immediately starts the UI
 - `npm install -g worktreeman` installs the command globally for repeated local use
 - `npm pack` and `npm publish` use the `prepack` script to build `dist/cli.js` and `dist/web`
 
