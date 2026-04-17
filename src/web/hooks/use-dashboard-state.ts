@@ -10,6 +10,7 @@ import type {
   AiCommandJob,
   AiCommandId,
   AiCommandSettingsResponse,
+  AutoSyncSettingsResponse,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
@@ -32,6 +33,7 @@ import type {
   ShutdownStatus,
   SystemStatusResponse,
   UpdateAiCommandSettingsRequest,
+  UpdateAutoSyncSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
   UpdateProjectManagementStatusRequest,
@@ -43,7 +45,10 @@ import {
   createProjectManagementDocument as createProjectManagementDocumentRequest,
   createWorktree,
   deleteWorktree,
+  disableAutoSync as disableAutoSyncRequest,
+  enableAutoSync as enableAutoSyncRequest,
   generateGitCommitMessage as generateGitCommitMessageRequest,
+  getAutoSyncSettings as fetchAutoSyncSettings,
   getProjectManagementDocument as fetchProjectManagementDocument,
   getProjectManagementHistory as fetchProjectManagementHistory,
   listProjectManagementDocuments as fetchProjectManagementDocuments,
@@ -61,8 +66,10 @@ import {
   resolveGitMergeConflicts as resolveGitMergeConflictsRequest,
   restartBackgroundCommand as restartBackgroundProcess,
   runAiCommand as runAiCommandRequest,
+  runAutoSync as runAutoSyncRequest,
   runProjectManagementDocumentAi as runProjectManagementDocumentAiRequest,
   saveAiCommandSettings as persistAiCommandSettings,
+  saveAutoSyncSettings as persistAutoSyncSettings,
   saveConfigDocument as persistConfigDocument,
   startBackgroundCommand as startBackgroundProcess,
   startRuntime,
@@ -259,6 +266,8 @@ function useDashboardStateInternal() {
   const [configDocumentLoading, setConfigDocumentLoading] = useState(false);
   const [aiCommandSettings, setAiCommandSettings] = useState<AiCommandSettingsResponse | null>(null);
   const [aiCommandSettingsLoading, setAiCommandSettingsLoading] = useState(false);
+  const [autoSyncSettings, setAutoSyncSettings] = useState<AutoSyncSettingsResponse | null>(null);
+  const [autoSyncSettingsLoading, setAutoSyncSettingsLoading] = useState(false);
   const [aiCommandJob, setAiCommandJob] = useState<AiCommandJob | null>(null);
   const [aiCommandRunningBranch, setAiCommandRunningBranch] = useState<string | null>(null);
   const [projectManagementDocumentAiJob, setProjectManagementDocumentAiJob] = useState<AiCommandJob | null>(null);
@@ -932,6 +941,39 @@ function useDashboardStateInternal() {
           setAiCommandSettingsLoading(false);
         }
       },
+      async loadAutoSyncSettings(options?: { silent?: boolean }) {
+        if (!options?.silent) {
+          setAutoSyncSettingsLoading(true);
+        }
+
+        try {
+          const settings = await fetchAutoSyncSettings();
+          setAutoSyncSettings(settings);
+          setError(null);
+          return settings;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to load auto sync settings.");
+          return null;
+        } finally {
+          if (!options?.silent) {
+            setAutoSyncSettingsLoading(false);
+          }
+        }
+      },
+      async saveAutoSyncSettings(payload: UpdateAutoSyncSettingsRequest) {
+        setAutoSyncSettingsLoading(true);
+        try {
+          const settings = await persistAutoSyncSettings(payload);
+          setAutoSyncSettings(settings);
+          setError(null);
+          return settings;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to save auto sync settings.");
+          return null;
+        } finally {
+          setAutoSyncSettingsLoading(false);
+        }
+      },
       async loadAiCommandLogs(options?: { silent?: boolean }) {
         if (!options?.silent) {
           setAiCommandLogsLoading(true);
@@ -956,6 +998,45 @@ function useDashboardStateInternal() {
       },
       loadSystemStatus: loadSystemStatusState,
       loadAiCommandLog,
+      async enableAutoSync(branch: string) {
+        setBusyBranch(branch);
+        try {
+          const result = await enableAutoSyncRequest(branch);
+          setError(null);
+          return result;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to enable auto sync.");
+          return null;
+        } finally {
+          setBusyBranch(null);
+        }
+      },
+      async disableAutoSync(branch: string) {
+        setBusyBranch(branch);
+        try {
+          const result = await disableAutoSyncRequest(branch);
+          setError(null);
+          return result;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to disable auto sync.");
+          return null;
+        } finally {
+          setBusyBranch(null);
+        }
+      },
+      async runAutoSyncNow(branch: string) {
+        setBusyBranch(branch);
+        try {
+          const result = await runAutoSyncRequest(branch);
+          setError(null);
+          return result;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to run auto sync.");
+          return null;
+        } finally {
+          setBusyBranch(null);
+        }
+      },
       async runAiCommand(branch: string, payload: RunAiCommandRequest) {
         try {
           trackAiCommandJob(branch);
@@ -1177,15 +1258,17 @@ function useDashboardStateInternal() {
     gitComparisonLoading,
     configDocument,
     configDocumentLoading,
-      aiCommandSettings,
-      aiCommandSettingsLoading,
-      aiCommandJob,
-      aiCommandRunningBranch,
+    aiCommandSettings,
+    aiCommandSettingsLoading,
+    autoSyncSettings,
+    autoSyncSettingsLoading,
+    aiCommandJob,
+    aiCommandRunningBranch,
     projectManagementDocumentAiJob,
     projectManagementDocumentAiRunningBranch,
-      aiCommandLogs,
-      aiCommandLogDetail,
-      aiCommandLogsLoading,
+    aiCommandLogs,
+    aiCommandLogDetail,
+    aiCommandLogsLoading,
     aiCommandLogsError,
     aiCommandLogsLastUpdatedAt,
     runningAiCommandJobs,

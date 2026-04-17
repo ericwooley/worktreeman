@@ -4,6 +4,7 @@ import yaml from "js-yaml";
 import { DEFAULT_WORKTREE_BASE_DIR } from "../../shared/constants.js";
 import type {
   AiCommandConfig,
+  AutoSyncConfig,
   BackgroundCommandConfigEntry,
   ProjectManagementUserConfigEntry,
   ProjectManagementUsersConfig,
@@ -136,6 +137,22 @@ function parseAiCommands(value: unknown, legacyAiCommand: unknown): AiCommandCon
   };
 }
 
+function parseAutoSync(value: unknown): AutoSyncConfig {
+  if (value == null) {
+    return { remote: "origin" };
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("autoSync must be a mapping/object.");
+  }
+
+  const autoSync = value as Record<string, unknown>;
+  const remote = typeof autoSync.remote === "string" ? autoSync.remote.trim() : "";
+  return {
+    remote: remote || "origin",
+  };
+}
+
 function parseProjectManagementUserConfigEntry(value: unknown, label: string): ProjectManagementUserConfigEntry {
   if (typeof value !== "object" || !value || Array.isArray(value)) {
     throw new Error(`${label} must be a mapping/object.`);
@@ -205,6 +222,7 @@ export function parseConfigContents(raw: string): WorktreeManagerConfig {
       : [],
     derivedEnv: ensureRecord(parsed.derivedEnv, "derivedEnv"),
     quickLinks: parseQuickLinks(parsed.quickLinks),
+    autoSync: parseAutoSync(parsed.autoSync),
     aiCommands: parseAiCommands(parsed.aiCommands, parsed.aiCommand),
     startupCommands,
     backgroundCommands: parseBackgroundCommands(parsed.backgroundCommands),
@@ -268,6 +286,20 @@ export function updateAiCommandInConfigContents(raw: string, aiCommands: AiComma
   }
 
   delete parsed.aiCommand;
+
+  const nextContents = serializeConfigContents(parsed, { includeSchemaHeader: true });
+  parseConfigContents(nextContents);
+  return nextContents;
+}
+
+export function updateAutoSyncInConfigContents(raw: string, autoSync: AutoSyncConfig): string {
+  const { body } = extractSchemaHeader(raw);
+  const parsed = (yaml.load(body) as Record<string, unknown> | undefined) ?? {};
+
+  const remote = typeof autoSync.remote === "string" ? autoSync.remote.trim() : "";
+  parsed.autoSync = {
+    remote: remote || "origin",
+  };
 
   const nextContents = serializeConfigContents(parsed, { includeSchemaHeader: true });
   parseConfigContents(nextContents);

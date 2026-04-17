@@ -676,7 +676,7 @@ async function listBranchOptions(repoRoot: string, worktrees: WorktreeRecord[], 
   }));
 }
 
-async function getWorkingTreeSummary(worktreePath: string): Promise<GitWorkingTreeSummary> {
+export async function getWorkingTreeSummary(worktreePath: string): Promise<GitWorkingTreeSummary> {
   let stdout = "";
   try {
     ({ stdout } = await runCommand("git", ["status", "--short"], { cwd: worktreePath }));

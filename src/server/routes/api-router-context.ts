@@ -61,6 +61,7 @@ import {
   attachWorktreeDocumentLinks,
   getWorktreeDocumentLinks,
 } from "../services/worktree-link-service.js";
+import { createAutoSyncService } from "../services/auto-sync-service.js";
 import { runCommand } from "../utils/process.js";
 import {
   formatDurationMs,
@@ -117,6 +118,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const aiLogStreamPollIntervalMs = options.aiLogStreamPollIntervalMs ?? 500;
   const stateStreamFullRefreshIntervalMs = options.stateStreamFullRefreshIntervalMs ?? 120_000;
   const gitWatchDebounceMs = options.gitWatchDebounceMs ?? 150;
+  const autoSyncIntervalMs = options.autoSyncIntervalMs ?? 30_000;
   const shouldReconcileAiJobs = process.env.WTM_SERVER_ROLE === "worker" || Boolean(options.aiProcesses);
   const aiJobReadOptions = {
     aiProcesses: {
@@ -203,6 +205,15 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     emitStateRefresh();
   };
 
+  const autoSync = createAutoSyncService({
+    repoRoot: options.repoRoot,
+    operationalState: options.operationalState,
+    loadCurrentConfig,
+    emitStateRefresh,
+    emitGitStateRefresh,
+    intervalMs: autoSyncIntervalMs,
+  });
+
   const gitWatchers = new Map<string, fs.FSWatcher>();
   let gitWatchRefreshTimer: NodeJS.Timeout | null = null;
 
@@ -272,6 +283,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   void refreshGitWatchers().catch(() => undefined);
 
   const dispose = async () => {
+    await autoSync.dispose();
+
     if (gitWatchRefreshTimer) {
       clearTimeout(gitWatchRefreshTimer);
       gitWatchRefreshTimer = null;
@@ -749,6 +762,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     aiLogStreamPollIntervalMs,
     stateStreamFullRefreshIntervalMs,
     gitWatchDebounceMs,
+    autoSyncIntervalMs,
     hasInjectedAiProcesses,
     executionAiProcesses,
     passiveAiProcesses,
@@ -764,6 +778,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     ensureWorktreeRuntime,
     stopWorktreeRuntime,
     restartWorktreeRuntime,
+    autoSync,
     scheduleRuntimeStopAfterAiJob,
     emitGitStateRefresh,
     emitStateRefresh,

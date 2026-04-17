@@ -6,6 +6,7 @@ import type {
   AiCommandLogsResponse,
   AiCommandLogsStreamEvent,
   AiCommandSettingsResponse,
+  AutoSyncSettingsResponse,
   ApiStateStreamEvent,
   ConfigDocumentResponse,
   DashboardEventsStreamEvent,
@@ -16,6 +17,7 @@ import type {
   SystemStatusResponse,
   SystemStatusStreamEvent,
   UpdateAiCommandSettingsRequest,
+  UpdateAutoSyncSettingsRequest,
   UpdateProjectManagementUsersRequest,
 } from "../../shared/types.js";
 import {
@@ -25,6 +27,7 @@ import {
   readConfigContents as readConfigDocumentContents,
   parseConfigContents,
   updateAiCommandInConfigContents,
+  updateAutoSyncInConfigContents,
   updateProjectManagementUsersInConfigContents,
 } from "../services/config-service.js";
 import { buildAiCommandLogsResponse } from "./api-helpers.js";
@@ -721,6 +724,48 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
 
       context.emitStateRefresh();
       context.emitSystemStatusRefresh();
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/settings/auto-sync", async (_req, res, next) => {
+    try {
+      const config = await context.loadCurrentConfig();
+      const payload: AutoSyncSettingsResponse = {
+        branch: context.configSourceRef,
+        filePath: path.join(context.configWorktreePath, context.configFile),
+        autoSync: config.autoSync,
+      };
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.put("/settings/auto-sync", async (req, res, next) => {
+    try {
+      const body = req.body as UpdateAutoSyncSettingsRequest | undefined;
+      const remote = typeof body?.autoSync?.remote === "string" ? body.autoSync.remote : "";
+      const currentContents = await readConfigDocumentContents({
+        path: context.configPath,
+        repoRoot: context.repoRoot,
+        gitFile: context.configFile,
+      });
+      const nextContents = updateAutoSyncInConfigContents(currentContents, { remote });
+
+      const absoluteConfigPath = path.join(context.configWorktreePath, context.configFile);
+      await fs.writeFile(absoluteConfigPath, nextContents, "utf8");
+      await context.commitConfigEdit("config: update auto sync settings");
+
+      const payload: AutoSyncSettingsResponse = {
+        branch: context.configSourceRef,
+        filePath: absoluteConfigPath,
+        autoSync: { remote: remote.trim() || "origin" },
+      };
+
+      context.emitStateRefresh();
       res.json(payload);
     } catch (error) {
       next(error);

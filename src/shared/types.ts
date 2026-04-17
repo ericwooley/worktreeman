@@ -17,6 +17,30 @@ export interface AiCommandConfig {
   autoStartRuntime: boolean;
 }
 
+export interface AutoSyncConfig {
+  remote: string;
+}
+
+export type WorktreeAutoSyncStatus = "disabled" | "idle" | "running" | "paused";
+
+export type WorktreeAutoSyncSshAgentStatus = "not-required" | "ready" | "missing" | "unavailable";
+
+export interface WorktreeAutoSyncState {
+  worktreeId: WorktreeId;
+  branch: string;
+  worktreePath: string;
+  enabled: boolean;
+  status: WorktreeAutoSyncStatus;
+  remote: string;
+  message: string | null;
+  sshAgentStatus: WorktreeAutoSyncSshAgentStatus;
+  lastRunAt?: string;
+  lastSuccessAt?: string;
+  lastErrorAt?: string;
+  lastPulledAt?: string;
+  lastPushedAt?: string;
+}
+
 export interface ProjectManagementUserConfigEntry {
   name: string;
   email: string;
@@ -34,6 +58,7 @@ export interface WorktreeManagerConfig {
   runtimePorts: string[];
   derivedEnv: Record<string, string>;
   quickLinks: QuickLinkConfigEntry[];
+  autoSync: AutoSyncConfig;
   aiCommands: AiCommandConfig;
   startupCommands: string[];
   backgroundCommands: Record<string, BackgroundCommandConfigEntry>;
@@ -131,6 +156,7 @@ export interface WorktreeRecord {
   prunable: boolean;
   linkedDocument?: WorktreeLinkedDocumentSummary | null;
   runtime?: WorktreeRuntime;
+  autoSync?: WorktreeAutoSyncState;
   deletion?: WorktreeDeletionState;
 }
 
@@ -223,6 +249,16 @@ export interface AiCommandSettingsResponse {
 
 export interface UpdateAiCommandSettingsRequest {
   aiCommands: AiCommandConfig;
+}
+
+export interface AutoSyncSettingsResponse {
+  branch: string;
+  filePath: string;
+  autoSync: AutoSyncConfig;
+}
+
+export interface UpdateAutoSyncSettingsRequest {
+  autoSync: AutoSyncConfig;
 }
 
 export interface GitBranchOption {

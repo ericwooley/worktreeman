@@ -6,6 +6,7 @@ import type {
   AiCommandLogStreamEvent,
   AiCommandLogsResponse,
   AiCommandSettingsResponse,
+  AutoSyncSettingsResponse,
   AiCommandStreamEvent,
   BackgroundCommandLogStreamEvent,
   BackgroundCommandLogsResponse,
@@ -40,10 +41,12 @@ import type {
   TmuxClientInfo,
   TmuxClientsStreamEvent,
   UpdateAiCommandSettingsRequest,
+  UpdateAutoSyncSettingsRequest,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
   UpdateProjectManagementStatusRequest,
   UpdateProjectManagementUsersRequest,
+  WorktreeAutoSyncState,
   WorktreeRuntime,
 } from "@shared/types";
 
@@ -169,6 +172,17 @@ export function getAiCommandSettings(): Promise<AiCommandSettingsResponse> {
 
 export function saveAiCommandSettings(payload: UpdateAiCommandSettingsRequest): Promise<AiCommandSettingsResponse> {
   return request<AiCommandSettingsResponse>("/api/settings/ai-command", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAutoSyncSettings(): Promise<AutoSyncSettingsResponse> {
+  return request<AutoSyncSettingsResponse>("/api/settings/auto-sync");
+}
+
+export function saveAutoSyncSettings(payload: UpdateAutoSyncSettingsRequest): Promise<AutoSyncSettingsResponse> {
+  return request<AutoSyncSettingsResponse>("/api/settings/auto-sync", {
     method: "PUT",
     body: JSON.stringify(payload),
   });
@@ -508,6 +522,24 @@ export function restartRuntime(branch: string): Promise<WorktreeRuntime> {
 
 export function syncEnvFiles(branch: string): Promise<EnvSyncResponse> {
   return request<EnvSyncResponse>(`/api/worktrees/${encodeURIComponent(branch)}/env/sync`, {
+    method: "POST",
+  });
+}
+
+export function enableAutoSync(branch: string): Promise<WorktreeAutoSyncState> {
+  return request<WorktreeAutoSyncState>(`/api/worktrees/${encodeURIComponent(branch)}/auto-sync/enable`, {
+    method: "POST",
+  });
+}
+
+export function disableAutoSync(branch: string): Promise<WorktreeAutoSyncState> {
+  return request<WorktreeAutoSyncState>(`/api/worktrees/${encodeURIComponent(branch)}/auto-sync/disable`, {
+    method: "POST",
+  });
+}
+
+export function runAutoSync(branch: string): Promise<WorktreeAutoSyncState | null> {
+  return request<WorktreeAutoSyncState | null>(`/api/worktrees/${encodeURIComponent(branch)}/auto-sync/run`, {
     method: "POST",
   });
 }

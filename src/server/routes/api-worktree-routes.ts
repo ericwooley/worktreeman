@@ -324,6 +324,60 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
     }
   });
 
+  router.post("/worktrees/:branch/auto-sync/enable", async (req, res, next) => {
+    try {
+      const worktree = await context.findWorktree(req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const state = await context.autoSync.enable(worktree);
+      res.json(state);
+    } catch (error) {
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/auto-sync/disable", async (req, res, next) => {
+    try {
+      const worktree = await context.findWorktree(req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      const state = await context.autoSync.disable(worktree);
+      res.json(state);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/worktrees/:branch/auto-sync/run", async (req, res, next) => {
+    try {
+      const worktree = await context.findWorktree(req.params.branch);
+      if (!worktree) {
+        res.status(404).json({ message: `Unknown worktree ${req.params.branch}` });
+        return;
+      }
+
+      await context.autoSync.runNow(worktree);
+      const nextState = await context.operationalState.getAutoSyncById(worktree.id);
+      res.json(nextState);
+    } catch (error) {
+      if (error instanceof Error) {
+        res.status(400).json({ message: error.message });
+        return;
+      }
+      next(error);
+    }
+  });
+
   router.post("/worktrees/:branch/ai-command/run", async (req, res, next) => {
     let worktree: WorktreeRecord | null = null;
     let input = "";

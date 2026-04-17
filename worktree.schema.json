@@ -54,6 +54,9 @@
         "$ref": "#/$defs/quickLinkEntry"
       }
     },
+    "autoSync": {
+      "$ref": "#/$defs/autoSyncConfig"
+    },
     "aiCommands": {
       "$ref": "#/$defs/aiCommandConfig"
     },
@@ -117,11 +120,32 @@
           "type": "string",
           "description": "Faster or lighter-weight AI command template run inside a selected worktree. Include $WTM_AI_INPUT where the generated prompt should be inserted.",
           "default": ""
+        },
+        "autoStartRuntime": {
+          "type": "boolean",
+          "description": "Automatically start a worktree runtime before running an AI command when one is not already active.",
+          "default": false
         }
       },
       "default": {
         "smart": "",
-        "simple": ""
+        "simple": "",
+        "autoStartRuntime": false
+      }
+    },
+    "autoSyncConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remote": {
+          "type": "string",
+          "description": "Remote name used for document auto sync pull and push operations.",
+          "default": "origin",
+          "minLength": 1
+        }
+      },
+      "default": {
+        "remote": "origin"
       }
     },
     "quickLinkEntry": {

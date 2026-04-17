@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Editor from "@monaco-editor/react";
 import { DEFAULT_WORKTREEMAN_SETTINGS_BRANCH } from "@shared/constants";
-import type { AiCommandConfig, AiCommandId, SystemSubTab, WorktreeRecord } from "@shared/types";
+import type { AiCommandConfig, AiCommandId, AutoSyncConfig, SystemSubTab, WorktreeRecord } from "@shared/types";
 import {
   CommandPalette,
   DEFAULT_COMMAND_PALETTE_SHORTCUT,
@@ -44,11 +44,21 @@ const EMPTY_AI_COMMANDS: AiCommandConfig = {
   autoStartRuntime: false,
 };
 
+const EMPTY_AUTO_SYNC: AutoSyncConfig = {
+  remote: "origin",
+};
+
 function normalizeAiCommands(aiCommands?: Partial<AiCommandConfig> | null): AiCommandConfig {
   return {
     smart: typeof aiCommands?.smart === "string" ? aiCommands.smart : "",
     simple: typeof aiCommands?.simple === "string" ? aiCommands.simple : "",
     autoStartRuntime: aiCommands?.autoStartRuntime === true,
+  };
+}
+
+function normalizeAutoSync(autoSync?: Partial<AutoSyncConfig> | null): AutoSyncConfig {
+  return {
+    remote: typeof autoSync?.remote === "string" && autoSync.remote.trim() ? autoSync.remote.trim() : "origin",
   };
 }
 
@@ -164,6 +174,8 @@ export function Dashboard() {
     configDocumentLoading,
     aiCommandSettings,
     aiCommandSettingsLoading,
+    autoSyncSettings,
+    autoSyncSettingsLoading,
     aiCommandJob,
     projectManagementDocumentAiJob,
     aiCommandLogs,
@@ -204,6 +216,7 @@ export function Dashboard() {
     loadProjectManagementUsers,
     loadConfigDocument,
     loadAiCommandSettings,
+    loadAutoSyncSettings,
     loadAiCommandLog,
     loadAiCommandLogs,
     loadSystemStatus,
@@ -219,12 +232,16 @@ export function Dashboard() {
     cancelAiCommand,
     cancelProjectManagementDocumentAi,
     saveAiCommandSettings,
+    saveAutoSyncSettings,
     saveConfigDocument,
     subscribeToBackgroundLogs,
     updateProjectManagementDependencies,
     updateProjectManagementDocument,
     updateProjectManagementStatus,
     updateProjectManagementUsers,
+    enableAutoSync,
+    disableAutoSync,
+    runAutoSyncNow,
   } = useDashboardState();
   const { theme, themes, setThemeId, setPreviewThemeId, clearPreviewTheme } = useTheme();
   const [selectedBranch, setSelectedBranch] = useState<string | null>(initialUrlState.selectedBranch);
@@ -253,8 +270,10 @@ export function Dashboard() {
   const [createWorktreeModalOpen, setCreateWorktreeModalOpen] = useState(false);
   const [configEditorOpen, setConfigEditorOpen] = useState(false);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [autoSyncSettingsOpen, setAutoSyncSettingsOpen] = useState(false);
   const [configDraft, setConfigDraft] = useState("");
   const [aiCommandDrafts, setAiCommandDrafts] = useState<AiCommandConfig>(EMPTY_AI_COMMANDS);
+  const [autoSyncDraft, setAutoSyncDraft] = useState<AutoSyncConfig>(EMPTY_AUTO_SYNC);
   const [branch, setBranch] = useState("");
   const [createWorktreeDocumentId, setCreateWorktreeDocumentId] = useState<string | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -857,6 +876,39 @@ export function Dashboard() {
     setAiSettingsOpen(false);
   }, [aiCommandDrafts, saveAiCommandSettings]);
 
+  const openAutoSyncSettings = useCallback(async () => {
+    const settings = await loadAutoSyncSettings();
+    if (!settings) {
+      return;
+    }
+
+    setAutoSyncDraft(normalizeAutoSync(settings.autoSync));
+    setAutoSyncSettingsOpen(true);
+  }, [loadAutoSyncSettings]);
+
+  const closeAutoSyncSettings = useCallback(() => {
+    setAutoSyncSettingsOpen(false);
+  }, []);
+
+  const reloadAutoSyncSettings = useCallback(async () => {
+    const settings = await loadAutoSyncSettings();
+    if (!settings) {
+      return;
+    }
+
+    setAutoSyncDraft(normalizeAutoSync(settings.autoSync));
+  }, [loadAutoSyncSettings]);
+
+  const persistAutoSyncSettings = useCallback(async () => {
+    const settings = await saveAutoSyncSettings({ autoSync: normalizeAutoSync(autoSyncDraft) });
+    if (!settings) {
+      return;
+    }
+
+    setAutoSyncDraft(normalizeAutoSync(settings.autoSync));
+    setAutoSyncSettingsOpen(false);
+  }, [autoSyncDraft, saveAutoSyncSettings]);
+
   const openDeleteConfirmation = useCallback((worktree: WorktreeRecord | null) => {
     const deleteAiDisabledReason = getWorktreeDeleteAiDisabledReason(runningAiCommandJobs, worktree?.branch);
     if (!worktree?.deletion?.canDelete || deleteAiDisabledReason) {
@@ -926,7 +978,9 @@ export function Dashboard() {
   }, []);
 
   const configuredAiCommands = normalizeAiCommands(aiCommandSettings?.aiCommands);
+  const configuredAutoSync = normalizeAutoSync(autoSyncSettings?.autoSync ?? state?.config.autoSync);
   const aiCommandDraftValues = normalizeAiCommands(aiCommandDrafts);
+  const autoSyncDraftValues = normalizeAutoSync(autoSyncDraft);
   const handleLoadProjectManagementDocument = useCallback(async (documentId: string, options?: { silent?: boolean }) => {
     setProjectManagementSelectedDocumentId(documentId);
     return loadProjectManagementDocument(documentId, options);
@@ -1156,6 +1210,15 @@ export function Dashboard() {
         action: () => setCommandPaletteScope("theme-select"),
       },
       {
+        id: "settings-auto-sync",
+        code: "sas",
+        title: "Edit auto sync",
+        subtitle: `Choose the remote used for document auto sync. Current remote: ${configuredAutoSync.remote}`,
+        group: "Settings",
+        keywords: ["auto sync", "documents", "remote", configuredAutoSync.remote],
+        action: () => void openAutoSyncSettings(),
+      },
+      {
         id: "settings-ai-command",
         code: "sai",
         title: "Edit AI command",
@@ -1255,6 +1318,7 @@ export function Dashboard() {
     navigateToProjectManagementSubTab,
     navigateToSystemSubTab,
     openAiSettings,
+    openAutoSyncSettings,
     openDeleteConfirmation,
     openConfigEditor,
     projectManagementDocument?.title,
@@ -1269,6 +1333,7 @@ export function Dashboard() {
     selectedDeleteAiDisabledReason,
     theme,
     runningAiCommandJobs,
+    configuredAutoSync.remote,
   ]);
 
   const worktreeSelectionPaletteItems = useMemo<CommandPaletteItem[]>(() => {
@@ -1455,6 +1520,13 @@ export function Dashboard() {
               <button
                 type="button"
                 className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => void openAutoSyncSettings()}
+              >
+                Auto sync
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
                 onClick={() => void openAiSettings()}
               >
                 AI commands
@@ -1548,10 +1620,14 @@ export function Dashboard() {
             terminalShortcut={terminalShortcut}
             onTerminalShortcutToggle={() => toggleTerminalVisibility(true)}
             isBusy={busyBranch === selected?.branch}
+            autoSyncRemote={configuredAutoSync.remote}
             onStart={() => selected ? void start(selected.branch) : undefined}
             onStop={() => selected ? void stop(selected.branch) : undefined}
             onSyncEnv={() => selected ? void syncEnv(selected.branch) : undefined}
             onDelete={() => openDeleteConfirmation(selected)}
+            onEnableAutoSync={() => selected ? void enableAutoSync(selected.branch) : undefined}
+            onDisableAutoSync={() => selected ? void disableAutoSync(selected.branch) : undefined}
+            onRunAutoSyncNow={() => selected ? void runAutoSyncNow(selected.branch) : undefined}
             backgroundCommands={backgroundCommands}
             backgroundLogs={backgroundLogs}
             gitComparison={gitComparison}
@@ -1941,6 +2017,65 @@ export function Dashboard() {
                 }}
                 theme={theme.variant === "light" ? "vs" : "vs-dark"}
               />
+            </div>
+          </div>
+        </MatrixModal>
+      ) : null}
+
+      {autoSyncSettingsOpen ? (
+        <MatrixModal
+          kicker="Auto sync"
+          title="Configure document auto sync"
+          description="Choose which remote the documents branch should pull from and push to while auto sync is enabled."
+          closeLabel="Cancel"
+          maxWidthClass="max-w-2xl"
+          onClose={closeAutoSyncSettings}
+          footer={(
+            <>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={closeAutoSyncSettings}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                onClick={() => void reloadAutoSyncSettings()}
+                disabled={autoSyncSettingsLoading}
+              >
+                Reload
+              </button>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
+                onClick={() => void persistAutoSyncSettings()}
+                disabled={autoSyncSettingsLoading}
+              >
+                Save auto sync
+              </button>
+            </>
+          )}
+        >
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs theme-text-muted">
+              <MatrixBadge tone="neutral">Stored in config</MatrixBadge>
+              <span className="font-mono theme-text-strong">{autoSyncSettings?.filePath ?? state?.configPath ?? "worktree.yml"}</span>
+              <MatrixBadge tone="active">Remote {autoSyncDraftValues.remote}</MatrixBadge>
+            </div>
+            <label className="block space-y-2">
+              <span className="text-xs uppercase tracking-[0.18em] theme-text-soft">Auto sync remote</span>
+              <input
+                value={autoSyncDraftValues.remote}
+                onChange={(event) => setAutoSyncDraft({ remote: event.target.value })}
+                placeholder="origin"
+                className="matrix-input h-11 w-full rounded-none px-3 text-sm outline-none"
+                autoFocus
+              />
+            </label>
+            <div className="border theme-border-subtle p-3 text-sm theme-text-muted">
+              Auto sync uses this remote when the documents branch runs its scheduled fetch, pull, and push cycle.
             </div>
           </div>
         </MatrixModal>

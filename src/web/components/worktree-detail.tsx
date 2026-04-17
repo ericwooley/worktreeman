@@ -23,6 +23,7 @@ import type {
   SystemStatusResponse,
   SystemSubTab,
   UpdateProjectManagementUsersRequest,
+  WorktreeAutoSyncState,
   WorktreeRecord,
 } from "@shared/types";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
@@ -547,6 +548,7 @@ function parseDiffSections(raw: string) {
 interface WorktreeDetailProps {
   repoRoot: string | null;
   worktree: WorktreeRecord | null;
+  autoSyncRemote: string | null;
   worktreeOptions: MatrixDropdownOption[];
   worktreeCount: number;
   runningCount: number;
@@ -569,6 +571,9 @@ interface WorktreeDetailProps {
   onStop: () => void;
   onSyncEnv: () => void;
   onDelete: () => void;
+  onEnableAutoSync: () => void;
+  onDisableAutoSync: () => void;
+  onRunAutoSyncNow: () => void;
   backgroundCommands: BackgroundCommandState[];
   backgroundLogs: BackgroundCommandLogsResponse | null;
   gitComparison: GitComparisonResponse | null;
@@ -679,6 +684,7 @@ interface WorktreeDetailProps {
 export function WorktreeDetail({
   repoRoot,
   worktree,
+  autoSyncRemote,
   worktreeOptions,
   worktreeCount,
   runningCount,
@@ -701,6 +707,9 @@ export function WorktreeDetail({
   onStop,
   onSyncEnv,
   onDelete,
+  onEnableAutoSync,
+  onDisableAutoSync,
+  onRunAutoSyncNow,
   backgroundCommands,
   backgroundLogs,
   gitComparison,
@@ -782,6 +791,9 @@ export function WorktreeDetail({
   const isSystemTabActive = activeTab === "system";
   const isBackgroundCommandsActive = isEnvironmentTabActive && environmentSubTab === "background";
   const isRunning = Boolean(worktree?.runtime);
+  const autoSyncState: WorktreeAutoSyncState | null = worktree?.autoSync ?? null;
+  const isDocumentsBranch = worktree?.branch === "documents";
+  const autoSyncEffectiveRemote = autoSyncState?.remote ?? autoSyncRemote ?? "origin";
   const deleteAiDisabledReason = useMemo(
     () => getWorktreeDeleteAiDisabledReason(projectManagementRunningAiJobs, worktree?.branch),
     [projectManagementRunningAiJobs, worktree?.branch],
@@ -793,6 +805,69 @@ export function WorktreeDetail({
     : worktree?.deletion?.canDelete === false
       ? worktree.deletion.reason
       : null;
+  const autoSyncStatusTone = useMemo(() => {
+    if (!autoSyncState) {
+      return "idle" as const;
+    }
+
+    switch (autoSyncState.status) {
+      case "running":
+        return "active" as const;
+      case "paused":
+        return "warning" as const;
+      case "disabled":
+        return "idle" as const;
+      default:
+        return "neutral" as const;
+    }
+  }, [autoSyncState]);
+  const autoSyncStatusLabel = useMemo(() => {
+    if (!isDocumentsBranch) {
+      return "Documents only";
+    }
+
+    if (!autoSyncState) {
+      return "Off";
+    }
+
+    switch (autoSyncState.status) {
+      case "running":
+        return "Syncing";
+      case "paused":
+        return "Paused";
+      case "disabled":
+        return "Off";
+      default:
+        return autoSyncState.enabled ? "Ready" : "Off";
+    }
+  }, [autoSyncState, isDocumentsBranch]);
+  const autoSyncStatusContent = useMemo(() => {
+    if (!worktree) {
+      return undefined;
+    }
+
+    if (!isDocumentsBranch) {
+      return (
+        <div className="border theme-border-subtle theme-surface-soft px-3 py-2 text-sm theme-text-muted">
+          Auto sync is only available on the documents branch.
+        </div>
+      );
+    }
+
+    if (!autoSyncState?.message) {
+      return undefined;
+    }
+
+    const toneClass = autoSyncState.status === "paused"
+      ? "border theme-border-danger theme-surface-danger theme-text-danger"
+      : "border theme-border-subtle theme-surface-soft theme-text-muted";
+
+    return (
+      <div className={`${toneClass} px-3 py-2 text-sm`}>
+        {autoSyncState.message}
+      </div>
+    );
+  }, [autoSyncState, isDocumentsBranch, worktree]);
   const [copied, setCopied] = useState(false);
   const [selectedBackgroundCommandName, setSelectedBackgroundCommandName] = useState<string | null>(null);
   const [backgroundFilter, setBackgroundFilter] = useState("");
@@ -1755,6 +1830,11 @@ export function WorktreeDetail({
                       <MatrixBadge tone={worktree?.runtime ? "active" : "idle"} compact>
                         {worktree?.runtime ? "tmux attached" : "idle"}
                       </MatrixBadge>
+                      {worktree ? (
+                        <MatrixBadge tone={autoSyncStatusTone} compact>
+                          auto sync {autoSyncStatusLabel.toLowerCase()}
+                        </MatrixBadge>
+                      ) : null}
                       {worktree?.runtime?.runtimeStartedAt ? (
                         <MatrixBadge tone="active" compact>
                           live since {new Date(worktree.runtime.runtimeStartedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -1780,16 +1860,31 @@ export function WorktreeDetail({
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || isRunning} onClick={onStart}>Start env</button>
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy || !isRunning} onClick={onStop}>Stop env</button>
                       <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onSyncEnv}>Sync .env</button>
+                      {isDocumentsBranch ? (
+                        autoSyncState?.enabled ? (
+                          <>
+                            <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onRunAutoSyncNow}>Sync now</button>
+                            <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onDisableAutoSync}>Turn off auto sync</button>
+                          </>
+                        ) : (
+                          <button type="button" className="matrix-button rounded-none px-3 py-1.5 text-sm" disabled={isBusy} onClick={onEnableAutoSync}>Turn on auto sync</button>
+                        )
+                      ) : null}
                       <button type="button" className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-sm" disabled={Boolean(deleteDisabledReason)} onClick={onDelete} title={deleteDisabledReason ?? undefined}>
                         Delete
                       </button>
                     </>
                   ) : undefined}
-                  status={deleteDisabledReason ? (
-                    <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
-                      {deleteDisabledReason}
-                    </div>
-                  ) : undefined}
+                  status={(
+                    <>
+                      {autoSyncStatusContent}
+                      {deleteDisabledReason ? (
+                        <div className="border theme-border-danger theme-surface-danger px-3 py-2 text-sm theme-text-danger">
+                          {deleteDisabledReason}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 />
 
                 <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
@@ -1797,6 +1892,10 @@ export function WorktreeDetail({
                   <MatrixDetailField label="Head" value={worktree?.headSha ?? "-"} mono />
                   <MatrixDetailField label="Started" value={worktree?.runtime?.runtimeStartedAt ? new Date(worktree.runtime.runtimeStartedAt).toLocaleString() : "-"} />
                   <MatrixDetailField label="tmux session" value={worktree?.runtime?.tmuxSession ?? "-"} mono />
+                  <MatrixDetailField label="Auto sync remote" value={worktree ? autoSyncEffectiveRemote : "-"} mono />
+                  <MatrixDetailField label="Auto sync state" value={worktree ? autoSyncStatusLabel : "-"} />
+                  <MatrixDetailField label="Last sync" value={autoSyncState?.lastSuccessAt ? new Date(autoSyncState.lastSuccessAt).toLocaleString() : "-"} />
+                  <MatrixDetailField label="SSH agent" value={autoSyncState?.sshAgentStatus ?? "-"} mono />
                 </div>
 
                 {linkedDocument && linkedDocumentDetails ? (

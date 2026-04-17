@@ -6,6 +6,7 @@ import type {
   AiCommandOrigin,
   ShutdownLogEntry,
   ShutdownStatus,
+  WorktreeAutoSyncState,
   WorktreeRuntime,
 } from "../../shared/types.js";
 import { cloneAiCommandJob, parseAiCommandOrigin, toAiCommandLogError } from "../../shared/ai-command-utils.js";
@@ -148,12 +149,18 @@ interface BackgroundCommandMetadataRow {
   updated_at: string;
 }
 
+interface WorktreeAutoSyncStateRow {
+  worktree_id: string;
+  snapshot_json: string;
+}
+
 const RUNTIME_STATE_TABLE = "runtime_state_v2";
 const AI_JOB_STATE_TABLE = "ai_job_state_v2";
 const AI_RUN_LOGS_TABLE = "ai_run_logs_v2";
 const AI_RUN_OUTPUT_TABLE = "ai_run_output_entries_v2";
 const WORKTREE_DOCUMENT_LINKS_TABLE = "worktree_document_links";
 const BACKGROUND_COMMAND_METADATA_TABLE = "background_command_metadata";
+const WORKTREE_AUTO_SYNC_STATE_TABLE = "worktree_auto_sync_state_v1";
 
 const managedStores = new Map<string, ManagedOperationalStateStore>();
 
@@ -168,6 +175,10 @@ function cloneRuntime(runtime: WorktreeRuntime | null): WorktreeRuntime | null {
     quickLinks: runtime.quickLinks.map((link) => ({ ...link })),
     allocatedPorts: { ...runtime.allocatedPorts },
   };
+}
+
+function cloneAutoSyncState(state: WorktreeAutoSyncState | null): WorktreeAutoSyncState | null {
+  return state ? { ...state } : null;
 }
 
 function cloneAiCommandOutputEvent(event: AiCommandOutputEvent): AiCommandOutputEvent {
@@ -231,6 +242,14 @@ function parseRuntime(value: unknown): WorktreeRuntime | null {
   }
 
   return cloneRuntime(value as WorktreeRuntime);
+}
+
+function parseAutoSyncState(value: unknown): WorktreeAutoSyncState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  return cloneAutoSyncState(value as WorktreeAutoSyncState);
 }
 
 function parseAiCommandJob(value: unknown): AiCommandJob | null {
@@ -562,6 +581,15 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
 
       create index if not exists background_command_metadata_worktree_idx
         on ${BACKGROUND_COMMAND_METADATA_TABLE} (worktree_id, updated_at desc);
+
+      create table if not exists ${WORKTREE_AUTO_SYNC_STATE_TABLE} (
+        worktree_id text primary key,
+        snapshot_json text not null,
+        updated_at timestamptz not null default now()
+      );
+
+      create index if not exists worktree_auto_sync_state_updated_idx
+        on ${WORKTREE_AUTO_SYNC_STATE_TABLE} (updated_at desc);
     `);
 
     await db.query(
@@ -708,12 +736,59 @@ export class OperationalStateStore {
       .filter((runtime): runtime is WorktreeRuntime => runtime !== null);
   }
 
-  async mergeInto<T extends { id: WorktreeId }>(worktrees: T[]): Promise<Array<T & { runtime?: WorktreeRuntime }>> {
+  async getAutoSyncById(worktreeId: WorktreeId): Promise<WorktreeAutoSyncState | null> {
+    return await querySnapshot(
+      this.repoRoot,
+      `select snapshot_json from ${WORKTREE_AUTO_SYNC_STATE_TABLE} where worktree_id = $1`,
+      [worktreeId],
+      parseAutoSyncState,
+    );
+  }
+
+  async setAutoSync(state: WorktreeAutoSyncState): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(
+      `
+        insert into ${WORKTREE_AUTO_SYNC_STATE_TABLE} (worktree_id, snapshot_json, updated_at)
+        values ($1, $2, now())
+        on conflict (worktree_id) do update
+        set snapshot_json = excluded.snapshot_json,
+            updated_at = now()
+      `,
+      [state.worktreeId, JSON.stringify(cloneAutoSyncState(state))],
+    );
+  }
+
+  async deleteAutoSyncById(worktreeId: WorktreeId): Promise<WorktreeAutoSyncState | null> {
+    const existing = await this.getAutoSyncById(worktreeId);
+    if (!existing) {
+      return null;
+    }
+
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(`delete from ${WORKTREE_AUTO_SYNC_STATE_TABLE} where worktree_id = $1`, [worktreeId]);
+    return existing;
+  }
+
+  async listAutoSyncStates(): Promise<WorktreeAutoSyncState[]> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<WorktreeAutoSyncStateRow>(
+      `select worktree_id, snapshot_json from ${WORKTREE_AUTO_SYNC_STATE_TABLE} order by updated_at asc`,
+    );
+    return result.rows
+      .map((row) => parseAutoSyncState(JSON.parse(row.snapshot_json)))
+      .filter((state): state is WorktreeAutoSyncState => state !== null);
+  }
+
+  async mergeInto<T extends { id: WorktreeId }>(worktrees: T[]): Promise<Array<T & { runtime?: WorktreeRuntime; autoSync?: WorktreeAutoSyncState }>> {
     const runtimeEntries = await this.listRuntimes();
+    const autoSyncEntries = await this.listAutoSyncStates();
     const runtimeById = new Map(runtimeEntries.map((runtime) => [runtime.id, runtime]));
+    const autoSyncById = new Map(autoSyncEntries.map((state) => [state.worktreeId, state]));
     return worktrees.map((worktree) => ({
       ...worktree,
       runtime: runtimeById.get(worktree.id),
+      autoSync: autoSyncById.get(worktree.id),
     }));
   }
 

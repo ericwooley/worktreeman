@@ -45,6 +45,163 @@ test("DELETE /api/worktrees/:branch rejects deleting the default branch worktree
   }
 });
 
+test("PUT /api/settings/auto-sync persists the configured remote", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+
+    const response = await server.fetch("/api/settings/auto-sync", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoSync: { remote: "backup" } }),
+    });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      branch: repo.configSourceRef,
+      filePath: path.join(repo.configWorktreePath, repo.configFile),
+      autoSync: { remote: "backup" },
+    });
+
+    const config = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    assert.equal(config.autoSync.remote, "backup");
+
+    const getResponse = await server.fetch("/api/settings/auto-sync");
+    assert.equal(getResponse.status, 200);
+    assert.deepEqual(await getResponse.json(), {
+      branch: repo.configSourceRef,
+      filePath: path.join(repo.configWorktreePath, repo.configFile),
+      autoSync: { remote: "backup" },
+    });
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/worktrees/:branch/auto-sync/enable rejects non-documents branches", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const response = await server.fetch("/api/worktrees/feature-ai-log/auto-sync/enable", {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      message: "Auto sync is only available on the documents branch.",
+    });
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("POST /api/worktrees/:branch/auto-sync/enable pauses when the documents worktree is dirty", async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const config = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const documentsWorktree = await createWorktree(repo.repoRoot, config, { branch: "documents" });
+    await setupAutoSyncRemote(repo.repoRoot, documentsWorktree.worktreePath);
+    await fs.writeFile(path.join(documentsWorktree.worktreePath, "dirty.txt"), "local change\n", "utf8");
+
+    const server = await startApiServer(repo, { autoSyncIntervalMs: 50 });
+    const response = await server.fetch("/api/worktrees/documents/auto-sync/enable", {
+      method: "POST",
+    });
+
+    assert.equal(response.status, 200);
+
+    await waitFor(async () => {
+      const state = await readWorktreeAutoSyncState(server, "documents");
+      return state?.status === "paused" && state.enabled === false;
+    });
+
+    const autoSyncState = await readWorktreeAutoSyncState(server, "documents");
+    assert.ok(autoSyncState);
+    assert.equal(autoSyncState.enabled, false);
+    assert.equal(autoSyncState.status, "paused");
+    assert.match(autoSyncState.message ?? "", /local changes/i);
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("documents auto sync pulls remote changes on an interval and disable stops later syncs", { concurrency: false, timeout: 20000 }, async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const config = await loadConfig({
+      path: repo.configPath,
+      repoRoot: repo.repoRoot,
+      gitFile: repo.configFile,
+    });
+    const documentsWorktree = await createWorktree(repo.repoRoot, config, { branch: "documents" });
+    const { clonePath } = await setupAutoSyncRemote(repo.repoRoot, documentsWorktree.worktreePath);
+    const server = await startApiServer(repo, { autoSyncIntervalMs: 50 });
+
+    const enableResponse = await server.fetch("/api/worktrees/documents/auto-sync/enable", {
+      method: "POST",
+    });
+    assert.equal(enableResponse.status, 200);
+
+    await waitFor(async () => {
+      const state = await readWorktreeAutoSyncState(server, "documents");
+      return state?.enabled === true && state.status === "idle";
+    });
+
+    await pushRemoteCommit(clonePath, "remote-update-1.txt", "first sync\n", "remote update 1");
+
+    await waitFor(async () => {
+      try {
+        const contents = await fs.readFile(path.join(documentsWorktree.worktreePath, "remote-update-1.txt"), "utf8");
+        return contents === "first sync\n";
+      } catch {
+        return false;
+      }
+    }, 10000);
+
+    await waitFor(async () => {
+      const state = await readWorktreeAutoSyncState(server, "documents");
+      return state?.status === "idle" && Boolean(state.lastSuccessAt);
+    });
+
+    const disableResponse = await server.fetch("/api/worktrees/documents/auto-sync/disable", {
+      method: "POST",
+    });
+    assert.equal(disableResponse.status, 200);
+
+    await waitFor(async () => {
+      const state = await readWorktreeAutoSyncState(server, "documents");
+      return state?.enabled === false && state.status === "disabled";
+    });
+
+    await pushRemoteCommit(clonePath, "remote-update-2.txt", "should stay remote\n", "remote update 2");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    await assert.rejects(fs.access(path.join(documentsWorktree.worktreePath, "remote-update-2.txt")));
+
+    await server.close();
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("DELETE /api/worktrees/:branch rejects deleting the settings worktree", async () => {
   const repo = await createApiTestRepo();
 
@@ -1049,7 +1206,60 @@ test("runtime restart reloads config changes and reconnect ensures the tmux sess
   }
 });
 
-async function runGit(cwd: string, args: string[]) {
-  const { stdout } = await import("../utils/process.js").then(({ runCommand }) => runCommand("git", args, { cwd }));
+async function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
+  const { stdout } = await import("../utils/process.js").then(({ runCommand }) => runCommand("git", args, { cwd, env }));
   return stdout;
+}
+
+async function readWorktreeAutoSyncState(
+  server: Awaited<ReturnType<typeof startApiServer>>,
+  branch: string,
+): Promise<{
+  enabled: boolean;
+  status: string;
+  remote: string;
+  message?: string | null;
+  lastSuccessAt?: string;
+} | null> {
+  const response = await server.fetch("/api/state");
+  assert.equal(response.status, 200);
+  const payload = await response.json() as {
+    worktrees: Array<{
+      branch: string;
+      autoSync?: {
+        enabled: boolean;
+        status: string;
+        remote: string;
+        message?: string | null;
+        lastSuccessAt?: string;
+      } | null;
+    }>;
+  };
+
+  return payload.worktrees.find((entry) => entry.branch === branch)?.autoSync ?? null;
+}
+
+async function setupAutoSyncRemote(repoRoot: string, worktreePath: string) {
+  const remotePath = path.join(repoRoot, ".auto-sync-origin.git");
+  const clonePath = path.join(repoRoot, ".auto-sync-origin-clone");
+
+  await runGit(repoRoot, ["init", "--bare", remotePath]);
+  await runGit(worktreePath, ["remote", "add", "origin", remotePath]);
+  await runGit(worktreePath, ["push", "-u", "origin", "HEAD:documents"]);
+  await runGit(repoRoot, ["clone", "--branch", "documents", remotePath, clonePath]);
+
+  return { remotePath, clonePath };
+}
+
+async function pushRemoteCommit(clonePath: string, fileName: string, contents: string, message: string) {
+  await fs.writeFile(path.join(clonePath, fileName), contents, "utf8");
+  await runGit(clonePath, ["add", fileName]);
+  await runGit(clonePath, ["commit", "-m", message], {
+    ...process.env,
+    GIT_AUTHOR_NAME: "Test User",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test User",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  });
+  await runGit(clonePath, ["push", "origin", "documents"]);
 }
