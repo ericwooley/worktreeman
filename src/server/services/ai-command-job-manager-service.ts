@@ -1,6 +1,7 @@
 import { PgBoss } from "pg-boss";
 import type { AiCommandConfig, AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
 import type { WorktreeId } from "../../shared/worktree-id.js";
+import { readAiSessionIdFromEnv } from "../routes/api-helpers.js";
 import { beginAiCommandJob, continueAiCommandJob, type StartedAiCommandJob } from "./ai-command-service.js";
 import { closeManagedDatabaseClient, getManagedDatabaseClient } from "./database-client-service.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
@@ -197,6 +198,7 @@ export async function enqueueProjectManagementAiJob(options: {
     repoRoot: options.repoRoot,
     worktreeId: options.payload.worktreeId,
     branch: options.payload.branch,
+    sessionId: readAiSessionIdFromEnv(options.payload.env),
     documentId: options.payload.documentId,
     commandId: options.payload.commandId,
     origin: options.payload.origin ?? null,

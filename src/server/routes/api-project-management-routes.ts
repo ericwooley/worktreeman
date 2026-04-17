@@ -54,6 +54,7 @@ import {
 import { sanitizeBranchName } from "../utils/paths.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 import {
+  buildAiCommandProcessEnv,
   buildAiEnvironmentContext,
   buildProjectManagementExecutionAiPrompt,
   createProjectManagementDocumentOrigin,
@@ -581,13 +582,20 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         relatedDocuments: documentsPayload.documents,
         requestedChange: requestedChange ?? undefined,
       });
-      const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
+      const env = buildAiCommandProcessEnv({
+        repoRoot: context.repoRoot,
+        worktreeId: worktree.id,
+        documentId,
+        worktreePath,
+        env: runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env },
+      });
 
       const renderedCommand = renderAiCommand(template, input);
       const runDetails = {
         worktreeId: worktree.id,
         branch,
         documentId,
+        sessionId: env.AI_SESSION_ID ?? null,
         commandId,
         aiCommands: config.aiCommands,
         origin,

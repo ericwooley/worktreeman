@@ -264,6 +264,7 @@ export async function writeAiLogFixture(options: {
   fileName: string;
   branch: string;
   commandId?: "smart" | "simple";
+  sessionId?: string | null;
   origin?: AiCommandOrigin | null;
   worktreePath: string;
   command: string;
@@ -320,6 +321,7 @@ export async function writeAiLogFixture(options: {
     branch: options.branch,
     documentId: null,
     commandId: options.commandId ?? "smart",
+    sessionId: options.sessionId ?? null,
     origin: options.origin ?? null,
     worktreePath: options.worktreePath,
     command: options.command,
@@ -350,6 +352,7 @@ export async function writeAiLogFixture(options: {
       branch: options.branch,
       documentId: null,
       commandId: options.commandId ?? "smart",
+      sessionId: options.sessionId ?? null,
       command: options.command,
       input: options.request,
       status: "running",

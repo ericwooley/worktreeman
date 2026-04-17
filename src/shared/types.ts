@@ -656,6 +656,7 @@ export interface AiCommandJob {
   fileName: string;
   worktreeId: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   command: string;
@@ -704,6 +705,7 @@ export interface AiCommandLogSummary {
   timestamp: string;
   worktreeId: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   worktreePath: string;
@@ -720,6 +722,7 @@ export interface AiCommandLogEntry {
   timestamp: string;
   worktreeId: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   worktreePath: string;

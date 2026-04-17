@@ -375,6 +375,7 @@ export function ProjectManagementAiLogTab({
                 <MatrixDetailField label="Exit code" value={typeof logDetail.exitCode === "number" ? String(logDetail.exitCode) : "Pending"} />
                 <MatrixDetailField label="AI command" value={getAiCommandLabel(logDetail.commandId)} />
                 <MatrixDetailField label="Output updates" value={String(detailOutputEvents.length)} />
+                <MatrixDetailField label="Session ID" value={logDetail.sessionId ?? "Unavailable"} mono />
                 <MatrixDetailField label="Worktree path" value={logDetail.worktreePath} mono />
                 <MatrixDetailField label="Command" value={logDetail.command} mono />
               </div>

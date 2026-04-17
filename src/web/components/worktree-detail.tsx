@@ -29,6 +29,7 @@ import type {
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
+import type { ProjectManagementDocumentPresentation } from "./project-management-document-route";
 import { getTmuxSessionName } from "../lib/tmux";
 import type { CommitChangesPayload } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
@@ -599,6 +600,7 @@ interface WorktreeDetailProps {
   projectManagementUsers: ProjectManagementUsersResponse | null;
   projectManagementActiveSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
+  projectManagementDocumentPresentation: ProjectManagementDocumentPresentation;
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
   projectManagementEditFormTab: ProjectManagementDocumentFormViewMode;
   projectManagementCreateFormTab: ProjectManagementDocumentFormViewMode;
@@ -628,6 +630,8 @@ interface WorktreeDetailProps {
   onProjectManagementDocumentViewModeChange: (mode: ProjectManagementDocumentViewMode) => void;
   onProjectManagementEditFormTabChange: (mode: ProjectManagementDocumentFormViewMode) => void;
   onProjectManagementCreateFormTabChange: (mode: ProjectManagementDocumentFormViewMode) => void;
+  onProjectManagementOpenDocumentPage: (documentId: string, options?: { viewMode?: ProjectManagementDocumentViewMode }) => void;
+  onProjectManagementCloseDocument: () => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementUsers: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
@@ -735,6 +739,7 @@ export function WorktreeDetail({
   projectManagementUsers,
   projectManagementActiveSubTab,
   projectManagementSelectedDocumentId,
+  projectManagementDocumentPresentation,
   projectManagementDocumentViewMode,
   projectManagementEditFormTab,
   projectManagementCreateFormTab,
@@ -764,6 +769,8 @@ export function WorktreeDetail({
   onProjectManagementDocumentViewModeChange,
   onProjectManagementEditFormTabChange,
   onProjectManagementCreateFormTabChange,
+  onProjectManagementOpenDocumentPage,
+  onProjectManagementCloseDocument,
   onLoadProjectManagementDocuments,
   onLoadProjectManagementUsers,
   onLoadProjectManagementDocument,
@@ -2106,6 +2113,7 @@ export function WorktreeDetail({
               projectManagementUsers={projectManagementUsers}
               activeSubTab={projectManagementActiveSubTab}
               selectedDocumentId={projectManagementSelectedDocumentId}
+              documentPresentation={projectManagementDocumentPresentation}
               documentViewMode={projectManagementDocumentViewMode}
               editFormTab={projectManagementEditFormTab}
               createFormTab={projectManagementCreateFormTab}
@@ -2137,6 +2145,8 @@ export function WorktreeDetail({
               onRunDocumentAi={onRunProjectManagementDocumentAi}
               onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}
               onCancelAiCommand={onCancelProjectManagementAiCommand}
+              onOpenDocumentPage={onProjectManagementOpenDocumentPage}
+              onCloseDocument={onProjectManagementCloseDocument}
               onRetryRefresh={() => void refreshProjectManagementWorkspace({ silent: false, includeSelectedDocument: false })}
             />
           </div>

@@ -8,6 +8,7 @@ export function toAiCommandJobFromLog(logDetail: AiCommandLogEntry): AiCommandJo
     branch: logDetail.branch,
     documentId: logDetail.documentId ?? null,
     commandId: logDetail.commandId,
+    sessionId: logDetail.sessionId ?? null,
     command: logDetail.command,
     input: logDetail.request,
     status: logDetail.status,

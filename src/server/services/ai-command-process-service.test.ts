@@ -163,6 +163,31 @@ test("AI command process passes multiline input with special chars via WTM_AI_IN
   }
 });
 
+test("AI command process preserves AI_SESSION_ID from env", async () => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
+  const processName = `wtm:ai:test-ai-session-id-${Date.now()}`;
+  const sessionId = "stable-ai-session-id";
+
+  try {
+    const result = await runManagedProcess({
+      processName,
+      command: "printf '%s' \"$AI_SESSION_ID\"",
+      input: "",
+      worktreePath: tempDir,
+      env: {
+        ...process.env,
+        AI_SESSION_ID: sessionId,
+      },
+    });
+
+    assert.equal(result.stdout, sessionId);
+    assert.equal(result.processInfo?.exitCode ?? 0, 0);
+  } finally {
+    await deleteAiCommandProcess(processName).catch(() => undefined);
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("stopAllAiCommandProcesses terminates managed running processes", async () => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-process-"));
   const processName = `wtm:ai:test-stop-all-${Date.now()}`;

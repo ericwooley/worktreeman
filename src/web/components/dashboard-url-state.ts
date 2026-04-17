@@ -2,6 +2,7 @@ import type { SystemSubTab } from "@shared/types";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
+import { readProjectManagementDocumentPath, type ProjectManagementDocumentPresentation } from "./project-management-document-route";
 import type { WorktreeEnvironmentSubTab } from "./worktree-detail";
 
 export type DashboardActiveTab = "environment" | "git" | "project-management" | "system" | "ai-log";
@@ -17,6 +18,7 @@ export interface DashboardUrlState {
   systemSubTab: SystemSubTab;
   projectManagementSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
+  projectManagementDocumentPresentation: ProjectManagementDocumentPresentation;
   projectManagementDocumentViewMode: ProjectManagementDocumentViewMode;
   projectManagementEditFormTab: ProjectManagementDocumentFormViewMode;
   projectManagementCreateFormTab: ProjectManagementDocumentFormViewMode;
@@ -52,10 +54,22 @@ export function parseSystemSubTab(value: string | null): SystemSubTab {
   return value === "jobs" ? "jobs" : "performance";
 }
 
-export function readDashboardUrlState(search: string = typeof window === "undefined" ? "" : window.location.search): DashboardUrlState {
+export function readDashboardUrlState(
+  pathnameOrSearch: string = typeof window === "undefined" ? "" : window.location.search,
+  searchMaybe?: string,
+): DashboardUrlState {
+  const pathname = searchMaybe === undefined
+    ? (pathnameOrSearch.startsWith("/")
+      ? pathnameOrSearch
+      : (typeof window === "undefined" ? "/" : window.location.pathname))
+    : pathnameOrSearch;
+  const search = searchMaybe ?? (pathnameOrSearch.startsWith("?") ? pathnameOrSearch : "");
   const params = new URLSearchParams(search);
+  const projectManagementDocumentRoute = readProjectManagementDocumentPath(pathname);
   const tab = params.get("tab");
-  const activeTab: DashboardActiveTab = tab === "git" || tab === "merge"
+  const activeTab: DashboardActiveTab = projectManagementDocumentRoute.presentation === "page"
+    ? "project-management"
+    : tab === "git" || tab === "merge"
     ? "git"
     : tab === "system"
         ? "system"
@@ -78,8 +92,11 @@ export function readDashboardUrlState(search: string = typeof window === "undefi
     gitView: params.get("git") === "diff" ? "diff" : "graph",
     isTerminalVisible: params.get("terminal") === "open",
     systemSubTab: parseSystemSubTab(params.get("systemTab")),
-    projectManagementSubTab: parseProjectManagementSubTab(params.get("pmTab")),
-    projectManagementSelectedDocumentId: params.get("pmDoc"),
+    projectManagementSubTab: projectManagementDocumentRoute.presentation === "page"
+      ? "document"
+      : parseProjectManagementSubTab(params.get("pmTab")),
+    projectManagementSelectedDocumentId: projectManagementDocumentRoute.documentId ?? params.get("pmDoc"),
+    projectManagementDocumentPresentation: projectManagementDocumentRoute.presentation,
     projectManagementDocumentViewMode: parseProjectManagementDocumentViewMode(params.get("pmView")),
     projectManagementEditFormTab: parseProjectManagementDocumentFormViewMode(params.get("pmEditTab")),
     projectManagementCreateFormTab: parseProjectManagementDocumentFormViewMode(params.get("pmCreateTab")),

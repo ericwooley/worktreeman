@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 import test from "#test-runtime";
-import type { ProjectManagementDocument } from "@shared/types";
-import { ApiError } from "./api";
-import {
-  buildProjectManagementStatusFallbackPayload,
-  mergeUpdatedProjectManagementDocumentIntoList,
-  shouldFallbackProjectManagementStatusUpdate,
-} from "./project-management-status-update";
+import type { ProjectManagementDocument, ProjectManagementDocumentSummary } from "@shared/types";
+import { mergeUpdatedProjectManagementDocumentIntoList } from "./project-management-status-update";
 
 const sampleDocument: ProjectManagementDocument = {
   id: "doc-1",
@@ -24,25 +19,6 @@ const sampleDocument: ProjectManagementDocument = {
   historyCount: 2,
   comments: [],
 };
-
-test("status update fallback only triggers for missing status route", () => {
-  assert.equal(shouldFallbackProjectManagementStatusUpdate(new ApiError("missing", 404)), true);
-  assert.equal(shouldFallbackProjectManagementStatusUpdate(new ApiError("bad request", 400)), false);
-  assert.equal(shouldFallbackProjectManagementStatusUpdate(new Error("boom")), false);
-});
-
-test("status update fallback payload preserves document fields and only changes status", () => {
-  assert.deepEqual(buildProjectManagementStatusFallbackPayload(sampleDocument, "in-progress"), {
-    title: "Dependencies",
-    summary: "Track prerequisite document work.",
-    markdown: "# Dependencies\n",
-    tags: ["feature", "ux"],
-    dependencies: ["doc-2"],
-    status: "in-progress",
-    assignee: "Eric",
-    archived: false,
-  });
-});
 
 test("mergeUpdatedProjectManagementDocumentIntoList updates the matching document and tags", () => {
   const merged = mergeUpdatedProjectManagementDocumentIntoList({
@@ -63,7 +39,7 @@ test("mergeUpdatedProjectManagementDocumentIntoList updates the matching documen
     availableTags: ["feature", "plan", "ux"],
     availableStatuses: ["backlog", "todo", "in-progress", "blocked", "done", "reference"],
   }, {
-    ...sampleDocument,
+    ...(sampleDocument as ProjectManagementDocumentSummary),
     status: "in-progress",
     tags: ["ops"],
   });

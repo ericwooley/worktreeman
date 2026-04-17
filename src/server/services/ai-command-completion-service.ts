@@ -4,6 +4,18 @@ import { addProjectManagementComment, getProjectManagementDocument, updateProjec
 import { buildWorktreeAiCompletedComment } from "./project-management-comment-formatters.js";
 import { logServerEvent } from "../utils/server-logger.js";
 
+const PROJECT_MANAGEMENT_DOCUMENT_OUTPUT_PATTERN = /<wtm-new-document>([\s\S]*?)<\/wtm-new-document>/i;
+
+function extractUpdatedProjectManagementMarkdown(stdout: string) {
+  const match = stdout.match(PROJECT_MANAGEMENT_DOCUMENT_OUTPUT_PATTERN);
+  const nextMarkdown = match?.[1]?.trim();
+  if (!nextMarkdown) {
+    throw new Error("AI command finished without returning <wtm-new-document>...</wtm-new-document>. Inspect the saved AI log output to see the raw response.");
+  }
+
+  return nextMarkdown;
+}
+
 export async function completeAiCommandRun(options: {
   repoRoot: string;
   branch: string;
@@ -18,10 +30,7 @@ export async function completeAiCommandRun(options: {
   autoCommitDirtyWorktree?: boolean;
 }) {
   if (options.applyDocumentUpdateToDocumentId) {
-    const nextMarkdown = options.stdout.trim();
-    if (!nextMarkdown) {
-      throw new Error("AI command finished without returning updated markdown.");
-    }
+    const nextMarkdown = extractUpdatedProjectManagementMarkdown(options.stdout);
 
     const currentDocument = await getProjectManagementDocument(options.repoRoot, options.applyDocumentUpdateToDocumentId);
     await updateProjectManagementDocument(options.repoRoot, options.applyDocumentUpdateToDocumentId, {

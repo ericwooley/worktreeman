@@ -34,6 +34,7 @@ const docs = Object.entries(markdownModules)
   });
 
 const docsBySlug = new Map(docs.map((doc) => [doc.slug, doc]));
+const docsBasePath = normalizeBasePath(import.meta.env.BASE_URL);
 
 export function DocsSite() {
   const currentSlug = getCurrentSlug();
@@ -50,9 +51,15 @@ export function DocsSite() {
             <div className="docs-terminal-mark">worktreeman docs</div>
             <p className="docs-rail-title">Install, configure, and run branch-scoped local environments.</p>
             <div className="docs-command-block">
-              <span>$ npm install -g worktreeman</span>
-              <span>$ worktreeman init</span>
-              <span>$ worktreeman start</span>
+              <span>$ npx -y worktreeman create --cwd /path/to/repo</span>
+              <span>$ npx -y worktreeman init --cwd /path/to/repo</span>
+              <span>$ npx -y worktreeman start --cwd /path/to/repo</span>
+            </div>
+
+            <div className="mt-4 text-sm leading-6 text-[#9cd99c]">
+              <a className="docs-link" href="https://github.com/ericwooley/worktreeman" target="_blank" rel="noreferrer">
+                View README on GitHub
+              </a>
             </div>
 
             <nav className="mt-5 flex flex-col gap-2 text-sm">
@@ -89,7 +96,8 @@ export function DocsSite() {
 }
 
 function getCurrentSlug(): string {
-  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const sitePath = stripBasePath(window.location.pathname, docsBasePath);
+  const path = sitePath.replace(/\/+$/, "") || "/";
   const segments = path.split("/").filter(Boolean);
   const lastSegment = segments.at(-1);
 
@@ -102,10 +110,26 @@ function getCurrentSlug(): string {
 
 function toDocHref(slug: string | undefined): string {
   if (!slug) {
+    return docsBasePath;
+  }
+
+  return slug === docs[0]?.slug ? docsBasePath : `${docsBasePath}${slug}/`;
+}
+
+function normalizeBasePath(baseUrl: string): string {
+  if (!baseUrl || baseUrl === "/") {
     return "/";
   }
 
-  return slug === docs[0]?.slug ? "/" : `/${slug}/`;
+  return `/${baseUrl.replace(/^\/+|\/+$/g, "")}/`;
+}
+
+function stripBasePath(pathname: string, basePath: string): string {
+  if (basePath === "/") {
+    return pathname;
+  }
+
+  return pathname.startsWith(basePath) ? pathname.slice(basePath.length - 1) || "/" : pathname;
 }
 
 function extractExcerpt(markdown: string): string {

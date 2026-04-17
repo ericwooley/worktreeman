@@ -33,9 +33,11 @@ import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import { logServerEvent } from "../utils/server-logger.js";
 import {
+  buildAiCommandProcessEnv,
   createAiLogIdentifiers,
   createGitConflictResolutionOrigin,
   parseAiCommandId,
+  readAiSessionIdFromEnv,
   safeWriteAiRequestLog,
 } from "./api-helpers.js";
 import type { ApiRouterContext } from "./api-router-context.js";
@@ -248,18 +250,24 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       }
 
       const runtime = await context.operationalState.getRuntimeById(worktree.id);
-      const env = runtime
-        ? buildRuntimeProcessEnv(runtime)
-        : {
-            ...process.env,
-            ...config.env,
-            WORKTREE_ID: worktree.id,
-            WORKTREE_BRANCH: worktree.branch,
-            WORKTREE_PATH: worktree.worktreePath,
-          };
+      const env = buildAiCommandProcessEnv({
+        repoRoot: context.repoRoot,
+        worktreeId: worktree.id,
+        worktreePath: worktree.worktreePath,
+        env: runtime
+          ? buildRuntimeProcessEnv(runtime)
+          : {
+              ...process.env,
+              ...config.env,
+              WORKTREE_ID: worktree.id,
+              WORKTREE_BRANCH: worktree.branch,
+              WORKTREE_PATH: worktree.worktreePath,
+            },
+      });
 
       const commandId = parseAiCommandId(body?.commandId ?? "smart");
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
+      const sessionId = readAiSessionIdFromEnv(env);
       const origin = createGitConflictResolutionOrigin({
         branch: worktree.branch,
         worktreeId: worktree.id,
@@ -273,6 +281,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
           branch: worktree.branch,
           commandId,
           origin,
+          sessionId,
           worktreePath: worktree.worktreePath,
           renderedCommand: template,
           input: "",
@@ -288,6 +297,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
           branch: worktree.branch,
           commandId,
           origin,
+          sessionId,
           worktreePath: worktree.worktreePath,
           renderedCommand: template,
           input: "",
@@ -325,6 +335,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
             branch: worktree.branch,
             commandId,
             origin,
+            sessionId,
             worktreePath: worktree.worktreePath,
             renderedCommand,
             input,
@@ -346,6 +357,7 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
             branch: worktree.branch,
             commandId,
             origin,
+            sessionId,
             worktreePath: worktree.worktreePath,
             renderedCommand,
             input,
@@ -398,15 +410,20 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       }
 
       const runtime = await context.operationalState.getRuntimeById(worktree.id);
-      const env = runtime
-        ? buildRuntimeProcessEnv(runtime)
-        : {
-            ...process.env,
-            ...config.env,
-            WORKTREE_ID: worktree.id,
-            WORKTREE_BRANCH: worktree.branch,
-            WORKTREE_PATH: worktree.worktreePath,
-          };
+      const env = buildAiCommandProcessEnv({
+        repoRoot: context.repoRoot,
+        worktreeId: worktree.id,
+        worktreePath: worktree.worktreePath,
+        env: runtime
+          ? buildRuntimeProcessEnv(runtime)
+          : {
+              ...process.env,
+              ...config.env,
+              WORKTREE_ID: worktree.id,
+              WORKTREE_BRANCH: worktree.branch,
+              WORKTREE_PATH: worktree.worktreePath,
+            },
+      });
 
       const payload: CommitGitChangesResponse = await commitGitChanges({
         repoRoot: context.repoRoot,
@@ -443,15 +460,20 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       }
 
       const runtime = await context.operationalState.getRuntimeById(worktree.id);
-      const env = runtime
-        ? buildRuntimeProcessEnv(runtime)
-        : {
-            ...process.env,
-            ...config.env,
-            WORKTREE_ID: worktree.id,
-            WORKTREE_BRANCH: worktree.branch,
-            WORKTREE_PATH: worktree.worktreePath,
-          };
+      const env = buildAiCommandProcessEnv({
+        repoRoot: context.repoRoot,
+        worktreeId: worktree.id,
+        worktreePath: worktree.worktreePath,
+        env: runtime
+          ? buildRuntimeProcessEnv(runtime)
+          : {
+              ...process.env,
+              ...config.env,
+              WORKTREE_ID: worktree.id,
+              WORKTREE_BRANCH: worktree.branch,
+              WORKTREE_PATH: worktree.worktreePath,
+            },
+      });
 
       const payload: GenerateGitCommitMessageResponse = await generateGitCommitMessage({
         repoRoot: context.repoRoot,

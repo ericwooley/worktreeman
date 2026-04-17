@@ -12,9 +12,12 @@ import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
 import { ProjectManagementDocumentForm } from "./project-management-document-form";
 import { sortProjectManagementDocuments } from "./project-management-document-browser";
+import { readProjectManagementDocumentPath } from "./project-management-document-route";
 import {
   getCompletedAiDocumentRefreshTarget,
   getProjectManagementDocumentRunDefaults,
+} from "./project-management-document-utils";
+import {
   moveBoardDocument,
   ProjectManagementPanel,
 } from "./project-management-panel";
@@ -211,6 +214,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     aiJob: null,
     documentRunJob: null,
     runningAiJobs: [],
+    documentPresentation: "modal",
     selectedWorktreeBranch: null,
     onSelectWorktree: () => undefined,
     onSubTabChange: () => undefined,
@@ -229,6 +233,8 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     onRunDocumentAi: async () => null,
     onCancelDocumentAiCommand: async () => null,
     onCancelAiCommand: async () => null,
+    onOpenDocumentPage: () => undefined,
+    onCloseDocument: () => undefined,
     ...overrides,
   };
 
@@ -274,6 +280,7 @@ test("create form renders without seeded defaults", () => {
       aiJob={null}
       documentRunJob={null}
       runningAiJobs={[]}
+      documentPresentation="modal"
       selectedWorktreeBranch={null}
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
@@ -292,6 +299,8 @@ test("create form renders without seeded defaults", () => {
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
       onCancelAiCommand={async () => null}
+      onOpenDocumentPage={() => undefined}
+      onCloseDocument={() => undefined}
     />,
   );
 
@@ -381,6 +390,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       aiJob={null}
       documentRunJob={null}
       runningAiJobs={[]}
+      documentPresentation="modal"
       selectedWorktreeBranch={null}
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
@@ -399,6 +409,8 @@ test("document view shows dependency summary and modal entrypoint", () => {
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
       onCancelAiCommand={async () => null}
+      onOpenDocumentPage={() => undefined}
+      onCloseDocument={() => undefined}
     />,
   );
 
@@ -414,10 +426,21 @@ test("document view shows dependency summary and modal entrypoint", () => {
   assert.match(markup, /runtime active/);
   assert.match(markup, /Archive document/);
   assert.match(markup, /Save assignee/);
+  assert.match(markup, /Open full page/);
   assert.match(markup, /Update the lane, assignee, or archive state here without leaving the document view\./);
   assert.match(markup, /id="project-management-workspace-document-tab"/);
   assert.match(markup, /id="project-management-workspace-document-panel"/);
   assert.match(markup, /aria-labelledby="project-management-workspace-document-tab"/);
+});
+
+test("document page presentation renders page-specific controls and tab ids", () => {
+  const markup = renderProjectManagementPanel({
+    documentPresentation: "page",
+  });
+
+  assert.match(markup, /Back to documents/);
+  assert.match(markup, /id="project-management-document-page-view-document-tab"/);
+  assert.doesNotMatch(markup, /Open full page/);
 });
 
 test("document view renders summary, comments, and comment attribution", () => {
@@ -451,6 +474,7 @@ test("document view renders summary, comments, and comment attribution", () => {
       aiJob={null}
       documentRunJob={null}
       runningAiJobs={[]}
+      documentPresentation="modal"
       selectedWorktreeBranch="feature/doc-1-primary"
       onSelectWorktree={() => undefined}
       onSubTabChange={() => undefined}
@@ -469,6 +493,8 @@ test("document view renders summary, comments, and comment attribution", () => {
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
       onCancelAiCommand={async () => null}
+      onOpenDocumentPage={() => undefined}
+      onCloseDocument={() => undefined}
     />,
   );
 
@@ -562,20 +588,35 @@ test("document rail keeps the selected card first even when another document was
   assert.ok(selectedIndex < newerDocumentIndex);
 });
 
+test("document route parser recognizes dedicated page urls", () => {
+  assert.deepEqual(readProjectManagementDocumentPath("/project-management/documents/doc-7"), {
+    documentId: "doc-7",
+    presentation: "page",
+  });
+  assert.deepEqual(readProjectManagementDocumentPath("/"), {
+    documentId: null,
+    presentation: "modal",
+  });
+});
+
 test("moveBoardDocument updates the lane without forcing a document reselect", async () => {
   const calls: Array<{ documentId: string; status: string }> = [];
   const result = await moveBoardDocument({
     documents: [...sampleDocuments],
     documentId: "doc-1",
     nextStatus: "done",
-    onUpdateStatus: async (documentId, status) => {
+    onUpdateStatus: async (documentId: string, status: string) => {
       calls.push({ documentId, status });
-      return { ...sampleDocument, status };
+      return {
+        branch: "refs/heads/main",
+        headSha: "abc123",
+        document: { ...sampleDocument, status },
+      };
     },
   });
 
   assert.deepEqual(calls, [{ documentId: "doc-1", status: "done" }]);
-  assert.equal(result?.status, "done");
+  assert.equal(result?.document.status, "done");
 });
 
 test("moveBoardDocument skips redundant lane moves", async () => {
@@ -584,9 +625,13 @@ test("moveBoardDocument skips redundant lane moves", async () => {
     documents: [...sampleDocuments],
     documentId: "doc-1",
     nextStatus: "todo",
-    onUpdateStatus: async () => {
+    onUpdateStatus: async (_documentId: string, _status: string) => {
       called = true;
-      return sampleDocument;
+      return {
+        branch: "refs/heads/main",
+        headSha: "abc123",
+        document: sampleDocument,
+      };
     },
   });
 

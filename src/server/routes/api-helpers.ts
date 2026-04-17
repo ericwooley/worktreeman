@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -85,12 +85,47 @@ export function resolveAiLogWorktreeId(options: {
   return options.worktreeId ?? createWorktreeId(options.worktreePath);
 }
 
+function createAiSessionId(options: {
+  repoRoot: string;
+  worktreeId: WorktreeId;
+  documentId?: string | null;
+}): string {
+  const scope = typeof options.documentId === "string" && options.documentId
+    ? `document:${options.documentId}`
+    : `worktree:${options.worktreeId}`;
+  return createHash("sha256").update(`${options.repoRoot}\u0000${scope}`).digest("hex");
+}
+
+export function buildAiCommandProcessEnv(options: {
+  repoRoot: string;
+  worktreePath: string;
+  worktreeId?: WorktreeId;
+  documentId?: string | null;
+  env: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  const worktreeId = resolveAiLogWorktreeId(options);
+  return {
+    ...options.env,
+    AI_SESSION_ID: createAiSessionId({
+      repoRoot: options.repoRoot,
+      worktreeId,
+      documentId: options.documentId,
+    }),
+  };
+}
+
+export function readAiSessionIdFromEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>): string | null {
+  const sessionId = env.AI_SESSION_ID;
+  return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : null;
+}
+
 async function writeAiRequestLog(options: {
   fileName: string;
   jobId: string;
   repoRoot: string;
   worktreeId?: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   origin?: AiCommandOrigin | null;
@@ -127,6 +162,7 @@ async function writeAiRequestLog(options: {
     timestamp: startedAt,
     worktreeId,
     branch: options.branch,
+    sessionId: options.sessionId ?? null,
     documentId: options.documentId ?? null,
     commandId: options.commandId,
     origin: options.origin ?? null,
@@ -157,6 +193,7 @@ export async function safeWriteAiRequestLog(options: {
   repoRoot: string;
   worktreeId?: WorktreeId;
   branch: string;
+  sessionId?: string | null;
   documentId?: string | null;
   commandId: AiCommandId;
   origin?: AiCommandOrigin | null;
@@ -398,8 +435,8 @@ export function buildProjectManagementAiPrompt(options: {
     options.environmentContext,
     "Your job is to return a full replacement markdown document, not commentary about the document.",
     "The server will persist your response as the next version of this existing project-management document. Document history is the rollback mechanism.",
-    "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change. Return the final markdown itself as raw text.",
-    "Output format: return only the complete updated markdown document body as plain text. Do not wrap it in code fences. Do not add explanations, preambles, summaries, or commentary outside the document.",
+    "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change.",
+    "Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>. The response may contain nothing outside those tags. Do not wrap the document in code fences.",
     "Quality bar: produce an execution-ready plan for the selected worktree. Make the document concrete, well-ordered, specific, and directly useful to an engineer or agent doing the work.",
     "Call out assumptions, blockers, dependencies, and sequencing explicitly when they matter. Replace vague guidance with actionable steps.",
     "Preserve the document's purpose, but improve clarity, structure, and usefulness based on the requested change and the current repository context.",
@@ -603,13 +640,17 @@ export async function generateProjectManagementDocumentSummary(options: {
   try {
     const { stdout } = await runCommand("bash", ["-lc", renderedCommand], {
       cwd: options.repoRoot,
-      env: {
-        ...process.env,
-        ...options.config.env,
-        WTM_AI_INPUT: input,
-        WORKTREE_BRANCH: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
-        WORKTREE_PATH: options.repoRoot,
-      },
+      env: buildAiCommandProcessEnv({
+        repoRoot: options.repoRoot,
+        worktreePath: options.repoRoot,
+        env: {
+          ...process.env,
+          ...options.config.env,
+          WTM_AI_INPUT: input,
+          WORKTREE_BRANCH: DEFAULT_PROJECT_MANAGEMENT_BRANCH,
+          WORKTREE_PATH: options.repoRoot,
+        },
+      }),
     });
     const summary = stdout.trim();
     logServerEvent("project-management-summary", "generated", {
@@ -810,6 +851,7 @@ export function toRunningAiCommandJob(entry: AiCommandLogEntry): AiCommandJob {
     fileName: entry.fileName,
     worktreeId: entry.worktreeId,
     branch: entry.branch,
+    sessionId: entry.sessionId ?? null,
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
     command: entry.command,
@@ -846,6 +888,7 @@ function hasObservedAiCommandJobProcess(job: AiCommandJob): boolean {
 function mergeAiCommandLogEntryWithJob(entry: AiCommandLogEntry, job: AiCommandJob): AiCommandLogEntry {
   return {
     ...entry,
+    sessionId: job.sessionId ?? entry.sessionId ?? null,
     documentId: job.documentId ?? entry.documentId ?? null,
     origin: job.origin ?? entry.origin ?? null,
     worktreePath: job.worktreePath ?? entry.worktreePath,

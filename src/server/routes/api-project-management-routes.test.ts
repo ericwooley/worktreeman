@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "#test-runtime";
 import { worktreeId } from "../../shared/worktree-id.js";
+import { buildAiCommandProcessEnv } from "./api-helpers.js";
 import {
   createApiTestRepo,
   createFakeAiProcesses,
@@ -33,8 +34,8 @@ test("project-management AI runs update the saved document on the server", { con
     },
   };
   fakeAiProcesses.queueStartScript([
-    { status: "online", pid: 5012, stdout: "# Updated By AI\n\n- durable update\n", stderr: "" },
-    { status: "stopped", pid: 5012, stdout: "# Updated By AI\n\n- durable update\n", stderr: "", exitCode: 0 },
+    { status: "online", pid: 5012, stdout: "<wtm-new-document># Updated By AI\n\n- durable update\n</wtm-new-document>\n", stderr: "" },
+    { status: "stopped", pid: 5012, stdout: "<wtm-new-document># Updated By AI\n\n- durable update\n</wtm-new-document>\n", stderr: "", exitCode: 0 },
   ]);
   const server = await startApiServer(repo, {
     aiProcesses,
@@ -76,7 +77,7 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(capturedCommand.includes("tighten this plan"), true);
     assert.equal(capturedPrompt.includes("You are rewriting the project-management markdown document"), true);
     assert.equal(capturedPrompt.includes("Requested change: tighten this plan"), true);
-    assert.equal(capturedPrompt.includes("Output format: return only the complete updated markdown document body as plain text."), true);
+    assert.equal(capturedPrompt.includes("Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>."), true);
     assert.equal(capturedPrompt.includes("You are not creating files, not writing a .md file"), true);
     assert.equal(capturedPrompt.includes("Document history is the rollback mechanism."), true);
     assert.equal(capturedPrompt.includes("Environment wrapper:"), true);
@@ -126,7 +127,7 @@ test("creating a project-management document auto-generates a short summary with
   const nextContents = updateAiCommandInConfigContents(currentContents, {
     smart: "printf %s $WTM_AI_INPUT",
     simple:
-      "node -e \"const fs = require('node:fs'); fs.writeFileSync('summary-prompt.txt', process.argv[1]); console.log('Generated UI summary.');\" $WTM_AI_INPUT",
+      "node -e \"const fs = require('node:fs'); fs.writeFileSync('summary-prompt.txt', process.argv[1]); fs.writeFileSync('summary-ai-session.txt', process.env.AI_SESSION_ID || ''); console.log('Generated UI summary.');\" $WTM_AI_INPUT",
     autoStartRuntime: false,
   });
   await fs.writeFile(repo.configPath, nextContents, "utf8");
@@ -165,6 +166,7 @@ test("creating a project-management document auto-generates a short summary with
     assert.equal(saved.document.summary, "Generated UI summary.");
 
     const prompt = await fs.readFile(path.join(repo.repoRoot, "summary-prompt.txt"), "utf8");
+    const summarySessionId = await fs.readFile(path.join(repo.repoRoot, "summary-ai-session.txt"), "utf8");
     assert.equal(prompt.includes('You are writing the short summary for the project-management document "Launch Checklist"'), true);
     assert.equal(prompt.includes("Return only the final short summary as raw text."), true);
     assert.equal(prompt.includes("Write 1-2 sentences that make the document easy to scan in the UI."), true);
@@ -173,6 +175,15 @@ test("creating a project-management document auto-generates a short summary with
     assert.equal(prompt.includes("Assignee: Avery"), true);
     assert.equal(prompt.includes("Tags: release, ops"), true);
     assert.equal(prompt.includes("Current markdown:"), true);
+    assert.equal(summarySessionId.length > 0, true);
+    assert.equal(
+      summarySessionId,
+      buildAiCommandProcessEnv({
+        repoRoot: repo.repoRoot,
+        worktreePath: repo.repoRoot,
+        env: {},
+      }).AI_SESSION_ID,
+    );
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, payload.document.id);
     assert.equal(history.history.length, 2);
@@ -188,8 +199,8 @@ test("project-management AI document updates ignore stderr while logs retain it"
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   fakeAiProcesses.queueStartScript([
-    { status: "online", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n" },
-    { status: "stopped", pid: 5013, stdout: "# Clean Markdown\n\nOnly stdout belongs here.\n", stderr: "> build · gpt-4.1\n", exitCode: 0 },
+    { status: "online", pid: 5013, stdout: "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n", stderr: "> build · gpt-4.1\n" },
+    { status: "stopped", pid: 5013, stdout: "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n", stderr: "> build · gpt-4.1\n", exitCode: 0 },
   ]);
   const server = await startApiServer(repo, {
     aiProcesses: fakeAiProcesses.aiProcesses,
@@ -242,10 +253,10 @@ test("project-management AI document updates ignore stderr while logs retain it"
       };
     };
 
-    assert.equal(detailPayload.log.response.stdout, "# Clean Markdown\n\nOnly stdout belongs here.\n");
+    assert.equal(detailPayload.log.response.stdout, "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n");
     assert.equal(detailPayload.log.response.stderr, "> build · gpt-4.1\n");
     assert.deepEqual(detailPayload.log.response.events?.map((event) => ({ source: event.source, text: event.text })), [
-      { source: "stdout", text: "# Clean Markdown\n\nOnly stdout belongs here.\n" },
+      { source: "stdout", text: "<wtm-new-document># Clean Markdown\n\nOnly stdout belongs here.\n</wtm-new-document>\n" },
       { source: "stderr", text: "> build · gpt-4.1\n" },
     ]);
   } finally {
@@ -313,7 +324,7 @@ test("project-management AI document update failures settle the job without taki
       };
 
       return detailPayload.log.status === "failed"
-        && detailPayload.log.error?.message === "AI command finished without returning updated markdown.";
+        && detailPayload.log.error?.message === "AI command finished without returning <wtm-new-document>...</wtm-new-document>. Inspect the saved AI log output to see the raw response.";
     });
 
     const unchanged = await getProjectManagementDocument(repo.repoRoot, outline.id);
@@ -334,8 +345,8 @@ test("project-management AI document update failures settle the job without taki
 
     assert.equal(detailPayload.log.status, "failed");
     assert.equal(detailPayload.log.response.stdout, "");
-    assert.equal(detailPayload.log.response.stderr, "AI command finished without returning updated markdown.");
-    assert.equal(detailPayload.log.error?.message, "AI command finished without returning updated markdown.");
+    assert.equal(detailPayload.log.response.stderr, "AI command finished without returning <wtm-new-document>...</wtm-new-document>. Inspect the saved AI log output to see the raw response.");
+    assert.equal(detailPayload.log.error?.message, "AI command finished without returning <wtm-new-document>...</wtm-new-document>. Inspect the saved AI log output to see the raw response.");
 
     const followUpResponse = await server.fetch(`/api/project-management/documents`);
     assert.equal(followUpResponse.status, 200);
@@ -707,9 +718,22 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(createdWorktree.runtime?.tmuxSession?.length ? true : false, true);
     const capturedCommand = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-input"), "utf8");
     const capturedEnv = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-env"), "utf8");
+    const firstSessionMatch = capturedEnv.match(/^AI_SESSION_ID=(.*)$/m);
     assert.equal(capturedEnv.includes(`WORKTREE_BRANCH=${payload.job.branch}`), true);
     assert.equal(capturedEnv.includes(`WORKTREE_PATH=${createdWorktree.worktreePath}`), true);
     assert.equal(capturedEnv.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
+    assert.ok(firstSessionMatch);
+    assert.equal(firstSessionMatch[1]?.length ? true : false, true);
+    assert.equal(
+      firstSessionMatch[1],
+      buildAiCommandProcessEnv({
+        repoRoot: repo.repoRoot,
+        worktreeId: worktreeId(createdWorktree.worktreePath),
+        documentId: outline.id,
+        worktreePath: createdWorktree.worktreePath,
+        env: {},
+      }).AI_SESSION_ID,
+    );
     assert.equal(capturedCommand.includes("You are implementing the work described by the project-management document"), true);
     assert.equal(capturedCommand.includes("Environment wrapper:"), true);
     assert.equal(capturedCommand.includes(`- Repository root: ${repo.repoRoot}`), true);
@@ -804,6 +828,15 @@ test("project-management document AI creates a derived worktree and streams stdo
       };
     };
     assert.match(completedLogDetailPayload.log.response.stdout, /implemented/);
+
+    const alternateSessionId = buildAiCommandProcessEnv({
+      repoRoot: repo.repoRoot,
+      worktreeId: worktreeId(path.join(repo.repoRoot, "pm-project-outline-project-outline-2")),
+      documentId: outline.id,
+      worktreePath: path.join(repo.repoRoot, "pm-project-outline-project-outline-2"),
+      env: {},
+    }).AI_SESSION_ID;
+    assert.equal(alternateSessionId, firstSessionMatch[1]);
 
     await waitFor(async () => {
       const latestStatePayload = await readStateSnapshot<{

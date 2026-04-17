@@ -6,24 +6,45 @@
 
 :root {
   color-scheme: dark;
-  --bg: #020703;
-  --bg-soft: rgba(3, 16, 6, 0.78);
-  --panel: rgba(5, 22, 9, 0.82);
-  --panel-strong: rgba(4, 18, 7, 0.92);
-  --line: rgba(74, 255, 122, 0.2);
-  --line-strong: rgba(74, 255, 122, 0.42);
-  --text: #d7ffd7;
-  --muted: #9cd99c;
-  --green: #4aff7a;
-  --green-dim: #2fa556;
-  --code: #b9ffb9;
+  --base00: #020703;
+  --base01: #071a0b;
+  --base02: #09280f;
+  --base03: #2f6b45;
+  --base04: #6cb96c;
+  --base05: #d7ffd7;
+  --base06: #ecffec;
+  --base07: #f8fff8;
+  --base08: #ff6d6d;
+  --base09: #ffcf76;
+  --base0A: #ffe1a8;
+  --base0B: #4aff7a;
+  --base0C: #7fe19e;
+  --base0D: #38bdf8;
+  --base0E: #c084fc;
+  --base0F: #cdab53;
+  --rgb-base00: 2 7 3;
+  --rgb-base01: 7 26 11;
+  --rgb-base02: 9 40 15;
+  --rgb-base03: 47 107 69;
+  --rgb-base04: 108 185 108;
+  --rgb-base05: 215 255 215;
+  --rgb-base06: 236 255 236;
+  --rgb-base07: 248 255 248;
+  --rgb-base08: 255 109 109;
+  --rgb-base09: 255 207 118;
+  --rgb-base0A: 255 225 168;
+  --rgb-base0B: 74 255 122;
+  --rgb-base0C: 127 225 158;
+  --rgb-base0D: 56 189 248;
+  --rgb-base0E: 192 132 252;
+  --rgb-base0F: 205 171 83;
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  background: #020703;
-  color: var(--text);
+  background: rgb(var(--rgb-base01) / 0.98);
+  color: var(--base05);
   font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
 }
 
@@ -45,10 +66,23 @@ a {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background-color: rgba(74, 255, 122, 0.035);
+  background-color: rgb(var(--rgb-base0B) / 0.04);
   background-size: 100% 4px, 4px 100%;
   opacity: 0.22;
   mix-blend-mode: screen;
+}
+
+.docs-shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to right, rgb(var(--rgb-base0B) / 0.04) 0, rgb(var(--rgb-base0B) / 0.04) 1px, transparent 1px, transparent 100%),
+    linear-gradient(to bottom, rgb(var(--rgb-base0B) / 0.03) 0, rgb(var(--rgb-base0B) / 0.03) 1px, transparent 1px, transparent 100%);
+  background-size: 32px 32px;
+  opacity: 0.18;
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 0.55), transparent 92%);
 }
 
 .docs-kicker,
@@ -66,7 +100,7 @@ a {
 
 .docs-kicker,
 .docs-terminal-mark {
-  color: var(--green);
+  color: var(--base0B);
   font-size: 0.74rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -81,26 +115,38 @@ a {
 .docs-rail-card,
 .docs-rail-note,
 .docs-article-shell {
-  border: 1px solid var(--line);
-  background: var(--panel-strong);
-  box-shadow: inset 0 1px 0 rgba(149, 255, 178, 0.05), 0 0 0 1px rgba(17, 52, 21, 0.16), 0 18px 54px rgba(0, 0, 0, 0.44);
+  position: relative;
+  border: 1px solid rgb(var(--rgb-base0B) / 0.18);
+  background: rgb(var(--rgb-base01) / 0.9);
+  box-shadow:
+    inset 0 1px 0 rgb(var(--rgb-base07) / 0.04),
+    0 0 0 1px rgb(var(--rgb-base00) / 0.18),
+    0 18px 54px rgb(var(--rgb-base00) / 0.44);
   backdrop-filter: blur(6px);
 }
 
 .docs-rail-card,
 .docs-rail-note {
-  border-radius: 1rem;
   padding: 1.1rem;
 }
 
 .docs-article-shell {
-  border-radius: 1.1rem;
   padding: 1.4rem 1.5rem;
+}
+
+.docs-rail-card::before,
+.docs-rail-note::before,
+.docs-article-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: rgb(var(--rgb-base0B) / 0.32);
 }
 
 .docs-rail-title {
   margin: 0.8rem 0 0;
-  color: var(--text);
+  color: var(--base05);
   font-size: 0.95rem;
   line-height: 1.7;
 }
@@ -109,13 +155,21 @@ a {
   display: grid;
   gap: 0.45rem;
   margin-top: 1rem;
-  border: 1px solid rgba(74, 255, 122, 0.18);
-  border-radius: 0.8rem;
-  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgb(var(--rgb-base0B) / 0.18);
+  background: rgb(var(--rgb-base00) / 0.28);
   padding: 0.85rem 0.9rem;
-  color: var(--code);
+  color: var(--base06);
   font-size: 0.82rem;
   line-height: 1.55;
+}
+
+.docs-link {
+  color: var(--base0B);
+  text-decoration: none;
+}
+
+.docs-link:hover {
+  color: var(--base0C);
 }
 
 .docs-toc-item {
@@ -123,34 +177,39 @@ a {
   grid-template-columns: auto 1fr;
   gap: 0.8rem;
   align-items: start;
-  border-radius: 0.85rem;
-  border: 1px solid rgba(74, 255, 122, 0.12);
-  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgb(var(--rgb-base0B) / 0.12);
+  background: rgb(var(--rgb-base00) / 0.2);
   padding: 0.85rem 0.95rem;
-  color: #bdf6bd;
+  color: var(--base05);
   transition: border-color 160ms ease, background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 
 .docs-toc-item:hover {
   transform: translateY(-1px);
-  border-color: rgba(74, 255, 122, 0.3);
-  background: rgba(9, 30, 12, 0.72);
+  border-color: rgb(var(--rgb-base0B) / 0.22);
+  background: rgb(var(--rgb-base00) / 0.26);
+  box-shadow:
+    inset 0 1px 0 rgb(var(--rgb-base07) / 0.04),
+    0 14px 30px rgb(var(--rgb-base00) / 0.24);
 }
 
 .docs-toc-item-current {
-  border-color: var(--line-strong);
-  background: var(--panel-strong);
-  box-shadow: inset 0 0 0 1px rgba(74, 255, 122, 0.12), 0 0 24px rgba(45, 193, 92, 0.12);
+  border-color: rgb(var(--rgb-base0B) / 0.24);
+  background: rgb(var(--rgb-base02) / 0.48);
+  box-shadow:
+    inset 0 0 0 1px rgb(var(--rgb-base0B) / 0.08),
+    0 0 0 1px rgb(var(--rgb-base0B) / 0.06),
+    0 16px 34px rgb(var(--rgb-base00) / 0.26);
 }
 
 .docs-toc-index {
-  color: var(--green);
+  color: var(--base0B);
   font-size: 0.8rem;
   line-height: 1.4;
 }
 
 .docs-prose {
-  color: var(--text);
+  color: var(--base05);
   font-size: 0.96rem;
   line-height: 1.85;
 }
@@ -163,7 +222,7 @@ a {
 .docs-prose h2,
 .docs-prose h3,
 .docs-prose h4 {
-  color: #ecffec;
+  color: var(--base06);
   line-height: 1.2;
   font-weight: 600;
 }
@@ -171,12 +230,14 @@ a {
 .docs-prose h1 {
   margin: 0 0 1.15rem;
   font-size: clamp(2rem, 3vw, 2.8rem);
-  text-shadow: 0 0 22px rgba(74, 255, 122, 0.12);
+  text-shadow: 0 0 22px rgb(var(--rgb-base0B) / 0.12);
 }
 
 .docs-prose h2 {
   margin: 2.4rem 0 0.85rem;
   font-size: clamp(1.2rem, 2vw, 1.55rem);
+  border-top: 1px solid rgb(var(--rgb-base0B) / 0.14);
+  padding-top: 0.9rem;
 }
 
 .docs-prose h3 {
@@ -202,27 +263,25 @@ a {
 }
 
 .docs-prose strong {
-  color: #ecffec;
+  color: var(--base06);
   font-weight: 600;
 }
 
 .docs-prose code {
-  color: var(--code);
-  background: rgba(74, 255, 122, 0.08);
-  border: 1px solid rgba(74, 255, 122, 0.12);
-  border-radius: 0.38rem;
+  color: var(--base06);
+  background: rgb(var(--rgb-base0B) / 0.08);
+  border: 1px solid rgb(var(--rgb-base0B) / 0.12);
   padding: 0.08rem 0.34rem;
   font-size: 0.92em;
 }
 
 .docs-prose pre {
   overflow-x: auto;
-  border: 1px solid rgba(74, 255, 122, 0.2);
-  border-radius: 0.9rem;
-  background: var(--bg-soft);
-  color: var(--code);
+  border: 1px solid rgb(var(--rgb-base0B) / 0.18);
+  background: rgb(var(--rgb-base00) / 0.28);
+  color: var(--base06);
   padding: 1rem 1.05rem;
-  box-shadow: inset 0 1px 0 rgba(181, 255, 196, 0.05);
+  box-shadow: inset 0 1px 0 rgb(var(--rgb-base07) / 0.05);
 }
 
 .docs-prose pre code {
@@ -232,23 +291,53 @@ a {
 }
 
 .docs-prose a {
-  color: var(--green);
+  color: var(--base0B);
   text-decoration: underline;
   text-underline-offset: 0.18em;
 }
 
+.docs-prose a:hover {
+  color: var(--base0C);
+}
+
 .docs-prose blockquote {
-  border-left: 3px solid rgba(74, 255, 122, 0.32);
+  border-left: 3px solid rgb(var(--rgb-base0B) / 0.32);
   margin-left: 0;
   padding: 0.15rem 0 0.15rem 1rem;
-  color: var(--muted);
-  background: rgba(74, 255, 122, 0.03);
+  color: var(--base04);
+  background: rgb(var(--rgb-base0B) / 0.03);
 }
 
 .docs-prose hr {
   margin: 2rem 0;
   border: 0;
-  border-top: 1px solid rgba(74, 255, 122, 0.16);
+  border-top: 1px solid rgb(var(--rgb-base0B) / 0.16);
+}
+
+.docs-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1rem;
+}
+
+.docs-prose th,
+.docs-prose td {
+  border: 1px solid rgb(var(--rgb-base0B) / 0.14);
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.docs-prose th {
+  color: var(--base06);
+  background: rgb(var(--rgb-base02) / 0.72);
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.docs-prose td {
+  background: rgb(var(--rgb-base00) / 0.18);
 }
 
 .reveal-up {
@@ -268,12 +357,6 @@ a {
 }
 
 @media (max-width: 768px) {
-  .docs-article-shell,
-  .docs-rail-card,
-  .docs-rail-note {
-    border-radius: 0.9rem;
-  }
-
   .docs-article-shell {
     padding: 1.1rem;
   }

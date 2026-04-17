@@ -112,6 +112,7 @@ function toAiCommandLogSummary(log: AiCommandLogEntry): AiCommandLogSummary {
     branch: log.branch,
     documentId: log.documentId ?? null,
     commandId: log.commandId,
+    sessionId: log.sessionId ?? null,
     origin: log.origin ?? null,
     worktreePath: log.worktreePath,
     command: log.command,

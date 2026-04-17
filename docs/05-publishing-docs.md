@@ -40,8 +40,20 @@ Keep that behavior documented in the repository so startup is predictable.
 ## Common commands
 
 ```bash
+# Run without a global install (recommended for one-off use)
+npx -y worktreeman start
+
+# Or install globally for repeated local use
 npm install -g worktreeman
 worktreeman init
 worktreeman start
 worktreeman --help
 ```
+
+## Share the docs link
+
+When you introduce the tool to teammates, include the hosted docs link alongside the CLI commands:
+
+- https://ericwooley.github.io/worktreeman/
+
+That gives people a stable reference for setup, configuration, and runtime behavior even if they have not cloned the repo yet.

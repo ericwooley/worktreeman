@@ -51,6 +51,7 @@ import {
 import { logServerEvent } from "../utils/server-logger.js";
 import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service.js";
 import {
+  buildAiCommandProcessEnv,
   buildAiEnvironmentContext,
   buildProjectManagementAiPrompt,
   buildWorktreeAiPrompt,
@@ -564,7 +565,13 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         });
       }
 
-      const env = runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env };
+      const env = buildAiCommandProcessEnv({
+        repoRoot: context.repoRoot,
+        worktreeId: worktree.id,
+        documentId: explicitDocumentId,
+        worktreePath,
+        env: runtime ? buildRuntimeProcessEnv(runtime) : { ...process.env },
+      });
 
       renderedCommand = renderAiCommand(template, input);
       const runDetails = {
@@ -694,6 +701,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           repoRoot: context.repoRoot,
           worktreeId: persistedLog.worktreeId,
           branch: persistedLog.branch,
+          sessionId: persistedLog.sessionId ?? null,
           documentId: persistedLog.documentId ?? null,
           commandId: persistedLog.commandId,
           origin: persistedLog.origin ?? null,
@@ -760,6 +768,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           repoRoot: context.repoRoot,
           worktreeId: resolvedLog.worktreeId,
           branch: resolvedLog.branch,
+          sessionId: resolvedLog.sessionId ?? null,
           documentId: resolvedLog.documentId ?? null,
           commandId: resolvedLog.commandId,
           origin: resolvedLog.origin ?? null,
