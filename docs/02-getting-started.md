@@ -48,6 +48,14 @@ Run the CLI without installing it globally (recommended for one-off use):
 npx -y worktreeman start
 ```
 
+For a full first-time setup in a new managed repo, the usual sequence is:
+
+```bash
+npx -y worktreeman create --cwd /path/to/repo
+npx -y worktreeman init --cwd /path/to/repo
+npx -y worktreeman start --cwd /path/to/repo
+```
+
 If you prefer a global install for repeated local use:
 
 ```bash
@@ -136,6 +144,11 @@ quickLinks:
   - name: Webhook receiver
     url: http://localhost:${WEBHOOK_PORT}
 ```
+
+Notes:
+
+- allocated runtime ports are reserved on loopback for local development use
+- these values are ephemeral per runtime start, so consume them through env interpolation rather than hard-coding them elsewhere
 
 ## Run startup and background commands
 
@@ -282,6 +295,18 @@ Then open:
 ```text
 http://localhost:4312
 ```
+
+Notes on host selection:
+
+- Use `--host auto` to let worktreeman prefer a Tailscale interface, then WireGuard, then a private LAN address, and finally localhost.
+- Binding to wildcard hosts such as `0.0.0.0` or `::` requires `--dangerously-expose-to-network` to prevent accidental exposure of the terminal-enabled UI.
+
+## Troubleshooting
+
+- `worktreeman start` says the layout is invalid: make sure the repo root contains `.bare/`, a `.git` file pointing at `./.bare`, and checked-out `main/` plus `wtm-settings/`
+- your app did not pick up `${PORT}` or another runtime var: start the environment from the UI first so `runtimePorts`, `derivedEnv`, and tmux env injection all run
+- a setup command works in one shell but not another: `startupCommands` run through the user's shell with `SHELL -lc`, so shell configuration can affect behavior
+- you need remote access to the UI: prefer `--host auto` for Tailscale or other private-network interfaces before using wildcard binds
 
 ## First run
 

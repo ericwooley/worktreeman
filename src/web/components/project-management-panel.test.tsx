@@ -568,14 +568,18 @@ test("moveBoardDocument updates the lane without forcing a document reselect", a
     documents: [...sampleDocuments],
     documentId: "doc-1",
     nextStatus: "done",
-    onUpdateStatus: async (documentId, status) => {
+    onUpdateStatus: async (documentId: string, status: string) => {
       calls.push({ documentId, status });
-      return { ...sampleDocument, status };
+      return {
+        branch: "refs/heads/main",
+        headSha: "abc123",
+        document: { ...sampleDocument, status },
+      };
     },
   });
 
   assert.deepEqual(calls, [{ documentId: "doc-1", status: "done" }]);
-  assert.equal(result?.status, "done");
+  assert.equal(result?.document.status, "done");
 });
 
 test("moveBoardDocument skips redundant lane moves", async () => {
@@ -584,9 +588,13 @@ test("moveBoardDocument skips redundant lane moves", async () => {
     documents: [...sampleDocuments],
     documentId: "doc-1",
     nextStatus: "todo",
-    onUpdateStatus: async () => {
+    onUpdateStatus: async (_documentId: string, _status: string) => {
       called = true;
-      return sampleDocument;
+      return {
+        branch: "refs/heads/main",
+        headSha: "abc123",
+        document: sampleDocument,
+      };
     },
   });
 

@@ -51,9 +51,15 @@ export function DocsSite() {
             <div className="docs-terminal-mark">worktreeman docs</div>
             <p className="docs-rail-title">Install, configure, and run branch-scoped local environments.</p>
             <div className="docs-command-block">
-              <span>$ npm install -g worktreeman</span>
-              <span>$ worktreeman init</span>
-              <span>$ worktreeman start</span>
+              <span>$ npx -y worktreeman create --cwd /path/to/repo</span>
+              <span>$ npx -y worktreeman init --cwd /path/to/repo</span>
+              <span>$ npx -y worktreeman start --cwd /path/to/repo</span>
+            </div>
+
+            <div className="mt-4 text-sm leading-6 text-[#9cd99c]">
+              <a className="docs-link" href="https://github.com/ericwooley/worktreeman" target="_blank" rel="noreferrer">
+                View README on GitHub
+              </a>
             </div>
 
             <nav className="mt-5 flex flex-col gap-2 text-sm">

@@ -41,6 +41,8 @@ You can also keep a top-level `$schema` key in the file body if you want, but th
 
 If you start the local UI, the header `Config` action opens the shared `worktree.yml` in a built-in Monaco editor modal and saves directly back to the checked-out settings worktree.
 
+You can also browse the hosted docs at https://ericwooley.github.io/worktreeman/ while editing the file locally.
+
 ## Recommended full example
 
 ```yml
@@ -98,6 +100,16 @@ That ordering matters:
 
 ## Top-level fields
 
+## `preferredPort`
+
+Optional preferred port for the worktreeman HTTP server. If this value is set and available the server will bind to it; otherwise the server will try the explicit `--port` CLI value, the `PORT` environment variable, and finally fall back to `4312`. If the preferred port is occupied and the CLI did not request a specific port, the server will automatically allocate another free port and report which port it chose.
+
+Example:
+
+```yml
+preferredPort: 4900
+```
+
 ## `env`
 
 Static environment variables added to every runtime for the repo.
@@ -136,6 +148,8 @@ If `PORT` is allocated as `28737`, that value is available to:
 - the tmux shell session
 - `derivedEnv`
 - `quickLinks`
+
+These ports are allocated on loopback for local development use.
 
 ## `derivedEnv`
 
@@ -201,6 +215,8 @@ startupCommands:
 ```
 
 Keep these commands idempotent and predictable. They run when a developer starts the environment.
+
+Note: startup commands are executed with the user's login shell via `SHELL -lc '<command>'` (for example `bash -lc`). Use shell-compatible command syntax appropriate to the developer environment (Unix shells are assumed). Do not assume a specific shell feature unless your team standardizes on it.
 
 ## `backgroundCommands`
 

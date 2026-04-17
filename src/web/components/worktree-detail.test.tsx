@@ -87,7 +87,11 @@ type WorktreeDetailProps = Parameters<typeof import("./worktree-detail")["Worktr
 
 async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}) {
   const originalSelf = globalThis.self;
-  globalThis.self = globalThis;
+  Object.defineProperty(globalThis, "self", {
+    configurable: true,
+    writable: true,
+    value: globalThis,
+  });
   try {
     const { WorktreeDetail } = await import("./worktree-detail");
 
@@ -145,8 +149,6 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         projectManagementAvailableTags={[]}
         projectManagementAvailableStatuses={[]}
         projectManagementUsers={null as ProjectManagementUsersResponse | null}
-        gitPullRequestDocumentId={null}
-        onGitPullRequestDocumentChange={() => undefined}
         projectManagementActiveSubTab="document"
         projectManagementSelectedDocumentId={null}
         projectManagementDocumentViewMode="document"
@@ -202,7 +204,11 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
       />,
     );
   } finally {
-    globalThis.self = originalSelf;
+    Object.defineProperty(globalThis, "self", {
+      configurable: true,
+      writable: true,
+      value: originalSelf,
+    });
   }
 }
 

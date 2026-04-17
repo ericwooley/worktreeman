@@ -2,6 +2,8 @@
 
 `worktreeman` is a local CLI and browser UI for running branch-based development environments out of one repository.
 
+Hosted docs: https://ericwooley.github.io/worktreeman/
+
 It is built for repositories that already use:
 
 - `git worktree`
@@ -32,7 +34,7 @@ The typical branch workflow usually turns into a mix of shell history, copied co
 
 ## Typical flow
 
-1. Install `worktreeman` from npm.
+1. Install `worktreeman` from npm or run it one-off with `npx -y worktreeman`.
 2. Run `worktreeman create --cwd /path/to/repo` or `worktreeman clone <remote> --cwd /path/to/repo`.
 3. Review the generated `wtm-settings/worktree.yml`.
 4. Start the local UI with `worktreeman start --cwd /path/to/repo`.
