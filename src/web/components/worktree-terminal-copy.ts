@@ -43,7 +43,9 @@ function copyWithExecCommand(text: string): boolean {
     return false;
   }
 
-  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const activeElement = document.activeElement && typeof (document.activeElement as { focus?: unknown }).focus === "function"
+    ? document.activeElement as { focus: () => void }
+    : null;
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.setAttribute("readonly", "true");

@@ -210,6 +210,11 @@ export interface ProjectManagementUsersStreamEvent {
   users: ProjectManagementUsersResponse;
 }
 
+export interface ProjectManagementReviewsStreamEvent {
+  type: "snapshot" | "update";
+  reviews: ProjectManagementReviewsResponse;
+}
+
 export interface SystemStatusStreamEvent {
   type: "snapshot" | "update";
   status: SystemStatusResponse;
@@ -225,6 +230,7 @@ export type DashboardEventsStreamEvent =
   | { type: "shutdown-status"; event: ShutdownStatusStreamEvent }
   | { type: "ai-logs"; event: AiCommandLogsStreamEvent }
   | { type: "project-management-documents"; event: ProjectManagementDocumentsStreamEvent }
+  | { type: "project-management-reviews"; event: ProjectManagementReviewsStreamEvent }
   | { type: "project-management-users"; event: ProjectManagementUsersStreamEvent }
   | { type: "system-status"; event: SystemStatusStreamEvent };
 
@@ -406,8 +412,8 @@ export interface SystemJobPayloadSummary {
   renderedCommandPreview: string | null;
   inputPreview: string | null;
   applyDocumentUpdateToDocumentId: string | null;
-  commentDocumentId: string | null;
-  commentRequestSummaryPreview: string | null;
+  reviewDocumentId: string | null;
+  reviewRequestSummaryPreview: string | null;
   autoCommitDirtyWorktree: boolean;
 }
 
@@ -470,15 +476,30 @@ export interface ProjectManagementDocumentSummary {
 
 export interface ProjectManagementDocument extends ProjectManagementDocumentSummary {
   markdown: string;
-  comments: ProjectManagementComment[];
 }
 
-export interface ProjectManagementComment {
+export type ProjectManagementReviewEntryKind = "comment" | "activity";
+
+export type ProjectManagementReviewEntrySource = "user" | "ai" | "system";
+
+export type ProjectManagementReviewEventType = "comment" | "ai-started" | "ai-completed" | "merge";
+
+export interface ProjectManagementReviewEntry {
   id: string;
+  documentId: string;
+  kind: ProjectManagementReviewEntryKind;
+  source: ProjectManagementReviewEntrySource;
+  eventType: ProjectManagementReviewEventType;
   body: string;
   createdAt: string;
+  updatedAt: string;
   authorName: string;
   authorEmail: string;
+}
+
+export interface ProjectManagementDocumentReview {
+  documentId: string;
+  entries: ProjectManagementReviewEntry[];
 }
 
 export interface ProjectManagementHistoryEntry {
@@ -496,7 +517,7 @@ export interface ProjectManagementHistoryEntry {
   assignee: string;
   archived: boolean;
   changeCount: number;
-  action: "create" | "update" | "archive" | "restore" | "comment";
+  action: "create" | "update" | "archive" | "restore";
   diff: string;
 }
 
@@ -524,6 +545,18 @@ export interface ProjectManagementHistoryResponse {
   branch: string;
   headSha: string;
   history: ProjectManagementHistoryEntry[];
+}
+
+export interface ProjectManagementReviewsResponse {
+  branch: string;
+  headSha: string;
+  reviews: ProjectManagementDocumentReview[];
+}
+
+export interface ProjectManagementDocumentReviewResponse {
+  branch: string;
+  headSha: string;
+  review: ProjectManagementDocumentReview;
 }
 
 export interface ProjectManagementBatchResponse {
@@ -598,14 +631,17 @@ export interface UpdateProjectManagementStatusRequest {
   status: string;
 }
 
-export interface AddProjectManagementCommentRequest {
+export interface AddProjectManagementReviewEntryRequest {
   body: string;
+  kind?: ProjectManagementReviewEntryKind;
+  source?: ProjectManagementReviewEntrySource;
+  eventType?: ProjectManagementReviewEventType;
 }
 
 export interface RunAiCommandRequest {
   input: string;
   documentId?: string;
-  commentDocumentId?: string;
+  reviewDocumentId?: string;
   commandId?: AiCommandId;
   origin?: AiCommandOrigin | null;
 }
@@ -623,7 +659,7 @@ export type AiCommandOriginTab = "environment" | "git" | "project-management";
 
 export type AiCommandOriginEnvironmentSubTab = "terminal" | "background";
 
-export type AiCommandOriginProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "users";
+export type AiCommandOriginProjectManagementSubTab = "document" | "review" | "board" | "dependency-tree" | "history" | "create" | "users";
 
 export type AiCommandOriginKind =
   | "worktree-environment"

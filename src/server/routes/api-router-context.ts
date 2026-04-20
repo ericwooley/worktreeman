@@ -48,15 +48,16 @@ import { enqueueProjectManagementAiJob } from "../services/ai-command-job-manage
 import { completeAiCommandRun } from "../services/ai-command-completion-service.js";
 import { buildWorktreeAiStartedComment } from "../services/project-management-comment-formatters.js";
 import {
+  addProjectManagementReviewEntry,
+  listProjectManagementReviews,
+} from "../services/project-management-review-service.js";
+import {
   ensureRuntimeTerminalSession,
   getTmuxSessionName,
   killTmuxSession,
   killTmuxSessionByName,
 } from "../services/terminal-service.js";
-import {
-  addProjectManagementComment,
-  listProjectManagementDocuments,
-} from "../services/project-management-service.js";
+import { listProjectManagementDocuments } from "../services/project-management-service.js";
 import {
   attachWorktreeDocumentLinks,
   getWorktreeDocumentLinks,
@@ -93,6 +94,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const stateListeners = new Set<() => void>();
   const gitComparisonListeners = new Set<() => void>();
   const projectManagementDocumentsListeners = new Set<() => void>();
+  const projectManagementReviewsListeners = new Set<() => void>();
   const projectManagementUsersListeners = new Set<() => void>();
   const systemStatusListeners = new Set<() => void>();
   const tmuxClientsListenersByBranch = new Map<string, Set<() => void>>();
@@ -327,10 +329,23 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     }
   };
 
+  const emitProjectManagementReviewsRefresh = () => {
+    for (const listener of projectManagementReviewsListeners) {
+      listener();
+    }
+  };
+
   const subscribeToProjectManagementUsersRefresh = (listener: () => void) => {
     projectManagementUsersListeners.add(listener);
     return () => {
       projectManagementUsersListeners.delete(listener);
+    };
+  };
+
+  const subscribeToProjectManagementReviewsRefresh = (listener: () => void) => {
+    projectManagementReviewsListeners.add(listener);
+    return () => {
+      projectManagementReviewsListeners.delete(listener);
     };
   };
 
@@ -604,8 +619,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     worktreePath: string;
     env: NodeJS.ProcessEnv;
     applyDocumentUpdateToDocumentId?: string | null;
-    commentDocumentId?: string | null;
-    commentRequestSummary?: string | null;
+    reviewDocumentId?: string | null;
+    reviewRequestSummary?: string | null;
     autoCommitDirtyWorktree?: boolean;
   }): Promise<StartedAiCommandJob> => startAiCommandJob({
     worktreeId: details.worktreeId,
@@ -645,7 +660,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
         throw new Error(`AI process exited with code ${completedProcess.exitCode ?? "unknown"}.`);
       }
     },
-    onComplete: details.applyDocumentUpdateToDocumentId || details.commentDocumentId || details.autoCommitDirtyWorktree
+    onComplete: details.applyDocumentUpdateToDocumentId || details.reviewDocumentId || details.autoCommitDirtyWorktree
       ? async ({ stdout, stderr }) => {
           await completeAiCommandRun({
             repoRoot: options.repoRoot,
@@ -656,10 +671,13 @@ export function createApiRouterContext(options: ApiRouterOptions) {
             stdout,
             stderr,
             applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId,
-            commentDocumentId: details.commentDocumentId,
-            commentRequestSummary: details.commentRequestSummary,
+            reviewDocumentId: details.reviewDocumentId,
+            reviewRequestSummary: details.reviewRequestSummary,
             autoCommitDirtyWorktree: details.autoCommitDirtyWorktree,
           });
+          if (details.reviewDocumentId) {
+            emitProjectManagementReviewsRefresh();
+          }
         }
       : undefined,
   });
@@ -676,8 +694,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     worktreePath: string;
     env: NodeJS.ProcessEnv;
     applyDocumentUpdateToDocumentId?: string | null;
-    commentDocumentId?: string | null;
-    commentRequestSummary?: string | null;
+    reviewDocumentId?: string | null;
+    reviewRequestSummary?: string | null;
     autoCommitDirtyWorktree?: boolean;
   }) => enqueueProjectManagementAiJob({
     repoRoot: options.repoRoot,
@@ -693,8 +711,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       env: Object.fromEntries(Object.entries(details.env).filter(([, value]) => typeof value === "string")) as Record<string, string>,
       documentId: details.documentId,
       applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId ?? null,
-      commentDocumentId: details.commentDocumentId ?? null,
-      commentRequestSummary: details.commentRequestSummary ?? null,
+      reviewDocumentId: details.reviewDocumentId ?? null,
+      reviewRequestSummary: details.reviewRequestSummary ?? null,
       autoCommitDirtyWorktree: details.autoCommitDirtyWorktree ?? false,
     },
   });
@@ -702,25 +720,29 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const addWorktreeAiStartedComment = async (details: {
     branch: string;
     commandId: AiCommandId;
-    commentDocumentId?: string | null;
+    reviewDocumentId?: string | null;
     requestSummary?: string | null;
   }) => {
-    if (!details.commentDocumentId) {
+    if (!details.reviewDocumentId) {
       return;
     }
 
     try {
-      await addProjectManagementComment(options.repoRoot, details.commentDocumentId, {
+      await addProjectManagementReviewEntry(options.repoRoot, details.reviewDocumentId, {
         body: buildWorktreeAiStartedComment({
           branch: details.branch,
           commandId: details.commandId,
           requestSummary: details.requestSummary,
         }),
+        kind: "activity",
+        source: "ai",
+        eventType: "ai-started",
       });
+      emitProjectManagementReviewsRefresh();
     } catch (error) {
-      logServerEvent("project-management-comment", "failed", {
+      logServerEvent("project-management-review", "failed", {
         branch: details.branch,
-        documentId: details.commentDocumentId,
+        documentId: details.reviewDocumentId,
         stage: "ai-started",
         error: error instanceof Error ? error.message : String(error),
       }, "error");
@@ -792,9 +814,12 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     subscribeToGitComparisonRefresh,
     emitProjectManagementDocumentsRefresh,
     subscribeToProjectManagementDocumentsRefresh,
+    emitProjectManagementReviewsRefresh,
+    subscribeToProjectManagementReviewsRefresh,
     emitProjectManagementUsersRefresh,
     subscribeToProjectManagementUsersRefresh,
     listProjectManagementDocuments: () => listProjectManagementDocuments(options.repoRoot),
+    listProjectManagementReviews: () => listProjectManagementReviews(options.repoRoot),
     emitSystemStatusRefresh,
     subscribeToSystemStatusRefresh,
     emitTmuxClientsRefresh,

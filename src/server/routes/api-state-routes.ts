@@ -10,6 +10,8 @@ import type {
   ApiStateStreamEvent,
   ConfigDocumentResponse,
   DashboardEventsStreamEvent,
+  ProjectManagementReviewsResponse,
+  ProjectManagementReviewsStreamEvent,
   ProjectManagementUsersResponse,
   ProjectManagementUsersStreamEvent,
   ShutdownStatus,
@@ -23,6 +25,7 @@ import type {
 import {
   listProjectManagementUsers,
 } from "../services/project-management-service.js";
+import { listProjectManagementReviews } from "../services/project-management-review-service.js";
 import {
   readConfigContents as readConfigDocumentContents,
   parseConfigContents,
@@ -90,12 +93,14 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       });
       let currentProjectManagementUsers = await listProjectManagementUsers(context.repoRoot, initialConfig.projectManagement.users);
       let currentProjectManagementDocuments = await context.listProjectManagementDocuments();
+      let currentProjectManagementReviews = await context.listProjectManagementReviews();
       let rebuildingState = false;
       let rebuildingShutdown = false;
       let rebuildingSystem = false;
       let rebuildingAiCommandLogs = false;
       let rebuildingUsers = false;
       let rebuildingDocuments = false;
+      let rebuildingReviews = false;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -115,6 +120,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         void unsubscribeAiCommandLogs().catch(() => undefined);
         unsubscribeProjectManagementDocuments();
         unsubscribeProjectManagementUsers();
+        unsubscribeProjectManagementReviews();
         unsubscribeSystemStatus();
         clearInterval(stateInterval);
         clearInterval(shutdownInterval);
@@ -122,6 +128,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         clearInterval(aiCommandLogsInterval);
         clearInterval(projectManagementUsersInterval);
         clearInterval(projectManagementDocumentsInterval);
+        clearInterval(projectManagementReviewsInterval);
         clearInterval(keepAlive);
         if (res.destroyed || res.writableEnded) {
           return;
@@ -178,12 +185,20 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         writeEvent({ type: "project-management-documents", event: { type, documents } });
       };
 
+      const writeProjectManagementReviewsEvent = (
+        type: ProjectManagementReviewsStreamEvent["type"],
+        reviews: ProjectManagementReviewsResponse,
+      ) => {
+        writeEvent({ type: "project-management-reviews", event: { type, reviews } });
+      };
+
       writeStateEvent("snapshot", currentState);
       writeShutdownEvent("snapshot", currentShutdownStatus);
       writeSystemEvent("snapshot", currentSystemStatus);
       writeAiCommandLogsEvent("snapshot", currentAiCommandLogs);
       writeProjectManagementUsersEvent("snapshot", currentProjectManagementUsers);
       writeProjectManagementDocumentsEvent("snapshot", currentProjectManagementDocuments);
+      writeProjectManagementReviewsEvent("snapshot", currentProjectManagementReviews);
 
       const rebuildAndEmitState = () => {
         if (rebuildingState || isStreamClosed()) {
@@ -347,12 +362,36 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         });
       };
 
+      const rebuildAndEmitProjectManagementReviews = () => {
+        if (rebuildingReviews || isStreamClosed()) {
+          return;
+        }
+
+        rebuildingReviews = true;
+        void Promise.resolve().then(async () => {
+          const nextReviews = await context.listProjectManagementReviews();
+          if (isStreamClosed()) {
+            return;
+          }
+
+          currentProjectManagementReviews = nextReviews;
+          writeProjectManagementReviewsEvent("update", nextReviews);
+        }).catch((error) => {
+          logServerEvent("events-stream", "project-management-reviews-rebuild-failed", {
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }).finally(() => {
+          rebuildingReviews = false;
+        });
+      };
+
       const unsubscribeState = context.subscribeToStateRefresh(rebuildAndEmitState);
       const unsubscribeAiCommandLogs = await context.operationalState.subscribeToAiCommandLogNotifications(() => {
         rebuildAndEmitAiCommandLogs();
       });
       const unsubscribeProjectManagementDocuments = context.subscribeToProjectManagementDocumentsRefresh(rebuildAndEmitProjectManagementDocuments);
       const unsubscribeProjectManagementUsers = context.subscribeToProjectManagementUsersRefresh(rebuildAndEmitProjectManagementUsers);
+      const unsubscribeProjectManagementReviews = context.subscribeToProjectManagementReviewsRefresh(rebuildAndEmitProjectManagementReviews);
       const unsubscribeSystemStatus = context.subscribeToSystemStatusRefresh(rebuildAndEmitSystem);
       const stateInterval = setInterval(rebuildAndEmitState, context.stateStreamFullRefreshIntervalMs);
       const shutdownInterval = setInterval(rebuildAndEmitShutdown, context.aiLogStreamPollIntervalMs);
@@ -360,6 +399,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       const aiCommandLogsInterval = setInterval(rebuildAndEmitAiCommandLogs, Math.max(context.aiLogStreamPollIntervalMs * 6, 30000));
       const projectManagementUsersInterval = setInterval(rebuildAndEmitProjectManagementUsers, context.stateStreamFullRefreshIntervalMs);
       const projectManagementDocumentsInterval = setInterval(rebuildAndEmitProjectManagementDocuments, context.stateStreamFullRefreshIntervalMs);
+      const projectManagementReviewsInterval = setInterval(rebuildAndEmitProjectManagementReviews, context.stateStreamFullRefreshIntervalMs);
       const keepAlive = setInterval(() => {
         if (isStreamClosed()) {
           return;

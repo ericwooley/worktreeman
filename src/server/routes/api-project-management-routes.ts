@@ -2,17 +2,19 @@ import express from "express";
 import path from "node:path";
 import process from "node:process";
 import type {
-  AddProjectManagementCommentRequest,
+  AddProjectManagementReviewEntryRequest,
   AppendProjectManagementBatchRequest,
   AiCommandId,
   AiCommandOrigin,
   CreateProjectManagementDocumentRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
+  ProjectManagementDocumentReviewResponse,
   ProjectManagementDocumentSummaryResponse,
   ProjectManagementDocumentsStreamEvent,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  ProjectManagementReviewsResponse,
   RunAiCommandResponse,
   UpdateProjectManagementDependenciesRequest,
   UpdateProjectManagementDocumentRequest,
@@ -32,7 +34,6 @@ import {
 } from "../services/runtime-service.js";
 import { syncEnvFiles } from "../services/env-sync-service.js";
 import {
-  addProjectManagementComment,
   appendProjectManagementBatch,
   createProjectManagementDocument,
   getProjectManagementDocument,
@@ -43,6 +44,11 @@ import {
   updateProjectManagementDocument,
   updateProjectManagementStatus,
 } from "../services/project-management-service.js";
+import {
+  addProjectManagementReviewEntry,
+  getProjectManagementDocumentReview,
+  listProjectManagementReviews,
+} from "../services/project-management-review-service.js";
 import {
   getAiCommandJob,
   waitForAiCommandJob,
@@ -184,6 +190,27 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
   router.get("/project-management/documents/:id/history", async (req, res, next) => {
     try {
       const payload: ProjectManagementHistoryResponse = await getProjectManagementDocumentHistory(
+        context.repoRoot,
+        decodeURIComponent(req.params.id),
+      );
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/project-management/reviews", async (_req, res, next) => {
+    try {
+      const payload: ProjectManagementReviewsResponse = await listProjectManagementReviews(context.repoRoot);
+      res.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/project-management/documents/:id/review", async (req, res, next) => {
+    try {
+      const payload: ProjectManagementDocumentReviewResponse = await getProjectManagementDocumentReview(
         context.repoRoot,
         decodeURIComponent(req.params.id),
       );
@@ -356,21 +383,25 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
     }
   });
 
-  router.post("/project-management/documents/:id/comments", async (req, res, next) => {
+  router.post("/project-management/documents/:id/review", async (req, res, next) => {
     try {
-      const body = req.body as AddProjectManagementCommentRequest;
+      const body = req.body as AddProjectManagementReviewEntryRequest;
       if (!body?.body?.trim()) {
-        res.status(400).json({ message: "Comment body is required." });
+        res.status(400).json({ message: "Review body is required." });
         return;
       }
 
-      const payload: ProjectManagementDocumentSummaryResponse = await addProjectManagementComment(
+      const payload: ProjectManagementDocumentReviewResponse = await addProjectManagementReviewEntry(
         context.repoRoot,
         decodeURIComponent(req.params.id),
-        { body: body.body },
+        {
+          body: body.body,
+          kind: body.kind,
+          source: body.source,
+          eventType: body.eventType,
+        },
       );
-      context.emitStateRefresh();
-      context.emitProjectManagementDocumentsRefresh();
+      context.emitProjectManagementReviewsRefresh();
       res.status(201).json(payload);
     } catch (error) {
       next(error);
@@ -603,15 +634,15 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         renderedCommand,
         worktreePath,
         env,
-        commentDocumentId: documentId,
-        commentRequestSummary: requestedChange,
+        reviewDocumentId: documentId,
+        reviewRequestSummary: requestedChange,
         autoCommitDirtyWorktree: true,
       };
       const job = await (await context.startAiProcessJob(runDetails)).started;
       await context.addWorktreeAiStartedComment({
         branch,
         commandId,
-        commentDocumentId: documentId,
+        reviewDocumentId: documentId,
         requestSummary: requestedChange,
       });
       await moveProjectManagementDocumentTowardInProgress(context.repoRoot, documentId);
@@ -625,6 +656,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
       const payload: RunAiCommandResponse = { job, runtime };
       context.emitStateRefresh();
       context.emitProjectManagementDocumentsRefresh();
+      context.emitProjectManagementReviewsRefresh();
       context.emitSystemStatusRefresh();
       res.json(payload);
     } catch (error) {

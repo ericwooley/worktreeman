@@ -1,5 +1,5 @@
 import type {
-  AddProjectManagementCommentRequest,
+  AddProjectManagementReviewEntryRequest,
   AppendProjectManagementBatchRequest,
   AiCommandLogResponse,
   ApiStateStreamEvent,
@@ -26,8 +26,10 @@ import type {
   ResolveGitMergeConflictsRequest,
   ProjectManagementBatchResponse,
   ProjectManagementDocumentResponse,
+  ProjectManagementDocumentReviewResponse,
   ProjectManagementHistoryResponse,
   ProjectManagementListResponse,
+  ProjectManagementReviewsResponse,
   ProjectManagementDocumentsStreamEvent,
   ProjectManagementUsersResponse,
   ProjectManagementUsersStreamEvent,
@@ -477,11 +479,19 @@ export function updateProjectManagementStatus(
   });
 }
 
-export function addProjectManagementComment(
+export function getProjectManagementReviews(): Promise<ProjectManagementReviewsResponse> {
+  return request<ProjectManagementReviewsResponse>("/api/project-management/reviews");
+}
+
+export function getProjectManagementDocumentReview(documentId: string): Promise<ProjectManagementDocumentReviewResponse> {
+  return request<ProjectManagementDocumentReviewResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`);
+}
+
+export function addProjectManagementReviewEntry(
   documentId: string,
-  payload: AddProjectManagementCommentRequest,
-): Promise<ProjectManagementDocumentSummaryResponse> {
-  return request<ProjectManagementDocumentSummaryResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+  payload: AddProjectManagementReviewEntryRequest,
+): Promise<ProjectManagementDocumentReviewResponse> {
+  return request<ProjectManagementDocumentReviewResponse>(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

@@ -17,10 +17,6 @@ export function ProjectManagementHistoryTab({ history }: ProjectManagementHistor
       return "warning" as const;
     }
 
-    if (entry.action === "comment") {
-      return "idle" as const;
-    }
-
     return "neutral" as const;
   }
 

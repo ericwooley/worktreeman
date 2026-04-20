@@ -53,7 +53,6 @@ interface ProjectManagementDocumentDetailProps {
   editAssignee: string;
   dependencySelection: string[];
   currentDependencyDocuments: ProjectManagementDocumentSummary[];
-  commentDraft: string;
   aiRunSummary: string | null;
   documentRunSummary: string | null;
   aiFailureToast: string | null;
@@ -86,14 +85,12 @@ interface ProjectManagementDocumentDetailProps {
   onEditTagsChange: (value: string) => void;
   onEditStatusChange: (value: string) => void;
   onEditAssigneeChange: (value: string) => void;
-  onCommentDraftChange: (value: string) => void;
   onSetEditingState: (editing: boolean) => void;
   onSaveDocument: () => Promise<void>;
   onQuickDocumentUpdate: (overrides: { status?: string; assignee?: string; archived?: boolean }) => Promise<void>;
   onSaveAssignee: () => Promise<void>;
   onToggleArchive: () => Promise<void>;
   onSelectWorktree: (branch: string) => void;
-  onAddComment: () => Promise<void>;
   onOpenDependencyGraph: () => void;
   onOpenDependencyModal: () => void;
   onCloseDependencyModal: () => void;
@@ -140,7 +137,6 @@ export function ProjectManagementDocumentDetail({
   editAssignee,
   dependencySelection,
   currentDependencyDocuments,
-  commentDraft,
   aiRunSummary,
   documentRunSummary,
   aiFailureToast,
@@ -173,14 +169,12 @@ export function ProjectManagementDocumentDetail({
   onEditTagsChange,
   onEditStatusChange,
   onEditAssigneeChange,
-  onCommentDraftChange,
   onSetEditingState,
   onSaveDocument,
   onQuickDocumentUpdate,
   onSaveAssignee,
   onToggleArchive,
   onSelectWorktree,
-  onAddComment,
   onOpenDependencyGraph,
   onOpenDependencyModal,
   onCloseDependencyModal,
@@ -498,55 +492,6 @@ export function ProjectManagementDocumentDetail({
             <div className="border theme-border-subtle p-4">
               <div className="pm-markdown text-sm theme-text" dangerouslySetInnerHTML={{ __html: marked.parse(document.markdown) }} />
             </div>
-            <div className="border theme-border-subtle p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.18em] theme-text-soft">Comments</p>
-                  <p className="mt-1 text-sm theme-text-muted">Discuss the document here. Comments are attributed to the repo git user.</p>
-                </div>
-                <MatrixBadge tone="neutral" compact>{document.comments.length} comment{document.comments.length === 1 ? "" : "s"}</MatrixBadge>
-              </div>
-              <div className="mt-3 space-y-3">
-                {document.comments.length ? document.comments.map((comment) => (
-                  <div key={comment.id} className="border theme-border-subtle px-3 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold theme-text-strong">{comment.authorName}</p>
-                      <p className="text-xs theme-text-muted">{comment.authorEmail}</p>
-                      <p className="text-xs theme-text-soft">{new Date(comment.createdAt).toLocaleString()}</p>
-                    </div>
-                    <div className="pm-markdown mt-2 text-sm theme-text" dangerouslySetInnerHTML={{ __html: marked.parse(comment.body) }} />
-                  </div>
-                )) : (
-                  <div className="matrix-command rounded-none px-3 py-3 text-sm theme-empty-note">
-                    No comments yet. Add context, blockers, or implementation notes here.
-                  </div>
-                )}
-              </div>
-              <div className="mt-3 border-t theme-border-subtle pt-3">
-                <label className="block space-y-2">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Add comment</span>
-                  <textarea
-                    value={commentDraft}
-                    onChange={(event) => onCommentDraftChange(event.target.value)}
-                    placeholder="Leave an implementation note, blocker, or follow-up."
-                    rows={4}
-                    disabled={saving || aiRunning}
-                    className="matrix-input min-h-[7rem] w-full rounded-none px-3 py-3 text-sm outline-none"
-                  />
-                </label>
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <p className="text-xs theme-text-muted">Saved with your repo git `user.name` and `user.email`.</p>
-                  <button
-                    type="button"
-                    className="matrix-button rounded-none px-3 py-2 text-sm font-semibold"
-                    disabled={saving || aiRunning || !commentDraft.trim()}
-                    onClick={() => void onAddComment()}
-                  >
-                    Add comment
-                  </button>
-                </div>
-              </div>
-            </div>
           </div>
           <div className="space-y-3">
             <div className="border theme-border-subtle p-3">
@@ -597,7 +542,7 @@ export function ProjectManagementDocumentDetail({
         </div>
       ) : (
         <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
-          Select a document to inspect its markdown, tags, comments, and worktree links.
+          Select a document to inspect its markdown, tags, and linked worktrees.
         </div>
       )}
 

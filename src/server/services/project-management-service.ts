@@ -13,10 +13,8 @@ import {
   PROJECT_MANAGEMENT_SCHEMA_VERSION,
 } from "../../shared/constants.js";
 import type {
-  AddProjectManagementCommentRequest,
   AppendProjectManagementBatchRequest,
   CreateProjectManagementDocumentRequest,
-  ProjectManagementComment,
   ProjectManagementBatchResponse,
   ProjectManagementDocument,
   ProjectManagementDocumentResponse,
@@ -39,7 +37,7 @@ const PROJECT_MANAGEMENT_MAX_APPEND_RETRIES = 5;
 const PROJECT_MANAGEMENT_MAX_HISTORY_DIFF_CHARS = 20_000;
 const PROJECT_MANAGEMENT_CACHE_NAMESPACE = "project-management-cache";
 
-type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restore" | "comment";
+type ProjectManagementDocumentAction = "create" | "update" | "archive" | "restore";
 
 interface ProjectManagementAuthor {
   name: string;
@@ -67,7 +65,6 @@ interface ProjectManagementAutomergeDocument {
   archived: boolean;
   createdAt: string;
   updatedAt: string;
-  comments: ProjectManagementComment[];
 }
 
 interface StoredProjectManagementBatchEntry {
@@ -126,7 +123,6 @@ interface PersistedProjectManagementDocumentSummaryRow {
 interface PersistedProjectManagementDocumentRow extends PersistedProjectManagementDocumentSummaryRow {
   document_order: number;
   markdown: string;
-  comments_json: string;
   automerge_binary: string;
 }
 
@@ -213,10 +209,6 @@ function normalizeAssignee(value: string | undefined): string {
 
 function normalizeSummary(value: string | undefined): string {
   return value?.trim() ?? "";
-}
-
-function normalizeCommentBody(value: string): string {
-  return value.trim();
 }
 
 function slugifyDocumentId(value: string): string {
@@ -412,17 +404,6 @@ function parseStringArray(value: string): string[] {
   return parsed.filter((entry): entry is string => typeof entry === "string");
 }
 
-function parseComments(value: string): ProjectManagementComment[] {
-  if (!value) {
-    return [];
-  }
-
-  const parsed = JSON.parse(value) as unknown[];
-  return parsed
-    .filter((entry): entry is ProjectManagementComment => Boolean(entry) && typeof entry === "object")
-    .map((entry) => ({ ...entry }));
-}
-
 function toSummaryFromRow(row: PersistedProjectManagementDocumentSummaryRow): ProjectManagementDocumentSummary {
   return {
     id: row.document_id,
@@ -447,7 +428,6 @@ function toDocumentFromRow(row: PersistedProjectManagementDocumentRow): Persiste
     document: {
       ...summary,
       markdown: row.markdown,
-      comments: parseComments(row.comments_json),
     },
     automergeDoc: Automerge.load<ProjectManagementAutomergeDocument>(
       Uint8Array.from(Buffer.from(row.automerge_binary, "base64")),
@@ -484,7 +464,6 @@ async function getProjectManagementDb(repoRoot: string) {
           updated_at timestamptz not null,
           history_count integer not null,
           markdown text not null,
-          comments_json text not null,
           automerge_binary text not null
         );
 
@@ -645,7 +624,6 @@ async function loadPersistedDocumentRecord(
         updated_at::text,
         history_count,
         markdown,
-        comments_json,
         automerge_binary
       from ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE}
       where document_id = $1
@@ -710,10 +688,9 @@ async function upsertPersistedDocumentRecord(
         updated_at,
         history_count,
         markdown,
-        comments_json,
         automerge_binary
       ) values (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
       )
       on conflict (document_id) do update
       set document_order = excluded.document_order,
@@ -731,7 +708,6 @@ async function upsertPersistedDocumentRecord(
           updated_at = excluded.updated_at,
           history_count = excluded.history_count,
           markdown = excluded.markdown,
-          comments_json = excluded.comments_json,
           automerge_binary = excluded.automerge_binary
     `,
     [
@@ -751,7 +727,6 @@ async function upsertPersistedDocumentRecord(
       record.document.updatedAt,
       record.document.historyCount,
       record.document.markdown,
-      JSON.stringify(record.document.comments),
       Buffer.from(Automerge.save(record.automergeDoc)).toString("base64"),
     ],
   );
@@ -1052,23 +1027,7 @@ function buildProjectManagementDiff(previous: ProjectManagementDocument | null, 
     sections.push(buildUnifiedDiff(previousMarkdown, next.markdown, "markdown:before", "markdown:after"));
   }
 
-  const previousComments = serializeComments(previous?.comments ?? []);
-  const nextComments = serializeComments(next.comments);
-  if (previousComments !== nextComments) {
-    sections.push(buildUnifiedDiff(previousComments, nextComments, "comments:before", "comments:after"));
-  }
-
   return sections.join("\n\n");
-}
-
-function serializeComments(comments: ProjectManagementComment[]): string {
-  return comments.map((comment, index) => {
-    const bodyLines = comment.body.split(/\r?\n/);
-    return [
-      `comment ${index + 1}: ${comment.createdAt} | ${comment.authorName} <${comment.authorEmail}>`,
-      ...bodyLines.map((line) => `  ${line}`),
-    ].join("\n");
-  }).join("\n");
 }
 
 function ensureProjectManagementDiff(entry: Pick<ProjectManagementHistoryEntry, "diff" | "action">): string {
@@ -1104,7 +1063,6 @@ function materializeDocument(doc: Automerge.Doc<ProjectManagementAutomergeDocume
     archived: Boolean(doc.archived),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
-    comments: Array.from(doc.comments ?? []).map((comment) => ({ ...comment })),
     historyCount: 0,
   };
 }
@@ -1123,7 +1081,6 @@ async function loadStoreDocument(repoRoot: string, documentId: string): Promise<
     ...record.document,
     tags: [...record.document.tags],
     dependencies: [...record.document.dependencies],
-    comments: record.document.comments.map((comment) => ({ ...comment })),
   };
 }
 
@@ -1239,7 +1196,6 @@ function createSeedBatch(now: string, author: ProjectManagementAuthor): StoredPr
     draft.archived = false;
     draft.createdAt = now;
     draft.updatedAt = now;
-    draft.comments = [];
   });
 
   const change = Automerge.getLastLocalChange(doc);
@@ -1371,18 +1327,16 @@ async function appendEntries(
     dependencies?: string[];
     status?: string;
     assignee?: string;
-    archived?: boolean;
-    commentBody?: string;
-  }>,
+     archived?: boolean;
+   }>,
 ): Promise<ProjectManagementBatchResponse> {
   for (let attempt = 1; attempt <= PROJECT_MANAGEMENT_MAX_APPEND_RETRIES; attempt += 1) {
     const operationStartedAt = Date.now();
-    logServerEvent("project-management-update-timing", "append-entries-started", {
-      attempt,
-      documentIds: entries.map((entry) => entry.documentId?.trim()).filter(Boolean),
-      entryCount: entries.length,
-      commentEntries: entries.filter((entry) => typeof entry.commentBody === "string").length,
-    });
+      logServerEvent("project-management-update-timing", "append-entries-started", {
+        attempt,
+        documentIds: entries.map((entry) => entry.documentId?.trim()).filter(Boolean),
+        entryCount: entries.length,
+      });
     const stateStartedAt = Date.now();
     logServerEvent("project-management-update-timing", "phase-start", { attempt, phase: "state" });
     const state = await getReducedProjectManagementState(repoRoot);
@@ -1438,47 +1392,19 @@ async function appendEntries(
       let action: ProjectManagementDocumentAction;
       let change: Uint8Array;
 
-      if (typeof entry.commentBody === "string") {
-        if (!existingDoc) {
-          throw new Error(`Unknown project management document ${documentId}.`);
-        }
-
-        const body = normalizeCommentBody(entry.commentBody);
-        if (!body) {
-          throw new Error("Comment body is required.");
-        }
-
-        const writableDoc = Automerge.clone(existingDoc, { actor: actorId });
-        nextDoc = Automerge.change(writableDoc, "Add project management comment", (draft) => {
-          draft.updatedAt = now;
-          if (!Array.isArray(draft.comments)) {
-            draft.comments = [];
-          }
-          draft.comments.push({
-            id: randomUUID(),
-            body,
-            createdAt: now,
-            authorName: author.name,
-            authorEmail: author.email,
-          });
-        });
-        change = Automerge.getLastLocalChange(nextDoc)!;
-        action = "comment";
-      } else {
-        ({ nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
-          number: existingDoc?.number ?? getNextDocumentNumber(summariesById.values()),
-          title,
-          summary: entry.summary ?? existingDoc?.summary,
-          markdown,
-          tags,
-          dependencies,
-          status: entry.status,
-          assignee: entry.assignee ?? existingDoc?.assignee,
-          archived: entry.archived ?? existingDoc?.archived,
-          now,
-          actorId,
-        }));
-      }
+      ({ nextDoc, action, change } = applyDocumentChange(documentId, existingDoc, {
+        number: existingDoc?.number ?? getNextDocumentNumber(summariesById.values()),
+        title,
+        summary: entry.summary ?? existingDoc?.summary,
+        markdown,
+        tags,
+        dependencies,
+        status: entry.status,
+        assignee: entry.assignee ?? existingDoc?.assignee,
+        archived: entry.archived ?? existingDoc?.archived,
+        now,
+        actorId,
+      }));
 
       batchEntries.push({
         documentId,
@@ -1788,35 +1714,6 @@ export async function moveProjectManagementDocumentTowardInProgress(
   }
 
   return updateProjectManagementStatus(repoRoot, documentId, "in-progress");
-}
-
-export async function addProjectManagementComment(
-  repoRoot: string,
-  documentId: string,
-  request: AddProjectManagementCommentRequest,
-): Promise<ProjectManagementDocumentSummaryResponse> {
-  await getReducedProjectManagementState(repoRoot);
-  const currentDocument = await loadStoreDocument(repoRoot, documentId);
-
-  const body = normalizeCommentBody(request.body);
-  if (!body) {
-    throw new Error("Comment body is required.");
-  }
-
-  const result = await appendEntries(repoRoot, [{
-    documentId,
-    title: currentDocument.title,
-    summary: currentDocument.summary,
-    markdown: currentDocument.markdown,
-    tags: currentDocument.tags,
-    dependencies: currentDocument.dependencies,
-    status: currentDocument.status,
-    assignee: currentDocument.assignee,
-    archived: currentDocument.archived,
-    commentBody: body,
-  }]);
-
-  return getProjectManagementDocumentSummary(repoRoot, documentId, result.headSha);
 }
 
 async function getProjectManagementDocumentSummary(

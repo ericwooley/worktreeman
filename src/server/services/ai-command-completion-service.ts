@@ -1,6 +1,7 @@
 import type { AiCommandConfig, AiCommandId } from "../../shared/types.js";
 import { autoCommitGitChanges } from "./git-service.js";
-import { addProjectManagementComment, getProjectManagementDocument, updateProjectManagementDocument } from "./project-management-service.js";
+import { addProjectManagementReviewEntry } from "./project-management-review-service.js";
+import { getProjectManagementDocument, updateProjectManagementDocument } from "./project-management-service.js";
 import { buildWorktreeAiCompletedComment } from "./project-management-comment-formatters.js";
 import { logServerEvent } from "../utils/server-logger.js";
 
@@ -25,8 +26,8 @@ export async function completeAiCommandRun(options: {
   stdout: string;
   stderr: string;
   applyDocumentUpdateToDocumentId?: string | null;
-  commentDocumentId?: string | null;
-  commentRequestSummary?: string | null;
+  reviewDocumentId?: string | null;
+  reviewRequestSummary?: string | null;
   autoCommitDirtyWorktree?: boolean;
 }) {
   if (options.applyDocumentUpdateToDocumentId) {
@@ -70,24 +71,27 @@ export async function completeAiCommandRun(options: {
     }
   }
 
-  if (!options.commentDocumentId) {
+  if (!options.reviewDocumentId) {
     return;
   }
 
   try {
-    await addProjectManagementComment(options.repoRoot, options.commentDocumentId, {
+    await addProjectManagementReviewEntry(options.repoRoot, options.reviewDocumentId, {
       body: buildWorktreeAiCompletedComment({
         branch: options.branch,
         commandId: options.commandId,
-        requestSummary: options.commentRequestSummary,
+        requestSummary: options.reviewRequestSummary,
         stdout: options.stdout,
         stderr: options.stderr,
       }),
+      kind: "activity",
+      source: "ai",
+      eventType: "ai-completed",
     });
   } catch (error) {
-    logServerEvent("project-management-comment", "failed", {
+    logServerEvent("project-management-review", "failed", {
       branch: options.branch,
-      documentId: options.commentDocumentId,
+      documentId: options.reviewDocumentId,
       error: error instanceof Error ? error.message : String(error),
     }, "error");
   }

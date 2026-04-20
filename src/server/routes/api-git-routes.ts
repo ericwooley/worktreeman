@@ -26,9 +26,9 @@ import {
   listWorktrees,
   mergeGitBranch,
 } from "../services/git-service.js";
+import { addProjectManagementReviewEntry } from "../services/project-management-review-service.js";
 import { buildWorktreeMergeComment } from "../services/project-management-comment-formatters.js";
 import { buildRuntimeProcessEnv } from "../services/runtime-service.js";
-import { addProjectManagementComment } from "../services/project-management-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import { logServerEvent } from "../utils/server-logger.js";
@@ -193,15 +193,19 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
         : null;
       if (linkedDocument?.documentId) {
         try {
-          await addProjectManagementComment(context.repoRoot, linkedDocument.documentId, {
+          await addProjectManagementReviewEntry(context.repoRoot, linkedDocument.documentId, {
             body: buildWorktreeMergeComment({
               branch: comparison.compareBranch,
               baseBranch: comparison.baseBranch,
               commits: comparisonBeforeMerge.compareCommits,
             }),
+            kind: "activity",
+            source: "system",
+            eventType: "merge",
           });
+          context.emitProjectManagementReviewsRefresh();
         } catch (error) {
-          logServerEvent("project-management-comment", "failed", {
+          logServerEvent("project-management-review", "failed", {
             branch: compareBranch,
             documentId: linkedDocument.documentId,
             stage: "merge",

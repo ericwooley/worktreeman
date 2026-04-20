@@ -111,6 +111,7 @@ function createConfig(commandName: string, command: string): WorktreeManagerConf
     runtimePorts: [],
     derivedEnv: {},
     quickLinks: [],
+    autoSync: { remote: "origin" },
     aiCommands: {
       smart: "printf %s $WTM_AI_INPUT",
       simple: "printf %s $WTM_AI_INPUT",

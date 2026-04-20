@@ -162,8 +162,8 @@ function toPayloadSummary(value: unknown): SystemJobPayloadSummary {
       typeof payload?.applyDocumentUpdateToDocumentId === "string"
         ? payload.applyDocumentUpdateToDocumentId
         : null,
-    commentDocumentId: typeof payload?.commentDocumentId === "string" ? payload.commentDocumentId : null,
-    commentRequestSummaryPreview: previewText(payload?.commentRequestSummary),
+    reviewDocumentId: typeof payload?.reviewDocumentId === "string" ? payload.reviewDocumentId : null,
+    reviewRequestSummaryPreview: previewText(payload?.reviewRequestSummary),
     autoCommitDirtyWorktree: payload?.autoCommitDirtyWorktree === true,
   };
 }

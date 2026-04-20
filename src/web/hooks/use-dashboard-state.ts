@@ -1,6 +1,6 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
-  AddProjectManagementCommentRequest,
+  AddProjectManagementReviewEntryRequest,
   AiCommandLogEntry,
   AiCommandLogSummary,
   AiCommandLogsResponse,
@@ -23,9 +23,11 @@ import type {
   GitComparisonResponse,
   ProjectManagementBatchUpdateEntry,
   ProjectManagementDocument,
+  ProjectManagementDocumentReview,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
   ProjectManagementListResponse,
+  ProjectManagementReviewsResponse,
   ProjectManagementUsersResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
@@ -40,7 +42,7 @@ import type {
   UpdateProjectManagementUsersRequest,
 } from "@shared/types";
 import {
-  addProjectManagementComment as addProjectManagementCommentRequest,
+  addProjectManagementReviewEntry as addProjectManagementReviewEntryRequest,
   appendProjectManagementBatch as appendProjectManagementBatchRequest,
   createProjectManagementDocument as createProjectManagementDocumentRequest,
   createWorktree,
@@ -50,7 +52,9 @@ import {
   generateGitCommitMessage as generateGitCommitMessageRequest,
   getAutoSyncSettings as fetchAutoSyncSettings,
   getProjectManagementDocument as fetchProjectManagementDocument,
+  getProjectManagementDocumentReview as fetchProjectManagementDocumentReview,
   getProjectManagementHistory as fetchProjectManagementHistory,
+  getProjectManagementReviews as fetchProjectManagementReviews,
   listProjectManagementDocuments as fetchProjectManagementDocuments,
   getProjectManagementUsers as fetchProjectManagementUsers,
   getConfigDocument as fetchConfigDocument,
@@ -146,7 +150,9 @@ function applyDashboardEventsStreamEvent(options: {
   setSystemLastUpdatedAt: React.Dispatch<React.SetStateAction<string | null>>;
   setSystemLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setProjectManagement: React.Dispatch<React.SetStateAction<ProjectManagementListResponse | null>>;
+  setProjectManagementReviews: React.Dispatch<React.SetStateAction<ProjectManagementReviewsResponse | null>>;
   setProjectManagementUsers: React.Dispatch<React.SetStateAction<ProjectManagementUsersResponse | null>>;
+  setProjectManagementDocumentReview: React.Dispatch<React.SetStateAction<ProjectManagementDocumentReview | null>>;
   setProjectManagementError: React.Dispatch<React.SetStateAction<string | null>>;
   setProjectManagementLastUpdatedAt: React.Dispatch<React.SetStateAction<string | null>>;
   setProjectManagementLoading: React.Dispatch<React.SetStateAction<boolean>>;
@@ -173,7 +179,9 @@ function applyDashboardEventsStreamEvent(options: {
     setSystemLastUpdatedAt,
     setSystemLoading,
     setProjectManagement,
+    setProjectManagementReviews,
     setProjectManagementUsers,
+    setProjectManagementDocumentReview,
     setProjectManagementError,
     setProjectManagementLastUpdatedAt,
     setProjectManagementLoading,
@@ -234,6 +242,20 @@ function applyDashboardEventsStreamEvent(options: {
       setProjectManagementLoading(false);
       setError(null);
       return;
+    case "project-management-reviews":
+      setProjectManagementReviews(event.event.reviews);
+      setProjectManagementDocumentReview((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return event.event.reviews.reviews.find((entry) => entry.documentId === current.documentId) ?? current;
+      });
+      setProjectManagementError(null);
+      setProjectManagementLastUpdatedAt(timestamp);
+      setProjectManagementLoading(false);
+      setError(null);
+      return;
     case "project-management-users":
       setProjectManagementUsers(event.event.users);
       setProjectManagementError(null);
@@ -284,8 +306,10 @@ function useDashboardStateInternal() {
   const [systemError, setSystemError] = useState<string | null>(null);
   const [systemLastUpdatedAt, setSystemLastUpdatedAt] = useState<string | null>(null);
   const [projectManagement, setProjectManagement] = useState<ProjectManagementListResponse | null>(null);
+  const [projectManagementReviews, setProjectManagementReviews] = useState<ProjectManagementReviewsResponse | null>(null);
   const [projectManagementUsers, setProjectManagementUsers] = useState<ProjectManagementUsersResponse | null>(null);
   const [projectManagementDocument, setProjectManagementDocument] = useState<ProjectManagementDocument | null>(null);
+  const [projectManagementDocumentReview, setProjectManagementDocumentReview] = useState<ProjectManagementDocumentReview | null>(null);
   const [projectManagementHistory, setProjectManagementHistory] = useState<ProjectManagementHistoryEntry[]>([]);
   const [projectManagementLoading, setProjectManagementLoading] = useState(false);
   const [projectManagementError, setProjectManagementError] = useState<string | null>(null);
@@ -310,7 +334,9 @@ function useDashboardStateInternal() {
         setSystemLastUpdatedAt,
         setSystemLoading,
         setProjectManagement,
+        setProjectManagementReviews,
         setProjectManagementUsers,
+        setProjectManagementDocumentReview,
         setProjectManagementError,
         setProjectManagementLastUpdatedAt,
         setProjectManagementLoading,
@@ -541,18 +567,53 @@ function useDashboardStateInternal() {
     }
   }, []);
 
+  const loadProjectManagementReviewsState = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setProjectManagementLoading(true);
+    }
+
+    try {
+      const payload = await fetchProjectManagementReviews();
+      setProjectManagementReviews(payload);
+      setProjectManagementDocumentReview((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return payload.reviews.find((entry) => entry.documentId === current.documentId) ?? current;
+      });
+      setProjectManagementError(null);
+      setProjectManagementLastUpdatedAt(new Date().toISOString());
+      setError(null);
+      return payload;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to load project management reviews.";
+      setProjectManagementReviews(null);
+      setProjectManagementDocumentReview(null);
+      setProjectManagementError(message);
+      setError(message);
+      return null;
+    } finally {
+      if (!options?.silent) {
+        setProjectManagementLoading(false);
+      }
+    }
+  }, []);
+
   const loadProjectManagementDocumentState = useCallback(async (documentId: string, options?: { silent?: boolean }) => {
     if (!options?.silent) {
       setProjectManagementLoading(true);
     }
 
     try {
-      const [documentPayload, historyPayload] = await Promise.all([
+      const [documentPayload, historyPayload, reviewPayload] = await Promise.all([
         fetchProjectManagementDocument(documentId),
         fetchProjectManagementHistory(documentId),
+        fetchProjectManagementDocumentReview(documentId),
       ]);
       setProjectManagementDocument(documentPayload.document);
       setProjectManagementHistory(historyPayload.history);
+      setProjectManagementDocumentReview(reviewPayload.review);
       setProjectManagementError(null);
       setProjectManagementLastUpdatedAt(new Date().toISOString());
       setError(null);
@@ -560,6 +621,7 @@ function useDashboardStateInternal() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load project management document.";
       setProjectManagementDocument(null);
+      setProjectManagementDocumentReview(null);
       setProjectManagementHistory([]);
       setProjectManagementError(message);
       setError(message);
@@ -633,6 +695,10 @@ function useDashboardStateInternal() {
   useEffect(() => {
     void loadProjectManagementUsersState({ silent: true });
   }, [loadProjectManagementUsersState]);
+
+  useEffect(() => {
+    void loadProjectManagementReviewsState({ silent: true });
+  }, [loadProjectManagementReviewsState]);
 
   useEffect(() => {
     void loadSystemStatusState({ silent: true });
@@ -1045,8 +1111,9 @@ function useDashboardStateInternal() {
           setAiCommandJob(result.job);
           setAiCommandRunningBranch(result.job.status === "running" ? branch : null);
           upsertRunningAiJob(result.job);
-          if (payload.documentId || payload.commentDocumentId) {
+          if (payload.documentId || payload.reviewDocumentId) {
             void loadProjectManagementDocumentsState({ silent: true });
+            void loadProjectManagementReviewsState({ silent: true });
           }
           setError(null);
           return result.job;
@@ -1101,6 +1168,7 @@ function useDashboardStateInternal() {
       },
       trackAiCommandJob,
       loadProjectManagementDocuments: loadProjectManagementDocumentsState,
+      loadProjectManagementReviews: loadProjectManagementReviewsState,
       loadProjectManagementUsers: loadProjectManagementUsersState,
       loadProjectManagementDocument: loadProjectManagementDocumentState,
       async createProjectManagementDocument(payload: CreateProjectManagementDocumentRequest) {
@@ -1109,8 +1177,12 @@ function useDashboardStateInternal() {
           const response = await createProjectManagementDocumentRequest(payload);
           await loadProjectManagementDocumentsState({ silent: true });
           setProjectManagementDocument(response.document);
-          const history = await fetchProjectManagementHistory(response.document.id);
+          const [history, review] = await Promise.all([
+            fetchProjectManagementHistory(response.document.id),
+            fetchProjectManagementDocumentReview(response.document.id),
+          ]);
           setProjectManagementHistory(history.history);
+          setProjectManagementDocumentReview(review.review);
           setError(null);
           return response.document;
         } catch (err) {
@@ -1209,17 +1281,26 @@ function useDashboardStateInternal() {
           setProjectManagementSaving(false);
         }
       },
-      async addProjectManagementComment(documentId: string, payload: AddProjectManagementCommentRequest) {
+      async addProjectManagementReviewEntry(documentId: string, payload: AddProjectManagementReviewEntryRequest) {
         setProjectManagementSaving(true);
         try {
-          const response = await addProjectManagementCommentRequest(documentId, payload);
-          applyProjectManagementSummary(response.document);
+          const response = await addProjectManagementReviewEntryRequest(documentId, payload);
+          setProjectManagementDocumentReview(response.review);
+          setProjectManagementReviews((current) => {
+            if (!current) {
+              return current;
+            }
+
+            return {
+              ...current,
+              reviews: current.reviews.map((entry) => entry.documentId === documentId ? response.review : entry),
+            };
+          });
+          setProjectManagementLastUpdatedAt(new Date().toISOString());
           setError(null);
-          return projectManagementDocument?.id === documentId
-            ? await loadProjectManagementDocumentState(documentId, { silent: true })
-            : null;
+          return response.review;
         } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to add project management comment.");
+          setError(err instanceof Error ? err.message : "Failed to add project management review entry.");
           return null;
         } finally {
           setProjectManagementSaving(false);
@@ -1242,7 +1323,7 @@ function useDashboardStateInternal() {
         }
       },
     }),
-    [appendBackgroundLogs, applyAiCommandLogsPayload, applyProjectManagementSummary, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementUsersState, loadSystemStatusState, projectManagement?.documents, projectManagementDocument?.id, trackAiCommandJob, upsertRunningAiJob],
+    [appendBackgroundLogs, applyAiCommandLogsPayload, applyProjectManagementSummary, loadAiCommandLog, loadProjectManagementDocumentsState, loadProjectManagementDocumentState, loadProjectManagementReviewsState, loadProjectManagementUsersState, loadSystemStatusState, projectManagement?.documents, trackAiCommandJob, upsertRunningAiJob],
   );
 
   return {
@@ -1278,8 +1359,10 @@ function useDashboardStateInternal() {
     systemError,
     systemLastUpdatedAt,
     projectManagement,
+    projectManagementReviews,
     projectManagementUsers,
     projectManagementDocument,
+    projectManagementDocumentReview,
     projectManagementHistory,
     projectManagementLoading,
     projectManagementError,

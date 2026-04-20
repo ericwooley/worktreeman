@@ -25,8 +25,8 @@ export interface ProjectManagementAiQueuePayload {
   documentId: string;
   origin?: AiCommandOrigin | null;
   applyDocumentUpdateToDocumentId?: string | null;
-  commentDocumentId?: string | null;
-  commentRequestSummary?: string | null;
+  reviewDocumentId?: string | null;
+  reviewRequestSummary?: string | null;
   autoCommitDirtyWorktree?: boolean;
 }
 
@@ -112,8 +112,8 @@ async function runManagedAiProcess(options: {
         stdout,
         stderr,
         applyDocumentUpdateToDocumentId: options.payload.applyDocumentUpdateToDocumentId,
-        commentDocumentId: options.payload.commentDocumentId,
-        commentRequestSummary: options.payload.commentRequestSummary,
+        reviewDocumentId: options.payload.reviewDocumentId,
+        reviewRequestSummary: options.payload.reviewRequestSummary,
         autoCommitDirtyWorktree: options.payload.autoCommitDirtyWorktree,
       });
     },

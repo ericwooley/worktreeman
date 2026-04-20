@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { marked } from "marked";
 import type {
   AiCommandOrigin,
   AiCommandConfig,
@@ -7,9 +8,11 @@ import type {
   ProjectManagementUser,
   RunAiCommandRequest,
   ProjectManagementDocument,
+  ProjectManagementDocumentReview,
   ProjectManagementDocumentSummaryResponse,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
+  ProjectManagementReviewEntry,
   ProjectManagementUsersResponse,
   RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
@@ -28,7 +31,7 @@ import {
   useProjectManagementDocumentBrowserState,
 } from "./project-management-document-browser";
 import { ProjectManagementDocumentDetail } from "./project-management-document-detail";
-import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
+import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardHeader, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixSectionIntro, MatrixSkeletonCard, MatrixSpinner, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
@@ -46,8 +49,57 @@ import {
   summarizeDocumentText,
 } from "./project-management-document-utils";
 
-export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "users";
+export type ProjectManagementSubTab = "document" | "review" | "board" | "dependency-tree" | "history" | "create" | "users";
 export type ProjectManagementDocumentViewMode = "document" | "edit";
+
+function getReviewEventLabel(entry: ProjectManagementReviewEntry) {
+  switch (entry.eventType) {
+    case "ai-started":
+      return "AI started";
+    case "ai-completed":
+      return "AI completed";
+    case "merge":
+      return "Merged";
+    default:
+      return "Comment";
+  }
+}
+
+function getReviewEventTone(entry: ProjectManagementReviewEntry) {
+  switch (entry.eventType) {
+    case "ai-started":
+      return "warning" as const;
+    case "ai-completed":
+      return "active" as const;
+    case "merge":
+      return "neutral" as const;
+    default:
+      return entry.kind === "activity" ? "idle" as const : "active" as const;
+  }
+}
+
+function getReviewSourceTone(entry: ProjectManagementReviewEntry) {
+  switch (entry.source) {
+    case "ai":
+      return "active" as const;
+    case "system":
+      return "idle" as const;
+    default:
+      return "neutral" as const;
+  }
+}
+
+function getReviewSourceLabel(entry: ProjectManagementReviewEntry) {
+  if (entry.source === "ai") {
+    return "AI";
+  }
+
+  if (entry.source === "system") {
+    return "System";
+  }
+
+  return "User";
+}
 
 interface ProjectManagementPanelProps {
   documents: ProjectManagementDocumentSummary[];
@@ -61,6 +113,8 @@ interface ProjectManagementPanelProps {
   editFormTab: ProjectManagementDocumentFormViewMode;
   createFormTab: ProjectManagementDocumentFormViewMode;
   document: ProjectManagementDocument | null;
+  reviews: ProjectManagementDocumentReview[];
+  review: ProjectManagementDocumentReview | null;
   history: ProjectManagementHistoryEntry[];
   loading: boolean;
   refreshError?: string | null;
@@ -104,12 +158,12 @@ interface ProjectManagementPanelProps {
     status?: string;
     archived?: boolean;
   }) => Promise<boolean>;
-  onAddComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentSummaryResponse | null>;
+  onAddReviewEntry: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentReview | null>;
   onRunAiCommand: (payload: RunAiCommandRequest & {
     input: string;
     documentId: string;
     commandId: AiCommandId;
-    commentDocumentId?: string;
+    reviewDocumentId?: string;
     origin?: AiCommandOrigin | null;
   }) => Promise<AiCommandJob | null>;
   onRunDocumentAi: (payload: { documentId: string; commandId: AiCommandId } & RunProjectManagementDocumentAiRequest) => Promise<RunAiCommandResponse | null>;
@@ -162,6 +216,8 @@ export function ProjectManagementPanel({
   editFormTab,
   createFormTab,
   document,
+  reviews,
+  review,
   history,
   loading,
   refreshError = null,
@@ -185,7 +241,7 @@ export function ProjectManagementPanel({
   onUpdateStatus,
   onUpdateUsers,
   onBatchUpdateDocuments,
-  onAddComment,
+  onAddReviewEntry,
   onRunAiCommand,
   onRunDocumentAi,
   onCancelDocumentAiCommand,
@@ -221,7 +277,7 @@ export function ProjectManagementPanel({
   const [newUserName, setNewUserName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [userFormError, setUserFormError] = useState<string | null>(null);
-  const [commentDraft, setCommentDraft] = useState("");
+  const [reviewDraft, setReviewDraft] = useState("");
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
   const [aiChangeRequest, setAiChangeRequest] = useState("");
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);

@@ -398,8 +398,8 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
       const explicitDocumentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
-      const requestedCommentDocumentId = typeof body?.commentDocumentId === "string" && body.commentDocumentId.trim()
-        ? body.commentDocumentId.trim()
+      const requestedReviewDocumentId = typeof body?.reviewDocumentId === "string" && body.reviewDocumentId.trim()
+        ? body.reviewDocumentId.trim()
         : null;
       const requestedOrigin = parseAiCommandOrigin(body?.origin);
 
@@ -422,7 +422,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         ? null
         : (await getWorktreeDocumentLink(context.repoRoot, worktree.id))?.documentId ?? null;
       const documentId = explicitDocumentId ?? linkedDocumentId;
-      const commentDocumentId = explicitDocumentId ? null : requestedCommentDocumentId ?? linkedDocumentId;
+      const reviewDocumentId = explicitDocumentId ? null : requestedReviewDocumentId ?? linkedDocumentId;
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
       worktreePath = worktree.worktreePath;
       branch = worktree.branch;
@@ -586,8 +586,8 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         worktreePath,
         env,
         applyDocumentUpdateToDocumentId: explicitDocumentId,
-        commentDocumentId,
-        commentRequestSummary: explicitDocumentId ? null : body.input,
+        reviewDocumentId,
+        reviewRequestSummary: explicitDocumentId ? null : body.input,
         autoCommitDirtyWorktree: true,
       };
       const job = explicitDocumentId
@@ -605,16 +605,16 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
               worktreePath: runDetails.worktreePath,
               env: runDetails.env,
               applyDocumentUpdateToDocumentId: runDetails.applyDocumentUpdateToDocumentId,
-              commentDocumentId: runDetails.commentDocumentId,
-              commentRequestSummary: runDetails.commentRequestSummary,
+              reviewDocumentId: runDetails.reviewDocumentId,
+              reviewRequestSummary: runDetails.reviewRequestSummary,
               autoCommitDirtyWorktree: runDetails.autoCommitDirtyWorktree,
             })
         : await (await context.startAiProcessJob(runDetails)).started;
       await context.addWorktreeAiStartedComment({
         branch: runDetails.branch,
         commandId: runDetails.commandId,
-        commentDocumentId: runDetails.commentDocumentId,
-        requestSummary: runDetails.commentRequestSummary,
+        reviewDocumentId: runDetails.reviewDocumentId,
+        requestSummary: runDetails.reviewRequestSummary,
       });
       context.scheduleRuntimeStopAfterAiJob({
         worktree,
