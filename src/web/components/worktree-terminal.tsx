@@ -14,7 +14,7 @@ import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
 import { shortcutFromKeyboardEvent } from "./command-palette";
 import { ENVIRONMENT_SESSION_INFO_TITLE, WORKTREE_ENVIRONMENT_KICKER } from "./worktree-environment-content";
-import { shouldHandleTerminalCopy } from "./worktree-terminal-copy";
+import { getTerminalCopyDecision, logTerminalCopyEvent, writeTerminalTextToClipboard } from "./worktree-terminal-copy";
 
 const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
 const TERMINAL_SURFACE_MODE_STORAGE_KEY = "worktreeman.terminalSurfaceMode";
@@ -376,19 +376,37 @@ export function WorktreeTerminal({
         const osc52Disposable = terminal.parser.registerOscHandler(52, (data) => {
           const separatorIndex = data.indexOf(";");
           if (separatorIndex === -1) {
+            logTerminalCopyEvent("osc52-ignored", { reason: "missing-separator" });
             return false;
           }
 
           const encodedPayload = data.slice(separatorIndex + 1);
           if (!encodedPayload || encodedPayload === "?") {
+            logTerminalCopyEvent("osc52-ignored", {
+              reason: !encodedPayload ? "empty-payload" : "read-request",
+            });
             return true;
           }
 
           try {
             const decoded = decodeOsc52Payload(encodedPayload);
-            void navigator.clipboard?.writeText(decoded).catch(() => undefined);
+            logTerminalCopyEvent("osc52-copy-attempt", {
+              textLength: decoded.length,
+              clipboardAvailable: Boolean(navigator.clipboard?.writeText),
+            });
+            void writeTerminalTextToClipboard(decoded).then((method) => {
+              logTerminalCopyEvent("osc52-copy-success", { textLength: decoded.length, method });
+            }).catch((error) => {
+              logTerminalCopyEvent("osc52-copy-failed", {
+                textLength: decoded.length,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
             return true;
-          } catch {
+          } catch (error) {
+            logTerminalCopyEvent("osc52-copy-decode-failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
             return false;
           }
         });
@@ -398,13 +416,23 @@ export function WorktreeTerminal({
             if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "c") {
               const selection = terminal.getSelection();
               if (!selection) {
+                logTerminalCopyEvent("keyboard-copy-skipped", { reason: "no-selection" });
                 return true;
               }
 
-              void navigator.clipboard?.writeText(selection).then(() => {
+              logTerminalCopyEvent("keyboard-copy-attempt", {
+                textLength: selection.length,
+                clipboardAvailable: Boolean(navigator.clipboard?.writeText),
+              });
+              void writeTerminalTextToClipboard(selection).then((method) => {
                 lastCopiedSelectionRef.current = selection;
-              }).catch(() => {
+                logTerminalCopyEvent("keyboard-copy-success", { textLength: selection.length, method });
+              }).catch((error) => {
                 lastCopiedSelectionRef.current = "";
+                logTerminalCopyEvent("keyboard-copy-failed", {
+                  textLength: selection.length,
+                  error: error instanceof Error ? error.message : String(error),
+                });
               });
               event.preventDefault();
               return false;
@@ -459,9 +487,19 @@ export function WorktreeTerminal({
         };
 
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const socketUrl = `${protocol}//${window.location.host}/ws/terminal?id=${encodeURIComponent(worktreeId)}`;
         const socket = new WebSocket(
-          `${protocol}//${window.location.host}/ws/terminal?id=${encodeURIComponent(worktreeId)}`,
+          socketUrl,
         );
+        logTerminalCopyEvent("terminal-socket-connect", {
+          url: socketUrl,
+          readyState: socket.readyState,
+        });
+
+        socket.addEventListener("open", () => {
+          logTerminalCopyEvent("terminal-socket-open", { readyState: socket.readyState });
+          triggerInitialResizePass();
+        });
 
         socket.addEventListener("message", (event) => {
           if (disposed) {
@@ -495,10 +533,20 @@ export function WorktreeTerminal({
           }
         });
 
-        socket.addEventListener("close", () => {
+        socket.addEventListener("error", () => {
+          logTerminalCopyEvent("terminal-socket-error", { readyState: socket.readyState });
+        });
+
+        socket.addEventListener("close", (event) => {
           if (disposed) {
             return;
           }
+
+          logTerminalCopyEvent("terminal-socket-close", {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+          });
 
           setTerminalConnectionState("disconnected");
           setCurrentClientId(null);
@@ -597,17 +645,34 @@ export function WorktreeTerminal({
         const copySelection = () => {
           const selection = terminal.getSelection();
 
-          if (
-            !selection ||
-            selection === lastCopiedSelectionRef.current ||
-            !navigator.clipboard?.writeText
-          ) {
+          if (!selection) {
+            logTerminalCopyEvent("selection-copy-skipped", { reason: "no-selection" });
+            return;
+          }
+
+          if (selection === lastCopiedSelectionRef.current) {
+            logTerminalCopyEvent("selection-copy-skipped", {
+              reason: "already-copied",
+              textLength: selection.length,
+            });
             return;
           }
 
           lastCopiedSelectionRef.current = selection;
-          void navigator.clipboard.writeText(selection).catch(() => {
+          logTerminalCopyEvent("selection-copy-attempt", {
+            textLength: selection.length,
+            clipboardAvailable: Boolean(navigator.clipboard?.writeText),
+          });
+          void writeTerminalTextToClipboard(selection).catch((error) => {
             lastCopiedSelectionRef.current = "";
+            logTerminalCopyEvent("selection-copy-failed", {
+              textLength: selection.length,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }).then((method) => {
+            if (lastCopiedSelectionRef.current === selection) {
+              logTerminalCopyEvent("selection-copy-success", { textLength: selection.length, method });
+            }
           });
         };
         const handleViewportResize = () => {
@@ -627,6 +692,10 @@ export function WorktreeTerminal({
         const handleSelectionChange = () => {
           const selection = terminal.getSelection();
           const domSelection = window.getSelection()?.toString() ?? "";
+          logTerminalCopyEvent("selection-change", {
+            terminalSelectionLength: selection.length,
+            domSelectionLength: domSelection.length,
+          });
           if (!selection) {
             lastCopiedSelectionRef.current = "";
           }
@@ -638,19 +707,26 @@ export function WorktreeTerminal({
         const handleCopy = (event: ClipboardEvent) => {
           const selection = terminal.getSelection();
           const domSelection = window.getSelection()?.toString() ?? "";
-          if (!shouldHandleTerminalCopy({
+          const decision = getTerminalCopyDecision({
             hasTerminalFocus: hasTerminalFocus(),
             terminalSelection: selection,
             domSelection,
-          })) {
+          });
+          logTerminalCopyEvent("document-copy", {
+            shouldHandle: decision.shouldHandle,
+            reason: decision.reason,
+            terminalSelectionLength: selection.length,
+            domSelectionLength: domSelection.length,
+          });
+          if (!decision.shouldHandle) {
             return;
           }
 
           event.preventDefault();
           event.clipboardData?.setData("text/plain", selection);
           lastCopiedSelectionRef.current = selection;
+          logTerminalCopyEvent("document-copy-handled", { textLength: selection.length });
         };
-        socket.addEventListener("open", () => triggerInitialResizePass());
         terminal.onSelectionChange(handleSelectionChange);
         host.addEventListener("click", focusTerminal);
         host.addEventListener("mouseup", handleMouseUp);

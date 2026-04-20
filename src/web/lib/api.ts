@@ -64,6 +64,14 @@ export class ApiError extends Error {
   }
 }
 
+function logStreamEvent(scope: string, event: string, details: Record<string, unknown> = {}) {
+  if (typeof console === "undefined" || typeof console.info !== "function") {
+    return;
+  }
+
+  console.info("[api-stream]", scope, event, details);
+}
+
 async function request<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -130,9 +138,12 @@ export function subscribeToDashboardEvents(
   onConnectionChange?: (connected: boolean) => void,
 ): () => void {
   let closed = false;
-  const source = new EventSource("/api/events/stream");
+  const url = "/api/events/stream";
+  const source = new EventSource(url);
+  logStreamEvent("dashboard-events", "connect", { url });
 
   source.onopen = () => {
+    logStreamEvent("dashboard-events", "open", { readyState: source.readyState });
     onConnectionChange?.(true);
   };
 
@@ -146,6 +157,7 @@ export function subscribeToDashboardEvents(
       return;
     }
 
+    logStreamEvent("dashboard-events", "error", { readyState: source.readyState });
     onConnectionChange?.(false);
   };
 
@@ -271,7 +283,13 @@ export function subscribeToAiCommandLog(
   onEvent: (event: AiCommandLogStreamEvent) => void,
 ): () => void {
   let closed = false;
-  const source = new EventSource(`/api/ai/logs/${encodeURIComponent(jobId)}/stream`);
+  const url = `/api/ai/logs/${encodeURIComponent(jobId)}/stream`;
+  const source = new EventSource(url);
+  logStreamEvent("ai-log", "connect", { url, jobId });
+
+  source.onopen = () => {
+    logStreamEvent("ai-log", "open", { readyState: source.readyState, jobId });
+  };
 
   source.onmessage = (event) => {
     onEvent(JSON.parse(event.data) as AiCommandLogStreamEvent);
@@ -281,6 +299,8 @@ export function subscribeToAiCommandLog(
     if (closed) {
       return;
     }
+
+    logStreamEvent("ai-log", "error", { readyState: source.readyState, jobId });
   };
 
   return () => {
@@ -556,7 +576,13 @@ export function getTmuxClients(branch: string): Promise<TmuxClientInfo[]> {
 
 export function subscribeToTmuxClients(branch: string, onEvent: (event: TmuxClientsStreamEvent) => void): () => void {
   let closed = false;
-  const source = new EventSource(`/api/worktrees/${encodeURIComponent(branch)}/runtime/tmux-clients/stream`);
+  const url = `/api/worktrees/${encodeURIComponent(branch)}/runtime/tmux-clients/stream`;
+  const source = new EventSource(url);
+  logStreamEvent("tmux-clients", "connect", { url, branch });
+
+  source.onopen = () => {
+    logStreamEvent("tmux-clients", "open", { readyState: source.readyState, branch });
+  };
 
   source.onmessage = (event) => {
     onEvent(JSON.parse(event.data) as TmuxClientsStreamEvent);
@@ -566,6 +592,8 @@ export function subscribeToTmuxClients(branch: string, onEvent: (event: TmuxClie
     if (closed) {
       return;
     }
+
+    logStreamEvent("tmux-clients", "error", { readyState: source.readyState, branch });
   };
 
   return () => {
