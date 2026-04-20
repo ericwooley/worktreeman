@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "#test-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { WorktreeRecord } from "@shared/types";
-import { WorktreeTerminal } from "./worktree-terminal";
 
 const WORKTREE_ID = "88888888888888888888888888888888" as WorktreeRecord["id"];
 
@@ -31,7 +30,10 @@ const sampleWorktree: WorktreeRecord = {
   },
 };
 
-function renderTerminal(overrides: Partial<Parameters<typeof WorktreeTerminal>[0]> = {}) {
+async function renderTerminal(overrides: Record<string, unknown> = {}) {
+  Object.assign(globalThis as Record<string, unknown>, { self: globalThis });
+  const { WorktreeTerminal } = await import("./worktree-terminal");
+
   return renderToStaticMarkup(
     <WorktreeTerminal
       repoRoot="/repo"
@@ -52,8 +54,8 @@ function renderTerminal(overrides: Partial<Parameters<typeof WorktreeTerminal>[0
   );
 }
 
-test("worktree terminal renders reconnect and restart controls beside session details", () => {
-  const markup = renderTerminal();
+test("worktree terminal renders reconnect and restart controls beside session details", async () => {
+  const markup = await renderTerminal();
 
   assert.match(markup, /Environment session info/);
   assert.match(markup, /Connected/);
@@ -66,8 +68,8 @@ test("worktree terminal renders reconnect and restart controls beside session de
   assert.match(markup, /Attached tmux clients/);
 });
 
-test("worktree terminal keeps shell actions disabled when no worktree is selected", () => {
-  const markup = renderTerminal({
+test("worktree terminal keeps shell actions disabled when no worktree is selected", async () => {
+  const markup = await renderTerminal({
     repoRoot: null,
     worktree: null,
     worktreeOptions: [],

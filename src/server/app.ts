@@ -18,6 +18,7 @@ import { createTerminalService, ensureTerminalSession, killTmuxSession } from ".
 import { formatServerUrl, resolveServerHost } from "./utils/server-host.js";
 import { formatDurationMs, logServerEvent } from "./utils/server-logger.js";
 import type { RepoContext } from "./utils/paths.js";
+import { getViteAllowedHosts } from "./utils/vite-allowed-hosts.js";
 import type { WebSocketServer } from "ws";
 import type { ViteDevServer } from "vite";
 import type os from "node:os";
@@ -158,6 +159,14 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     });
   });
 
+  const preferredPort = resolvePreferredPort(options.port, config.preferredPort);
+  const resolvedHost = resolveServerHost({
+    requestedHost: options.host,
+    dangerouslyExposeToNetwork: options.dangerouslyExposeToNetwork,
+    networkInterfaces: options.networkInterfaces,
+  });
+  const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null, resolvedHost.bindHost);
+
   if (isDevelopment) {
     const viteModuleId = "vite";
     const { createServer } = await import(viteModuleId) as typeof import("vite");
@@ -165,7 +174,13 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
       root: appRoot,
       server: {
         middlewareMode: true,
-        hmr: { server },
+        allowedHosts: getViteAllowedHosts([resolvedHost.urlHost]),
+        port,
+        strictPort: true,
+        hmr: {
+          server,
+          clientPort: port,
+        },
       },
       appType: "spa",
     });
@@ -184,13 +199,6 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     res.status(500).json({ message });
   });
 
-  const preferredPort = resolvePreferredPort(options.port, config.preferredPort);
-  const resolvedHost = resolveServerHost({
-    requestedHost: options.host,
-    dangerouslyExposeToNetwork: options.dangerouslyExposeToNetwork,
-    networkInterfaces: options.networkInterfaces,
-  });
-  const { port, fellBackFrom } = await resolveStartupPort(preferredPort, options.port == null, resolvedHost.bindHost);
   const prepareInitialTerminalSession = options.prepareInitialTerminalSession ?? ensureTerminalSession;
 
   const formatStartupError = (error: unknown) => {

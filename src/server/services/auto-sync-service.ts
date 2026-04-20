@@ -60,7 +60,7 @@ async function getRemoteUrl(worktreePath: string, remote: string): Promise<strin
   return result.stdout.trim();
 }
 
-async function checkSshAgent(remoteUrl: string): Promise<SshAgentCheckResult> {
+async function checkSshAgent(repoRoot: string, remoteUrl: string): Promise<SshAgentCheckResult> {
   if (!isSshRemote(remoteUrl)) {
     return { status: "not-required", message: null };
   }
@@ -73,7 +73,7 @@ async function checkSshAgent(remoteUrl: string): Promise<SshAgentCheckResult> {
   }
 
   const result = await runCommand("ssh-add", ["-l"], {
-    cwd: options.repoRoot,
+    cwd: repoRoot,
     allowExitCodes: [0, 1, 2],
     env: process.env,
   });
@@ -183,7 +183,7 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
       }
 
       const remoteUrl = await getRemoteUrl(worktree.worktreePath, config.remote);
-      const sshAgent = await checkSshAgent(remoteUrl);
+      const sshAgent = await checkSshAgent(options.repoRoot, remoteUrl);
       if (sshAgent.status === "missing" || sshAgent.status === "unavailable") {
         await disableWithState(worktree, config, {
           lastRunAt: startedAt,

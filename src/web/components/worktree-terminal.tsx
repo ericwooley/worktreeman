@@ -14,6 +14,7 @@ import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge } from "./matrix-primitives";
 import { shortcutFromKeyboardEvent } from "./command-palette";
 import { ENVIRONMENT_SESSION_INFO_TITLE, WORKTREE_ENVIRONMENT_KICKER } from "./worktree-environment-content";
+import { shouldHandleTerminalCopy } from "./worktree-terminal-copy";
 
 const TERMINAL_DRAWER_VISIBLE_HEIGHT = 52;
 const TERMINAL_SURFACE_MODE_STORAGE_KEY = "worktreeman.terminalSurfaceMode";
@@ -635,12 +636,13 @@ export function WorktreeTerminal({
           }
         };
         const handleCopy = (event: ClipboardEvent) => {
-          if (!hasTerminalFocus()) {
-            return;
-          }
-
           const selection = terminal.getSelection();
-          if (!selection) {
+          const domSelection = window.getSelection()?.toString() ?? "";
+          if (!shouldHandleTerminalCopy({
+            hasTerminalFocus: hasTerminalFocus(),
+            terminalSelection: selection,
+            domSelection,
+          })) {
             return;
           }
 

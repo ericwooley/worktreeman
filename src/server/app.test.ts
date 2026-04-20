@@ -5,6 +5,7 @@ import net from "node:net";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "#test-runtime";
 import { startServer } from "./app.js";
 import { configureDatabaseConnection } from "./services/database-connection-service.js";
@@ -286,6 +287,45 @@ test("startServer serves favicon from configured repository file", async () => {
     assert.deepEqual(responseBytes, faviconBytes);
   } finally {
     await startedServer?.close();
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("startServer dev CSS includes Tailwind utility classes", async () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousCwd = process.cwd();
+  const { rootDir, repo } = await createTestRepo();
+  let startedServer: Awaited<ReturnType<typeof startServer>> | undefined;
+
+  try {
+    process.env.NODE_ENV = "development";
+    process.chdir(rootDir);
+    startedServer = await startServer({ repo, host: "127.0.0.1", port: await listenFreePort(), openBrowser: false });
+
+    const indexResponse = await fetch(`${startedServer.url}/`, {
+      headers: { Accept: "text/html" },
+    });
+    assert.equal(indexResponse.status, 200);
+
+    let css = "";
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const response = await fetch(`${startedServer.url}/src/web/styles.css`);
+      assert.equal(response.status, 200);
+      css = await response.text();
+      if (css.includes(".relative{") && css.includes(".min-h-screen{") && css.includes(".font-semibold{")) {
+        break;
+      }
+
+      await delay(100);
+    }
+
+    assert.match(css, /\.relative\s*\{/);
+    assert.match(css, /\.min-h-screen\s*\{/);
+    assert.match(css, /\.font-semibold\s*\{/);
+  } finally {
+    process.env.NODE_ENV = previousNodeEnv;
+    await startedServer?.close();
+    process.chdir(previousCwd);
     await fs.rm(rootDir, { recursive: true, force: true });
   }
 });

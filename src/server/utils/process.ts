@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 export interface CommandResult {
   stdout: string;
   stderr: string;
+  exitCode: number | null;
 }
 
 export interface CommandOptions {
@@ -42,7 +43,7 @@ export async function runCommand(command: string, args: string[], options: Comma
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0 || options.allowExitCodes?.includes(code ?? -1)) {
-        resolve({ stdout, stderr });
+        resolve({ stdout, stderr, exitCode: code ?? null });
         return;
       }
 
