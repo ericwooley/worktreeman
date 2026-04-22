@@ -224,12 +224,7 @@ function cloneAiCommandLogEntry(entry: AiCommandLogEntry | null): AiCommandLogEn
 }
 
 function toStoredAiCommandJob(job: AiCommandJob): AiCommandJob {
-  return {
-    ...cloneAiCommandJob(job)!,
-    stdout: "",
-    stderr: job.status === "failed" ? (job.stderr || job.error || "") : "",
-    outputEvents: [],
-  };
+  return cloneAiCommandJob(job)!;
 }
 
 function cloneShutdownStatus(status: ShutdownStatus): ShutdownStatus {

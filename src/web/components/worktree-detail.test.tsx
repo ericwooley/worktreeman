@@ -11,6 +11,7 @@ import type {
   CommitGitChangesResponse,
   GitComparisonResponse,
   ProjectManagementDocument,
+  ProjectManagementDocumentReview,
   ProjectManagementDocumentSummary,
   ProjectManagementDocumentSummaryResponse,
   ProjectManagementHistoryEntry,
@@ -99,6 +100,7 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
       <WorktreeDetail
         repoRoot="/repo"
         worktree={sampleWorktree}
+        autoSyncRemote={null}
         worktreeOptions={[]}
         worktreeCount={1}
         runningCount={0}
@@ -121,6 +123,9 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         onStop={() => undefined}
         onSyncEnv={() => undefined}
         onDelete={() => undefined}
+        onEnableAutoSync={() => undefined}
+        onDisableAutoSync={() => undefined}
+        onRunAutoSyncNow={() => undefined}
         backgroundCommands={[] as BackgroundCommandState[]}
         backgroundLogs={null as BackgroundCommandLogsResponse | null}
         gitComparison={sampleGitComparison}
@@ -149,8 +154,11 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         projectManagementAvailableTags={[]}
         projectManagementAvailableStatuses={[]}
         projectManagementUsers={null as ProjectManagementUsersResponse | null}
+        projectManagementReviews={[] as ProjectManagementDocumentReview[]}
+        projectManagementDocumentReview={null as ProjectManagementDocumentReview | null}
         projectManagementActiveSubTab="document"
         projectManagementSelectedDocumentId={null}
+        projectManagementDocumentPresentation="modal"
         projectManagementDocumentViewMode="document"
         projectManagementEditFormTab="write"
         projectManagementCreateFormTab="write"
@@ -180,7 +188,10 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         onProjectManagementDocumentViewModeChange={() => undefined}
         onProjectManagementEditFormTabChange={() => undefined}
         onProjectManagementCreateFormTabChange={() => undefined}
+        onProjectManagementOpenDocumentPage={() => undefined}
+        onProjectManagementCloseDocument={() => undefined}
         onLoadProjectManagementDocuments={createAsyncNoop(null)}
+        onLoadProjectManagementReviews={createAsyncNoop(null)}
         onLoadProjectManagementUsers={createAsyncNoop(null)}
         onLoadProjectManagementDocument={createAsyncNoop(null as ProjectManagementDocument | null)}
         onLoadProjectManagementAiLogs={createAsyncNoop(null)}
@@ -194,7 +205,7 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         onUpdateProjectManagementStatus={createAsyncNoop(null as ProjectManagementDocumentSummaryResponse | null)}
         onUpdateProjectManagementUsers={createAsyncNoop(null as ProjectManagementUsersResponse | null)}
         onBatchUpdateProjectManagementDocuments={createAsyncNoop(false)}
-        onAddProjectManagementComment={createAsyncNoop(null as ProjectManagementDocumentSummaryResponse | null)}
+        onAddProjectManagementReviewEntry={createAsyncNoop(null as ProjectManagementDocumentReview | null)}
         onRunProjectManagementAiCommand={createAsyncNoop(null as AiCommandJob | null)}
         onRunProjectManagementDocumentAi={createAsyncNoop(null as RunAiCommandResponse | null)}
         onCancelProjectManagementDocumentAiCommand={createAsyncNoop(null as AiCommandJob | null)}
@@ -219,4 +230,58 @@ test("Git tab shows merge actions with base/main labels", async () => {
   assert.match(markup, />Merge base into main</);
   assert.doesNotMatch(markup, />Merge worktree into base</);
   assert.doesNotMatch(markup, />Merge base into worktree</);
+});
+
+test("Review tab renders linked document review timeline", async () => {
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+    },
+    projectManagementDocuments: [{
+      id: "doc-1",
+      number: 1,
+      title: "Dependencies",
+      summary: "Track prerequisite document work.",
+      tags: ["feature"],
+      dependencies: [],
+      status: "todo",
+      assignee: "Eric",
+      archived: false,
+      createdAt: "2026-03-20T10:00:00.000Z",
+      updatedAt: "2026-03-25T10:00:00.000Z",
+      historyCount: 2,
+    }],
+    projectManagementReviews: [{
+      documentId: "doc-1",
+      entries: [{
+        id: "review-1",
+        documentId: "doc-1",
+        kind: "comment",
+        source: "user",
+        eventType: "comment",
+        body: "## Review note\n\nNeed a **final QA pass**",
+        createdAt: "2026-03-25T11:30:00.000Z",
+        updatedAt: "2026-03-25T11:30:00.000Z",
+        authorName: "Casey Reviewer",
+        authorEmail: "casey@example.com",
+      }],
+    }],
+  });
+
+  assert.match(markup, />Review</);
+  assert.match(markup, /Linked document/);
+  assert.match(markup, /Dependencies/);
+  assert.match(markup, /Track comments, AI activity, and merge events/);
+  assert.match(markup, /Add review entry/);
+  assert.match(markup, /Casey Reviewer/);
+  assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
 });

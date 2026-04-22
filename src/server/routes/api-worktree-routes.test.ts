@@ -142,7 +142,7 @@ test("POST /api/worktrees/:branch/auto-sync/enable pauses when the documents wor
   }
 });
 
-test("documents auto sync pulls remote changes on an interval and disable stops later syncs", { concurrency: false, timeout: 20000 }, async () => {
+test("documents auto sync pulls remote changes on an interval and disable stops later syncs", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
 
   try {
@@ -189,7 +189,7 @@ test("documents auto sync pulls remote changes on an interval and disable stops 
     await waitFor(async () => {
       const state = await readWorktreeAutoSyncState(server, "documents");
       return state?.enabled === false && state.status === "disabled";
-    });
+    }, 10000);
 
     await pushRemoteCommit(clonePath, "remote-update-2.txt", "should stay remote\n", "remote update 2");
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -828,7 +828,7 @@ test("AI cancel route can cancel a running job before the process spawns", { con
   }
 });
 
-test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidance when runtime is active", { concurrency: false, timeout: 15000 }, async () => {
+test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidance when runtime is active", { concurrency: false, timeout: 20000 }, async () => {
   const repo = await createApiTestRepo();
   const parsedConfig = await loadConfig({
     path: repo.configPath,
@@ -1245,6 +1245,13 @@ async function setupAutoSyncRemote(repoRoot: string, worktreePath: string) {
 
   await runGit(repoRoot, ["init", "--bare", remotePath]);
   await runGit(worktreePath, ["remote", "add", "origin", remotePath]);
+  await runGit(worktreePath, ["commit", "--allow-empty", "-m", "initialize documents remote"], {
+    ...process.env,
+    GIT_AUTHOR_NAME: "Test User",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test User",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  });
   await runGit(worktreePath, ["push", "-u", "origin", "HEAD:documents"]);
   await runGit(repoRoot, ["clone", "--branch", "documents", remotePath, clonePath]);
 

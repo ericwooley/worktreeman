@@ -162,7 +162,8 @@ test("worker entrypoint shutdown drains active AI job without killing its child 
     }, 20000, 100);
 
     assert.equal(completedJob.exitCode, 0);
-    assert.match(completedJob.stdout, /done/);
+    assert.equal(completedJob.stdout, "");
+    assert.equal(completedJob.stderr, "");
 
     const workerExit = await waitForChildExit(workerChild);
     assert.equal(workerExit.code, 0);

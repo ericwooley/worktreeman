@@ -110,6 +110,7 @@ interface PersistedProjectManagementDocumentSummaryRow {
   summary: string;
   kind: string;
   pull_request_json: string;
+  comments_json?: string | null;
   tags_json: string;
   dependencies_json: string;
   status: string;
@@ -455,6 +456,7 @@ async function getProjectManagementDb(repoRoot: string) {
           summary text not null,
           kind text not null,
           pull_request_json text not null,
+          comments_json text not null default '[]',
           tags_json text not null,
           dependencies_json text not null,
           status text not null,
@@ -483,6 +485,10 @@ async function getProjectManagementDb(repoRoot: string) {
       await db.exec(`
         alter table ${PROJECT_MANAGEMENT_STATE_TABLE}
           add column if not exists snapshot_json text;
+      `);
+      await db.exec(`
+        alter table ${PROJECT_MANAGEMENT_DOCUMENTS_TABLE}
+          add column if not exists comments_json text not null default '[]';
       `);
     })();
     projectManagementDbState.set(repoRoot, { db, ready });
@@ -679,6 +685,7 @@ async function upsertPersistedDocumentRecord(
         summary,
         kind,
         pull_request_json,
+        comments_json,
         tags_json,
         dependencies_json,
         status,
@@ -690,7 +697,7 @@ async function upsertPersistedDocumentRecord(
         markdown,
         automerge_binary
       ) values (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
       )
       on conflict (document_id) do update
       set document_order = excluded.document_order,
@@ -699,6 +706,7 @@ async function upsertPersistedDocumentRecord(
           summary = excluded.summary,
           kind = excluded.kind,
           pull_request_json = excluded.pull_request_json,
+          comments_json = excluded.comments_json,
           tags_json = excluded.tags_json,
           dependencies_json = excluded.dependencies_json,
           status = excluded.status,
@@ -718,6 +726,7 @@ async function upsertPersistedDocumentRecord(
       record.document.summary,
       "document",
       JSON.stringify(null),
+      JSON.stringify([]),
       JSON.stringify(record.document.tags),
       JSON.stringify(record.document.dependencies),
       record.document.status,

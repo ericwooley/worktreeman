@@ -10,8 +10,6 @@ import { completeAiCommandRun } from "./ai-command-completion-service.js";
 
 const PROJECT_MANAGEMENT_AI_QUEUE = "project-management-ai-update";
 const JOB_POLL_INTERVAL_SECONDS = 0.5;
-const WORKER_STOP_TIMEOUT_MS = 60_000;
-
 export interface ProjectManagementAiQueuePayload {
   jobId?: string;
   worktreeId: WorktreeId;
@@ -38,6 +36,26 @@ interface ManagedAiCommandJobQueue {
 }
 
 const managedQueues = new Map<string, ManagedAiCommandJobQueue>();
+
+async function shutdownManager(repoRoot: string, manager: ManagedAiCommandJobQueue, removeFromMap = true) {
+  if (removeFromMap) {
+    managedQueues.delete(repoRoot);
+  }
+
+  if (manager.workerId) {
+    await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
+    manager.workerId = null;
+  }
+
+  if (manager.activeJobs.size > 0) {
+    await Promise.allSettled(Array.from(manager.activeJobs));
+  }
+
+  await Promise.allSettled([
+    manager.boss.stop(),
+    closeManagedDatabaseClient(repoRoot, "jobs"),
+  ]);
+}
 
 function summarizeQueuePayload(payload: ProjectManagementAiQueuePayload) {
   return {
@@ -291,14 +309,7 @@ export async function startProjectManagementAiWorker(options: { repoRoot: string
 
   return {
     close: async () => {
-      if (manager.workerId) {
-        await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
-        manager.workerId = null;
-      }
-      if (manager.activeJobs.size > 0) {
-        await Promise.allSettled(Array.from(manager.activeJobs));
-      }
-      await manager.boss.stop({ graceful: true, timeout: WORKER_STOP_TIMEOUT_MS }).catch(() => undefined);
+      await shutdownManager(options.repoRoot, manager);
     },
   };
 }
@@ -308,13 +319,7 @@ export async function stopAllAiCommandJobManagers() {
   managedQueues.clear();
 
   await Promise.all(entries.map(async ([repoRoot, manager]) => {
-    if (manager.workerId) {
-      await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
-    }
-    await Promise.allSettled([
-      manager.boss.stop({ graceful: true, timeout: WORKER_STOP_TIMEOUT_MS }),
-      closeManagedDatabaseClient(repoRoot, "jobs"),
-    ]);
+    await shutdownManager(repoRoot, manager, false);
   }));
 }
 
@@ -324,12 +329,5 @@ export async function stopAiCommandJobManager(repoRoot: string) {
     return;
   }
 
-  managedQueues.delete(repoRoot);
-  if (manager.workerId) {
-    await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
-  }
-  await Promise.allSettled([
-    manager.boss.stop({ graceful: true, timeout: WORKER_STOP_TIMEOUT_MS }),
-    closeManagedDatabaseClient(repoRoot, "jobs"),
-  ]);
+  await shutdownManager(repoRoot, manager);
 }

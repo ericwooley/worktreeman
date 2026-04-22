@@ -15,6 +15,7 @@ import {
 import { loadConfig, parseConfigContents, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
+import { getProjectManagementDocumentReview } from "../services/project-management-review-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
@@ -402,7 +403,7 @@ test("project-management AI rejects unknown target documents and logs the failur
   }
 });
 
-test("project-management routes preserve summary and add attributed comments", { concurrency: false }, async () => {
+test("project-management review routes preserve summary and add attributed entries", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);
 
@@ -415,7 +416,7 @@ test("project-management routes preserve summary and add attributed comments", {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: "Comments rollout",
-        summary: "Track the document comments launch.",
+        summary: "Track the review timeline launch.",
         markdown: "# Comments rollout\n",
         tags: ["feature", "ux"],
         status: "todo",
@@ -424,45 +425,51 @@ test("project-management routes preserve summary and add attributed comments", {
     });
     assert.equal(createResponse.status, 201);
     const createPayload = await createResponse.json() as { document: { id: string; summary: string } };
-    assert.equal(createPayload.document.summary, "Track the document comments launch.");
+    assert.equal(createPayload.document.summary, "Track the review timeline launch.");
 
     const documentId = createPayload.document.id;
 
-    const commentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+    const commentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ body: "Need one more pass on author attribution." }),
     });
     assert.equal(commentResponse.status, 201);
     const commentPayload = await commentResponse.json() as {
-      document: {
-        summary: string;
-        historyCount: number;
+      review: {
+        documentId: string;
+        entries: Array<{
+          body: string;
+          authorName: string;
+          authorEmail: string;
+          eventType: string;
+        }>;
       };
     };
-    assert.equal(commentPayload.document.summary, "Track the document comments launch.");
-    assert.equal(commentPayload.document.historyCount, 2);
-
-    const history = await getProjectManagementDocumentHistory(repo.repoRoot, documentId);
-    assert.equal(history.history.at(-1)?.action, "comment");
-    assert.equal(history.history.at(-1)?.authorName, "Riley Maintainer");
-    assert.equal(history.history.at(-1)?.authorEmail, "riley@example.com");
+    assert.equal(commentPayload.review.documentId, documentId);
+    assert.equal(commentPayload.review.entries.length, 1);
+    assert.equal(commentPayload.review.entries[0]?.body, "Need one more pass on author attribution.");
+    assert.equal(commentPayload.review.entries[0]?.authorName, "Riley Maintainer");
+    assert.equal(commentPayload.review.entries[0]?.authorEmail, "riley@example.com");
+    assert.equal(commentPayload.review.entries[0]?.eventType, "comment");
 
     const updatedDocument = await getProjectManagementDocument(repo.repoRoot, documentId);
-    assert.equal(updatedDocument.document.summary, "Track the document comments launch.");
-    assert.equal(updatedDocument.document.comments.length, 1);
-    assert.equal(updatedDocument.document.comments[0]?.body, "Need one more pass on author attribution.");
-    assert.equal(updatedDocument.document.comments[0]?.authorName, "Riley Maintainer");
-    assert.equal(updatedDocument.document.comments[0]?.authorEmail, "riley@example.com");
+    assert.equal(updatedDocument.document.summary, "Track the review timeline launch.");
 
-    const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+    const updatedReview = await getProjectManagementDocumentReview(repo.repoRoot, documentId);
+    assert.equal(updatedReview.review.entries.length, 1);
+    assert.equal(updatedReview.review.entries[0]?.body, "Need one more pass on author attribution.");
+    assert.equal(updatedReview.review.entries[0]?.authorName, "Riley Maintainer");
+    assert.equal(updatedReview.review.entries[0]?.authorEmail, "riley@example.com");
+
+    const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ body: "   " }),
     });
     assert.equal(invalidCommentResponse.status, 400);
     const invalidCommentPayload = await invalidCommentResponse.json() as { message: string };
-    assert.equal(invalidCommentPayload.message, "Comment body is required.");
+    assert.equal(invalidCommentPayload.message, "Review body is required.");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -785,14 +792,20 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(updated.document.title, "Project Outline");
     assert.equal(updated.document.status, "in-progress");
     assert.equal(updated.document.markdown.includes("implemented"), false);
-    assert.equal(updated.document.comments.length >= 2, true);
-    const startedComment = updated.document.comments.at(-2);
-    const latestComment = updated.document.comments.at(-1);
+
+    const updatedReview = await getProjectManagementDocumentReview(repo.repoRoot, outline.id);
+    assert.equal(updatedReview.review.entries.length >= 2, true);
+    const startedComment = updatedReview.review.entries.at(-2);
+    const latestComment = updatedReview.review.entries.at(-1);
     assert.ok(startedComment);
     assert.ok(latestComment);
+    assert.equal(startedComment.eventType, "ai-started");
+    assert.equal(startedComment.source, "ai");
     assert.match(startedComment.body, /## Worktree AI started/);
     assert.equal(startedComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(startedComment.body, /- Command: `smart`/);
+    assert.equal(latestComment.eventType, "ai-completed");
+    assert.equal(latestComment.source, "ai");
     assert.match(latestComment.body, /## Worktree AI completed/);
     assert.equal(latestComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(latestComment.body, /- Command: `smart`/);
@@ -803,7 +816,7 @@ test("project-management document AI creates a derived worktree and streams stdo
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, outline.id);
     assert.equal(history.history.length >= 2, true);
-    assert.match(history.history.at(-1)?.diff ?? "", /\+  ## Worktree AI completed/);
+    assert.equal(history.history.at(-1)?.action, "update");
 
     const aiLogsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(aiLogsResponse.status, 200);

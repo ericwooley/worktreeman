@@ -965,6 +965,7 @@ export async function reconcileAiCommandLogEntry(options: {
       isProcessActive: options.aiProcesses.isProcessActive,
     },
     reconcile: options.reconcileJobs ?? true,
+    treatProcessNameAsObserved: hasObservedAiCommandLogProcess(refreshedEntry),
   });
   if (!reconciledJob || reconciledJob.jobId !== refreshedEntry.jobId) {
     return refreshedEntry;

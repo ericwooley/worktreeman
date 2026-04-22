@@ -217,11 +217,14 @@ function createAiCommandJobRecord(options: {
   };
 }
 
-function hasObservedAiCommandProcess(job: AiCommandJob): boolean {
+function hasObservedAiCommandProcess(
+  job: AiCommandJob,
+  options?: { treatProcessNameAsObserved?: boolean },
+): boolean {
   return job.pid != null
     || job.exitCode != null
     || typeof job.completedAt === "string"
-    || Boolean(job.processName);
+    || (options?.treatProcessNameAsObserved === true && Boolean(job.processName));
 }
 
 function createOutputEvent(
@@ -270,6 +273,7 @@ async function reconcileAiCommandJob(
   repoRoot: string,
   job: AiCommandJob | null,
   aiProcesses: AiCommandProcessAdapter = defaultAiCommandProcessAdapter,
+  options?: { treatProcessNameAsObserved?: boolean },
 ): Promise<AiCommandJob | null> {
   if (!job || job.status !== "running") {
     return cloneAiCommandJob(job);
@@ -298,7 +302,7 @@ async function reconcileAiCommandJob(
   }
 
   const processInfo = await aiProcesses.getProcess(processName);
-  if (!processInfo && !hasObservedAiCommandProcess(currentJob)) {
+  if (!processInfo && !hasObservedAiCommandProcess(currentJob, options)) {
     return cloneAiCommandJob(currentJob);
   }
 
@@ -428,7 +432,7 @@ export async function beginAiCommandJob(options: {
 export async function getAiCommandJob(
   repoRoot: string,
   worktreeId: WorktreeId,
-  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean },
+  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean; treatProcessNameAsObserved?: boolean },
 ): Promise<AiCommandJob | null> {
   const store = await createOperationalStateStore(repoRoot);
   const job = await store.getAiCommandJobById(worktreeId);
@@ -436,12 +440,14 @@ export async function getAiCommandJob(
     return cloneAiCommandJob(job);
   }
 
-  return await reconcileAiCommandJob(repoRoot, job, options?.aiProcesses);
+  return await reconcileAiCommandJob(repoRoot, job, options?.aiProcesses, {
+    treatProcessNameAsObserved: options?.treatProcessNameAsObserved,
+  });
 }
 
 export async function listAiCommandJobs(
   repoRoot: string,
-  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean },
+  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean; treatProcessNameAsObserved?: boolean },
 ): Promise<AiCommandJob[]> {
   const store = await createOperationalStateStore(repoRoot);
   const persistedJobs = await store.listAiCommandJobs();
@@ -452,7 +458,9 @@ export async function listAiCommandJobs(
   }
 
   const jobs = await Promise.all(
-    persistedJobs.map((job) => reconcileAiCommandJob(repoRoot, job, options?.aiProcesses)),
+    persistedJobs.map((job) => reconcileAiCommandJob(repoRoot, job, options?.aiProcesses, {
+      treatProcessNameAsObserved: options?.treatProcessNameAsObserved,
+    })),
   );
   return jobs
     .map((job) => cloneAiCommandJob(job))

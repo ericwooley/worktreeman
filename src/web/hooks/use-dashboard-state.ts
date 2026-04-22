@@ -1131,6 +1131,7 @@ function useDashboardStateInternal() {
           upsertRunningAiJob(result.job);
           trackProjectManagementDocumentAiJob(result.job.branch);
           void loadProjectManagementDocumentsState({ silent: true });
+          void loadProjectManagementReviewsState({ silent: true });
           setError(null);
           return result;
         } catch (err) {

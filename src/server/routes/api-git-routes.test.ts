@@ -14,6 +14,7 @@ import {
 import { loadConfig, readConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { createWorktree } from "../services/git-service.js";
 import { getProjectManagementDocument } from "../services/project-management-service.js";
+import { getProjectManagementDocumentReview } from "../services/project-management-review-service.js";
 import { runCommand } from "../utils/process.js";
 import { getWorktreeDocumentLink, setWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
@@ -113,8 +114,13 @@ test("git compare merge merges a feature branch into main", { concurrency: false
     assert.match(stdout.trim(), /Merge branch 'feature-merge'|add merge file/);
 
     const updatedDocument = await getProjectManagementDocument(repo.repoRoot, createDocumentPayload.document.id);
-    const latestComment = updatedDocument.document.comments.at(-1);
+    assert.equal(updatedDocument.document.title, "Merge tracking doc");
+
+    const updatedReview = await getProjectManagementDocumentReview(repo.repoRoot, createDocumentPayload.document.id);
+    const latestComment = updatedReview.review.entries.at(-1);
     assert.ok(latestComment);
+    assert.equal(latestComment.eventType, "merge");
+    assert.equal(latestComment.source, "system");
     assert.match(latestComment.body, /## Worktree merged/);
     assert.match(latestComment.body, /Merged `feature-merge` into `main`\./);
     assert.match(latestComment.body, /### Merged commits \(1\)/);

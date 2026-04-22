@@ -38,14 +38,16 @@ export function logTerminalCopyEvent(event: string, details: Record<string, unkn
   console.info("[terminal-copy]", event, details);
 }
 
+function isFocusableElement(value: Element | null): value is Element & { focus: () => void } {
+  return Boolean(value) && typeof (value as HTMLElement).focus === "function";
+}
+
 function copyWithExecCommand(text: string): boolean {
   if (typeof document === "undefined" || typeof document.execCommand !== "function") {
     return false;
   }
 
-  const activeElement = document.activeElement && typeof (document.activeElement as { focus?: unknown }).focus === "function"
-    ? document.activeElement as { focus: () => void }
-    : null;
+  const activeElement = isFocusableElement(document.activeElement) ? document.activeElement : null;
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.setAttribute("readonly", "true");

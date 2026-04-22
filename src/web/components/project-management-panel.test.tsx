@@ -80,7 +80,6 @@ const sampleDocuments: ProjectManagementDocumentSummary[] = [
 const sampleDocument: ProjectManagementDocument = {
   ...sampleDocuments[0],
   markdown: "# Dependencies\n",
-  comments: [],
 };
 
 const sampleWorktrees: WorktreeRecord[] = [
@@ -145,7 +144,7 @@ const sampleHistory = [
     assignee: "Eric",
     archived: false,
     changeCount: 1,
-    action: "comment" as const,
+    action: "update" as const,
     diff: "@@\n+Need a final QA pass",
   },
 ];
@@ -228,7 +227,6 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     onUpdateStatus: async () => null,
     onUpdateUsers: async () => null,
     onBatchUpdateDocuments: async () => true,
-    onAddComment: async () => null,
     onRunAiCommand: async () => null,
     onRunDocumentAi: async () => null,
     onCancelDocumentAiCommand: async () => null,
@@ -294,7 +292,6 @@ test("create form renders without seeded defaults", () => {
       onUpdateStatus={async () => null}
       onUpdateUsers={async () => null}
       onBatchUpdateDocuments={async () => true}
-      onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
@@ -404,7 +401,6 @@ test("document view shows dependency summary and modal entrypoint", () => {
       onUpdateStatus={async () => null}
       onUpdateUsers={async () => null}
       onBatchUpdateDocuments={async () => true}
-      onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
@@ -443,7 +439,7 @@ test("document page presentation renders page-specific controls and tab ids", ()
   assert.doesNotMatch(markup, /Open full page/);
 });
 
-test("document view renders summary, comments, and comment attribution", () => {
+test("document view renders summary without inline review timeline", () => {
   const markup = renderToStaticMarkup(
     <ProjectManagementPanel
       documents={[...sampleDocuments]}
@@ -459,13 +455,6 @@ test("document view renders summary, comments, and comment attribution", () => {
       document={{
         ...sampleDocument,
         summary: "Track prerequisite document work.",
-        comments: [{
-          id: "comment-1",
-          body: "## Review note\n\nNeed a **final QA pass**",
-          createdAt: "2026-03-25T11:30:00.000Z",
-          authorName: "Casey Reviewer",
-          authorEmail: "casey@example.com",
-        }],
       }}
       history={sampleHistory}
       loading={false}
@@ -488,7 +477,6 @@ test("document view renders summary, comments, and comment attribution", () => {
       onUpdateStatus={async () => null}
       onUpdateUsers={async () => null}
       onBatchUpdateDocuments={async () => true}
-      onAddComment={async () => null}
       onRunAiCommand={async () => null}
       onRunDocumentAi={async () => null}
       onCancelDocumentAiCommand={async () => null}
@@ -502,12 +490,8 @@ test("document view renders summary, comments, and comment attribution", () => {
   assert.match(markup, /Active worktree/);
   assert.match(markup, /active worktree/);
   assert.match(markup, /Track prerequisite document work\./);
-  assert.match(markup, /1 comment/);
-  assert.match(markup, /Casey Reviewer/);
-  assert.match(markup, /casey@example.com/);
-  assert.match(markup, /<h2>Review note<\/h2>/);
-  assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
-  assert.match(markup, /Saved with your repo git/);
+  assert.doesNotMatch(markup, />Comments</);
+  assert.doesNotMatch(markup, /Add comment/);
 });
 
 test("dependency picker modal renders current dependencies and searchable document browser", () => {

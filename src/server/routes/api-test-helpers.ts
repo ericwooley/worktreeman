@@ -8,6 +8,7 @@ import test from "#test-runtime";
 import express from "express";
 import request from "supertest";
 import { createApiRouter } from "./api.js";
+import { stopManagedApiRouterContexts } from "./api-router-context.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees } from "../services/repository-layout-service.js";
 import { initRepository } from "../services/init-service.js";
 import { createWorktree } from "../services/git-service.js";
@@ -760,6 +761,7 @@ test.afterEach(async () => {
 
   await Promise.all(repoRootsToCleanup.map(async (repoRoot) => {
     testContextRepoRoots.delete(repoRoot);
+    await stopManagedApiRouterContexts(repoRoot).catch(() => undefined);
     await stopAiCommandJobManager(repoRoot);
     await stopOperationalStateStore(repoRoot);
     await stopDatabaseSocketServer(repoRoot).catch(() => undefined);
@@ -769,6 +771,7 @@ test.afterEach(async () => {
 test.after(async () => {
   const repos = Array.from(testContextRepoRoots);
   testContextRepoRoots.clear();
+  await Promise.all(repos.map((repoRoot) => stopManagedApiRouterContexts(repoRoot).catch(() => undefined)));
   await Promise.all(repos.map(async (repoRoot) => {
     await stopRunningAiJobsForRepo(repoRoot, deleteAiCommandProcess).catch(() => undefined);
   }));

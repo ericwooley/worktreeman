@@ -90,6 +90,49 @@ const CONFIG_COMMIT_ENV = {
   GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
 };
 
+type ManagedApiRouterContextEntry = {
+  dispose: () => Promise<void>;
+};
+
+const managedApiRouterContextsByRepo = new Map<string, Set<ManagedApiRouterContextEntry>>();
+
+function registerManagedApiRouterContext(repoRoot: string, entry: ManagedApiRouterContextEntry) {
+  let entries = managedApiRouterContextsByRepo.get(repoRoot);
+  if (!entries) {
+    entries = new Set();
+    managedApiRouterContextsByRepo.set(repoRoot, entries);
+  }
+
+  entries.add(entry);
+}
+
+function unregisterManagedApiRouterContext(repoRoot: string, entry: ManagedApiRouterContextEntry) {
+  const entries = managedApiRouterContextsByRepo.get(repoRoot);
+  if (!entries) {
+    return;
+  }
+
+  entries.delete(entry);
+  if (entries.size === 0) {
+    managedApiRouterContextsByRepo.delete(repoRoot);
+  }
+}
+
+export async function stopManagedApiRouterContexts(repoRoot: string) {
+  const entries = Array.from(managedApiRouterContextsByRepo.get(repoRoot) ?? []);
+  if (entries.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(entries.map((entry) => entry.dispose()));
+}
+
+export async function stopAllManagedApiRouterContexts() {
+  const entries = Array.from(managedApiRouterContextsByRepo.values()).flatMap((repoEntries) => Array.from(repoEntries));
+  managedApiRouterContextsByRepo.clear();
+  await Promise.allSettled(entries.map((entry) => entry.dispose()));
+}
+
 export function createApiRouterContext(options: ApiRouterOptions) {
   const stateListeners = new Set<() => void>();
   const gitComparisonListeners = new Set<() => void>();
@@ -238,7 +281,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     }
 
     try {
-      const watcher = fs.watch(resolvedPath, { recursive: true }, () => {
+      const watcher = fs.watch(resolvedPath, { recursive: process.platform === "darwin" || process.platform === "win32" }, () => {
         scheduleGitWatchRefresh();
       });
       watcher.on("error", () => {
@@ -285,23 +328,39 @@ export function createApiRouterContext(options: ApiRouterOptions) {
 
   void refreshGitWatchers().catch(() => undefined);
 
-  const dispose = async () => {
-    await autoSync.dispose();
-
-    if (gitWatchRefreshTimer) {
-      clearTimeout(gitWatchRefreshTimer);
-      gitWatchRefreshTimer = null;
-    }
-
-    for (const watcher of gitWatchers.values()) {
-      try {
-        watcher.close();
-      } catch {
-        // Ignore watcher shutdown races.
-      }
-    }
-    gitWatchers.clear();
+  let disposePromise: Promise<void> | null = null;
+  const managedContextEntry: ManagedApiRouterContextEntry = {
+    dispose: async () => await dispose(),
   };
+
+  const dispose = async () => {
+    if (disposePromise) {
+      return await disposePromise;
+    }
+
+    disposePromise = (async () => {
+      unregisterManagedApiRouterContext(options.repoRoot, managedContextEntry);
+      await autoSync.dispose();
+
+      if (gitWatchRefreshTimer) {
+        clearTimeout(gitWatchRefreshTimer);
+        gitWatchRefreshTimer = null;
+      }
+
+      for (const watcher of gitWatchers.values()) {
+        try {
+          watcher.close();
+        } catch {
+          // Ignore watcher shutdown races.
+        }
+      }
+      gitWatchers.clear();
+    })();
+
+    return await disposePromise;
+  };
+
+  registerManagedApiRouterContext(options.repoRoot, managedContextEntry);
 
   const subscribeToGitComparisonRefresh = (listener: () => void) => {
     gitComparisonListeners.add(listener);

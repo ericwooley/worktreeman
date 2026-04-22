@@ -148,6 +148,12 @@ const PRIMARY_NAV_ITEMS: Array<{
     description: "Documents, board flow, dependencies, and planning work.",
   },
   {
+    id: "review",
+    shortLabel: "REV",
+    label: "Review",
+    description: "Linked-document review timeline and worktree discussion.",
+  },
+  {
     id: "system",
     shortLabel: "SYS",
     label: "System",
@@ -198,6 +204,8 @@ export function Dashboard() {
     systemLastUpdatedAt,
     projectManagement,
     projectManagementUsers,
+    projectManagementReviews,
+    projectManagementDocumentReview,
     projectManagementDocument,
     projectManagementHistory,
     projectManagementLoading,
@@ -206,7 +214,7 @@ export function Dashboard() {
     projectManagementSaving,
     clearLastEnvSync,
     clearBackgroundLogs,
-    addProjectManagementComment,
+    addProjectManagementReviewEntry,
     batchUpdateProjectManagementDocuments,
     create,
     createProjectManagementDocument,
@@ -221,6 +229,7 @@ export function Dashboard() {
     loadBackgroundLogs,
     loadProjectManagementDocument,
     loadProjectManagementDocuments,
+    loadProjectManagementReviews,
     loadProjectManagementUsers,
     loadConfigDocument,
     loadAiCommandSettings,
@@ -1124,6 +1133,19 @@ export function Dashboard() {
         action: () => navigateToTab("project-management"),
       },
       {
+        id: "nav-review",
+        code: "nr",
+        title: "Open Review tab",
+        subtitle: selected?.linkedDocument?.title
+          ? `Inspect the linked review timeline for ${selected.linkedDocument.title}.`
+          : "Inspect the linked document review timeline for the selected worktree.",
+        group: "Navigation",
+        keywords: ["review", "timeline", "linked document", "discussion", "ai"],
+        badgeLabel: activeTab === "review" ? "Active" : undefined,
+        badgeTone: "active",
+        action: () => navigateToTab("review"),
+      },
+      {
         id: "nav-project-management-document",
         code: "npd",
         title: "Open project document view",
@@ -1704,6 +1726,8 @@ export function Dashboard() {
             projectManagementAvailableTags={projectManagement?.availableTags ?? []}
             projectManagementAvailableStatuses={projectManagement?.availableStatuses ?? []}
             projectManagementUsers={projectManagementUsers}
+            projectManagementReviews={projectManagementReviews?.reviews ?? []}
+            projectManagementDocumentReview={projectManagementDocumentReview}
             projectManagementActiveSubTab={projectManagementSubTab}
             projectManagementSelectedDocumentId={projectManagementSelectedDocumentId}
             projectManagementDocumentPresentation={projectManagementDocumentPresentation}
@@ -1738,6 +1762,7 @@ export function Dashboard() {
             onProjectManagementOpenDocumentPage={handleOpenProjectManagementDocumentPage}
             onProjectManagementCloseDocument={handleCloseProjectManagementDocument}
             onLoadProjectManagementDocuments={loadProjectManagementDocuments}
+            onLoadProjectManagementReviews={loadProjectManagementReviews}
             onLoadProjectManagementUsers={loadProjectManagementUsers}
             onLoadProjectManagementDocument={handleLoadProjectManagementDocument}
             onLoadProjectManagementAiLogs={loadAiCommandLogs}
@@ -1756,9 +1781,8 @@ export function Dashboard() {
             onBatchUpdateProjectManagementDocuments={async (documentIds, overrides) => {
               return batchUpdateProjectManagementDocuments(documentIds, overrides);
             }}
-            onAddProjectManagementComment={async (documentId, payload) => {
-              await addProjectManagementComment(documentId, payload);
-              return null;
+            onAddProjectManagementReviewEntry={async (documentId, payload) => {
+              return addProjectManagementReviewEntry(documentId, payload);
             }}
             projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}

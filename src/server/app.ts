@@ -226,17 +226,19 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
     closed = true;
     const logInfo = (message: string) => {
       process.stdout.write(`${message}\n`);
-      void operationalState.appendShutdownInfo(message);
+      void operationalState.appendShutdownInfo(message).catch(() => undefined);
     };
     const logError = (message: string) => {
       process.stderr.write(`${message}\n`);
-      void operationalState.appendShutdownError(message);
+      void operationalState.appendShutdownError(message).catch(() => undefined);
     };
 
     let shutdownError: unknown = null;
 
     try {
-      await operationalState.beginShutdown("[shutdown] Closing worktreeman server...");
+      await operationalState.beginShutdown("[shutdown] Closing worktreeman server...").catch((error) => {
+        process.stderr.write(`[shutdown] Failed to persist shutdown start: ${error instanceof Error ? error.message : String(error)}\n`);
+      });
       process.stdout.write("[shutdown] Closing worktreeman server...\n");
 
       await loadShutdownConfig().catch((error) => {
@@ -245,7 +247,12 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
         );
       });
 
-      const activeRuntimes = await operationalState.listRuntimes();
+      const activeRuntimes = await operationalState.listRuntimes().catch((error) => {
+        logError(
+          `[shutdown] Failed to list active runtimes: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return [];
+      });
       if (activeRuntimes.length > 0) {
         logInfo(`[shutdown] Stopping ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"}...`);
       }
@@ -271,7 +278,12 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
           );
         }
 
-        await operationalState.deleteRuntimeById(runtime.id);
+        await operationalState.deleteRuntimeById(runtime.id).catch((error) => {
+          logError(
+            `[shutdown] Failed to delete runtime ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          return null;
+        });
       }
 
       if (terminalService) {
@@ -314,7 +326,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
         logInfo("[shutdown] Closing Vite dev server...");
         await vite.close();
       }
-      await operationalState.completeShutdown("[shutdown] Shutdown complete.");
+      await operationalState.completeShutdown("[shutdown] Shutdown complete.").catch(() => undefined);
       process.stdout.write("[shutdown] Shutdown complete.\n");
     } catch (error) {
       shutdownError = error;
