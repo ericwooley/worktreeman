@@ -284,4 +284,6 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Add review entry/);
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
+  assert.match(markup, /Continue with AI/);
+  assert.match(markup, /The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request\./);
 });

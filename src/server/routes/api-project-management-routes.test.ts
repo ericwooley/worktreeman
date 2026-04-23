@@ -810,7 +810,8 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(latestComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(latestComment.body, /- Command: `smart`/);
     assert.match(latestComment.body, /- Output: 2 stdout lines, 0 stderr lines/);
-    assert.match(latestComment.body, /### Output/);
+    assert.match(latestComment.body, /<details>/);
+    assert.match(latestComment.body, /<summary>Output details<\/summary>/);
     assert.match(latestComment.body, /#### Stdout/);
     assert.match(latestComment.body, /```text\nplanning\.\.\.\nimplemented/);
 

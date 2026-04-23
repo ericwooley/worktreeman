@@ -10,6 +10,7 @@ import type {
   AiCommandLogsResponse,
   AiCommandLogSummary,
   AiCommandOrigin,
+  RunAiCommandRequest,
   AiCommandOutputEvent,
   BackgroundCommandState,
   ProjectManagementDocumentResponse,
@@ -588,6 +589,24 @@ export function createGitConflictResolutionOrigin(options: {
   };
 }
 
+export function createWorktreeReviewOrigin(options: {
+  branch: string;
+  worktreeId?: WorktreeId;
+  documentId: string;
+}): AiCommandOrigin {
+  return {
+    kind: "worktree-review",
+    label: "Review follow-up",
+    description: `Continue review activity for linked document ${options.documentId}.`,
+    location: {
+      tab: "review",
+      branch: options.branch,
+      worktreeId: options.worktreeId,
+      documentId: options.documentId,
+    },
+  };
+}
+
 function buildProjectManagementSummaryPrompt(options: {
   branch: string;
   document: ProjectManagementDocumentResponse["document"];
@@ -616,6 +635,27 @@ function buildProjectManagementSummaryPrompt(options: {
     "Current markdown:",
     options.document.markdown,
   ].join("\n");
+}
+
+function buildReviewFollowUpSummaryPrompt(options: {
+  branch: string;
+  documentTitle: string;
+  originalRequest: string;
+  priorOutputs: string[];
+}) {
+  return [
+    `You are summarizing previous AI work for the review activity linked to \"${options.documentTitle}\" on branch ${options.branch}.`,
+    "The server will use your response as compact context for the next follow-up AI run.",
+    "Return only the final summary as raw text.",
+    "Write a concise engineer-facing summary that captures what prior AI runs already did, key outcomes, unresolved risks, and any notable failures.",
+    "Do not use markdown headings, bullets, code fences, or commentary outside the summary.",
+    "Prefer a short paragraph unless the content is too dense.",
+    "",
+    `Original request: ${options.originalRequest}`,
+    "",
+    "Previous AI outputs:",
+    ...options.priorOutputs.map((entry, index) => `Run ${index + 1}:\n${entry}`),
+  ].join("\n\n");
 }
 
 export async function generateProjectManagementDocumentSummary(options: {
@@ -667,6 +707,99 @@ export async function generateProjectManagementDocumentSummary(options: {
     }, "error");
     return null;
   }
+}
+
+function formatReviewFollowUpLogOutput(entry: AiCommandLogEntry): string | null {
+  const sections = [
+    entry.response.stdout.trim() ? `stdout:\n${entry.response.stdout.trim()}` : null,
+    entry.response.stderr.trim() ? `stderr:\n${entry.response.stderr.trim()}` : null,
+    entry.error?.message?.trim() ? `error: ${entry.error.message.trim()}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  if (!sections.length) {
+    return null;
+  }
+
+  return [
+    `Request: ${entry.request.trim() || "(empty request)"}`,
+    ...sections,
+  ].join("\n\n");
+}
+
+export async function buildReviewFollowUpRequest(options: {
+  repoRoot: string;
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  documentId: string;
+  documentTitle: string;
+  followUp: NonNullable<RunAiCommandRequest["reviewFollowUp"]>;
+}): Promise<string> {
+  const priorLogs = (await listAiCommandLogEntries(options.repoRoot))
+    .filter((entry) => entry.documentId === options.documentId)
+    .filter((entry) => entry.branch === options.branch || entry.worktreePath === options.worktreePath)
+    .filter((entry) => entry.status !== "running")
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+
+  const priorOutputs = priorLogs
+    .map(formatReviewFollowUpLogOutput)
+    .filter((entry): entry is string => Boolean(entry));
+
+  let previousRunSummary = "No previous AI outputs were available for this review yet.";
+  if (priorOutputs.length) {
+    const template = resolveAiCommandTemplate(options.config.aiCommands, "simple");
+    if (template.includes("$WTM_AI_INPUT")) {
+      const input = buildReviewFollowUpSummaryPrompt({
+        branch: options.branch,
+        documentTitle: options.documentTitle,
+        originalRequest: options.followUp.originalRequest,
+        priorOutputs,
+      });
+      const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+
+      try {
+        const { stdout } = await runCommand("bash", ["-lc", renderedCommand], {
+          cwd: options.repoRoot,
+          env: buildAiCommandProcessEnv({
+            repoRoot: options.repoRoot,
+            worktreePath: options.worktreePath,
+            documentId: options.documentId,
+            env: {
+              ...process.env,
+              ...options.config.env,
+              WTM_AI_INPUT: input,
+              WORKTREE_BRANCH: options.branch,
+              WORKTREE_PATH: options.worktreePath,
+            },
+          }),
+        });
+        const summary = stdout.trim();
+        if (summary) {
+          previousRunSummary = summary;
+        }
+      } catch (error) {
+        logServerEvent("review-follow-up", "summary-failed", {
+          branch: options.branch,
+          documentId: options.documentId,
+          error: error instanceof Error ? error.message : String(error),
+        }, "error");
+      }
+    }
+  }
+
+  return [
+    `Review follow-up for linked document \"${options.documentTitle}\".`,
+    "Use the existing worktree context and continue from the prior AI work rather than restarting from scratch.",
+    "",
+    "Original context:",
+    options.followUp.originalRequest.trim(),
+    "",
+    "Summary of previous AI outputs:",
+    previousRunSummary,
+    "",
+    "New follow-up request:",
+    options.followUp.newRequest.trim(),
+  ].join("\n");
 }
 
 function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLogEntry {

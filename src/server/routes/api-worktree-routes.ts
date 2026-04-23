@@ -53,9 +53,11 @@ import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service
 import {
   buildAiCommandProcessEnv,
   buildAiEnvironmentContext,
+  buildReviewFollowUpRequest,
   buildProjectManagementAiPrompt,
   buildWorktreeAiPrompt,
   createProjectManagementDocumentOrigin,
+  createWorktreeReviewOrigin,
   createWorktreeEnvironmentOrigin,
   formatLogSnippet,
   isAiCommandLogActivelyRunning,
@@ -397,6 +399,15 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       worktree = worktrees.find((entry) => entry.branch === req.params.branch) ?? null;
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
+      let reviewFollowUp = body?.reviewFollowUp
+        && typeof body.reviewFollowUp === "object"
+        && typeof body.reviewFollowUp.originalRequest === "string"
+        && typeof body.reviewFollowUp.newRequest === "string"
+          ? {
+              originalRequest: body.reviewFollowUp.originalRequest,
+              newRequest: body.reviewFollowUp.newRequest,
+            }
+          : null;
       const explicitDocumentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
       const requestedReviewDocumentId = typeof body?.reviewDocumentId === "string" && body.reviewDocumentId.trim()
         ? body.reviewDocumentId.trim()
@@ -423,10 +434,22 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         : (await getWorktreeDocumentLink(context.repoRoot, worktree.id))?.documentId ?? null;
       const documentId = explicitDocumentId ?? linkedDocumentId;
       const reviewDocumentId = explicitDocumentId ? null : requestedReviewDocumentId ?? linkedDocumentId;
+      const isReviewOriginRequest = requestedOrigin?.kind === "worktree-review"
+        || requestedOrigin?.location.tab === "review";
+
+      if (!explicitDocumentId && reviewDocumentId && isReviewOriginRequest && !reviewFollowUp && input.trim()) {
+        reviewFollowUp = {
+          originalRequest: input,
+          newRequest: input,
+        };
+      }
+
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
       worktreePath = worktree.worktreePath;
       branch = worktree.branch;
-      origin = requestedOrigin ?? createWorktreeEnvironmentOrigin(worktree.branch, worktree.id);
+      origin = requestedOrigin ?? (reviewFollowUp && reviewDocumentId
+        ? createWorktreeReviewOrigin({ branch: worktree.branch, worktreeId: worktree.id, documentId: reviewDocumentId })
+        : createWorktreeEnvironmentOrigin(worktree.branch, worktree.id));
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
@@ -549,6 +572,21 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         });
       }
 
+      if (!explicitDocumentId && reviewFollowUp && reviewDocumentId) {
+        const reviewDocumentTitle = linkedDocumentId && linkedDocumentId === reviewDocumentId
+          ? worktree.linkedDocument?.title ?? `Document ${reviewDocumentId}`
+          : `Document ${reviewDocumentId}`;
+        input = await buildReviewFollowUpRequest({
+          repoRoot: context.repoRoot,
+          config,
+          branch: worktree.branch,
+          worktreePath,
+          documentId: reviewDocumentId,
+          documentTitle: reviewDocumentTitle,
+          followUp: reviewFollowUp,
+        });
+      }
+
       logServerEvent("ai-command", "request-started", {
         branch: worktree.branch,
         worktreePath: worktree.worktreePath,
@@ -574,6 +612,10 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       });
 
       renderedCommand = renderAiCommand(template, input);
+      const reviewRequestSummary = explicitDocumentId
+        ? null
+        : reviewFollowUp?.newRequest ?? body.input;
+
       const runDetails = {
         worktreeId: worktree.id,
         branch: worktree.branch,
@@ -587,7 +629,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         env,
         applyDocumentUpdateToDocumentId: explicitDocumentId,
         reviewDocumentId,
-        reviewRequestSummary: explicitDocumentId ? null : body.input,
+        reviewRequestSummary,
         autoCommitDirtyWorktree: true,
       };
       const job = explicitDocumentId

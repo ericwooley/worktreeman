@@ -50,6 +50,25 @@ function formatLogSection(title: string, value: string): string | null {
   ].join("\n");
 }
 
+function formatCombinedLogDetails(stdout: string, stderr: string): string | null {
+  const sections = [
+    formatLogSection("Stdout", stdout),
+    formatLogSection("Stderr", stderr),
+  ].filter((section): section is string => Boolean(section));
+
+  if (!sections.length) {
+    return null;
+  }
+
+  return [
+    "<details>",
+    "<summary>Output details</summary>",
+    "",
+    ...sections.flatMap((section, index) => (index === 0 ? [section] : ["", section])),
+    "</details>",
+  ].join("\n");
+}
+
 function formatCommitDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) {
@@ -99,16 +118,9 @@ export function buildWorktreeAiCompletedComment(details: {
     lines.push(`- Request: ${normalizeInlineText(details.requestSummary)}`);
   }
 
-  const stdoutSection = formatLogSection("Stdout", details.stdout);
-  const stderrSection = formatLogSection("Stderr", details.stderr);
-  if (stdoutSection || stderrSection) {
-    lines.push("", "### Output");
-  }
-  if (stdoutSection) {
-    lines.push("", stdoutSection);
-  }
-  if (stderrSection) {
-    lines.push("", stderrSection);
+  const outputDetails = formatCombinedLogDetails(details.stdout, details.stderr);
+  if (outputDetails) {
+    lines.push("", outputDetails);
   }
 
   return lines.join("\n");

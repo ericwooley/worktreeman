@@ -980,6 +980,8 @@ export function WorktreeDetail({
   }, [linkedDocument?.id, projectManagementDocumentReview, projectManagementReviews]);
   const linkedDocumentReviewEntries = linkedDocumentReview?.entries ?? [];
   const [reviewDraft, setReviewDraft] = useState("");
+  const [reviewFollowUpDraft, setReviewFollowUpDraft] = useState("");
+  const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
@@ -1458,6 +1460,47 @@ export function WorktreeDetail({
     }
   };
 
+  const submitReviewFollowUp = async () => {
+    if (!linkedDocument?.id || !reviewFollowUpDraft.trim() || reviewFollowUpSubmitting) {
+      return;
+    }
+
+    const latestAiRequest = [...linkedDocumentReviewEntries]
+      .reverse()
+      .find((entry) => entry.source === "ai" && entry.eventType === "ai-started");
+    const originalRequest = latestAiRequest?.body.trim() || linkedDocumentDetails?.summary || linkedDocument.title;
+
+    setReviewFollowUpSubmitting(true);
+    try {
+      const job = await onRunProjectManagementAiCommand({
+        input: reviewFollowUpDraft,
+        reviewDocumentId: linkedDocument.id,
+        commandId: "smart",
+        origin: {
+          kind: "worktree-review",
+          label: "Review follow-up",
+          description: `Continue review activity for ${linkedDocument.title}`,
+          location: {
+            tab: "review",
+            branch: worktree?.branch ?? null,
+            worktreeId: worktree?.id ?? null,
+            documentId: linkedDocument.id,
+          },
+        },
+        reviewFollowUp: {
+          originalRequest,
+          newRequest: reviewFollowUpDraft,
+        },
+      });
+
+      if (job) {
+        setReviewFollowUpDraft("");
+      }
+    } finally {
+      setReviewFollowUpSubmitting(false);
+    }
+  };
+
   const openAiLogOrigin = async (origin: AiCommandJob["origin"] | AiCommandLogEntry["origin"] | AiCommandLogSummary["origin"]) => {
     if (!origin) {
       return;
@@ -1471,6 +1514,14 @@ export function WorktreeDetail({
       onTabChange("project-management");
       onProjectManagementSubTabChange(mapOriginProjectManagementSubTabToUiTab(origin.location.projectManagementSubTab));
       onProjectManagementDocumentViewModeChange(origin.location.projectManagementDocumentViewMode ?? "document");
+      if (origin.location.documentId) {
+        await onLoadProjectManagementDocument(origin.location.documentId, { silent: true });
+      }
+      return;
+    }
+
+    if (origin.location.tab === "review") {
+      onTabChange("review");
       if (origin.location.documentId) {
         await onLoadProjectManagementDocument(origin.location.documentId, { silent: true });
       }
@@ -2303,6 +2354,32 @@ export function WorktreeDetail({
                     No review entries yet. Add the first note here or run AI work from this worktree to start the timeline.
                   </div>
                 )}
+
+                <div className="theme-inline-panel p-4">
+                  <label className="block space-y-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Continue with AI</span>
+                    <textarea
+                      value={reviewFollowUpDraft}
+                      onChange={(event) => setReviewFollowUpDraft(event.target.value)}
+                      placeholder="Ask AI to continue from the existing review context, prior AI outputs, and your next request."
+                      rows={5}
+                      className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+                    />
+                  </label>
+                  <p className="mt-3 text-sm theme-text-muted">
+                    The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request.
+                  </p>
+                  <div className="mt-3 flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={reviewFollowUpSubmitting || !reviewFollowUpDraft.trim()}
+                      onClick={() => void submitReviewFollowUp()}
+                    >
+                      {reviewFollowUpSubmitting ? "Starting AI follow-up..." : "Continue with AI"}
+                    </button>
+                  </div>
+                </div>
               </>
             )}
           </div>

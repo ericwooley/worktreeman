@@ -22,7 +22,7 @@ test("buildWorktreeAiStartedComment formats markdown metadata", () => {
   ].join("\n"));
 });
 
-test("buildWorktreeAiCompletedComment renders stdout and stderr as fenced markdown sections", () => {
+test("buildWorktreeAiCompletedComment renders stdout and stderr inside collapsible output details", () => {
   const comment = buildWorktreeAiCompletedComment({
     branch: "feature/comments",
     commandId: "simple",
@@ -36,11 +36,13 @@ test("buildWorktreeAiCompletedComment renders stdout and stderr as fenced markdo
   assert.match(comment, /- Command: `simple`/);
   assert.match(comment, /- Output: 2 stdout lines, 1 stderr line/);
   assert.match(comment, /- Request: summarize the worktree run/);
-  assert.match(comment, /### Output/);
+  assert.match(comment, /<details>/);
+  assert.match(comment, /<summary>Output details<\/summary>/);
   assert.match(comment, /#### Stdout/);
   assert.match(comment, /```text\nplanned change\nimplemented change\n```/);
   assert.match(comment, /#### Stderr/);
   assert.match(comment, /```text\nwarning: verify snapshot\n```/);
+  assert.match(comment, /<\/details>/);
 });
 
 test("buildWorktreeAiCompletedComment omits empty output sections", () => {
@@ -51,7 +53,7 @@ test("buildWorktreeAiCompletedComment omits empty output sections", () => {
     stderr: "",
   });
 
-  assert.doesNotMatch(comment, /### Output/);
+  assert.doesNotMatch(comment, /<details>/);
   assert.match(comment, /- Output: 0 stdout lines, 0 stderr lines/);
   assert.doesNotMatch(comment, /```text/);
 });
