@@ -519,6 +519,8 @@ export function buildProjectManagementExecutionAiPrompt(options: {
     `You are implementing the work described by the project-management document \"${options.document.title}\".`,
     "Use this document as the main instruction set for the engineering work to perform in the repository.",
     options.environmentContext,
+    "You can use `npx -y worktreeman api` for local worktree helpers when that is useful.",
+    "Supported helpers include `npx -y worktreeman api dev start`, `npx -y worktreeman api dev stop`, `npx -y worktreeman api dev status`, `npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`, `npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`, `npx -y worktreeman api documents list`, `npx -y worktreeman api documents read <document-id>`, and `npx -y worktreeman api documents history <document-id>`.",
     "Make code changes directly in the repository. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
     "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
     "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",

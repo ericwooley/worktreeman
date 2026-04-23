@@ -51,6 +51,24 @@ test("findRepoContext resolves config from the bare-layout root", async () => {
   }
 });
 
+test("findRepoContext resolves config from a checked-out worktree path", async () => {
+  const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-paths-"));
+
+  try {
+    await createBareRepoLayout({ rootDir });
+    await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+    await initRepository(rootDir, { baseDir: ".", runtimePorts: ["PORT"], force: false });
+
+    const repo = await findRepoContext(path.join(rootDir, DEFAULT_WORKTREEMAN_MAIN_BRANCH));
+
+    assert.equal(repo.repoRoot, rootDir);
+    assert.equal(repo.configSourceRef, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH);
+    assert.equal(repo.configWorktreePath, path.join(rootDir, DEFAULT_WORKTREEMAN_SETTINGS_BRANCH));
+  } finally {
+    await fs.rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("findRepoContext fails when wtm-settings exists but no config file is present", async () => {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-paths-"));
 

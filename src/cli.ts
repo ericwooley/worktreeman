@@ -2,6 +2,7 @@
 
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { confirm, input } from "@inquirer/prompts";
 import {
   boolean,
@@ -15,12 +16,34 @@ import {
   string,
   subcommands,
 } from "cmd-ts";
+import type {
+  BackgroundCommandLogLine,
+  WorktreeManagerConfig,
+  WorktreeRecord,
+  WorktreeRuntime,
+} from "./shared/types.js";
 import {
   DEFAULT_WORKTREE_BASE_DIR,
   DEFAULT_WORKTREEMAN_MAIN_BRANCH,
   DEFAULT_WORKTREEMAN_SETTINGS_BRANCH,
 } from "./shared/constants.js";
 import { findRepoContext } from "./server/utils/paths.js";
+import { listWorktrees } from "./server/services/git-service.js";
+import { loadConfig } from "./server/services/config-service.js";
+import { createOperationalStateStore } from "./server/services/operational-state-service.js";
+import { ensureRuntimeTerminalSession, getTmuxSessionName, killTmuxSession, killTmuxSessionByName } from "./server/services/terminal-service.js";
+import { buildRuntimeProcessEnv, createRuntime, runStartupCommands } from "./server/services/runtime-service.js";
+import {
+  getBackgroundCommandLogs,
+  listBackgroundCommands,
+  startConfiguredBackgroundCommands,
+  stopAllBackgroundCommands,
+} from "./server/services/background-command-service.js";
+import {
+  getProjectManagementDocument,
+  getProjectManagementDocumentHistory,
+  listProjectManagementDocuments,
+} from "./server/services/project-management-service.js";
 import { initRepository } from "./server/services/init-service.js";
 import { createBareRepoLayout, ensurePrimaryWorktrees, resolveCloneRootDir } from "./server/services/repository-layout-service.js";
 import { startManagedRuntimeProcess, type ManagedRuntimeProcess } from "./server/services/process-supervisor-service.js";
@@ -445,6 +468,317 @@ const cloneCommand = command({
   },
 });
 
+const apiDevStartCommand = command({
+  name: "start",
+  description: "Start the dev environment for a worktree.",
+  args: {
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository and target worktree.",
+    }),
+    branch: option({
+      type: optional(string),
+      long: "branch",
+      short: "b",
+      description: "Optional branch name when the cwd is not already inside the target worktree.",
+    }),
+  },
+  handler: async ({ cwd, branch }) => {
+    const target = await resolveApiWorktreeTarget(cwd, branch);
+    const runtime = await ensureCliWorktreeRuntime(target);
+    writeJson({
+      branch: target.worktree.branch,
+      worktreePath: target.worktree.worktreePath,
+      runtime,
+      backgroundCommands: await listBackgroundCommands(target.config, target.repo.repoRoot, target.worktree, runtime),
+    });
+  },
+});
+
+const apiDevStopCommand = command({
+  name: "stop",
+  description: "Stop the dev environment for a worktree.",
+  args: {
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository and target worktree.",
+    }),
+    branch: option({
+      type: optional(string),
+      long: "branch",
+      short: "b",
+      description: "Optional branch name when the cwd is not already inside the target worktree.",
+    }),
+  },
+  handler: async ({ cwd, branch }) => {
+    const target = await resolveApiWorktreeTarget(cwd, branch);
+    await stopCliWorktreeRuntime(target);
+    writeJson({
+      ok: true,
+      branch: target.worktree.branch,
+      worktreePath: target.worktree.worktreePath,
+      runtime: null,
+      backgroundCommands: await listBackgroundCommands(target.config, target.repo.repoRoot, target.worktree, undefined),
+    });
+  },
+});
+
+const apiDevStatusCommand = command({
+  name: "status",
+  description: "Show dev runtime and service status.",
+  args: {
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository and target worktree.",
+    }),
+    branch: option({
+      type: optional(string),
+      long: "branch",
+      short: "b",
+      description: "Optional branch name when the cwd is not already inside the target worktree.",
+    }),
+  },
+  handler: async ({ cwd, branch }) => {
+    const target = await resolveApiWorktreeTarget(cwd, branch);
+    const runtime = await target.operationalState.getRuntimeById(target.worktree.id);
+    writeJson({
+      branch: target.worktree.branch,
+      worktreePath: target.worktree.worktreePath,
+      runtime,
+      backgroundCommands: await listBackgroundCommands(target.config, target.repo.repoRoot, target.worktree, runtime ?? undefined),
+    });
+  },
+});
+
+const apiDevLogsReadCommand = command({
+  name: "read",
+  description: "Read recent stdout/stderr service logs.",
+  args: {
+    commandName: option({
+      type: string,
+      long: "command",
+      short: "n",
+      description: "Background command name to inspect.",
+    }),
+    source: option({
+      type: optional(string),
+      long: "source",
+      short: "s",
+      description: "Log source to include: stdout, stderr, or all. Defaults to all.",
+    }),
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository and target worktree.",
+    }),
+    branch: option({
+      type: optional(string),
+      long: "branch",
+      short: "b",
+      description: "Optional branch name when the cwd is not already inside the target worktree.",
+    }),
+  },
+  handler: async ({ commandName, source, cwd, branch }) => {
+    const target = await resolveApiWorktreeTarget(cwd, branch);
+    const normalizedSource = normalizeLogSource(source);
+    const logs = await getBackgroundCommandLogs(target.config, target.worktree, commandName);
+    writeJson({
+      ...logs,
+      source: normalizedSource,
+      lines: filterLogLines(logs.lines, normalizedSource),
+    });
+  },
+});
+
+const apiDevLogsGrepCommand = command({
+  name: "grep",
+  description: "Search recent stdout/stderr service logs.",
+  args: {
+    pattern: positional({
+      type: string,
+      displayName: "pattern",
+      description: "Text or regex pattern to search for.",
+    }),
+    commandName: option({
+      type: string,
+      long: "command",
+      short: "n",
+      description: "Background command name to inspect.",
+    }),
+    source: option({
+      type: optional(string),
+      long: "source",
+      short: "s",
+      description: "Log source to include: stdout, stderr, or all. Defaults to all.",
+    }),
+    regex: flag({
+      type: boolean,
+      long: "regex",
+      description: "Interpret the pattern as a regular expression.",
+      defaultValue: () => false,
+      defaultValueIsSerializable: true,
+    }),
+    ignoreCase: flag({
+      type: boolean,
+      long: "ignore-case",
+      short: "i",
+      description: "Match without case sensitivity.",
+      defaultValue: () => false,
+      defaultValueIsSerializable: true,
+    }),
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository and target worktree.",
+    }),
+    branch: option({
+      type: optional(string),
+      long: "branch",
+      short: "b",
+      description: "Optional branch name when the cwd is not already inside the target worktree.",
+    }),
+  },
+  handler: async ({ pattern, commandName, source, regex, ignoreCase, cwd, branch }) => {
+    const target = await resolveApiWorktreeTarget(cwd, branch);
+    const normalizedSource = normalizeLogSource(source);
+    const logs = await getBackgroundCommandLogs(target.config, target.worktree, commandName);
+    const filteredLines = filterLogLines(logs.lines, normalizedSource);
+    const matcher = createLogMatcher(pattern, { regex, ignoreCase });
+    writeJson({
+      commandName: logs.commandName,
+      source: normalizedSource,
+      pattern,
+      regex,
+      ignoreCase,
+      lines: filteredLines.filter((line) => matcher(line.text)),
+    });
+  },
+});
+
+const apiDevLogsCommand = subcommands({
+  name: "logs",
+  description: "Read or search background command logs.",
+  cmds: {
+    read: apiDevLogsReadCommand,
+    grep: apiDevLogsGrepCommand,
+  },
+});
+
+const apiDevCommand = subcommands({
+  name: "dev",
+  description: "Inspect or control worktree dev environments.",
+  cmds: {
+    start: apiDevStartCommand,
+    stop: apiDevStopCommand,
+    status: apiDevStatusCommand,
+    logs: apiDevLogsCommand,
+  },
+});
+
+const apiDocumentsListCommand = command({
+  name: "list",
+  description: "List project-management documents.",
+  args: {
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository.",
+    }),
+  },
+  handler: async ({ cwd }) => {
+    const repo = await findRepoContext(cwd);
+    writeJson(await listProjectManagementDocuments(repo.repoRoot));
+  },
+});
+
+const apiDocumentsReadCommand = command({
+  name: "read",
+  description: "Read a project-management document.",
+  args: {
+    documentId: positional({
+      type: string,
+      displayName: "document-id",
+      description: "Project-management document id.",
+    }),
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository.",
+    }),
+  },
+  handler: async ({ documentId, cwd }) => {
+    const repo = await findRepoContext(cwd);
+    writeJson(await getProjectManagementDocument(repo.repoRoot, documentId));
+  },
+});
+
+const apiDocumentsHistoryCommand = command({
+  name: "history",
+  description: "Read project-management document history.",
+  args: {
+    documentId: positional({
+      type: string,
+      displayName: "document-id",
+      description: "Project-management document id.",
+    }),
+    cwd: option({
+      type: string,
+      long: "cwd",
+      short: "c",
+      defaultValue: () => process.cwd(),
+      defaultValueIsSerializable: true,
+      description: "Directory used to resolve the managed repository.",
+    }),
+  },
+  handler: async ({ documentId, cwd }) => {
+    const repo = await findRepoContext(cwd);
+    writeJson(await getProjectManagementDocumentHistory(repo.repoRoot, documentId));
+  },
+});
+
+const apiDocumentsCommand = subcommands({
+  name: "documents",
+  description: "Read project-management documents and history.",
+  cmds: {
+    list: apiDocumentsListCommand,
+    read: apiDocumentsReadCommand,
+    history: apiDocumentsHistoryCommand,
+  },
+});
+
+const apiCommand = subcommands({
+  name: "api",
+  description: "Repo-local runtime, log, and project-management document helpers.",
+  cmds: {
+    dev: apiDevCommand,
+    documents: apiDocumentsCommand,
+  },
+});
+
 const cli = subcommands({
   name: "worktreeman",
   version: "0.1.0",
@@ -455,17 +789,26 @@ const cli = subcommands({
     clone: cloneCommand,
     start: startCommand,
     init: initCommand,
+    api: apiCommand,
   },
 });
 
-run(cli, normalizedArgv).catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exit(1);
-});
+export { cli };
 
-function normalizeArgv(argv: string[]): string[] {
+export function runCli(argv: string[]) {
+  return run(cli, normalizeArgv(argv));
+}
+
+if (isDirectCliEntryPoint()) {
+  runCli(normalizedArgv).catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exit(1);
+  });
+}
+
+export function normalizeArgv(argv: string[]): string[] {
   return argv
     .filter((value) => value !== "--")
     .map((value) => value === "--danagerously-expose-to-network" ? "--dangerously-expose-to-network" : value);
@@ -522,4 +865,141 @@ async function promptForRuntimePorts(): Promise<string[]> {
 
     ports.push(envName);
   }
+}
+
+function isDirectCliEntryPoint(): boolean {
+  const entryPoint = process.argv[1];
+  return typeof entryPoint === "string" && entryPoint.length > 0 && import.meta.url === pathToFileURL(entryPoint).href;
+}
+
+interface CliApiTarget {
+  cwd: string;
+  repo: Awaited<ReturnType<typeof findRepoContext>>;
+  config: WorktreeManagerConfig;
+  worktree: WorktreeRecord;
+  operationalState: Awaited<ReturnType<typeof createOperationalStateStore>>;
+}
+
+async function resolveApiWorktreeTarget(cwd: string, branch?: string): Promise<CliApiTarget> {
+  const resolvedCwd = path.resolve(cwd);
+  const repo = await findRepoContext(resolvedCwd);
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const worktrees = await listWorktrees(repo.repoRoot);
+  const worktree = resolveTargetWorktree(worktrees, resolvedCwd, branch);
+  if (!worktree) {
+    throw new Error(
+      branch
+        ? `Unknown worktree branch ${branch}.`
+        : `Unable to determine a worktree from ${resolvedCwd}. Re-run from inside a worktree or pass --branch.`,
+    );
+  }
+
+  return {
+    cwd: resolvedCwd,
+    repo,
+    config,
+    worktree,
+    operationalState: await createOperationalStateStore(repo.repoRoot),
+  };
+}
+
+function resolveTargetWorktree(worktrees: WorktreeRecord[], cwd: string, branch?: string): WorktreeRecord | undefined {
+  if (branch) {
+    return worktrees.find((entry) => entry.branch === branch);
+  }
+
+  const exact = worktrees.find((entry) => path.resolve(entry.worktreePath) === cwd);
+  if (exact) {
+    return exact;
+  }
+
+  const containing = worktrees.filter((entry) => isPathWithin(entry.worktreePath, cwd));
+  return containing.sort((left, right) => right.worktreePath.length - left.worktreePath.length)[0];
+}
+
+function isPathWithin(parentPath: string, childPath: string): boolean {
+  const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function ensureCliWorktreeRuntime(target: CliApiTarget): Promise<WorktreeRuntime> {
+  const existingRuntime = await target.operationalState.getRuntimeById(target.worktree.id);
+  if (existingRuntime) {
+    return existingRuntime;
+  }
+
+  const { runtime } = await createRuntime(target.config, target.repo.repoRoot, target.worktree);
+  await target.operationalState.setRuntime(runtime);
+  await ensureRuntimeTerminalSession(runtime, target.repo.repoRoot);
+  await runStartupCommands(target.config.startupCommands, target.worktree.worktreePath, buildRuntimeProcessEnv(runtime));
+  await startConfiguredBackgroundCommands({
+    config: target.config,
+    repoRoot: target.repo.repoRoot,
+    worktree: target.worktree,
+    runtime,
+  });
+  return runtime;
+}
+
+async function stopCliWorktreeRuntime(target: CliApiTarget): Promise<void> {
+  const runtime = await target.operationalState.getRuntimeById(target.worktree.id);
+  if (!runtime) {
+    await killTmuxSessionByName(getTmuxSessionName(target.repo.repoRoot, target.worktree.id), target.worktree.worktreePath);
+    return;
+  }
+
+  let stopError: unknown = null;
+
+  try {
+    await stopAllBackgroundCommands(target.repo.repoRoot, runtime);
+  } catch (error) {
+    stopError = error;
+  }
+
+  try {
+    await killTmuxSession(runtime);
+  } catch (error) {
+    stopError ??= error;
+  }
+
+  await target.operationalState.deleteRuntimeById(runtime.id);
+
+  if (stopError) {
+    throw stopError;
+  }
+}
+
+function normalizeLogSource(source: string | undefined): "stdout" | "stderr" | "all" {
+  if (!source || source === "all") {
+    return "all";
+  }
+
+  if (source === "stdout" || source === "stderr") {
+    return source;
+  }
+
+  throw new Error(`Unknown log source ${source}. Use stdout, stderr, or all.`);
+}
+
+function filterLogLines(lines: BackgroundCommandLogLine[], source: "stdout" | "stderr" | "all"): BackgroundCommandLogLine[] {
+  return source === "all" ? lines : lines.filter((line) => line.source === source);
+}
+
+function createLogMatcher(pattern: string, options: { regex: boolean; ignoreCase: boolean }): (value: string) => boolean {
+  if (options.regex) {
+    const flags = options.ignoreCase ? "i" : "";
+    const expression = new RegExp(pattern, flags);
+    return (value) => expression.test(value);
+  }
+
+  const expected = options.ignoreCase ? pattern.toLocaleLowerCase() : pattern;
+  return (value) => (options.ignoreCase ? value.toLocaleLowerCase() : value).includes(expected);
+}
+
+function writeJson(value: unknown): void {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }

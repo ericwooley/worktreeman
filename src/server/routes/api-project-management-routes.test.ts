@@ -742,6 +742,13 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(capturedCommand.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
     assert.equal(capturedCommand.includes("- Running services:"), true);
     assert.equal(capturedCommand.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
+    assert.equal(capturedCommand.includes("You can use `npx -y worktreeman api`"), true);
+    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev start`"), true);
+    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev stop`"), true);
+    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev status`"), true);
+    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`"), true);
+    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`"), true);
+    assert.equal(capturedCommand.includes("`npx -y worktreeman api documents read <document-id>`"), true);
     assert.equal(capturedCommand.includes("in worktree"), false);
     assert.equal(capturedCommand.includes("Worktree path:"), true);
     assert.equal(capturedCommand.includes("Document number:"), false);
