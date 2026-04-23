@@ -50,6 +50,7 @@ import {
   WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL,
 } from "./worktree-environment-content";
 import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
+import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
 import { ProjectManagementAiTab } from "./project-management-ai-tab";
 import { ProjectManagementPanel } from "./project-management-panel";
 import { SystemTab } from "./system-tab";
@@ -979,6 +980,13 @@ export function WorktreeDetail({
     return projectManagementReviews.find((entry) => entry.documentId === linkedDocument.id) ?? null;
   }, [linkedDocument?.id, projectManagementDocumentReview, projectManagementReviews]);
   const linkedDocumentReviewEntries = linkedDocumentReview?.entries ?? [];
+  const activeReviewAiJob = useMemo(() => {
+    if (!worktree) {
+      return null;
+    }
+
+    return projectManagementRunningAiJobs.find((job) => job.worktreeId === worktree.id || job.branch === worktree.branch) ?? null;
+  }, [projectManagementRunningAiJobs, worktree]);
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewFollowUpDraft, setReviewFollowUpDraft] = useState("");
   const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
@@ -2355,31 +2363,49 @@ export function WorktreeDetail({
                   </div>
                 )}
 
-                <div className="theme-inline-panel p-4">
-                  <label className="block space-y-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Continue with AI</span>
-                    <textarea
-                      value={reviewFollowUpDraft}
-                      onChange={(event) => setReviewFollowUpDraft(event.target.value)}
-                      placeholder="Ask AI to continue from the existing review context, prior AI outputs, and your next request."
-                      rows={5}
-                      className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+                {activeReviewAiJob ? (
+                  <div className="space-y-3 theme-inline-panel p-4">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">AI is active</p>
+                      <p className="mt-2 text-sm theme-text-muted">
+                        Follow the live output for this worktree before starting another AI follow-up.
+                      </p>
+                    </div>
+                    <ProjectManagementAiOutputViewer
+                      source="worktree"
+                      job={activeReviewAiJob}
+                      summary={`AI is still running in ${activeReviewAiJob.branch}. Finish or cancel this run before prompting again from Review.`}
+                      expanded
+                      onCancel={() => void onCancelProjectManagementAiCommand()}
                     />
-                  </label>
-                  <p className="mt-3 text-sm theme-text-muted">
-                    The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request.
-                  </p>
-                  <div className="mt-3 flex flex-wrap justify-end gap-2">
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={reviewFollowUpSubmitting || !reviewFollowUpDraft.trim()}
-                      onClick={() => void submitReviewFollowUp()}
-                    >
-                      {reviewFollowUpSubmitting ? "Starting AI follow-up..." : "Continue with AI"}
-                    </button>
                   </div>
-                </div>
+                ) : (
+                  <div className="theme-inline-panel p-4">
+                    <label className="block space-y-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Continue with AI</span>
+                      <textarea
+                        value={reviewFollowUpDraft}
+                        onChange={(event) => setReviewFollowUpDraft(event.target.value)}
+                        placeholder="Ask AI to continue from the existing review context, prior AI outputs, and your next request."
+                        rows={5}
+                        className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+                      />
+                    </label>
+                    <p className="mt-3 text-sm theme-text-muted">
+                      The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request.
+                    </p>
+                    <div className="mt-3 flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        className="matrix-button rounded-none px-3 py-2 text-sm"
+                        disabled={reviewFollowUpSubmitting || !reviewFollowUpDraft.trim()}
+                        onClick={() => void submitReviewFollowUp()}
+                      >
+                        {reviewFollowUpSubmitting ? "Starting AI follow-up..." : "Continue with AI"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>

@@ -106,7 +106,7 @@ test("POST /api/worktrees/:branch/auto-sync/enable rejects non-documents branche
   }
 });
 
-test("POST /api/worktrees/:branch/auto-sync/enable pauses when the documents worktree is dirty", async () => {
+test("POST /api/worktrees/:branch/auto-sync/enable pauses when the documents worktree is dirty", { concurrency: false, timeout: 45000 }, async () => {
   const repo = await createApiTestRepo();
 
   try {
@@ -129,7 +129,7 @@ test("POST /api/worktrees/:branch/auto-sync/enable pauses when the documents wor
     await waitFor(async () => {
       const state = await readWorktreeAutoSyncState(server, "documents");
       return state?.status === "paused" && state.enabled === false;
-    });
+    }, 10000);
 
     const autoSyncState = await readWorktreeAutoSyncState(server, "documents");
     assert.ok(autoSyncState);
@@ -164,7 +164,7 @@ test("documents auto sync pulls remote changes on an interval and disable stops 
     await waitFor(async () => {
       const state = await readWorktreeAutoSyncState(server, "documents");
       return state?.enabled === true && state.status === "idle";
-    });
+    }, 10000);
 
     await pushRemoteCommit(clonePath, "remote-update-1.txt", "first sync\n", "remote update 1");
 

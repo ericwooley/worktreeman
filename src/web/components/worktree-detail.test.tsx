@@ -287,3 +287,63 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Continue with AI/);
   assert.match(markup, /The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request\./);
 });
+
+test("Review tab shows live AI output instead of the follow-up composer while AI is active", async () => {
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+    },
+    projectManagementRunningAiJobs: [{
+      jobId: "job-1",
+      worktreeId: sampleWorktree.id,
+      branch: sampleWorktree.branch,
+      worktreePath: sampleWorktree.worktreePath,
+      commandId: "smart",
+      command: "opencode run ...",
+      request: "Continue this review",
+      status: "running",
+      startedAt: "2026-03-25T12:00:00.000Z",
+      completedAt: undefined,
+      pid: 1234,
+      processName: "wtm:ai:job-1",
+      exitCode: null,
+      stdout: "Working...",
+      stderr: "",
+      error: null,
+      documentId: "doc-1",
+      origin: {
+        kind: "worktree-review",
+        label: "Review follow-up",
+        description: "Continue review activity for Dependencies",
+        location: {
+          tab: "review",
+          branch: sampleWorktree.branch,
+          worktreeId: sampleWorktree.id,
+          documentId: "doc-1",
+        },
+      },
+      outputEvents: [{
+        id: "evt-1",
+        source: "stdout",
+        text: "Working...",
+        timestamp: "2026-03-25T12:00:01.000Z",
+      }],
+    }],
+  });
+
+  assert.match(markup, /AI is active/);
+  assert.match(markup, /Follow the live output for this worktree before starting another AI follow-up\./);
+  assert.match(markup, /Worktree AI is working/);
+  assert.match(markup, /Mixed output timeline/);
+  assert.match(markup, /Cancel AI/);
+  assert.doesNotMatch(markup, /The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request\./);
+});
