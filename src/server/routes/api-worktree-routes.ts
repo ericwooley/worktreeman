@@ -573,9 +573,23 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       if (!explicitDocumentId && reviewFollowUp && reviewDocumentId) {
-        const reviewDocumentTitle = linkedDocumentId && linkedDocumentId === reviewDocumentId
-          ? worktree.linkedDocument?.title ?? `Document ${reviewDocumentId}`
-          : `Document ${reviewDocumentId}`;
+        let reviewDocumentPayload: ProjectManagementDocumentResponse | null = null;
+
+        try {
+          reviewDocumentPayload = await getProjectManagementDocument(context.repoRoot, reviewDocumentId);
+        } catch {
+          reviewDocumentPayload = null;
+        }
+
+        const reviewDocumentTitle = reviewDocumentPayload?.document.title
+          ?? (linkedDocumentId && linkedDocumentId === reviewDocumentId
+            ? worktree.linkedDocument?.title
+            : null)
+          ?? `Document ${reviewDocumentId}`;
+        const reviewDocumentSummary = reviewDocumentPayload?.document.summary
+          ?? (linkedDocumentId && linkedDocumentId === reviewDocumentId ? worktree.linkedDocument?.summary ?? null : null);
+        const reviewDocumentMarkdown = reviewDocumentPayload?.document.markdown ?? null;
+
         input = await buildReviewFollowUpRequest({
           repoRoot: context.repoRoot,
           config,
@@ -583,6 +597,8 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
           worktreePath,
           documentId: reviewDocumentId,
           documentTitle: reviewDocumentTitle,
+          documentSummary: reviewDocumentSummary,
+          documentMarkdown: reviewDocumentMarkdown,
           followUp: reviewFollowUp,
         });
       }

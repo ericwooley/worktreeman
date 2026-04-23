@@ -733,13 +733,19 @@ export async function buildReviewFollowUpRequest(options: {
   worktreePath: string;
   documentId: string;
   documentTitle: string;
+  documentSummary?: string | null;
+  documentMarkdown?: string | null;
   followUp: NonNullable<RunAiCommandRequest["reviewFollowUp"]>;
 }): Promise<string> {
   const priorLogs = (await listAiCommandLogEntries(options.repoRoot))
     .filter((entry) => entry.documentId === options.documentId)
-    .filter((entry) => entry.branch === options.branch || entry.worktreePath === options.worktreePath)
     .filter((entry) => entry.status !== "running")
     .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+
+  const originalRequest = priorLogs.find((entry) => entry.request.trim())?.request.trim()
+    || options.followUp.originalRequest.trim()
+    || options.documentSummary?.trim()
+    || options.documentTitle;
 
   const priorOutputs = priorLogs
     .map(formatReviewFollowUpLogOutput)
@@ -752,7 +758,7 @@ export async function buildReviewFollowUpRequest(options: {
       const input = buildReviewFollowUpSummaryPrompt({
         branch: options.branch,
         documentTitle: options.documentTitle,
-        originalRequest: options.followUp.originalRequest,
+        originalRequest,
         priorOutputs,
       });
       const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
@@ -792,7 +798,12 @@ export async function buildReviewFollowUpRequest(options: {
     "Use the existing worktree context and continue from the prior AI work rather than restarting from scratch.",
     "",
     "Original context:",
-    options.followUp.originalRequest.trim(),
+    originalRequest,
+    "",
+    "Linked document context:",
+    `Title: ${options.documentTitle}`,
+    `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
+    options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
     "",
     "Summary of previous AI outputs:",
     previousRunSummary,

@@ -1176,6 +1176,159 @@ test("review-origin AI runs recover follow-up context even when reviewFollowUp i
   }
 });
 
+test("review follow-up AI runs include prior outputs from other linked worktrees for the same document", { concurrency: false, timeout: 20000 }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const reviewWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-review-history-current" });
+  const priorWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-review-history-prior" });
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+
+  const linkedDocumentId = "doc-review-history";
+  await operationalState.setWorktreeDocumentLink({
+    worktreeId: reviewWorktree.id,
+    branch: reviewWorktree.branch,
+    worktreePath: reviewWorktree.worktreePath,
+    documentId: linkedDocumentId,
+  });
+  await operationalState.upsertAiCommandLogEntry({
+    fileName: "review-history-1.md",
+    jobId: "review-history-job-1",
+    timestamp: "2026-04-20T09:00:00.000Z",
+    worktreeId: priorWorktree.id,
+    branch: priorWorktree.branch,
+    documentId: linkedDocumentId,
+    commandId: "smart",
+    worktreePath: priorWorktree.worktreePath,
+    command: "printf %s 'prior run 1'",
+    request: "Original review request",
+    response: {
+      stdout: "Implemented the first draft and found two risks.",
+      stderr: "",
+    },
+    status: "completed",
+    pid: 301,
+    processName: "wtm:ai:review-history-job-1",
+    completedAt: "2026-04-20T09:02:00.000Z",
+    exitCode: 0,
+    error: null,
+    origin: {
+      kind: "worktree-review",
+      label: "Review follow-up",
+      description: "Continue review activity",
+      location: {
+        tab: "review",
+        branch: priorWorktree.branch,
+        worktreeId: priorWorktree.id,
+        documentId: linkedDocumentId,
+      },
+    },
+  });
+  await operationalState.upsertAiCommandLogEntry({
+    fileName: "review-history-2.md",
+    jobId: "review-history-job-2",
+    timestamp: "2026-04-20T11:00:00.000Z",
+    worktreeId: reviewWorktree.id,
+    branch: reviewWorktree.branch,
+    documentId: linkedDocumentId,
+    commandId: "smart",
+    worktreePath: reviewWorktree.worktreePath,
+    command: "printf %s 'prior run 2'",
+    request: "Follow up on the remaining QA concerns",
+    response: {
+      stdout: "Closed one risk but left a deployment issue unresolved.",
+      stderr: "warning output",
+    },
+    status: "completed",
+    pid: 302,
+    processName: "wtm:ai:review-history-job-2",
+    completedAt: "2026-04-20T11:03:00.000Z",
+    exitCode: 0,
+    error: null,
+    origin: {
+      kind: "worktree-review",
+      label: "Review follow-up",
+      description: "Continue review activity",
+      location: {
+        tab: "review",
+        branch: reviewWorktree.branch,
+        worktreeId: reviewWorktree.id,
+        documentId: linkedDocumentId,
+      },
+    },
+  });
+
+  let capturedPrompt = "";
+  const aiProcesses = {
+    ...createFakeAiProcesses().aiProcesses,
+    async startProcess(options: { command: string }) {
+      const match = options.command.match(/^printf %s '([\s\S]*)'$/);
+      capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
+      return {
+        name: "wtm:ai:test-review-history",
+        pid: 9996,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async getProcess() {
+      return {
+        name: "wtm:ai:test-review-history",
+        pid: 9996,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async waitForProcess() {
+      return {
+        name: "wtm:ai:test-review-history",
+        pid: 9996,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    isProcessActive(status: string | undefined) {
+      return status === "online";
+    },
+  };
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const response = await server.fetch(`/api/worktrees/${reviewWorktree.branch}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "Make sure the remaining deployment issue is fixed",
+        reviewDocumentId: linkedDocumentId,
+        reviewFollowUp: {
+          originalRequest: "temporary client fallback",
+          newRequest: "Make sure the remaining deployment issue is fixed",
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    assert.equal(capturedPrompt.includes("Original context:"), true);
+    assert.equal(capturedPrompt.includes("Original review request"), true);
+    assert.equal(capturedPrompt.includes("Linked document context:"), true);
+    assert.equal(capturedPrompt.includes("Summary of previous AI outputs:"), true);
+    assert.equal(capturedPrompt.includes("Implemented the first draft and found two risks."), true);
+    assert.equal(capturedPrompt.includes("Closed one risk but left a deployment issue unresolved."), true);
+    assert.equal(capturedPrompt.includes("warning output"), true);
+    assert.equal(capturedPrompt.includes("New follow-up request:"), true);
+    assert.equal(capturedPrompt.includes("Make sure the remaining deployment issue is fixed"), true);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("worktree AI auto-starts a runtime and stops it after completion when the runtime was created for the AI run", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
   const currentContents = await readConfigContents({

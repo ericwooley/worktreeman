@@ -309,7 +309,7 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
       worktreePath: sampleWorktree.worktreePath,
       commandId: "smart",
       command: "opencode run ...",
-      request: "Continue this review",
+      input: "Continue this review",
       status: "running",
       startedAt: "2026-03-25T12:00:00.000Z",
       completedAt: undefined,
