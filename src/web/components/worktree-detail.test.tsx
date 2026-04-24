@@ -282,18 +282,18 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Linked document/);
   assert.match(markup, /Dependencies/);
   assert.match(markup, /Track comments, AI activity, and merge events/);
-  assert.match(markup, /Add review entry/);
+  assert.match(markup, /Review entry or Smart AI command/);
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
   assert.match(markup, /Delete entry/);
-  assert.match(markup, /Smart AI command/);
-  assert.match(markup, /placeholder="Use @dowork to continue implementation or @review to review the current branch diff\."/);
+  assert.match(markup, /placeholder="Add a review note, or start with @dowork or @review\."/);
   assert.match(markup, /<code>@dowork<\/code>/);
   assert.match(markup, /<code>@review<\/code>/);
-  assert.match(markup, /Start Smart AI/);
+  assert.match(markup, /Plain text adds a review entry\./);
+  assert.match(markup, />Submit review</);
 
   const reviewEntryIndex = markup.indexOf("Casey Reviewer");
-  const addReviewEntryIndex = markup.indexOf("Add review entry");
+  const addReviewEntryIndex = markup.indexOf("Review entry or Smart AI command");
   assert.ok(reviewEntryIndex >= 0);
   assert.ok(addReviewEntryIndex > reviewEntryIndex);
 });
@@ -351,10 +351,11 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
     }],
   });
 
+  assert.match(markup, /Review entry or Smart AI command/);
   assert.match(markup, /AI is active/);
-  assert.match(markup, /Follow the live output for this worktree before starting another AI follow-up\./);
+  assert.match(markup, /You can still add review notes here\. Wait for the current AI run to finish before starting another command\./);
   assert.match(markup, /Worktree AI is working/);
   assert.match(markup, /Mixed output timeline/);
   assert.match(markup, /Cancel AI/);
-  assert.doesNotMatch(markup, /placeholder="Use @dowork to continue implementation or @review to review the current branch diff\."/);
+  assert.match(markup, /placeholder="Add a review note, or start with @dowork or @review\."/);
 });

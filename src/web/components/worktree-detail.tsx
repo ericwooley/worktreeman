@@ -989,8 +989,7 @@ export function WorktreeDetail({
 
     return projectManagementRunningAiJobs.find((job) => job.worktreeId === worktree.id || job.branch === worktree.branch) ?? null;
   }, [projectManagementRunningAiJobs, worktree]);
-  const [reviewDraft, setReviewDraft] = useState("");
-  const [reviewFollowUpDraft, setReviewFollowUpDraft] = useState("");
+  const [reviewCommandDraft, setReviewCommandDraft] = useState("");
   const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
   const [deletingReviewEntryId, setDeletingReviewEntryId] = useState<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -1460,24 +1459,26 @@ export function WorktreeDetail({
     await onLoadProjectManagementDocument(linkedDocument.id, { silent: true });
   };
 
-  const submitReviewEntry = async () => {
-    if (!linkedDocument?.id || !reviewDraft.trim()) {
+  const submitReviewCommand = async () => {
+    if (!linkedDocument?.id || !reviewCommandDraft.trim()) {
       return;
     }
 
-    const nextReview = await onAddProjectManagementReviewEntry(linkedDocument.id, { body: reviewDraft });
-    if (nextReview) {
-      setReviewDraft("");
-    }
-  };
-
-  const submitReviewFollowUp = async () => {
-    if (!linkedDocument?.id || !reviewFollowUpDraft.trim() || reviewFollowUpSubmitting) {
-      return;
-    }
-
-    const trimmedDraft = reviewFollowUpDraft.trim();
+    const trimmedDraft = reviewCommandDraft.trim();
     const parsedCommand = trimmedDraft.match(/^@(dowork|review)\b/i);
+
+    if (!parsedCommand) {
+      const nextReview = await onAddProjectManagementReviewEntry(linkedDocument.id, { body: trimmedDraft });
+      if (nextReview) {
+        setReviewCommandDraft("");
+      }
+      return;
+    }
+
+    if (reviewFollowUpSubmitting || activeReviewAiJob) {
+      return;
+    }
+
     const reviewAction = parsedCommand?.[1]?.toLowerCase() === "review" ? "review" : "implement";
     const requestText = trimmedDraft.replace(/^@(dowork|review)\b\s*/i, "").trim() || trimmedDraft;
     const latestAiRequest = [...linkedDocumentReviewEntries]
@@ -1514,7 +1515,7 @@ export function WorktreeDetail({
       });
 
       if (job) {
-        setReviewFollowUpDraft("");
+        setReviewCommandDraft("");
       }
     } finally {
       setReviewFollowUpSubmitting(false);
@@ -2375,72 +2376,48 @@ export function WorktreeDetail({
                   </div>
                 )}
 
-                <div className="theme-inline-panel p-4">
+                <div className="theme-inline-panel p-4 space-y-3">
                   <label className="block space-y-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Add review entry</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Review entry or Smart AI command</span>
                     <textarea
-                      value={reviewDraft}
-                      onChange={(event) => setReviewDraft(event.target.value)}
-                      placeholder="Add context for this worktree, call out concerns, or leave a handoff note."
+                      value={reviewCommandDraft}
+                      onChange={(event) => setReviewCommandDraft(event.target.value)}
+                      placeholder="Add a review note, or start with @dowork or @review."
                       rows={5}
                       className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
                     />
                   </label>
-                  <div className="mt-3 flex flex-wrap justify-end gap-2">
+                  <p className="text-sm theme-text-muted">
+                    Plain text adds a review entry. Use <code>@dowork</code> to continue implementation, or <code>@review</code> to run a review-only pass over the current branch diff.
+                  </p>
+                  {activeReviewAiJob ? (
+                    <div className="space-y-3 border theme-border-subtle p-3">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">AI is active</p>
+                        <p className="mt-2 text-sm theme-text-muted">
+                          You can still add review notes here. Wait for the current AI run to finish before starting another command.
+                        </p>
+                      </div>
+                      <ProjectManagementAiOutputViewer
+                        source="worktree"
+                        job={activeReviewAiJob}
+                        summary={`AI is still running in ${activeReviewAiJob.branch}. Finish or cancel this run before prompting again from Review.`}
+                        expanded
+                        onCancel={() => void onCancelProjectManagementAiCommand()}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap justify-end gap-2">
                     <button
                       type="button"
                       className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={projectManagementSaving || !reviewDraft.trim()}
-                      onClick={() => void submitReviewEntry()}
+                      disabled={projectManagementSaving || reviewFollowUpSubmitting || !reviewCommandDraft.trim()}
+                      onClick={() => void submitReviewCommand()}
                     >
-                      {projectManagementSaving ? "Saving..." : "Add review entry"}
+                      {projectManagementSaving ? "Saving..." : reviewFollowUpSubmitting ? "Starting Smart AI..." : "Submit review"}
                     </button>
                   </div>
                 </div>
-
-                {activeReviewAiJob ? (
-                  <div className="space-y-3 theme-inline-panel p-4">
-                    <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">AI is active</p>
-                      <p className="mt-2 text-sm theme-text-muted">
-                        Follow the live output for this worktree before starting another AI follow-up.
-                      </p>
-                    </div>
-                    <ProjectManagementAiOutputViewer
-                      source="worktree"
-                      job={activeReviewAiJob}
-                      summary={`AI is still running in ${activeReviewAiJob.branch}. Finish or cancel this run before prompting again from Review.`}
-                      expanded
-                      onCancel={() => void onCancelProjectManagementAiCommand()}
-                    />
-                  </div>
-                ) : (
-                  <div className="theme-inline-panel p-4">
-                    <label className="block space-y-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Smart AI command</span>
-                      <textarea
-                        value={reviewFollowUpDraft}
-                        onChange={(event) => setReviewFollowUpDraft(event.target.value)}
-                        placeholder="Use @dowork to continue implementation or @review to review the current branch diff."
-                        rows={5}
-                        className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
-                      />
-                    </label>
-                    <p className="mt-3 text-sm theme-text-muted">
-                      Use <code>@dowork</code> to keep implementing with the linked document and review history, or <code>@review</code> to run a review-only pass over the current branch diff.
-                    </p>
-                    <div className="mt-3 flex flex-wrap justify-end gap-2">
-                      <button
-                        type="button"
-                        className="matrix-button rounded-none px-3 py-2 text-sm"
-                        disabled={reviewFollowUpSubmitting || !reviewFollowUpDraft.trim()}
-                        onClick={() => void submitReviewFollowUp()}
-                      >
-                        {reviewFollowUpSubmitting ? "Starting Smart AI..." : "Start Smart AI"}
-                      </button>
-                    </div>
-                  </div>
-                )}
               </>
             )}
           </div>
