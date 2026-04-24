@@ -384,7 +384,7 @@ function useDashboardStateInternal() {
     pushNotification({ tone: "info", title, message });
   }, [pushNotification]);
 
-  const error = notifications.findLast((notification) => notification.tone === "danger")?.message ?? null;
+  const error = [...notifications].reverse().find((notification) => notification.tone === "danger")?.message ?? null;
   const setError = useCallback<Dispatch<SetStateAction<string | null>>>((value) => {
     const resolved = typeof value === "function" ? value(error) : value;
     if (!resolved) {

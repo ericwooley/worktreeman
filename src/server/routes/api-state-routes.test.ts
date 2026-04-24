@@ -275,7 +275,7 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
       method: "POST",
     });
     assert.equal(startResponse.status, 200);
-    await firstServer.close();
+    await firstServer.close({ shutdownRuntimes: false });
 
     const secondServer = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
     const stream = await openSse(`${await secondServer.url()}/api/state/stream`);
@@ -294,6 +294,33 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
       await stream.close();
       await secondServer.close();
     }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("startApiServer close tears down runtime sessions by default", { concurrency: false, timeout: 15000 }, async () => {
+  const repo = await createApiTestRepo();
+  const featureAiLogPath = path.join(repo.repoRoot, "feature-ai-log");
+  const featureAiLogId = worktreeId(featureAiLogPath);
+  const tmuxSessionName = getTmuxSessionName(repo.repoRoot, featureAiLogId);
+
+  try {
+    const server = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
+    const startResponse = await server.fetch(`/api/worktrees/${encodeURIComponent("feature-ai-log")}/runtime/start`, {
+      method: "POST",
+    });
+    assert.equal(startResponse.status, 200);
+
+    await server.close();
+
+    const operationalState = await createOperationalStateStore(repo.repoRoot);
+    const runtime = await operationalState.getRuntimeById(featureAiLogId);
+    assert.equal(runtime, null);
+
+    await assert.rejects(async () => {
+      await runCommand("tmux", ["has-session", "-t", tmuxSessionName], { cwd: featureAiLogPath });
+    });
   } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }

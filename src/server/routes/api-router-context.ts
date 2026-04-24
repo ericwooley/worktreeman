@@ -92,6 +92,7 @@ const CONFIG_COMMIT_ENV = {
 };
 
 type ManagedApiRouterContextEntry = {
+  shutdownRuntimes: () => Promise<void>;
   dispose: () => Promise<void>;
 };
 
@@ -119,19 +120,29 @@ function unregisterManagedApiRouterContext(repoRoot: string, entry: ManagedApiRo
   }
 }
 
-export async function stopManagedApiRouterContexts(repoRoot: string) {
+export async function stopManagedApiRouterContexts(repoRoot: string, options?: { shutdownRuntimes?: boolean }) {
   const entries = Array.from(managedApiRouterContextsByRepo.get(repoRoot) ?? []);
   if (entries.length === 0) {
     return;
   }
 
-  await Promise.allSettled(entries.map((entry) => entry.dispose()));
+  await Promise.allSettled(entries.map(async (entry) => {
+    if (options?.shutdownRuntimes) {
+      await entry.shutdownRuntimes();
+    }
+    await entry.dispose();
+  }));
 }
 
-export async function stopAllManagedApiRouterContexts() {
+export async function stopAllManagedApiRouterContexts(options?: { shutdownRuntimes?: boolean }) {
   const entries = Array.from(managedApiRouterContextsByRepo.values()).flatMap((repoEntries) => Array.from(repoEntries));
   managedApiRouterContextsByRepo.clear();
-  await Promise.allSettled(entries.map((entry) => entry.dispose()));
+  await Promise.allSettled(entries.map(async (entry) => {
+    if (options?.shutdownRuntimes) {
+      await entry.shutdownRuntimes();
+    }
+    await entry.dispose();
+  }));
 }
 
 export function createApiRouterContext(options: ApiRouterOptions) {
@@ -330,8 +341,25 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   void refreshGitWatchers().catch(() => undefined);
 
   let disposePromise: Promise<void> | null = null;
+  let shutdownRuntimesPromise: Promise<void> | null = null;
   const managedContextEntry: ManagedApiRouterContextEntry = {
+    shutdownRuntimes: async () => await shutdownRuntimes(),
     dispose: async () => await dispose(),
+  };
+
+  const shutdownRuntimes = async () => {
+    if (shutdownRuntimesPromise) {
+      return await shutdownRuntimesPromise;
+    }
+
+    shutdownRuntimesPromise = (async () => {
+      const runtimes = await options.operationalState.listRuntimes();
+      await Promise.allSettled(runtimes.map(async (runtime) => {
+        await stopWorktreeRuntime(runtime);
+      }));
+    })();
+
+    return await shutdownRuntimesPromise;
   };
 
   const dispose = async () => {
@@ -858,6 +886,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     passiveAiProcesses,
     shouldReconcileAiJobs,
     aiJobReadOptions,
+    shutdownRuntimes,
     dispose,
     loadCurrentConfig,
     findWorktree,

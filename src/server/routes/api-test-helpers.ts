@@ -633,7 +633,7 @@ export async function startApiServer(
     baseUrl: "http://127.0.0.1",
     fetch: apiFetch,
     url: ensureLiveBaseUrl,
-    close: async () => {
+    close: async (options?: { shutdownRuntimes?: boolean }) => {
       try {
         if (server) {
           server.closeIdleConnections?.();
@@ -646,6 +646,9 @@ export async function startApiServer(
           });
         }
       } finally {
+        if (options?.shutdownRuntimes ?? true) {
+          await apiRouter.shutdownRuntimes().catch(() => undefined);
+        }
         await apiRouter.dispose().catch(() => undefined);
         await stopRunningAiJobsForRepo(repo.repoRoot, deleteProcess).catch(() => undefined);
         await waitForActiveAiCommandJobs(repo.repoRoot, { timeoutMs: 500 });
@@ -761,7 +764,7 @@ test.afterEach(async () => {
 
   await Promise.all(repoRootsToCleanup.map(async (repoRoot) => {
     testContextRepoRoots.delete(repoRoot);
-    await stopManagedApiRouterContexts(repoRoot).catch(() => undefined);
+    await stopManagedApiRouterContexts(repoRoot, { shutdownRuntimes: true }).catch(() => undefined);
     await stopAiCommandJobManager(repoRoot);
     await stopOperationalStateStore(repoRoot);
     await stopDatabaseSocketServer(repoRoot).catch(() => undefined);
@@ -771,7 +774,7 @@ test.afterEach(async () => {
 test.after(async () => {
   const repos = Array.from(testContextRepoRoots);
   testContextRepoRoots.clear();
-  await Promise.all(repos.map((repoRoot) => stopManagedApiRouterContexts(repoRoot).catch(() => undefined)));
+  await Promise.all(repos.map((repoRoot) => stopManagedApiRouterContexts(repoRoot, { shutdownRuntimes: true }).catch(() => undefined)));
   await Promise.all(repos.map(async (repoRoot) => {
     await stopRunningAiJobsForRepo(repoRoot, deleteAiCommandProcess).catch(() => undefined);
   }));

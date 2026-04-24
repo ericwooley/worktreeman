@@ -9,12 +9,11 @@ import { DEFAULT_WORKTREEMAN_MAIN_BRANCH } from "../shared/constants.js";
 import type { WorktreeId } from "../shared/worktree-id.js";
 import { createApiRouter } from "./routes/api.js";
 import { loadConfig } from "./services/config-service.js";
-import { stopAllBackgroundCommandsForShutdown } from "./services/background-command-service.js";
 import { waitForActiveAiCommandJobs } from "./services/ai-command-service.js";
 import { listWorktrees } from "./services/git-service.js";
 import { createOperationalStateStore, stopOperationalStateStore } from "./services/operational-state-service.js";
 import { rebuildProjectManagementStateForStartup } from "./services/project-management-service.js";
-import { createTerminalService, ensureTerminalSession, killTmuxSession } from "./services/terminal-service.js";
+import { createTerminalService, ensureTerminalSession } from "./services/terminal-service.js";
 import { formatServerUrl, resolveServerHost } from "./utils/server-host.js";
 import { formatDurationMs, logServerEvent } from "./utils/server-logger.js";
 import type { RepoContext } from "./utils/paths.js";
@@ -254,36 +253,7 @@ export async function startServer(options: StartServerOptions): Promise<{ port: 
         return [];
       });
       if (activeRuntimes.length > 0) {
-        logInfo(`[shutdown] Stopping ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"}...`);
-      }
-
-      for (const runtime of activeRuntimes) {
-        logInfo(`[shutdown] Stopping runtime ${runtime.branch}...`);
-
-        try {
-          logInfo(`[shutdown] stopping background commands for ${runtime.branch}...`);
-          await stopAllBackgroundCommandsForShutdown(options.repo.repoRoot, runtime);
-        } catch (error) {
-          logError(
-            `[shutdown] Failed to stop background commands for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-
-        try {
-          logInfo(`[shutdown] killing tmux session for ${runtime.branch}...`);
-          await killTmuxSession(runtime);
-        } catch (error) {
-          logError(
-            `[shutdown] Failed to stop tmux session for ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-
-        await operationalState.deleteRuntimeById(runtime.id).catch((error) => {
-          logError(
-            `[shutdown] Failed to delete runtime ${runtime.branch}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          return null;
-        });
+        logInfo(`[shutdown] Preserving ${activeRuntimes.length} active runtime${activeRuntimes.length === 1 ? "" : "s"} for restart.`);
       }
 
       if (terminalService) {
