@@ -497,6 +497,12 @@ export function addProjectManagementReviewEntry(
   });
 }
 
+export function deleteProjectManagementReviewEntry(documentId: string, reviewEntryId: string): Promise<void> {
+  return request<void>(`/api/project-management/documents/${encodeURIComponent(documentId)}/review/${encodeURIComponent(reviewEntryId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function appendProjectManagementBatch(
   payload: AppendProjectManagementBatchRequest,
 ): Promise<ProjectManagementBatchResponse> {

@@ -45,7 +45,6 @@ const sampleLogSummary: AiCommandLogSummary = {
   documentId: "doc-8",
   commandId: "simple",
   worktreePath: "/repo/.worktrees/feature-ai-log",
-  command: "runner --fast $WTM_AI_INPUT",
   requestPreview: "Summarize the implementation plan.",
   status: "completed",
   pid: 3131,

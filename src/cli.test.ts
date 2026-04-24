@@ -397,3 +397,13 @@ test("worktreeman api dev commands manage runtime and filter logs", async () => 
   assert.equal(killTmuxSessionByName.mock.calls.length, 0);
   assert.equal(getBackgroundCommandLogs.mock.calls.length, 2);
 });
+
+test("AI local helper instructions use repo-local npx package invocation", async () => {
+  const { buildAiLocalHelperInstructions } = await import("./server/routes/api-helpers.js");
+
+  const instructions = buildAiLocalHelperInstructions().join("\n");
+
+  assert.equal(instructions.includes("npx -y --package file:. worktreeman api"), true);
+  assert.equal(instructions.includes("current checked-out worktree code instead of a published package"), true);
+  assert.equal(instructions.includes("npx -y worktreeman api"), false);
+});

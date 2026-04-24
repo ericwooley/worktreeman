@@ -644,6 +644,11 @@ export interface RunAiCommandRequest {
   reviewDocumentId?: string;
   commandId?: AiCommandId;
   origin?: AiCommandOrigin | null;
+  reviewAction?: "implement" | "review";
+  reviewFollowUp?: {
+    originalRequest: string;
+    newRequest: string;
+  };
 }
 
 export interface RunProjectManagementDocumentAiRequest {
@@ -655,7 +660,7 @@ export interface RunProjectManagementDocumentAiRequest {
   worktreeName?: string;
 }
 
-export type AiCommandOriginTab = "environment" | "git" | "project-management";
+export type AiCommandOriginTab = "environment" | "git" | "project-management" | "review";
 
 export type AiCommandOriginEnvironmentSubTab = "terminal" | "background";
 
@@ -663,6 +668,7 @@ export type AiCommandOriginProjectManagementSubTab = "document" | "review" | "bo
 
 export type AiCommandOriginKind =
   | "worktree-environment"
+  | "worktree-review"
   | "project-management-document"
   | "project-management-document-run"
   | "git-conflict-resolution";
@@ -745,7 +751,6 @@ export interface AiCommandLogSummary {
   documentId?: string | null;
   commandId: AiCommandId;
   worktreePath: string;
-  command: string;
   requestPreview: string;
   status: AiCommandLogStatus;
   pid?: number | null;
@@ -776,6 +781,9 @@ export interface AiCommandLogEntry {
   completedAt?: string;
   error: AiCommandLogError | null;
   origin?: AiCommandOrigin | null;
+  historySummary?: string | null;
+  historySummaryGeneratedAt?: string;
+  historySummarySourceHash?: string | null;
 }
 
 export interface AiCommandLogsResponse {

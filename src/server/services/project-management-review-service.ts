@@ -25,6 +25,7 @@ interface PersistedProjectManagementReviewRow {
   updated_at: string;
   author_name: string;
   author_email: string;
+  deleted_at: string | null;
 }
 
 const projectManagementReviewDbState = new Map<string, { db: ManagedDatabaseClient; ready: Promise<void> }>();
@@ -90,11 +91,19 @@ async function getProjectManagementReviewDb(repoRoot: string) {
         created_at timestamptz not null,
         updated_at timestamptz not null,
         author_name text not null,
-        author_email text not null
+        author_email text not null,
+        deleted_at timestamptz
       );
+
+      alter table ${PROJECT_MANAGEMENT_REVIEWS_TABLE}
+        add column if not exists deleted_at timestamptz;
 
       create index if not exists project_management_review_entries_document_idx
         on ${PROJECT_MANAGEMENT_REVIEWS_TABLE} (document_id, created_at, id);
+
+      create index if not exists project_management_review_entries_active_document_idx
+        on ${PROJECT_MANAGEMENT_REVIEWS_TABLE} (document_id, created_at, id)
+        where deleted_at is null;
     `);
     projectManagementReviewDbState.set(repoRoot, { db, ready });
   }
@@ -136,8 +145,10 @@ export async function listProjectManagementReviews(repoRoot: string): Promise<Pr
       created_at::text,
       updated_at::text,
       author_name,
-      author_email
+      author_email,
+      deleted_at::text
     from ${PROJECT_MANAGEMENT_REVIEWS_TABLE}
+    where deleted_at is null
     order by document_id asc, created_at asc, id asc
   `);
 
@@ -214,6 +225,35 @@ export async function addProjectManagementReviewEntry(
       author.email,
     ],
   );
+
+  return getProjectManagementDocumentReview(repoRoot, documentId);
+}
+
+export async function deleteProjectManagementReviewEntry(
+  repoRoot: string,
+  documentId: string,
+  reviewEntryId: string,
+): Promise<ProjectManagementDocumentReviewResponse> {
+  await assertKnownProjectManagementDocument(repoRoot, documentId);
+  const db = await getProjectManagementReviewDb(repoRoot);
+  const now = new Date().toISOString();
+
+  const result = await db.query<{ id: string }>(
+    `
+      update ${PROJECT_MANAGEMENT_REVIEWS_TABLE}
+      set deleted_at = $3,
+          updated_at = $3
+      where document_id = $1
+        and id = $2
+        and deleted_at is null
+      returning id
+    `,
+    [documentId, reviewEntryId, now],
+  );
+
+  if (!result.rows.length) {
+    throw new Error(`Unknown project management review entry ${reviewEntryId}.`);
+  }
 
   return getProjectManagementDocumentReview(repoRoot, documentId);
 }

@@ -418,8 +418,12 @@ export async function deleteBranch(repoRoot: string, branch: string): Promise<vo
   await runCommand("git", ["branch", "-D", branch], { cwd: repoRoot });
 }
 
-export async function getWorktreeDeletionState(repoRoot: string, worktree: WorktreeRecord): Promise<WorktreeDeletionState> {
-  const defaultBranch = parseGitBranchName(await resolveDefaultBranch(repoRoot));
+export async function getWorktreeDeletionState(
+  repoRoot: string,
+  worktree: WorktreeRecord,
+  cachedDefaultBranch?: string,
+): Promise<WorktreeDeletionState> {
+  const defaultBranch = parseGitBranchName(cachedDefaultBranch ?? (await resolveDefaultBranch(repoRoot)));
   const rootWorktreePath = path.resolve(repoRoot);
   const targetWorktreePath = path.resolve(worktree.worktreePath);
   const defaultBranchWorktreePath = path.resolve(repoRoot, sanitizeBranchName(defaultBranch));
@@ -429,16 +433,12 @@ export async function getWorktreeDeletionState(repoRoot: string, worktree: Workt
   const isDefaultWorktree = targetWorktreePath === rootWorktreePath
     || targetWorktreePath === defaultBranchWorktreePath
     || targetWorktreePath === primaryMainWorktreePath;
-  const summary = await getWorkingTreeSummary(worktree.worktreePath);
+  const [summary, aheadBehind] = await Promise.all([
+    getWorkingTreeSummary(worktree.worktreePath),
+    getAheadBehindCounts(repoRoot, worktree.branch, defaultBranch).catch(() => ({ ahead: 0, behind: 0 })),
+  ]);
   const hasLocalChanges = summary.dirty;
-
-  let hasUnmergedCommits = false;
-  try {
-    const comparison = await getGitComparison(repoRoot, worktree.branch, defaultBranch);
-    hasUnmergedCommits = comparison.ahead > 0;
-  } catch {
-    hasUnmergedCommits = false;
-  }
+  const hasUnmergedCommits = aheadBehind.ahead > 0;
 
   const requiresConfirmation = hasLocalChanges || hasUnmergedCommits;
 
@@ -619,7 +619,7 @@ function parseCommitLines(stdout: string): GitCompareCommit[] {
     });
 }
 
-async function resolveDefaultBranch(repoRoot: string): Promise<string> {
+export async function resolveDefaultBranch(repoRoot: string): Promise<string> {
   try {
     const { stdout } = await runCommand("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: repoRoot });
     const branch = parseGitBranchName(stdout);
@@ -658,6 +658,39 @@ async function gitRefHasCommit(repoRoot: string, ref: string): Promise<boolean> 
     return true;
   } catch {
     return false;
+  }
+}
+
+export async function getAheadBehindCounts(
+  repoRoot: string,
+  compareBranch: string,
+  baseBranch: string,
+): Promise<{ ahead: number; behind: number }> {
+  const normalizedCompareBranch = parseGitBranchName(compareBranch);
+  const normalizedBaseBranch = parseGitBranchName(baseBranch);
+  const [baseHasCommit, compareHasCommit] = await Promise.all([
+    gitRefHasCommit(repoRoot, normalizedBaseBranch),
+    gitRefHasCommit(repoRoot, normalizedCompareBranch),
+  ]);
+  if (!compareHasCommit) return { ahead: 0, behind: 0 };
+  if (!baseHasCommit) {
+    try {
+      const { stdout } = await runCommand("git", ["rev-list", "--count", normalizedCompareBranch], { cwd: repoRoot });
+      return { ahead: Number(stdout.trim() || 0), behind: 0 };
+    } catch {
+      return { ahead: 0, behind: 0 };
+    }
+  }
+  try {
+    const { stdout } = await runCommand(
+      "git",
+      ["rev-list", "--left-right", "--count", `${normalizedBaseBranch}...${normalizedCompareBranch}`],
+      { cwd: repoRoot },
+    );
+    const [behindRaw, aheadRaw] = stdout.trim().split(/\s+/);
+    return { ahead: Number(aheadRaw ?? 0), behind: Number(behindRaw ?? 0) };
+  } catch {
+    return { ahead: 0, behind: 0 };
   }
 }
 

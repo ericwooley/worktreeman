@@ -109,8 +109,21 @@ async function getAheadBehind(worktreePath: string, remote: string, branch: stri
 export function createAutoSyncService(options: AutoSyncServiceOptions) {
   const intervalMs = options.intervalMs ?? 30_000;
   const inFlight = new Set<WorktreeId>();
-  let interval: NodeJS.Timeout | null = null;
+  const inFlightTicks = new Set<Promise<void>>();
+  let timer: NodeJS.Timeout | null = null;
   let disposed = false;
+
+  const readCurrentState = async (
+    worktree: Pick<WorktreeRecord, "id" | "branch" | "worktreePath">,
+    config: AutoSyncConfig,
+    fallback?: Partial<WorktreeAutoSyncState>,
+  ) => {
+    const stored = await options.operationalState.getAutoSyncById(worktree.id);
+    return createState(worktree, config, {
+      ...fallback,
+      ...stored,
+    });
+  };
 
   const persistState = async (state: WorktreeAutoSyncState, emitGitRefresh = false) => {
     await options.operationalState.setAutoSync(state);
@@ -120,6 +133,12 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
     }
     options.emitStateRefresh();
   };
+
+  const readLatestPersistedState = async (
+    worktree: Pick<WorktreeRecord, "id" | "branch" | "worktreePath">,
+    config: AutoSyncConfig,
+    fallback?: Partial<WorktreeAutoSyncState>,
+  ) => await readCurrentState(worktree, config, fallback);
 
   const disableWithState = async (
     worktree: Pick<WorktreeRecord, "id" | "branch" | "worktreePath">,
@@ -146,23 +165,29 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
 
     inFlight.add(worktree.id);
     try {
-      if (!currentState.enabled) {
+      const baseState = await readCurrentState(worktree, config, currentState);
+      if (!baseState.enabled) {
         return;
       }
 
       const checkedOutBranch = await getCurrentBranch(worktree.worktreePath);
+      const stateBeforeRun = await readCurrentState(worktree, config, baseState);
+      if (!stateBeforeRun.enabled) {
+        return;
+      }
+
       if (checkedOutBranch !== DOCUMENTS_BRANCH || worktree.branch !== DOCUMENTS_BRANCH) {
         await disableWithState(worktree, config, {
           branch: checkedOutBranch,
           message: "Auto sync stopped because this worktree is no longer on the documents branch.",
-          sshAgentStatus: currentState.sshAgentStatus,
+          sshAgentStatus: stateBeforeRun.sshAgentStatus,
         });
         return;
       }
 
       const startedAt = new Date().toISOString();
       await persistState({
-        ...currentState,
+        ...stateBeforeRun,
         branch: checkedOutBranch,
         worktreePath: worktree.worktreePath,
         remote: config.remote,
@@ -176,7 +201,7 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
         await disableWithState(worktree, config, {
           lastRunAt: startedAt,
           lastErrorAt: startedAt,
-          sshAgentStatus: currentState.sshAgentStatus,
+          sshAgentStatus: baseState.sshAgentStatus,
           message: "Auto sync paused because this worktree has local changes. Commit, stash, or clean the worktree before re-enabling it.",
         });
         return;
@@ -216,8 +241,13 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
         pushedAt = new Date().toISOString();
       }
 
+      const latestState = await readLatestPersistedState(worktree, config, baseState);
+      if (!latestState.enabled) {
+        return;
+      }
+
       await persistState({
-        ...currentState,
+        ...latestState,
         branch: checkedOutBranch,
         worktreePath: worktree.worktreePath,
         enabled: true,
@@ -229,10 +259,15 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
           : "Documents branch is already up to date.",
         lastRunAt: startedAt,
         lastSuccessAt: new Date().toISOString(),
-        lastPulledAt: pulledAt ?? currentState.lastPulledAt,
-        lastPushedAt: pushedAt ?? currentState.lastPushedAt,
+        lastPulledAt: pulledAt ?? baseState.lastPulledAt,
+        lastPushedAt: pushedAt ?? baseState.lastPushedAt,
       }, true);
     } catch (error) {
+      const latestState = await options.operationalState.getAutoSyncById(worktree.id).catch(() => null);
+      if (latestState && !latestState.enabled && latestState.status === "disabled") {
+        return;
+      }
+
       const timestamp = new Date().toISOString();
       const message = error instanceof Error ? error.message : String(error);
       await disableWithState(worktree, config, {
@@ -280,19 +315,39 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
     }));
   };
 
+  const scheduleNextTick = () => {
+    if (disposed || timer) {
+      return;
+    }
+
+    timer = setTimeout(() => {
+      timer = null;
+      scheduleTick();
+    }, intervalMs);
+  };
+
   const scheduleTick = () => {
     if (disposed) {
       return;
     }
 
-    Promise.resolve(tick()).catch((error) => {
-      logServerEvent("auto-sync", "tick-failed", {
-        error: error instanceof Error ? error.message : String(error),
-      }, "error");
-    });
+    const pendingTick = Promise.resolve(tick())
+      .catch((error) => {
+        if (disposed) {
+          return;
+        }
+
+        logServerEvent("auto-sync", "tick-failed", {
+          error: error instanceof Error ? error.message : String(error),
+        }, "error");
+      })
+      .finally(() => {
+        inFlightTicks.delete(pendingTick);
+        scheduleNextTick();
+      });
+    inFlightTicks.add(pendingTick);
   };
 
-  interval = setInterval(scheduleTick, intervalMs);
   scheduleTick();
 
   return {
@@ -309,7 +364,7 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
       });
       await persistState(state);
       await syncWorktree(worktree, state, config);
-      return state;
+      return await readCurrentState(worktree, config, state);
     },
     async disable(worktree: WorktreeRecord) {
       const config = (await options.loadCurrentConfig()).autoSync;
@@ -336,9 +391,13 @@ export function createAutoSyncService(options: AutoSyncServiceOptions) {
     },
     async dispose() {
       disposed = true;
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+
+      if (inFlightTicks.size > 0) {
+        await Promise.allSettled([...inFlightTicks]);
       }
     },
   };

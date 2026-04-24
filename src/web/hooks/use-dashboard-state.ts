@@ -1,4 +1,4 @@
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type {
   AddProjectManagementReviewEntryRequest,
   AiCommandLogEntry,
@@ -55,6 +55,7 @@ import {
   getProjectManagementDocumentReview as fetchProjectManagementDocumentReview,
   getProjectManagementHistory as fetchProjectManagementHistory,
   getProjectManagementReviews as fetchProjectManagementReviews,
+  deleteProjectManagementReviewEntry as deleteProjectManagementReviewEntryRequest,
   listProjectManagementDocuments as fetchProjectManagementDocuments,
   getProjectManagementUsers as fetchProjectManagementUsers,
   getConfigDocument as fetchConfigDocument,
@@ -97,6 +98,36 @@ import {
 import { useAiCommandLogStream } from "./useAiCommandLogStream";
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 15000;
+export const DASHBOARD_NOTIFICATION_AUTO_DISMISS_MS = 30_000;
+const DASHBOARD_NOTIFICATION_STACK_LIMIT = 6;
+
+export type DashboardNotificationTone = "danger" | "warning" | "success" | "info";
+
+export type DashboardNotification = {
+  id: string;
+  tone: DashboardNotificationTone;
+  title: string;
+  message: string;
+  createdAt: string;
+};
+
+type DashboardNotificationInput = {
+  tone: DashboardNotificationTone;
+  title: string;
+  message: string;
+};
+
+export function appendDashboardNotification(
+  current: DashboardNotification[],
+  notification: DashboardNotification,
+  maxItems = DASHBOARD_NOTIFICATION_STACK_LIMIT,
+) {
+  return [...current, notification].slice(-maxItems);
+}
+
+export function dismissDashboardNotification(current: DashboardNotification[], notificationId: string) {
+  return current.filter((notification) => notification.id !== notificationId);
+}
 
 type DashboardStateValue = ReturnType<typeof useDashboardStateInternal>;
 
@@ -119,7 +150,6 @@ function toAiCommandLogSummary(log: AiCommandLogEntry): AiCommandLogSummary {
     sessionId: log.sessionId ?? null,
     origin: log.origin ?? null,
     worktreePath: log.worktreePath,
-    command: log.command,
     requestPreview: toAiCommandRequestPreview(log.request),
     status: log.status,
     pid: log.pid ?? null,
@@ -164,7 +194,7 @@ function applyDashboardEventsStreamEvent(options: {
   setAiCommandLogDetail: React.Dispatch<React.SetStateAction<AiCommandLogEntry | null>>;
   getTrackedAiCommandLogJobId: () => string | null;
   clearTrackedAiCommandLogSubscription: () => void;
-  setError: React.Dispatch<React.SetStateAction<string | null>>;
+  setError: Dispatch<SetStateAction<string | null>>;
 }) {
   const timestamp = new Date().toISOString();
   const {
@@ -275,7 +305,7 @@ export type CommitChangesPayload = {
 function useDashboardStateInternal() {
   const [state, setState] = useState<ApiStateResponse | null>(null);
   const [stateStreamConnected, setStateStreamConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<DashboardNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoadedInitialState, setHasLoadedInitialState] = useState(false);
   const [busyBranch, setBusyBranch] = useState<string | null>(null);
@@ -315,10 +345,53 @@ function useDashboardStateInternal() {
   const [projectManagementError, setProjectManagementError] = useState<string | null>(null);
   const [projectManagementLastUpdatedAt, setProjectManagementLastUpdatedAt] = useState<string | null>(null);
   const [projectManagementSaving, setProjectManagementSaving] = useState(false);
+  const notificationCountRef = useRef(0);
   const aiCommandSubscriptionRef = useRef<(() => void) | null>(null);
   const projectManagementDocumentAiSubscriptionRef = useRef<(() => void) | null>(null);
   const trackedAiCommandBranchRef = useRef<string | null>(null);
   const trackedProjectManagementDocumentAiBranchRef = useRef<string | null>(null);
+
+  const pushNotification = useCallback((input: DashboardNotificationInput) => {
+    notificationCountRef.current += 1;
+    const notification: DashboardNotification = {
+      id: `dashboard-notification-${notificationCountRef.current}`,
+      createdAt: new Date().toISOString(),
+      ...input,
+    };
+
+    setNotifications((current) => appendDashboardNotification(current, notification));
+    return notification;
+  }, []);
+
+  const dismissNotification = useCallback((notificationId: string) => {
+    setNotifications((current) => dismissDashboardNotification(current, notificationId));
+  }, []);
+
+  const notifyRequestFailure = useCallback((message: string, title = "Request failed") => {
+    pushNotification({ tone: "danger", title, message });
+  }, [pushNotification]);
+
+  const notifyRequestWarning = useCallback((message: string, title = "Check this request") => {
+    pushNotification({ tone: "warning", title, message });
+  }, [pushNotification]);
+
+  const notifyRequestSuccess = useCallback((message: string, title = "Saved") => {
+    pushNotification({ tone: "success", title, message });
+  }, [pushNotification]);
+
+  const notifyRequestInfo = useCallback((message: string, title = "Request started") => {
+    pushNotification({ tone: "info", title, message });
+  }, [pushNotification]);
+
+  const error = [...notifications].reverse().find((notification) => notification.tone === "danger")?.message ?? null;
+  const setError = useCallback<Dispatch<SetStateAction<string | null>>>((value) => {
+    const resolved = typeof value === "function" ? value(error) : value;
+    if (!resolved) {
+      return;
+    }
+
+    notifyRequestFailure(resolved);
+  }, [error, notifyRequestFailure]);
 
   useEffect(() => subscribeToDashboardEvents(
     (event) => {
@@ -716,7 +789,12 @@ function useDashboardStateInternal() {
           if (documentId) {
             void loadProjectManagementDocumentsState({ silent: true });
           }
-          setError(null);
+          notifyRequestSuccess(
+            documentId
+              ? `Created ${branch} and linked it to the selected document.`
+              : `Created ${branch}.`,
+            "Worktree created",
+          );
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to create worktree.");
         } finally {
@@ -727,7 +805,12 @@ function useDashboardStateInternal() {
         setBusyBranch(branch);
         try {
           await deleteWorktree(branch, payload);
-          setError(null);
+          notifyRequestSuccess(
+            payload?.deleteBranch
+              ? `Removed ${branch} and deleted its branch.`
+              : `Removed ${branch}.`,
+            "Worktree removed",
+          );
         } catch (err) {
           const message = err instanceof Error ? err.message : "Failed to delete worktree.";
           setError(message);
@@ -740,7 +823,7 @@ function useDashboardStateInternal() {
         setBusyBranch(branch);
         try {
           await startRuntime(branch);
-          setError(null);
+          notifyRequestSuccess(`Started the runtime for ${branch}.`, "Runtime started");
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to start runtime.");
         } finally {
@@ -751,7 +834,7 @@ function useDashboardStateInternal() {
         setBusyBranch(branch);
         try {
           await stopRuntime(branch);
-          setError(null);
+          notifyRequestSuccess(`Stopped the runtime for ${branch}.`, "Runtime stopped");
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to stop runtime.");
         } finally {
@@ -763,7 +846,12 @@ function useDashboardStateInternal() {
         try {
           const result: EnvSyncResponse = await syncEnvFiles(branch);
           setLastEnvSync({ branch, copiedFiles: result.copiedFiles });
-          setError(null);
+          notifyRequestSuccess(
+            result.copiedFiles.length > 0
+              ? `Copied ${result.copiedFiles.length} env file${result.copiedFiles.length === 1 ? "" : "s"} into ${branch}.`
+              : `No matching env files were found for ${branch}.`,
+            "Env sync finished",
+          );
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to sync env files.");
         } finally {
@@ -787,7 +875,7 @@ function useDashboardStateInternal() {
         try {
           const commands = await startBackgroundProcess(branch, commandName);
           setBackgroundCommands(commands);
-          setError(null);
+          notifyRequestSuccess(`Started ${commandName} in ${branch}.`, "Background command started");
           return commands;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to start background command.");
@@ -801,7 +889,7 @@ function useDashboardStateInternal() {
         try {
           const commands = await stopBackgroundProcess(branch, commandName);
           setBackgroundCommands(commands);
-          setError(null);
+          notifyRequestSuccess(`Stopped ${commandName} in ${branch}.`, "Background command stopped");
           return commands;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to stop background command.");
@@ -815,7 +903,7 @@ function useDashboardStateInternal() {
         try {
           const commands = await restartBackgroundProcess(branch, commandName);
           setBackgroundCommands(commands);
-          setError(null);
+          notifyRequestSuccess(`Restarted ${commandName} in ${branch}.`, "Background command restarted");
           return commands;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to restart background command.");
@@ -874,7 +962,10 @@ function useDashboardStateInternal() {
         try {
           const comparison = await mergeGitBranchRequest(compareBranch, baseBranch ? { baseBranch } : undefined);
           setGitComparison(comparison);
-          setError(null);
+          notifyRequestSuccess(
+            `Merged ${compareBranch} into ${baseBranch ?? comparison.baseBranch}.`,
+            "Branch merged",
+          );
           return comparison;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to merge branch.");
@@ -892,7 +983,7 @@ function useDashboardStateInternal() {
           });
           const comparison = await fetchGitComparison(branch, baseBranch);
           setGitComparison((current) => areGitComparisonsEqual(current, comparison) ? current : comparison);
-          setError(null);
+          notifyRequestSuccess(`Merged ${baseBranch} into ${branch}.`, "Base branch merged");
           return comparison;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to merge base branch into worktree.");
@@ -906,7 +997,7 @@ function useDashboardStateInternal() {
         try {
           const comparison = await resolveGitMergeConflictsRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
           setGitComparison(comparison);
-          setError(null);
+          notifyRequestSuccess(`Applied AI merge-conflict resolution for ${branch}.`, "Conflicts resolved");
           return comparison;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to resolve merge conflicts.");
@@ -918,7 +1009,7 @@ function useDashboardStateInternal() {
       async generateGitCommitMessage(branch: string, baseBranch?: string, commandId: AiCommandId = "simple"): Promise<GenerateGitCommitMessageResponse | null> {
         try {
           const result = await generateGitCommitMessageRequest(branch, baseBranch ? { baseBranch, commandId } : { commandId });
-          setError(null);
+          notifyRequestSuccess(`Generated a commit message suggestion for ${branch}.`, "Commit message ready");
           return result;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to generate commit message.");
@@ -933,7 +1024,7 @@ function useDashboardStateInternal() {
         try {
           const result = await commitGitChangesRequest(branch, payload ?? {});
           setGitComparison(result.comparison);
-          setError(null);
+          notifyRequestSuccess(`Committed changes on ${branch}.`, "Changes committed");
           return result;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to commit changes.");
@@ -966,7 +1057,7 @@ function useDashboardStateInternal() {
         try {
           const document = await persistConfigDocument(contents);
           setConfigDocument(document);
-          setError(null);
+          notifyRequestSuccess(`Saved ${document.filePath}.`, "Config saved");
           return document;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to save config document.");
@@ -999,7 +1090,7 @@ function useDashboardStateInternal() {
         try {
           const settings = await persistAiCommandSettings(payload);
           setAiCommandSettings(settings);
-          setError(null);
+          notifyRequestSuccess("Saved the AI command settings.", "AI settings saved");
           return settings;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to save AI command settings.");
@@ -1032,7 +1123,7 @@ function useDashboardStateInternal() {
         try {
           const settings = await persistAutoSyncSettings(payload);
           setAutoSyncSettings(settings);
-          setError(null);
+          notifyRequestSuccess("Saved the auto sync settings.", "Auto sync settings saved");
           return settings;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to save auto sync settings.");
@@ -1069,7 +1160,7 @@ function useDashboardStateInternal() {
         setBusyBranch(branch);
         try {
           const result = await enableAutoSyncRequest(branch);
-          setError(null);
+          notifyRequestSuccess(`Enabled auto sync for ${branch}.`, "Auto sync enabled");
           return result;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to enable auto sync.");
@@ -1082,7 +1173,7 @@ function useDashboardStateInternal() {
         setBusyBranch(branch);
         try {
           const result = await disableAutoSyncRequest(branch);
-          setError(null);
+          notifyRequestSuccess(`Disabled auto sync for ${branch}.`, "Auto sync disabled");
           return result;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to disable auto sync.");
@@ -1095,7 +1186,7 @@ function useDashboardStateInternal() {
         setBusyBranch(branch);
         try {
           const result = await runAutoSyncRequest(branch);
-          setError(null);
+          notifyRequestInfo(`Started an auto sync run for ${branch}.`, "Auto sync started");
           return result;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to run auto sync.");
@@ -1115,7 +1206,7 @@ function useDashboardStateInternal() {
             void loadProjectManagementDocumentsState({ silent: true });
             void loadProjectManagementReviewsState({ silent: true });
           }
-          setError(null);
+          notifyRequestInfo(`Started ${result.job.commandId} AI work on ${branch}.`, "AI request started");
           return result.job;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to run AI command.");
@@ -1131,7 +1222,8 @@ function useDashboardStateInternal() {
           upsertRunningAiJob(result.job);
           trackProjectManagementDocumentAiJob(result.job.branch);
           void loadProjectManagementDocumentsState({ silent: true });
-          setError(null);
+          void loadProjectManagementReviewsState({ silent: true });
+          notifyRequestInfo(`Started project-management AI work for ${documentId}.`, "AI request started");
           return result;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to run project management AI command.");
@@ -1145,7 +1237,7 @@ function useDashboardStateInternal() {
           setProjectManagementDocumentAiRunningBranch(result.job.status === "running" ? branch : null);
           upsertRunningAiJob(result.job);
           applyAiCommandLogsPayload(await fetchAiCommandLogs());
-          setError(null);
+          notifyRequestSuccess(`Cancelled the project-management AI run for ${branch}.`, "AI request cancelled");
           return result.job;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to cancel project management AI command.");
@@ -1159,7 +1251,7 @@ function useDashboardStateInternal() {
           setAiCommandRunningBranch(result.job.status === "running" ? branch : null);
           upsertRunningAiJob(result.job);
           applyAiCommandLogsPayload(await fetchAiCommandLogs());
-          setError(null);
+          notifyRequestSuccess(`Cancelled the AI run for ${branch}.`, "AI request cancelled");
           return result.job;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to cancel AI command.");
@@ -1183,7 +1275,7 @@ function useDashboardStateInternal() {
           ]);
           setProjectManagementHistory(history.history);
           setProjectManagementDocumentReview(review.review);
-          setError(null);
+          notifyRequestSuccess(`Created project document ${response.document.title}.`, "Document created");
           return response.document;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to create project management document.");
@@ -1197,7 +1289,7 @@ function useDashboardStateInternal() {
         try {
           const response = await updateProjectManagementDocumentRequest(documentId, payload);
           applyProjectManagementSummary(response.document);
-          setError(null);
+          notifyRequestSuccess(`Updated ${response.document.title}.`, "Document saved");
           return projectManagementDocument?.id === documentId
             ? await loadProjectManagementDocumentState(documentId, { silent: true })
             : null;
@@ -1213,7 +1305,7 @@ function useDashboardStateInternal() {
         try {
           const response = await updateProjectManagementDependenciesRequest(documentId, payload);
           applyProjectManagementSummary(response.document);
-          setError(null);
+          notifyRequestSuccess(`Updated dependencies for ${response.document.title}.`, "Dependencies saved");
           return projectManagementDocument?.id === documentId
             ? await loadProjectManagementDocumentState(documentId, { silent: true })
             : null;
@@ -1229,7 +1321,7 @@ function useDashboardStateInternal() {
         try {
           const response = await updateProjectManagementDocumentRequest(documentId, { status: payload.status });
           applyProjectManagementSummary(response.document);
-          setError(null);
+          notifyRequestSuccess(`Set ${response.document.title} to ${response.document.status}.`, "Status updated");
           return null;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management status.");
@@ -1272,7 +1364,7 @@ function useDashboardStateInternal() {
           await appendProjectManagementBatchRequest({ entries });
           await loadProjectManagementDocumentsState({ silent: true });
 
-          setError(null);
+          notifyRequestSuccess(`Updated ${uniqueDocumentIds.length} project document${uniqueDocumentIds.length === 1 ? "" : "s"}.`, "Batch update saved");
           return true;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management documents.");
@@ -1297,11 +1389,50 @@ function useDashboardStateInternal() {
             };
           });
           setProjectManagementLastUpdatedAt(new Date().toISOString());
-          setError(null);
+          notifyRequestSuccess(`Added a review entry to ${documentId}.`, "Review updated");
           return response.review;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to add project management review entry.");
           return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async deleteProjectManagementReviewEntry(documentId: string, reviewEntryId: string) {
+        setProjectManagementSaving(true);
+        try {
+          await deleteProjectManagementReviewEntryRequest(documentId, reviewEntryId);
+          setProjectManagementDocumentReview((current) => {
+            if (!current || current.documentId !== documentId) {
+              return current;
+            }
+
+            return {
+              ...current,
+              entries: current.entries.filter((entry) => entry.id !== reviewEntryId),
+            };
+          });
+          setProjectManagementReviews((current) => {
+            if (!current) {
+              return current;
+            }
+
+            return {
+              ...current,
+              reviews: current.reviews.map((entry) => entry.documentId === documentId
+                ? {
+                    ...entry,
+                    entries: entry.entries.filter((reviewEntry) => reviewEntry.id !== reviewEntryId),
+                  }
+                : entry),
+            };
+          });
+          setProjectManagementLastUpdatedAt(new Date().toISOString());
+          notifyRequestSuccess(`Deleted review entry ${reviewEntryId}.`, "Review entry deleted");
+          return true;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to delete project management review entry.");
+          return false;
         } finally {
           setProjectManagementSaving(false);
         }
@@ -1313,7 +1444,7 @@ function useDashboardStateInternal() {
           setProjectManagementUsers(response);
           setProjectManagementError(null);
           setProjectManagementLastUpdatedAt(new Date().toISOString());
-          setError(null);
+          notifyRequestSuccess("Saved the project management user settings.", "Users updated");
           return response;
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to update project management users.");
@@ -1368,6 +1499,8 @@ function useDashboardStateInternal() {
     projectManagementError,
     projectManagementLastUpdatedAt,
     projectManagementSaving,
+    notifications,
+    dismissNotification,
     clearLastEnvSync,
     clearBackgroundLogs,
     ...actions,

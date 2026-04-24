@@ -6,6 +6,7 @@ import { buildWorktreeAiCompletedComment } from "./project-management-comment-fo
 import { logServerEvent } from "../utils/server-logger.js";
 
 const PROJECT_MANAGEMENT_DOCUMENT_OUTPUT_PATTERN = /<wtm-new-document>([\s\S]*?)<\/wtm-new-document>/i;
+const PROJECT_MANAGEMENT_REVIEW_OUTPUT_PATTERN = /<wtm-review>([\s\S]*?)<\/wtm-review>/i;
 
 function extractUpdatedProjectManagementMarkdown(stdout: string) {
   const match = stdout.match(PROJECT_MANAGEMENT_DOCUMENT_OUTPUT_PATTERN);
@@ -15,6 +16,16 @@ function extractUpdatedProjectManagementMarkdown(stdout: string) {
   }
 
   return nextMarkdown;
+}
+
+function extractTaggedReviewMarkdown(stdout: string) {
+  const match = stdout.match(PROJECT_MANAGEMENT_REVIEW_OUTPUT_PATTERN);
+  const nextReview = match?.[1]?.trim();
+  if (!nextReview) {
+    throw new Error("AI command finished without returning <wtm-review>...</wtm-review>. Inspect the saved AI log output to see the raw response.");
+  }
+
+  return nextReview;
 }
 
 export async function completeAiCommandRun(options: {
@@ -28,6 +39,7 @@ export async function completeAiCommandRun(options: {
   applyDocumentUpdateToDocumentId?: string | null;
   reviewDocumentId?: string | null;
   reviewRequestSummary?: string | null;
+  reviewAction?: "implement" | "review" | null;
   autoCommitDirtyWorktree?: boolean;
 }) {
   if (options.applyDocumentUpdateToDocumentId) {
@@ -75,16 +87,21 @@ export async function completeAiCommandRun(options: {
     return;
   }
 
-  try {
-    await addProjectManagementReviewEntry(options.repoRoot, options.reviewDocumentId, {
-      body: buildWorktreeAiCompletedComment({
+  const reviewBody = options.reviewAction === "review"
+    ? extractTaggedReviewMarkdown(options.stdout)
+    : buildWorktreeAiCompletedComment({
         branch: options.branch,
         commandId: options.commandId,
         requestSummary: options.reviewRequestSummary,
         stdout: options.stdout,
         stderr: options.stderr,
-      }),
-      kind: "activity",
+        reviewAction: options.reviewAction,
+      });
+
+  try {
+    await addProjectManagementReviewEntry(options.repoRoot, options.reviewDocumentId, {
+      body: reviewBody,
+      kind: options.reviewAction === "review" ? "comment" : "activity",
       source: "ai",
       eventType: "ai-completed",
     });

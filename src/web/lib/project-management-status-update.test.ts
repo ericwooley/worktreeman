@@ -17,7 +17,6 @@ const sampleDocument: ProjectManagementDocument = {
   createdAt: "2026-03-20T10:00:00.000Z",
   updatedAt: "2026-03-25T10:00:00.000Z",
   historyCount: 2,
-  comments: [],
 };
 
 test("mergeUpdatedProjectManagementDocumentIntoList updates the matching document and tags", () => {
@@ -34,7 +33,6 @@ test("mergeUpdatedProjectManagementDocumentIntoList updates the matching documen
       status: "todo",
       historyCount: 1,
       markdown: "# Second\n",
-      comments: [],
     }],
     availableTags: ["feature", "plan", "ux"],
     availableStatuses: ["backlog", "todo", "in-progress", "blocked", "done", "reference"],

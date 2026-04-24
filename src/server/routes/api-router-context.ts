@@ -23,6 +23,7 @@ import {
 import {
   getWorktreeDeletionState,
   listWorktrees,
+  resolveDefaultBranch,
 } from "../services/git-service.js";
 import {
   buildRuntimeProcessEnv,
@@ -90,6 +91,60 @@ const CONFIG_COMMIT_ENV = {
   GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || DEFAULT_GIT_AUTHOR_EMAIL,
 };
 
+type ManagedApiRouterContextEntry = {
+  shutdownRuntimes: () => Promise<void>;
+  dispose: () => Promise<void>;
+};
+
+const managedApiRouterContextsByRepo = new Map<string, Set<ManagedApiRouterContextEntry>>();
+
+function registerManagedApiRouterContext(repoRoot: string, entry: ManagedApiRouterContextEntry) {
+  let entries = managedApiRouterContextsByRepo.get(repoRoot);
+  if (!entries) {
+    entries = new Set();
+    managedApiRouterContextsByRepo.set(repoRoot, entries);
+  }
+
+  entries.add(entry);
+}
+
+function unregisterManagedApiRouterContext(repoRoot: string, entry: ManagedApiRouterContextEntry) {
+  const entries = managedApiRouterContextsByRepo.get(repoRoot);
+  if (!entries) {
+    return;
+  }
+
+  entries.delete(entry);
+  if (entries.size === 0) {
+    managedApiRouterContextsByRepo.delete(repoRoot);
+  }
+}
+
+export async function stopManagedApiRouterContexts(repoRoot: string, options?: { shutdownRuntimes?: boolean }) {
+  const entries = Array.from(managedApiRouterContextsByRepo.get(repoRoot) ?? []);
+  if (entries.length === 0) {
+    return;
+  }
+
+  await Promise.allSettled(entries.map(async (entry) => {
+    if (options?.shutdownRuntimes) {
+      await entry.shutdownRuntimes();
+    }
+    await entry.dispose();
+  }));
+}
+
+export async function stopAllManagedApiRouterContexts(options?: { shutdownRuntimes?: boolean }) {
+  const entries = Array.from(managedApiRouterContextsByRepo.values()).flatMap((repoEntries) => Array.from(repoEntries));
+  managedApiRouterContextsByRepo.clear();
+  await Promise.allSettled(entries.map(async (entry) => {
+    if (options?.shutdownRuntimes) {
+      await entry.shutdownRuntimes();
+    }
+    await entry.dispose();
+  }));
+}
+
 export function createApiRouterContext(options: ApiRouterOptions) {
   const stateListeners = new Set<() => void>();
   const gitComparisonListeners = new Set<() => void>();
@@ -152,8 +207,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
 
   const getMergeAiLockReason = (branch: string) => `Cancel the running AI job on ${branch} before merging these branches.`;
 
-  const buildDeletionState = async (worktree: WorktreeRecord) => {
-    const deletion = await getWorktreeDeletionState(options.repoRoot, worktree);
+  const buildDeletionState = async (worktree: WorktreeRecord, cachedDefaultBranch?: string) => {
+    const deletion = await getWorktreeDeletionState(options.repoRoot, worktree, cachedDefaultBranch);
     if (await getRunningAiJobForBranch(worktree)) {
       return {
         ...deletion,
@@ -238,7 +293,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     }
 
     try {
-      const watcher = fs.watch(resolvedPath, { recursive: true }, () => {
+      const watcher = fs.watch(resolvedPath, { recursive: process.platform === "darwin" || process.platform === "win32" }, () => {
         scheduleGitWatchRefresh();
       });
       watcher.on("error", () => {
@@ -285,23 +340,56 @@ export function createApiRouterContext(options: ApiRouterOptions) {
 
   void refreshGitWatchers().catch(() => undefined);
 
-  const dispose = async () => {
-    await autoSync.dispose();
-
-    if (gitWatchRefreshTimer) {
-      clearTimeout(gitWatchRefreshTimer);
-      gitWatchRefreshTimer = null;
-    }
-
-    for (const watcher of gitWatchers.values()) {
-      try {
-        watcher.close();
-      } catch {
-        // Ignore watcher shutdown races.
-      }
-    }
-    gitWatchers.clear();
+  let disposePromise: Promise<void> | null = null;
+  let shutdownRuntimesPromise: Promise<void> | null = null;
+  const managedContextEntry: ManagedApiRouterContextEntry = {
+    shutdownRuntimes: async () => await shutdownRuntimes(),
+    dispose: async () => await dispose(),
   };
+
+  const shutdownRuntimes = async () => {
+    if (shutdownRuntimesPromise) {
+      return await shutdownRuntimesPromise;
+    }
+
+    shutdownRuntimesPromise = (async () => {
+      const runtimes = await options.operationalState.listRuntimes();
+      await Promise.allSettled(runtimes.map(async (runtime) => {
+        await stopWorktreeRuntime(runtime);
+      }));
+    })();
+
+    return await shutdownRuntimesPromise;
+  };
+
+  const dispose = async () => {
+    if (disposePromise) {
+      return await disposePromise;
+    }
+
+    disposePromise = (async () => {
+      unregisterManagedApiRouterContext(options.repoRoot, managedContextEntry);
+      await autoSync.dispose();
+
+      if (gitWatchRefreshTimer) {
+        clearTimeout(gitWatchRefreshTimer);
+        gitWatchRefreshTimer = null;
+      }
+
+      for (const watcher of gitWatchers.values()) {
+        try {
+          watcher.close();
+        } catch {
+          // Ignore watcher shutdown races.
+        }
+      }
+      gitWatchers.clear();
+    })();
+
+    return await disposePromise;
+  };
+
+  registerManagedApiRouterContext(options.repoRoot, managedContextEntry);
 
   const subscribeToGitComparisonRefresh = (listener: () => void) => {
     gitComparisonListeners.add(listener);
@@ -621,6 +709,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     applyDocumentUpdateToDocumentId?: string | null;
     reviewDocumentId?: string | null;
     reviewRequestSummary?: string | null;
+    reviewAction?: "implement" | "review" | null;
     autoCommitDirtyWorktree?: boolean;
   }): Promise<StartedAiCommandJob> => startAiCommandJob({
     worktreeId: details.worktreeId,
@@ -673,6 +762,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
             applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId,
             reviewDocumentId: details.reviewDocumentId,
             reviewRequestSummary: details.reviewRequestSummary,
+            reviewAction: details.reviewAction,
             autoCommitDirtyWorktree: details.autoCommitDirtyWorktree,
           });
           if (details.reviewDocumentId) {
@@ -696,6 +786,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     applyDocumentUpdateToDocumentId?: string | null;
     reviewDocumentId?: string | null;
     reviewRequestSummary?: string | null;
+    reviewAction?: "implement" | "review" | null;
     autoCommitDirtyWorktree?: boolean;
   }) => enqueueProjectManagementAiJob({
     repoRoot: options.repoRoot,
@@ -713,6 +804,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId ?? null,
       reviewDocumentId: details.reviewDocumentId ?? null,
       reviewRequestSummary: details.reviewRequestSummary ?? null,
+      reviewAction: details.reviewAction ?? null,
       autoCommitDirtyWorktree: details.autoCommitDirtyWorktree ?? false,
     },
   });
@@ -722,6 +814,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     commandId: AiCommandId;
     reviewDocumentId?: string | null;
     requestSummary?: string | null;
+    reviewAction?: "implement" | "review" | null;
   }) => {
     if (!details.reviewDocumentId) {
       return;
@@ -733,6 +826,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
           branch: details.branch,
           commandId: details.commandId,
           requestSummary: details.requestSummary,
+          reviewAction: details.reviewAction,
         }),
         kind: "activity",
         source: "ai",
@@ -752,21 +846,24 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const resolveEnvSyncSourceRoot = async (_worktrees: Awaited<ReturnType<typeof listWorktrees>>) => options.configWorktreePath;
 
   const buildWorktreePayload = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
-    const merged = await options.operationalState.mergeInto(worktrees);
-    const [documentsPayload, links] = await Promise.all([
+    const [merged, documentsPayload, links, defaultBranch] = await Promise.all([
+      options.operationalState.mergeInto(worktrees),
       listProjectManagementDocuments(options.repoRoot),
       getWorktreeDocumentLinks(options.repoRoot),
+      resolveDefaultBranch(options.repoRoot),
     ]);
     const linkedWorktrees = attachWorktreeDocumentLinks(merged, links, documentsPayload.documents);
-    return await Promise.all(linkedWorktrees.map(async (worktree) => ({
+    const payload = await Promise.all(linkedWorktrees.map(async (worktree) => ({
       ...worktree,
-      deletion: await buildDeletionState(worktree),
+      deletion: await buildDeletionState(worktree, defaultBranch),
     })));
+    return payload;
   };
 
   const loadState = async (): Promise<ApiStateResponse> => {
     const config = await loadCurrentConfig();
     const worktrees = await listWorktrees(options.repoRoot);
+    const built = await buildWorktreePayload(worktrees);
     return {
       repoRoot: options.repoRoot,
       configPath: options.configPath,
@@ -774,7 +871,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       configSourceRef: options.configSourceRef,
       configWorktreePath: options.configWorktreePath,
       config,
-      worktrees: await buildWorktreePayload(worktrees),
+      worktrees: built,
     };
   };
 
@@ -795,6 +892,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     passiveAiProcesses,
     shouldReconcileAiJobs,
     aiJobReadOptions,
+    shutdownRuntimes,
     dispose,
     loadCurrentConfig,
     findWorktree,

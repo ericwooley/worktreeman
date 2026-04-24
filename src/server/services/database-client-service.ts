@@ -26,6 +26,7 @@ function resolveFallbackDatabasePath(repoRoot: string, namespace: string) {
 
 async function createConnectionStringClient(connectionString: string): Promise<ManagedDatabaseClient> {
   const pool = new Pool({ connectionString });
+  pool.on("error", () => undefined);
   let closeClient: (() => Promise<void>) | null = async () => {
     await pool.end();
   };
@@ -79,6 +80,7 @@ async function createConnectionStringClient(connectionString: string): Promise<M
     },
     async listen(channel, listener) {
       const client = new Client({ connectionString });
+      client.on("error", () => undefined);
       await client.connect();
       const onNotification = (message: { channel: string; payload?: string }) => {
         if (message.channel !== channel) {

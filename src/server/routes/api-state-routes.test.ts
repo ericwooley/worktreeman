@@ -146,7 +146,7 @@ test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }
         event: {
           type: string;
           logs: {
-            logs: Array<{ fileName: string; status: string }>;
+            logs: Array<{ fileName: string; status: string; requestPreview?: string; command?: string }>;
             runningJobs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
           };
         };
@@ -157,10 +157,10 @@ test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }
           event?: {
             type: string;
             logs: {
-              logs: Array<{ fileName: string; status: string }>;
-              runningJobs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
-            };
+            logs: Array<{ fileName: string; status: string; requestPreview?: string; command?: string }>;
+            runningJobs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
           };
+        };
         };
 
         if (event.type === "ai-logs" && event.event) {
@@ -181,6 +181,7 @@ test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }
       assert.equal(aiLogsSnapshot.event.logs.runningJobs[0].fileName, fileName);
       assert.equal(aiLogsSnapshot.event.logs.runningJobs[0].status, "running");
       assert.deepEqual(aiLogsSnapshot.event.logs.runningJobs[0].origin, origin);
+      assert.equal(aiLogsSnapshot.event.logs.runningJobs[0].fileName, fileName);
 
       await writeAiLogFixture({
         repoRoot: repo.repoRoot,
@@ -203,10 +204,10 @@ test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }
           event?: {
             type: string;
             logs: {
-              logs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null }>;
-              runningJobs: Array<{ fileName: string; status: string }>;
-            };
-          };
+               logs: Array<{ fileName: string; status: string; origin?: AiCommandOrigin | null; requestPreview?: string; command?: string }>;
+               runningJobs: Array<{ fileName: string; status: string }>;
+             };
+           };
         };
 
         if (event.type !== "ai-logs") {
@@ -220,11 +221,54 @@ test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }
 
         assert.equal(event.event?.type, "update");
         assert.deepEqual(completedLog.origin, origin);
+        assert.equal(typeof completedLog.requestPreview, "string");
+        assert.equal("command" in completedLog, false);
         assert.equal(event.event?.logs.runningJobs.every((entry) => entry.fileName !== fileName), true);
         return;
       }
 
       assert.fail("Did not receive the expected multiplexed AI log update.");
+    } finally {
+      await stream.close();
+      await server.close();
+    }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("GET /api/events/stream skips unchanged ai-log payload rebuilds", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+  const worktreePath = path.join(repo.repoRoot, "feature-ai-log");
+  const fileName = `${worktreeId(worktreePath)}-events-stream-stable-log.json`;
+
+  await writeAiLogFixture({
+    repoRoot: repo.repoRoot,
+    fileName,
+    branch: "feature-ai-log",
+    worktreePath,
+    command: "printf %s 'stable log'",
+    request: "stable log",
+    stdout: "done\n",
+    exitCode: 0,
+    completedAt: "2026-03-27T10:01:30.000Z",
+  });
+
+  try {
+    const server = await startApiServer(repo, {
+      aiLogStreamPollIntervalMs: 10,
+      stateStreamFullRefreshIntervalMs: 60_000,
+    });
+    const stream = await openSse(`${await server.url()}/api/events/stream`);
+
+    try {
+      const seenTypes: string[] = [];
+      for (let attempt = 0; attempt < 7; attempt += 1) {
+        const event = await stream.nextEvent(1000) as unknown as { type: string };
+        seenTypes.push(event.type);
+      }
+
+      assert.equal(seenTypes.filter((type) => type === "ai-logs").length, 1);
     } finally {
       await stream.close();
       await server.close();
@@ -275,7 +319,7 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
       method: "POST",
     });
     assert.equal(startResponse.status, 200);
-    await firstServer.close();
+    await firstServer.close({ shutdownRuntimes: false });
 
     const secondServer = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
     const stream = await openSse(`${await secondServer.url()}/api/state/stream`);
@@ -294,6 +338,33 @@ test("GET /api/state/stream replays persisted runtime state after a server resta
       await stream.close();
       await secondServer.close();
     }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("startApiServer close tears down runtime sessions by default", { concurrency: false, timeout: 15000 }, async () => {
+  const repo = await createApiTestRepo();
+  const featureAiLogPath = path.join(repo.repoRoot, "feature-ai-log");
+  const featureAiLogId = worktreeId(featureAiLogPath);
+  const tmuxSessionName = getTmuxSessionName(repo.repoRoot, featureAiLogId);
+
+  try {
+    const server = await startApiServer(repo, { stateStreamFullRefreshIntervalMs: 50 });
+    const startResponse = await server.fetch(`/api/worktrees/${encodeURIComponent("feature-ai-log")}/runtime/start`, {
+      method: "POST",
+    });
+    assert.equal(startResponse.status, 200);
+
+    await server.close();
+
+    const operationalState = await createOperationalStateStore(repo.repoRoot);
+    const runtime = await operationalState.getRuntimeById(featureAiLogId);
+    assert.equal(runtime, null);
+
+    await assert.rejects(async () => {
+      await runCommand("tmux", ["has-session", "-t", tmuxSessionName], { cwd: featureAiLogPath });
+    });
   } finally {
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
   }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { marked } from "marked";
 import { Gitgraph, Orientation, TemplateName, templateExtend } from "@gitgraph/react";
 import { DiffView, DiffModeEnum } from "@git-diff-view/react";
 import { changeMaxLengthToIgnoreLineDiff, getLang } from "@git-diff-view/core";
@@ -14,9 +15,11 @@ import type {
   CommitGitChangesResponse,
   GitComparisonResponse,
   ProjectManagementDocument,
+  ProjectManagementDocumentReview,
   ProjectManagementDocumentSummary,
   ProjectManagementDocumentSummaryResponse,
   ProjectManagementHistoryEntry,
+  ProjectManagementReviewEntry,
   ProjectManagementUsersResponse,
   RunAiCommandRequest,
   RunAiCommandResponse,
@@ -47,6 +50,7 @@ import {
   WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL,
 } from "./worktree-environment-content";
 import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
+import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
 import { ProjectManagementAiTab } from "./project-management-ai-tab";
 import { ProjectManagementPanel } from "./project-management-panel";
 import { SystemTab } from "./system-tab";
@@ -59,6 +63,64 @@ function getCssVariable(name: string, fallback: string): string {
 
   const value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
+}
+
+function getReviewEventLabel(entry: ProjectManagementReviewEntry) {
+  switch (entry.eventType) {
+    case "ai-started":
+      return "AI started";
+    case "ai-completed":
+      return "AI completed";
+    case "merge":
+      return "Merge";
+    default:
+      return "Comment";
+  }
+}
+
+function getReviewEventTone(entry: ProjectManagementReviewEntry) {
+  switch (entry.eventType) {
+    case "ai-started":
+      return "neutral" as const;
+    case "ai-completed":
+      return "active" as const;
+    case "merge":
+      return "warning" as const;
+    default:
+      return "neutral" as const;
+  }
+}
+
+function getReviewSourceTone(entry: ProjectManagementReviewEntry) {
+  switch (entry.source) {
+    case "ai":
+      return "active" as const;
+    case "system":
+      return "warning" as const;
+    default:
+      return "neutral" as const;
+  }
+}
+
+function getReviewSourceLabel(entry: ProjectManagementReviewEntry) {
+  switch (entry.source) {
+    case "ai":
+      return "AI";
+    case "system":
+      return "System";
+    default:
+      return "Comment";
+  }
+}
+
+function mapOriginProjectManagementSubTabToUiTab(
+  subTab: AiCommandOrigin["location"]["projectManagementSubTab"] | null | undefined,
+): ProjectManagementSubTab {
+  if (subTab === "review") {
+    return "document";
+  }
+
+  return subTab ?? "document";
 }
 
 const DIFF_RENDER_MAX_CHARS = 350_000;
@@ -555,8 +617,8 @@ interface WorktreeDetailProps {
   runningCount: number;
   selectedStatusLabel: string;
   onSelectWorktree: (value: string) => void;
-  activeTab: "environment" | "git" | "project-management" | "system" | "ai-log";
-  onTabChange: (tab: "environment" | "git" | "project-management" | "system" | "ai-log") => void;
+  activeTab: "environment" | "git" | "project-management" | "review" | "system" | "ai-log";
+  onTabChange: (tab: "environment" | "git" | "project-management" | "review" | "system" | "ai-log") => void;
   environmentSubTab: WorktreeEnvironmentSubTab;
   onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
   gitView: "graph" | "diff";
@@ -598,6 +660,8 @@ interface WorktreeDetailProps {
   projectManagementAvailableTags: string[];
   projectManagementAvailableStatuses: string[];
   projectManagementUsers: ProjectManagementUsersResponse | null;
+  projectManagementReviews: ProjectManagementDocumentReview[];
+  projectManagementDocumentReview: ProjectManagementDocumentReview | null;
   projectManagementActiveSubTab: ProjectManagementSubTab;
   projectManagementSelectedDocumentId: string | null;
   projectManagementDocumentPresentation: ProjectManagementDocumentPresentation;
@@ -633,6 +697,7 @@ interface WorktreeDetailProps {
   onProjectManagementOpenDocumentPage: (documentId: string, options?: { viewMode?: ProjectManagementDocumentViewMode }) => void;
   onProjectManagementCloseDocument: () => void;
   onLoadProjectManagementDocuments: (options?: { silent?: boolean }) => Promise<unknown>;
+  onLoadProjectManagementReviews: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementUsers: (options?: { silent?: boolean }) => Promise<unknown>;
   onLoadProjectManagementDocument: (documentId: string, options?: { silent?: boolean }) => Promise<ProjectManagementDocument | null>;
   onLoadProjectManagementAiLogs: (options?: { silent?: boolean }) => Promise<unknown>;
@@ -665,7 +730,8 @@ interface WorktreeDetailProps {
     status?: string;
     archived?: boolean;
   }) => Promise<boolean>;
-  onAddProjectManagementComment: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentSummaryResponse | null>;
+  onAddProjectManagementReviewEntry: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentReview | null>;
+  onDeleteProjectManagementReviewEntry: (documentId: string, reviewEntryId: string) => Promise<boolean>;
   onRunProjectManagementAiCommand: (payload: RunAiCommandRequest & {
     input: string;
     documentId?: string;
@@ -737,6 +803,8 @@ export function WorktreeDetail({
   projectManagementAvailableTags,
   projectManagementAvailableStatuses,
   projectManagementUsers,
+  projectManagementReviews,
+  projectManagementDocumentReview,
   projectManagementActiveSubTab,
   projectManagementSelectedDocumentId,
   projectManagementDocumentPresentation,
@@ -772,6 +840,7 @@ export function WorktreeDetail({
   onProjectManagementOpenDocumentPage,
   onProjectManagementCloseDocument,
   onLoadProjectManagementDocuments,
+  onLoadProjectManagementReviews,
   onLoadProjectManagementUsers,
   onLoadProjectManagementDocument,
   onLoadProjectManagementAiLogs,
@@ -785,7 +854,8 @@ export function WorktreeDetail({
   onUpdateProjectManagementStatus,
   onUpdateProjectManagementUsers,
   onBatchUpdateProjectManagementDocuments,
-  onAddProjectManagementComment,
+  onAddProjectManagementReviewEntry,
+  onDeleteProjectManagementReviewEntry,
   onRunProjectManagementAiCommand,
   onRunProjectManagementDocumentAi,
   onCancelProjectManagementDocumentAiCommand,
@@ -795,6 +865,7 @@ export function WorktreeDetail({
   const isEnvironmentTabActive = activeTab === "environment";
   const isAiLogTabActive = activeTab === "ai-log";
   const isGitTabActive = activeTab === "git";
+  const isReviewTabActive = activeTab === "review";
   const isSystemTabActive = activeTab === "system";
   const isBackgroundCommandsActive = isEnvironmentTabActive && environmentSubTab === "background";
   const isRunning = Boolean(worktree?.runtime);
@@ -899,6 +970,28 @@ export function WorktreeDetail({
       : null,
     [linkedDocument, projectManagementDocuments],
   );
+  const linkedDocumentReview = useMemo(() => {
+    if (!linkedDocument?.id) {
+      return null;
+    }
+
+    if (projectManagementDocumentReview?.documentId === linkedDocument.id) {
+      return projectManagementDocumentReview;
+    }
+
+    return projectManagementReviews.find((entry) => entry.documentId === linkedDocument.id) ?? null;
+  }, [linkedDocument?.id, projectManagementDocumentReview, projectManagementReviews]);
+  const linkedDocumentReviewEntries = linkedDocumentReview?.entries ?? [];
+  const activeReviewAiJob = useMemo(() => {
+    if (!worktree) {
+      return null;
+    }
+
+    return projectManagementRunningAiJobs.find((job) => job.worktreeId === worktree.id || job.branch === worktree.branch) ?? null;
+  }, [projectManagementRunningAiJobs, worktree]);
+  const [reviewCommandDraft, setReviewCommandDraft] = useState("");
+  const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
+  const [deletingReviewEntryId, setDeletingReviewEntryId] = useState<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
@@ -1121,11 +1214,18 @@ export function WorktreeDetail({
   }, [backgroundFilter, backgroundLogs, selectedBackgroundCommand?.name]);
   const refreshProjectManagementWorkspace = useCallback(async (options?: { silent?: boolean; includeSelectedDocument?: boolean }) => {
     await onLoadProjectManagementDocuments(options);
+    await onLoadProjectManagementReviews(options);
     await onLoadProjectManagementUsers(options);
     if (options?.includeSelectedDocument !== false && projectManagementSelectedDocumentId) {
       await onLoadProjectManagementDocument(projectManagementSelectedDocumentId, options);
     }
-  }, [onLoadProjectManagementDocument, onLoadProjectManagementDocuments, onLoadProjectManagementUsers, projectManagementSelectedDocumentId]);
+  }, [
+    onLoadProjectManagementDocument,
+    onLoadProjectManagementDocuments,
+    onLoadProjectManagementReviews,
+    onLoadProjectManagementUsers,
+    projectManagementSelectedDocumentId,
+  ]);
   const refreshAiLogs = useCallback(async (options?: { silent?: boolean }) => {
     await onLoadProjectManagementAiLogs(options);
   }, [onLoadProjectManagementAiLogs]);
@@ -1359,6 +1459,82 @@ export function WorktreeDetail({
     await onLoadProjectManagementDocument(linkedDocument.id, { silent: true });
   };
 
+  const submitReviewCommand = async () => {
+    if (!linkedDocument?.id || !reviewCommandDraft.trim()) {
+      return;
+    }
+
+    const trimmedDraft = reviewCommandDraft.trim();
+    const parsedCommand = trimmedDraft.match(/^@(dowork|review)\b/i);
+
+    if (!parsedCommand) {
+      const nextReview = await onAddProjectManagementReviewEntry(linkedDocument.id, { body: trimmedDraft });
+      if (nextReview) {
+        setReviewCommandDraft("");
+      }
+      return;
+    }
+
+    if (reviewFollowUpSubmitting || activeReviewAiJob) {
+      return;
+    }
+
+    const reviewAction = parsedCommand?.[1]?.toLowerCase() === "review" ? "review" : "implement";
+    const requestText = trimmedDraft.replace(/^@(dowork|review)\b\s*/i, "").trim() || trimmedDraft;
+    const latestAiRequest = [...linkedDocumentReviewEntries]
+      .reverse()
+      .find((entry) => entry.source === "ai" && entry.eventType === "ai-started");
+    const originalRequest = latestAiRequest?.body.trim() || linkedDocumentDetails?.summary || linkedDocument.title;
+
+    setReviewFollowUpSubmitting(true);
+    try {
+      const job = await onRunProjectManagementAiCommand({
+        input: requestText,
+        reviewDocumentId: linkedDocument.id,
+        commandId: "smart",
+        reviewAction,
+        origin: {
+          kind: "worktree-review",
+          label: reviewAction === "review" ? "Review pass" : "Review follow-up",
+          description: reviewAction === "review"
+            ? `Review branch changes for ${linkedDocument.title}`
+            : `Continue review activity for ${linkedDocument.title}`,
+          location: {
+            tab: "review",
+            branch: worktree?.branch ?? null,
+            worktreeId: worktree?.id ?? null,
+            documentId: linkedDocument.id,
+          },
+        },
+        reviewFollowUp: reviewAction === "review"
+          ? undefined
+          : {
+              originalRequest,
+              newRequest: requestText,
+            },
+      });
+
+      if (job) {
+        setReviewCommandDraft("");
+      }
+    } finally {
+      setReviewFollowUpSubmitting(false);
+    }
+  };
+
+  const deleteReviewEntry = async (entry: ProjectManagementReviewEntry) => {
+    if (!linkedDocument?.id || deletingReviewEntryId) {
+      return;
+    }
+
+    setDeletingReviewEntryId(entry.id);
+    try {
+      await onDeleteProjectManagementReviewEntry(linkedDocument.id, entry.id);
+    } finally {
+      setDeletingReviewEntryId(null);
+    }
+  };
+
   const openAiLogOrigin = async (origin: AiCommandJob["origin"] | AiCommandLogEntry["origin"] | AiCommandLogSummary["origin"]) => {
     if (!origin) {
       return;
@@ -1370,8 +1546,16 @@ export function WorktreeDetail({
 
     if (origin.location.tab === "project-management") {
       onTabChange("project-management");
-      onProjectManagementSubTabChange(origin.location.projectManagementSubTab ?? "document");
+      onProjectManagementSubTabChange(mapOriginProjectManagementSubTabToUiTab(origin.location.projectManagementSubTab));
       onProjectManagementDocumentViewModeChange(origin.location.projectManagementDocumentViewMode ?? "document");
+      if (origin.location.documentId) {
+        await onLoadProjectManagementDocument(origin.location.documentId, { silent: true });
+      }
+      return;
+    }
+
+    if (origin.location.tab === "review") {
+      onTabChange("review");
       if (origin.location.documentId) {
         await onLoadProjectManagementDocument(origin.location.documentId, { silent: true });
       }
@@ -2103,6 +2287,140 @@ export function WorktreeDetail({
               </div>
             )}
           </>
+        ) : isReviewTabActive ? (
+          <div className="space-y-4">
+            <div className="theme-inline-panel p-4">
+              <MatrixSectionIntro
+                kicker="Review"
+                title={linkedDocumentDetails ? linkedDocumentDetails.title : "Linked document review"}
+                description={linkedDocumentDetails
+                  ? "Track comments, AI activity, and merge events for the document linked to this worktree."
+                  : "Link a project document to this worktree to capture review notes and AI activity here."}
+                actions={linkedDocumentDetails ? (
+                  <button
+                    type="button"
+                    className="matrix-button rounded-none px-3 py-2 text-sm"
+                    onClick={() => void openLinkedDocument()}
+                  >
+                    Open document
+                  </button>
+                ) : undefined}
+                metrics={linkedDocumentDetails ? (
+                  <div className="grid w-full gap-2 text-left sm:grid-cols-3 xl:w-auto xl:min-w-[18rem]">
+                    <MatrixMetric label="Document" value={`#${linkedDocumentDetails.number}`} />
+                    <MatrixMetric label="Status" value={linkedDocumentDetails.status} />
+                    <MatrixMetric label="Entries" value={String(linkedDocumentReviewEntries.length)} />
+                  </div>
+                ) : undefined}
+              />
+
+              {linkedDocumentDetails ? (
+                <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
+                  <MatrixDetailField label="Linked document" value={linkedDocumentDetails.title} />
+                  <MatrixDetailField label="Document id" value={linkedDocumentDetails.id} mono />
+                  <MatrixDetailField label="Status" value={linkedDocumentDetails.status} />
+                  <MatrixDetailField label="Last updated" value={projectManagementLastUpdatedAt ? new Date(projectManagementLastUpdatedAt).toLocaleString() : "-"} />
+                </div>
+              ) : null}
+            </div>
+
+            {!linkedDocumentDetails ? (
+              <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                No linked document yet. Link a project document to this worktree to keep review discussion and AI activity in one place.
+              </div>
+            ) : (
+              <>
+                {linkedDocumentReviewEntries.length ? (
+                  <div className="grid gap-3">
+                    {linkedDocumentReviewEntries.map((entry) => (
+                      <MatrixCard key={entry.id} as="div" className="p-4">
+                        <MatrixCardHeader
+                          eyebrow={<span className="theme-text-soft">{new Date(entry.createdAt).toLocaleString()}</span>}
+                          title={entry.authorName ?? entry.authorEmail ?? getReviewSourceLabel(entry)}
+                          titleLines={1}
+                          titleText={entry.authorName ?? entry.authorEmail ?? getReviewSourceLabel(entry)}
+                          description={entry.authorEmail ?? undefined}
+                          descriptionLines={1}
+                          descriptionText={entry.authorEmail ?? undefined}
+                          badges={(
+                            <>
+                              <MatrixBadge tone={getReviewEventTone(entry)} compact>{getReviewEventLabel(entry)}</MatrixBadge>
+                              <MatrixBadge tone={getReviewSourceTone(entry)} compact>{getReviewSourceLabel(entry)}</MatrixBadge>
+                            </>
+                          )}
+                        />
+                        <div
+                          className="pm-markdown mt-4 text-sm theme-text"
+                          dangerouslySetInnerHTML={{ __html: marked.parse(entry.body) }}
+                        />
+                        <MatrixCardFooter className="mt-4 justify-between gap-3 text-xs theme-text-muted">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span>{entry.kind}</span>
+                            {entry.updatedAt !== entry.createdAt ? <span>{`Updated ${new Date(entry.updatedAt).toLocaleString()}`}</span> : null}
+                          </div>
+                          <button
+                            type="button"
+                            className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-xs"
+                            disabled={projectManagementSaving || deletingReviewEntryId === entry.id}
+                            onClick={() => void deleteReviewEntry(entry)}
+                          >
+                            {deletingReviewEntryId === entry.id ? "Deleting..." : "Delete entry"}
+                          </button>
+                        </MatrixCardFooter>
+                      </MatrixCard>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                    No review entries yet. Add the first note here or run AI work from this worktree to start the timeline.
+                  </div>
+                )}
+
+                <div className="theme-inline-panel p-4 space-y-3">
+                  <label className="block space-y-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Review entry or Smart AI command</span>
+                    <textarea
+                      value={reviewCommandDraft}
+                      onChange={(event) => setReviewCommandDraft(event.target.value)}
+                      placeholder="Add a review note, or start with @dowork or @review."
+                      rows={5}
+                      className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+                    />
+                  </label>
+                  <p className="text-sm theme-text-muted">
+                    Plain text adds a review entry. Use <code>@dowork</code> to continue implementation, or <code>@review</code> to run a review-only pass over the current branch diff.
+                  </p>
+                  {activeReviewAiJob ? (
+                    <div className="space-y-3 border theme-border-subtle p-3">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">AI is active</p>
+                        <p className="mt-2 text-sm theme-text-muted">
+                          You can still add review notes here. Wait for the current AI run to finish before starting another command.
+                        </p>
+                      </div>
+                      <ProjectManagementAiOutputViewer
+                        source="worktree"
+                        job={activeReviewAiJob}
+                        summary={`AI is still running in ${activeReviewAiJob.branch}. Finish or cancel this run before prompting again from Review.`}
+                        expanded
+                        onCancel={() => void onCancelProjectManagementAiCommand()}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={projectManagementSaving || reviewFollowUpSubmitting || !reviewCommandDraft.trim()}
+                      onClick={() => void submitReviewCommand()}
+                    >
+                      {projectManagementSaving ? "Saving..." : reviewFollowUpSubmitting ? "Starting Smart AI..." : "Submit review"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         ) : activeTab === "project-management" ? (
           <div>
             <ProjectManagementPanel
@@ -2140,7 +2458,6 @@ export function WorktreeDetail({
               onUpdateStatus={onUpdateProjectManagementStatus}
               onUpdateUsers={onUpdateProjectManagementUsers}
               onBatchUpdateDocuments={onBatchUpdateProjectManagementDocuments}
-              onAddComment={onAddProjectManagementComment}
               onRunAiCommand={onRunProjectManagementAiCommand}
               onRunDocumentAi={onRunProjectManagementDocumentAi}
               onCancelDocumentAiCommand={onCancelProjectManagementDocumentAiCommand}

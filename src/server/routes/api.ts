@@ -11,6 +11,7 @@ import { registerApiWorktreeRoutes } from "./api-worktree-routes.js";
 import type { ApiRouterOptions } from "./api-types.js";
 
 export interface ApiRouter extends express.Router {
+  shutdownRuntimes: () => Promise<void>;
   dispose: () => Promise<void>;
 }
 
@@ -26,6 +27,7 @@ export function createApiRouter(options: ApiRouterOptions): ApiRouter {
   registerApiBackgroundCommandRoutes(router, context);
 
   return Object.assign(router, {
+    shutdownRuntimes: context.shutdownRuntimes,
     dispose: context.dispose,
   });
 }

@@ -60,6 +60,9 @@ interface AiCommandLogRow {
   process_name: string | null;
   completed_at: string | null;
   error_json: string | null;
+  history_summary_text: string | null;
+  history_summary_generated_at: string | null;
+  history_summary_source_hash: string | null;
 }
 
 interface AiCommandLogIndexRow {
@@ -81,6 +84,9 @@ interface AiCommandLogIndexRow {
   process_name: string | null;
   completed_at: string | null;
   error_json: string | null;
+  history_summary_text: string | null;
+  history_summary_generated_at: string | null;
+  history_summary_source_hash: string | null;
 }
 
 export interface AiCommandLogIndexEntry {
@@ -102,6 +108,9 @@ export interface AiCommandLogIndexEntry {
   processName?: string | null;
   completedAt?: string;
   error: AiCommandLogError | null;
+  historySummary?: string | null;
+  historySummaryGeneratedAt?: string;
+  historySummarySourceHash?: string | null;
 }
 
 interface AiCommandOutputRow {
@@ -215,6 +224,9 @@ function cloneAiCommandLogEntry(entry: AiCommandLogEntry | null): AiCommandLogEn
     processName: entry.processName,
     error: cloneAiCommandLogError(entry.error),
     origin: cloneAiCommandOrigin(entry.origin) ?? null,
+    historySummary: entry.historySummary ?? null,
+    historySummaryGeneratedAt: entry.historySummaryGeneratedAt,
+    historySummarySourceHash: entry.historySummarySourceHash ?? null,
     response: {
       stdout: entry.response.stdout,
       stderr: entry.response.stderr,
@@ -224,12 +236,7 @@ function cloneAiCommandLogEntry(entry: AiCommandLogEntry | null): AiCommandLogEn
 }
 
 function toStoredAiCommandJob(job: AiCommandJob): AiCommandJob {
-  return {
-    ...cloneAiCommandJob(job)!,
-    stdout: "",
-    stderr: job.status === "failed" ? (job.stderr || job.error || "") : "",
-    outputEvents: [],
-  };
+  return cloneAiCommandJob(job)!;
 }
 
 function cloneShutdownStatus(status: ShutdownStatus): ShutdownStatus {
@@ -377,6 +384,9 @@ function toAiCommandLogEntry(row: AiCommandLogRow, events: AiCommandOutputEvent[
     processName: row.process_name,
     completedAt: row.completed_at ?? undefined,
     error: row.error_json ? toAiCommandLogError(JSON.parse(row.error_json)) : null,
+    historySummary: row.history_summary_text,
+    historySummaryGeneratedAt: row.history_summary_generated_at ?? undefined,
+    historySummarySourceHash: row.history_summary_source_hash,
   };
 }
 
@@ -405,6 +415,9 @@ function toAiCommandLogIndexEntry(row: AiCommandLogIndexRow): AiCommandLogIndexE
     processName: row.process_name,
     completedAt: row.completed_at ?? undefined,
     error: row.error_json ? toAiCommandLogError(JSON.parse(row.error_json)) : null,
+    historySummary: row.history_summary_text,
+    historySummaryGeneratedAt: row.history_summary_generated_at ?? undefined,
+    historySummarySourceHash: row.history_summary_source_hash,
   };
 }
 
@@ -536,6 +549,9 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
         process_name text,
         completed_at text,
         error_json text,
+        history_summary_text text,
+        history_summary_generated_at text,
+        history_summary_source_hash text,
         updated_at timestamptz not null default now()
       );
 
@@ -599,6 +615,15 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
 
       alter table ${AI_RUN_LOGS_TABLE}
         add column if not exists session_id text;
+
+      alter table ${AI_RUN_LOGS_TABLE}
+        add column if not exists history_summary_text text;
+
+      alter table ${AI_RUN_LOGS_TABLE}
+        add column if not exists history_summary_generated_at text;
+
+      alter table ${AI_RUN_LOGS_TABLE}
+        add column if not exists history_summary_source_hash text;
     `);
 
     await db.query(
@@ -962,11 +987,14 @@ export class OperationalStateStore {
           process_name,
           completed_at,
           error_json,
+          history_summary_text,
+          history_summary_generated_at,
+          history_summary_source_hash,
           updated_at
         )
         values (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, now()
+          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, now()
         )
         on conflict (job_id) do update
         set file_name = excluded.file_name,
@@ -981,13 +1009,16 @@ export class OperationalStateStore {
             command_text = excluded.command_text,
             request_text = excluded.request_text,
             status = excluded.status,
-            stdout_text = case when $21 then ${AI_RUN_LOGS_TABLE}.stdout_text else excluded.stdout_text end,
-            stderr_text = case when $21 then ${AI_RUN_LOGS_TABLE}.stderr_text else excluded.stderr_text end,
+            stdout_text = case when $24 then ${AI_RUN_LOGS_TABLE}.stdout_text else excluded.stdout_text end,
+            stderr_text = case when $24 then ${AI_RUN_LOGS_TABLE}.stderr_text else excluded.stderr_text end,
             pid = excluded.pid,
             exit_code = excluded.exit_code,
             process_name = excluded.process_name,
             completed_at = excluded.completed_at,
             error_json = excluded.error_json,
+            history_summary_text = excluded.history_summary_text,
+            history_summary_generated_at = excluded.history_summary_generated_at,
+            history_summary_source_hash = excluded.history_summary_source_hash,
             updated_at = now()
       `,
       [
@@ -1011,6 +1042,9 @@ export class OperationalStateStore {
         nextEntry.processName ?? null,
         nextEntry.completedAt ?? null,
         nextEntry.error ? JSON.stringify(nextEntry.error) : null,
+        nextEntry.historySummary ?? null,
+        nextEntry.historySummaryGeneratedAt ?? null,
+        nextEntry.historySummarySourceHash ?? null,
         preserveOutputText,
       ],
     );
@@ -1195,7 +1229,10 @@ export class OperationalStateStore {
           exit_code,
           process_name,
           completed_at,
-          error_json
+          error_json,
+          history_summary_text,
+          history_summary_generated_at,
+          history_summary_source_hash
         from ${AI_RUN_LOGS_TABLE}
         where job_id = $1
       `,
@@ -1237,7 +1274,10 @@ export class OperationalStateStore {
           exit_code,
           process_name,
           completed_at,
-          error_json
+          error_json,
+          history_summary_text,
+          history_summary_generated_at,
+          history_summary_source_hash
         from ${AI_RUN_LOGS_TABLE}
         where job_id = $1
       `,
@@ -1271,7 +1311,10 @@ export class OperationalStateStore {
           exit_code,
           process_name,
           completed_at,
-          error_json
+          error_json,
+          history_summary_text,
+          history_summary_generated_at,
+          history_summary_source_hash
         from ${AI_RUN_LOGS_TABLE}
         where file_name = $1
       `,
@@ -1315,7 +1358,10 @@ export class OperationalStateStore {
           exit_code,
           process_name,
           completed_at,
-          error_json
+          error_json,
+          history_summary_text,
+          history_summary_generated_at,
+          history_summary_source_hash
         from ${AI_RUN_LOGS_TABLE}
         order by updated_at desc, file_name desc
       `,
@@ -1354,7 +1400,10 @@ export class OperationalStateStore {
           exit_code,
           process_name,
           completed_at,
-          error_json
+          error_json,
+          history_summary_text,
+          history_summary_generated_at,
+          history_summary_source_hash
         from ${AI_RUN_LOGS_TABLE}
         order by updated_at desc, file_name desc
       `,

@@ -27,7 +27,6 @@ const summaryLog: AiCommandLogSummary = {
   commandId: "smart",
   sessionId: "ai-session-123",
   worktreePath: "/repo/feature-ai-log",
-  command: "runner --prompt",
   requestPreview: "This preview should not be the primary card content.",
   status: "completed",
   origin: environmentOrigin,

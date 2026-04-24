@@ -139,6 +139,28 @@ function getQuickSelectKey(index: number): string | null {
   return index === 9 ? "0" : String(index + 1);
 }
 
+export function shouldResetCommandPaletteState({
+  open,
+  previousOpen,
+  initialQuery,
+  previousInitialQuery,
+  scopeKey,
+  previousScopeKey,
+}: {
+  open: boolean;
+  previousOpen: boolean;
+  initialQuery: string;
+  previousInitialQuery: string;
+  scopeKey: string;
+  previousScopeKey: string;
+}): boolean {
+  if (!open) {
+    return false;
+  }
+
+  return !previousOpen || previousInitialQuery !== initialQuery || previousScopeKey !== scopeKey;
+}
+
 export function CommandPalette({
   open,
   commands,
@@ -182,6 +204,9 @@ export function CommandPalette({
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeChangeSourceRef = useRef<CommandPaletteActiveItemChangeSource>("initial");
   const hoverSyncEnabledRef = useRef(true);
+  const previousOpenRef = useRef(open);
+  const previousInitialQueryRef = useRef(initialQuery);
+  const previousScopeKeyRef = useRef(scopeKey);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [recordingShortcutId, setRecordingShortcutId] = useState<string | null>(null);
@@ -395,7 +420,20 @@ export function CommandPalette({
   }, [activeIndex, filteredCommands, isCodeMode, onClose, open, recordingShortcutId, shortcut, shortcutSettings]);
 
   useEffect(() => {
-    if (!open) {
+    const shouldResetState = shouldResetCommandPaletteState({
+      open,
+      previousOpen: previousOpenRef.current,
+      initialQuery,
+      previousInitialQuery: previousInitialQueryRef.current,
+      scopeKey,
+      previousScopeKey: previousScopeKeyRef.current,
+    });
+
+    previousOpenRef.current = open;
+    previousInitialQueryRef.current = initialQuery;
+    previousScopeKeyRef.current = scopeKey;
+
+    if (!shouldResetState) {
       return;
     }
 

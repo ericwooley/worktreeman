@@ -10,10 +10,13 @@ import type {
   AiCommandLogsResponse,
   AiCommandLogSummary,
   AiCommandOrigin,
+  RunAiCommandRequest,
   AiCommandOutputEvent,
   BackgroundCommandState,
+  GitComparisonResponse,
   ProjectManagementDocumentResponse,
   ProjectManagementListResponse,
+  ProjectManagementReviewEntry,
   WorktreeManagerConfig,
   WorktreeRuntime,
 } from "../../shared/types.js";
@@ -38,6 +41,7 @@ import { listWorktrees } from "../services/git-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import type { AiCommandLogIndexEntry } from "../services/operational-state-service.js";
+import { getProjectManagementDocumentReview } from "../services/project-management-review-service.js";
 import { runCommand } from "../utils/process.js";
 import {
   formatDurationMs,
@@ -351,6 +355,22 @@ function formatNamedEntries(entries: Array<[string, string | number]>): string {
     : "none";
 }
 
+function buildPromptSection(title: string, ...content: Array<string | null | undefined>): string {
+  return [title, ...content.filter((value): value is string => Boolean(value && value.trim()))].join("\n");
+}
+
+function buildPrompt(options: {
+  preamble?: Array<string | null | undefined>;
+  sections: Array<string | null | undefined>;
+  closing?: Array<string | null | undefined>;
+}): string {
+  return [
+    ...(options.preamble ?? []).filter((value): value is string => Boolean(value && value.trim())),
+    ...options.sections.filter((value): value is string => Boolean(value && value.trim())),
+    ...(options.closing ?? []).filter((value): value is string => Boolean(value && value.trim())),
+  ].join("\n\n");
+}
+
 export function buildAiEnvironmentContext(options: {
   repoRoot: string;
   config: WorktreeManagerConfig;
@@ -404,9 +424,11 @@ export function buildAiEnvironmentContext(options: {
 }
 
 export function buildAiLocalHelperInstructions(): string[] {
+  const localHelperBaseCommand = "npx -y --package file:. worktreeman api";
+
   return [
-    "You can use `npx -y worktreeman api` for local worktree helpers when that is useful.",
-    "Supported helpers include `npx -y worktreeman api dev start`, `npx -y worktreeman api dev stop`, `npx -y worktreeman api dev status`, `npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`, `npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`, `npx -y worktreeman api documents list`, `npx -y worktreeman api documents read <document-id>`, and `npx -y worktreeman api documents history <document-id>`.",
+    `You can use \`${localHelperBaseCommand}\` for repo-local worktree helpers when that is useful. This guarantees the command runs against the current checked-out worktree code instead of a published package.`,
+    `Supported helpers include \`${localHelperBaseCommand} dev start\`, \`${localHelperBaseCommand} dev stop\`, \`${localHelperBaseCommand} dev status\`, \`${localHelperBaseCommand} dev logs read --command <name> [--source stdout|stderr|all]\`, \`${localHelperBaseCommand} dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]\`, \`${localHelperBaseCommand} documents list\`, \`${localHelperBaseCommand} documents read <document-id>\`, and \`${localHelperBaseCommand} documents history <document-id>\`.`,
     "Use the dev logs helpers to read stdout/stderr for configured background commands or grep those logs without guessing process names or log file paths.",
   ];
 }
@@ -415,13 +437,13 @@ export function buildWorktreeAiPrompt(options: {
   request: string;
   environmentContext: string;
 }) {
-  return [
-    options.environmentContext,
-    ...buildAiLocalHelperInstructions(),
-    "",
-    "Operator request:",
-    options.request,
-  ].join("\n");
+  return buildPrompt({
+    sections: [
+      options.environmentContext,
+      buildPromptSection("Local helpers:", ...buildAiLocalHelperInstructions()),
+      buildPromptSection("Operator request:", options.request),
+    ],
+  });
 }
 
 export function buildProjectManagementAiPrompt(options: {
@@ -437,29 +459,33 @@ export function buildProjectManagementAiPrompt(options: {
     .map((entry) => `#${entry.number} ${entry.title}`)
     .join(", ");
 
-  return [
-    `You are rewriting the project-management markdown document \"${options.document.title}\" for worktree ${options.branch}.`,
-    `Worktree path: ${options.worktreePath}`,
-    `Requested change: ${options.requestedChange}`,
-    options.environmentContext,
-    ...buildAiLocalHelperInstructions(),
-    "Your job is to return a full replacement markdown document, not commentary about the document.",
-    "The server will persist your response as the next version of this existing project-management document. Document history is the rollback mechanism.",
-    "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change.",
-    "Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>. The response may contain nothing outside those tags. Do not wrap the document in code fences.",
-    "Quality bar: produce an execution-ready plan for the selected worktree. Make the document concrete, well-ordered, specific, and directly useful to an engineer or agent doing the work.",
-    "Call out assumptions, blockers, dependencies, and sequencing explicitly when they matter. Replace vague guidance with actionable steps.",
-    "Preserve the document's purpose, but improve clarity, structure, and usefulness based on the requested change and the current repository context.",
-    "",
-    `Document number: #${options.document.number}`,
-    `Status: ${options.document.status}`,
-    `Assignee: ${options.document.assignee || "Unassigned"}`,
-    `Tags: ${options.document.tags.join(", ") || "none"}`,
-    `Dependencies: ${dependencySummary || "none"}`,
-    "",
-    "Current markdown:",
-    options.document.markdown,
-  ].join("\n");
+  return buildPrompt({
+    preamble: [
+      `You are rewriting the project-management markdown document \"${options.document.title}\" for worktree ${options.branch}.`,
+      `Worktree path: ${options.worktreePath}`,
+      `Requested change: ${options.requestedChange}`,
+      options.environmentContext,
+      ...buildAiLocalHelperInstructions(),
+      "Your job is to return a full replacement markdown document, not commentary about the document.",
+      "The server will persist your response as the next version of this existing project-management document. Document history is the rollback mechanism.",
+      "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change.",
+      "Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>. The response may contain nothing outside those tags. Do not wrap the document in code fences.",
+      "Quality bar: produce an execution-ready plan for the selected worktree. Make the document concrete, well-ordered, specific, and directly useful to an engineer or agent doing the work.",
+      "Call out assumptions, blockers, dependencies, and sequencing explicitly when they matter. Replace vague guidance with actionable steps.",
+      "Preserve the document's purpose, but improve clarity, structure, and usefulness based on the requested change and the current repository context.",
+    ],
+    sections: [
+      buildPromptSection(
+        "Document context:",
+        `Document number: #${options.document.number}`,
+        `Status: ${options.document.status}`,
+        `Assignee: ${options.document.assignee || "Unassigned"}`,
+        `Tags: ${options.document.tags.join(", ") || "none"}`,
+        `Dependencies: ${dependencySummary || "none"}`,
+      ),
+      buildPromptSection("Current markdown:", options.document.markdown),
+    ],
+  });
 }
 
 async function branchRefExists(repoRoot: string, branch: string): Promise<boolean> {
@@ -525,23 +551,29 @@ export function buildProjectManagementExecutionAiPrompt(options: {
     .filter((entry) => options.document.dependencies.includes(entry.id))
     .map((entry) => `#${entry.number} ${entry.title}`)
     .join(", ");
-  return [
-    `You are implementing the work described by the project-management document \"${options.document.title}\".`,
-    "Use this document as the main instruction set for the engineering work to perform in the repository.",
-    options.environmentContext,
-    ...buildAiLocalHelperInstructions(),
-    "Make code changes directly in the repository. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
-    "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
-    "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",
-    "This is not an interactive user session, so make your best educated guesses and keep moving unless the prompt requires something specific you cannot infer.",
-    "Commit your work regularly as you complete meaningful milestones.",
-    "Return your normal coding-agent response after doing the work, including a concise summary of what you changed and how you verified it.",
-    options.requestedChange ? `Additional operator guidance: ${options.requestedChange}` : "",
-    dependencySummary ? `Dependencies: ${dependencySummary}` : "",
-    "",
-    "Current markdown:",
-    options.document.markdown,
-  ].filter(Boolean).join("\n");
+
+  return buildPrompt({
+    preamble: [
+      `You are implementing the work described by the project-management document \"${options.document.title}\".`,
+      "Use this document as the main instruction set for the engineering work to perform in the repository.",
+      options.environmentContext,
+      ...buildAiLocalHelperInstructions(),
+      "Make code changes directly in the repository. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
+      "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
+      "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",
+      "This is not an interactive user session, so make your best educated guesses and keep moving unless the prompt requires something specific you cannot infer.",
+      "Commit your work regularly as you complete meaningful milestones.",
+      "Return your normal coding-agent response after doing the work, including a concise summary of what you changed and how you verified it.",
+    ],
+    sections: [
+      buildPromptSection(
+        "Execution context:",
+        options.requestedChange ? `Additional operator guidance: ${options.requestedChange}` : null,
+        dependencySummary ? `Dependencies: ${dependencySummary}` : null,
+      ),
+      buildPromptSection("Current markdown:", options.document.markdown),
+    ],
+  });
 }
 
 export function createWorktreeEnvironmentOrigin(branch: string, worktreeId?: WorktreeId): AiCommandOrigin {
@@ -599,6 +631,30 @@ export function createGitConflictResolutionOrigin(options: {
   };
 }
 
+export function createWorktreeReviewOrigin(options: {
+  branch: string;
+  worktreeId?: WorktreeId;
+  documentId: string;
+  reviewAction?: RunAiCommandRequest["reviewAction"];
+}): AiCommandOrigin {
+  const label = options.reviewAction === "review" ? "Review pass" : "Review follow-up";
+  const description = options.reviewAction === "review"
+    ? `Review branch changes for linked document ${options.documentId}.`
+    : `Continue review activity for linked document ${options.documentId}.`;
+
+  return {
+    kind: "worktree-review",
+    label,
+    description,
+    location: {
+      tab: "review",
+      branch: options.branch,
+      worktreeId: options.worktreeId,
+      documentId: options.documentId,
+    },
+  };
+}
+
 function buildProjectManagementSummaryPrompt(options: {
   branch: string;
   document: ProjectManagementDocumentResponse["document"];
@@ -628,6 +684,36 @@ function buildProjectManagementSummaryPrompt(options: {
     options.document.markdown,
   ].join("\n");
 }
+
+function buildReviewFollowUpSummaryPrompt(options: {
+  branch: string;
+  documentTitle: string;
+  originalRequest: string;
+  priorOutputs: string[];
+}) {
+  return [
+    `You are summarizing previous AI work for the review activity linked to \"${options.documentTitle}\" on branch ${options.branch}.`,
+    "The server will use your response as compact context for the next follow-up AI run.",
+    "Return only the final summary as raw text.",
+    "Write a concise engineer-facing summary that captures what prior AI runs already did, key outcomes, unresolved risks, and any notable failures.",
+    "Do not use markdown headings, bullets, code fences, or commentary outside the summary.",
+    "Prefer a short paragraph unless the content is too dense.",
+    "",
+    `Original request: ${options.originalRequest}`,
+    "",
+    "Previous AI outputs:",
+    ...options.priorOutputs.map((entry, index) => `Run ${index + 1}:\n${entry}`),
+  ].join("\n\n");
+}
+
+const REVIEW_FOLLOW_UP_RAW_HISTORY_LIMIT = 4;
+const REVIEW_FOLLOW_UP_OLDER_SUMMARY_LIMIT = 6;
+const REVIEW_FOLLOW_UP_SUMMARY_INPUT_LIMIT = 8;
+const REVIEW_FOLLOW_UP_REQUEST_MAX_LENGTH = 1_200;
+const REVIEW_FOLLOW_UP_OUTPUT_MAX_LENGTH = 2_400;
+const REVIEW_FOLLOW_UP_SUMMARY_TEXT_MAX_LENGTH = 480;
+const REVIEW_THREAD_ENTRY_BODY_MAX_LENGTH = 1_200;
+const REVIEW_OUTPUT_SUMMARY_HASH_VERSION = "review-output-summary-v2";
 
 export async function generateProjectManagementDocumentSummary(options: {
   repoRoot: string;
@@ -678,6 +764,516 @@ export async function generateProjectManagementDocumentSummary(options: {
     }, "error");
     return null;
   }
+}
+
+function formatReviewFollowUpLogOutput(entry: AiCommandLogEntry): string | null {
+  const request = formatReviewFollowUpMultilineSnippet(entry.request, REVIEW_FOLLOW_UP_REQUEST_MAX_LENGTH);
+  const sections = [
+    entry.response.stdout.trim()
+      ? `stdout:\n${formatReviewFollowUpMultilineSnippet(entry.response.stdout, REVIEW_FOLLOW_UP_OUTPUT_MAX_LENGTH)}`
+      : null,
+    entry.error?.message?.trim() ? `error: ${entry.error.message.trim()}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  if (!sections.length) {
+    return null;
+  }
+
+  return [
+    `Request: ${request || "(empty request)"}`,
+    ...sections,
+  ].join("\n\n");
+}
+
+function isExecutionReviewHistoryEntry(entry: AiCommandLogEntry): boolean {
+  const originKind = entry.origin?.kind;
+  if (originKind === "worktree-review" || originKind === "project-management-document-run") {
+    return true;
+  }
+
+  const request = entry.request.trim();
+  if (!request) {
+    return false;
+  }
+
+  if (request.includes('You are rewriting the project-management markdown document')) {
+    return false;
+  }
+
+  return request.includes('You are implementing the work described by the project-management document')
+    || request.includes('Review follow-up for linked document');
+}
+
+function formatReviewFollowUpHistoryEntry(entry: AiCommandLogEntry): string {
+  const sections = [
+    `- Timestamp: ${entry.timestamp}`,
+    `- Branch: ${entry.branch}`,
+    `- Command: ${entry.commandId}`,
+    `- Status: ${entry.status}`,
+    `- Request summary: ${formatReviewFollowUpMultilineSnippet(entry.request, REVIEW_FOLLOW_UP_REQUEST_MAX_LENGTH) || "(empty request)"}`,
+    entry.response.stdout.trim()
+      ? `- Stdout:\n${formatReviewFollowUpMultilineSnippet(entry.response.stdout, REVIEW_FOLLOW_UP_OUTPUT_MAX_LENGTH)}`
+      : null,
+    entry.error?.message?.trim() ? `- Error: ${entry.error.message.trim()}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return sections.join("\n\n");
+}
+
+function formatReviewFollowUpMultilineSnippet(value: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).trimEnd()}\n...[truncated]`;
+}
+
+function buildReviewHistorySummarySourceHash(entry: AiCommandLogEntry): string {
+  return createHash("sha256").update(JSON.stringify({
+    branch: entry.branch,
+    commandId: entry.commandId,
+    status: entry.status,
+    request: entry.request.trim(),
+    stdout: entry.response.stdout.trim(),
+    error: entry.error?.message?.trim() ?? "",
+  })).digest("hex");
+}
+
+function createReviewHistorySummary(entry: AiCommandLogEntry): string | null {
+  const requestSummary = formatLogSnippet(entry.request, 160) || "(empty request)";
+  const outcomeSummary = formatLogSnippet(entry.response.stdout, 220)
+    || formatLogSnippet(entry.error?.message ?? "", 220)
+    || "No stdout or explicit error was captured.";
+
+  return formatReviewFollowUpMultilineSnippet(
+    [
+      `${entry.timestamp} on ${entry.branch} (${entry.commandId}, ${entry.status}).`,
+      `Request: ${requestSummary}`,
+      `Outcome: ${outcomeSummary}`,
+    ].join(" "),
+    REVIEW_FOLLOW_UP_SUMMARY_TEXT_MAX_LENGTH,
+  );
+}
+
+async function getCachedReviewHistorySummary(options: {
+  repoRoot: string;
+  entry: AiCommandLogEntry;
+}): Promise<string | null> {
+  const sourceHash = buildReviewHistorySummarySourceHash(options.entry);
+  const cachedSummary = options.entry.historySummary?.trim() ?? "";
+  if (cachedSummary && options.entry.historySummarySourceHash === sourceHash) {
+    return cachedSummary;
+  }
+
+  const summary = createReviewHistorySummary(options.entry);
+  if (!summary) {
+    return null;
+  }
+
+  const store = await createOperationalStateStore(options.repoRoot);
+  await store.upsertAiCommandLogEntry({
+    ...options.entry,
+    historySummary: summary,
+    historySummaryGeneratedAt: new Date().toISOString(),
+    historySummarySourceHash: sourceHash,
+  }, { preserveOutputText: true });
+  return summary;
+}
+
+async function buildReviewFollowUpHistoryContext(options: {
+  repoRoot: string;
+  executionHistoryLogs: AiCommandLogEntry[];
+}): Promise<{ priorHistoryLog: string; summaryInputs: string[] }> {
+  if (!options.executionHistoryLogs.length) {
+    return {
+      priorHistoryLog: "No prior implementation runs were available for this review yet.",
+      summaryInputs: [],
+    };
+  }
+
+  const rawHistoryEntries = options.executionHistoryLogs.slice(-REVIEW_FOLLOW_UP_RAW_HISTORY_LIMIT);
+  const olderHistoryEntries = options.executionHistoryLogs.slice(0, -rawHistoryEntries.length);
+  const olderHistorySummaries = (await Promise.all(
+    olderHistoryEntries.map((entry) => getCachedReviewHistorySummary({ repoRoot: options.repoRoot, entry })),
+  )).filter((entry): entry is string => Boolean(entry));
+  const visibleOlderSummaries = olderHistorySummaries.slice(-REVIEW_FOLLOW_UP_OLDER_SUMMARY_LIMIT);
+  const omittedOlderSummaryCount = Math.max(olderHistorySummaries.length - visibleOlderSummaries.length, 0);
+  const recentRawHistory = rawHistoryEntries.map(formatReviewFollowUpHistoryEntry);
+  const sections: string[] = [];
+
+  if (visibleOlderSummaries.length) {
+    sections.push([
+      `Earlier AI runs summarized (${olderHistorySummaries.length} total):`,
+      ...visibleOlderSummaries.map((summary, index) => `${index + 1}. ${summary}`),
+      omittedOlderSummaryCount > 0
+        ? `${omittedOlderSummaryCount} additional earlier run summaries were omitted to keep this follow-up request bounded.`
+        : null,
+    ].filter((value): value is string => Boolean(value)).join("\n"));
+  }
+
+  if (recentRawHistory.length) {
+    sections.push([
+      visibleOlderSummaries.length ? "Most recent AI runs:" : null,
+      recentRawHistory.join("\n\n---\n\n"),
+    ].filter((value): value is string => Boolean(value)).join("\n"));
+  }
+
+  const recentOutputInputs = rawHistoryEntries
+    .map(formatReviewFollowUpLogOutput)
+    .filter((entry): entry is string => Boolean(entry));
+  const summaryInputs = [...visibleOlderSummaries, ...recentOutputInputs].slice(-REVIEW_FOLLOW_UP_SUMMARY_INPUT_LIMIT);
+
+  return {
+    priorHistoryLog: sections.join("\n\n") || "No prior implementation runs were available for this review yet.",
+    summaryInputs,
+  };
+}
+
+function extractReviewEntryRequestSummary(body: string): string | null {
+  const match = body.match(/^- Request:\s*(.+)$/m);
+  return match?.[1]?.trim() || null;
+}
+
+function formatReviewEntryBodySnippet(body: string): string {
+  const normalized = body
+    .replace(/<details>[\s\S]*?<\/details>/gi, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/<[^>]+>/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
+
+  return formatReviewFollowUpMultilineSnippet(normalized, REVIEW_THREAD_ENTRY_BODY_MAX_LENGTH);
+}
+
+function getReviewThreadEntryTitle(entry: ProjectManagementReviewEntry): string {
+  if (entry.eventType === "ai-started") {
+    return "AI work started";
+  }
+
+  if (entry.eventType === "ai-completed") {
+    return "AI work completed";
+  }
+
+  if (entry.eventType === "merge") {
+    return "Merge activity";
+  }
+
+  if (entry.source === "ai") {
+    return "AI review note";
+  }
+
+  if (entry.source === "system") {
+    return "System review note";
+  }
+
+  return "Review feedback";
+}
+
+function normalizeReviewRequestMatch(value: string | null | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function buildReviewOutputSummarySourceHash(entry: AiCommandLogEntry): string {
+  return createHash("sha256").update(JSON.stringify({
+    version: REVIEW_OUTPUT_SUMMARY_HASH_VERSION,
+    branch: entry.branch,
+    commandId: entry.commandId,
+    status: entry.status,
+    completedAt: entry.completedAt ?? null,
+    request: entry.request.trim(),
+    stdout: entry.response.stdout.trim(),
+    error: entry.error?.message?.trim() ?? "",
+  })).digest("hex");
+}
+
+function createReviewOutputSummary(entry: AiCommandLogEntry): string | null {
+  const outcomeSummary = formatLogSnippet(entry.response.stdout, 260)
+    || formatLogSnippet(entry.error?.message ?? "", 220)
+    || "No stdout or explicit error was captured.";
+
+  return formatReviewFollowUpMultilineSnippet(
+    [
+      `${entry.branch} ${entry.commandId} run (${entry.status}).`,
+      `Stdout summary: ${outcomeSummary}`,
+      entry.error?.message?.trim() ? `Explicit error: ${entry.error.message.trim()}` : null,
+    ].filter((value): value is string => Boolean(value)).join(" "),
+    REVIEW_FOLLOW_UP_SUMMARY_TEXT_MAX_LENGTH,
+  );
+}
+
+async function getCachedReviewOutputSummary(options: {
+  repoRoot: string;
+  entry: AiCommandLogEntry;
+}): Promise<string | null> {
+  const sourceHash = buildReviewOutputSummarySourceHash(options.entry);
+  const cachedSummary = options.entry.historySummary?.trim() ?? "";
+  if (cachedSummary && options.entry.historySummarySourceHash === sourceHash) {
+    return cachedSummary;
+  }
+
+  const summary = createReviewOutputSummary(options.entry);
+  if (!summary) {
+    return null;
+  }
+
+  const store = await createOperationalStateStore(options.repoRoot);
+  await store.upsertAiCommandLogEntry({
+    ...options.entry,
+    historySummary: summary,
+    historySummaryGeneratedAt: new Date().toISOString(),
+    historySummarySourceHash: sourceHash,
+  }, { preserveOutputText: true });
+  return summary;
+}
+
+function findMatchingReviewLogIndex(entry: ProjectManagementReviewEntry, logs: AiCommandLogEntry[]): number {
+  const requestSummary = normalizeReviewRequestMatch(extractReviewEntryRequestSummary(entry.body));
+  if (requestSummary) {
+    const exactIndex = logs.findIndex((log) => normalizeReviewRequestMatch(log.request) === requestSummary);
+    if (exactIndex >= 0) {
+      return exactIndex;
+    }
+
+    const partialIndex = logs.findIndex((log) => {
+      const normalizedRequest = normalizeReviewRequestMatch(log.request);
+      return normalizedRequest.includes(requestSummary) || requestSummary.includes(normalizedRequest);
+    });
+    if (partialIndex >= 0) {
+      return partialIndex;
+    }
+  }
+
+  const entryTime = Date.parse(entry.updatedAt || entry.createdAt);
+  if (!Number.isFinite(entryTime)) {
+    return logs.length ? 0 : -1;
+  }
+
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const [index, log] of logs.entries()) {
+    const logTime = Date.parse(log.completedAt ?? log.timestamp);
+    if (!Number.isFinite(logTime)) {
+      continue;
+    }
+
+    const distance = Math.abs(logTime - entryTime);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex >= 0 ? bestIndex : (logs.length ? 0 : -1);
+}
+
+function matchReviewEntriesToLogs(entries: ProjectManagementReviewEntry[], logs: AiCommandLogEntry[]) {
+  const remainingLogs = [...logs];
+  const matchedLogs = new Map<string, AiCommandLogEntry>();
+
+  for (const entry of entries) {
+    if (entry.eventType !== "ai-completed") {
+      continue;
+    }
+
+    const matchIndex = findMatchingReviewLogIndex(entry, remainingLogs);
+    if (matchIndex < 0) {
+      continue;
+    }
+
+    const [matchedLog] = remainingLogs.splice(matchIndex, 1);
+    if (matchedLog) {
+      matchedLogs.set(entry.id, matchedLog);
+    }
+  }
+
+  return matchedLogs;
+}
+
+async function formatReviewThreadContextEntry(options: {
+  repoRoot: string;
+  index: number;
+  entry: ProjectManagementReviewEntry;
+  matchedLog: AiCommandLogEntry | null;
+}): Promise<string> {
+  const author = options.entry.authorName || options.entry.authorEmail || options.entry.source;
+  const bodySnippet = formatReviewEntryBodySnippet(options.entry.body) || "(empty review entry)";
+  const outputSummary = options.matchedLog
+    ? await getCachedReviewOutputSummary({ repoRoot: options.repoRoot, entry: options.matchedLog })
+    : null;
+
+  return [
+    `${options.index}. ${getReviewThreadEntryTitle(options.entry)}`,
+    `- Timestamp: ${options.entry.createdAt}`,
+    `- Author: ${author}`,
+    `- Review entry:\n${bodySnippet}`,
+    outputSummary ? `- Cached stdout summary:\n${outputSummary}` : null,
+  ].filter((value): value is string => Boolean(value)).join("\n");
+}
+
+async function buildOrderedReviewThreadContext(options: {
+  repoRoot: string;
+  documentId: string;
+}): Promise<{ reviewThreadContext: string; originalContextFallback: string | null }> {
+  const review = await getProjectManagementDocumentReview(options.repoRoot, options.documentId);
+  const entries = review.review.entries;
+  if (!entries.length) {
+    return {
+      reviewThreadContext: "No visible review feedback was recorded for this document yet.",
+      originalContextFallback: null,
+    };
+  }
+
+  const reviewLogs = (await listAiCommandLogEntries(options.repoRoot))
+    .filter((entry) => entry.documentId === options.documentId)
+    .filter((entry) => entry.status !== "running")
+    .filter((entry) => entry.origin?.kind === "worktree-review")
+    .sort((left, right) => (left.completedAt ?? left.timestamp).localeCompare(right.completedAt ?? right.timestamp));
+  const matchedLogs = matchReviewEntriesToLogs(entries, reviewLogs);
+  const formattedEntries = await Promise.all(entries.map((entry, index) => formatReviewThreadContextEntry({
+    repoRoot: options.repoRoot,
+    index: index + 1,
+    entry,
+    matchedLog: matchedLogs.get(entry.id) ?? null,
+  })));
+  const originalContextFallback = entries
+    .map((entry) => extractReviewEntryRequestSummary(entry.body))
+    .find((value): value is string => Boolean(value?.trim()))
+    ?? reviewLogs.find((entry) => entry.request.trim())?.request.trim()
+    ?? null;
+
+  return {
+    reviewThreadContext: formattedEntries.join("\n\n"),
+    originalContextFallback,
+  };
+}
+
+export async function buildReviewFollowUpRequest(options: {
+  repoRoot: string;
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  documentId: string;
+  documentTitle: string;
+  documentSummary?: string | null;
+  documentMarkdown?: string | null;
+  followUp: NonNullable<RunAiCommandRequest["reviewFollowUp"]>;
+}): Promise<string> {
+  const { reviewThreadContext, originalContextFallback } = await buildOrderedReviewThreadContext({
+    repoRoot: options.repoRoot,
+    documentId: options.documentId,
+  });
+
+  const originalRequest = options.followUp.originalRequest.trim()
+    || originalContextFallback
+    || options.documentSummary?.trim()
+    || options.documentTitle;
+
+  const environmentContext = buildAiEnvironmentContext({
+    repoRoot: options.repoRoot,
+    config: options.config,
+    branch: options.branch,
+    worktreePath: options.worktreePath,
+    backgroundCommands: [],
+  });
+
+  return buildPrompt({
+    preamble: [
+      `Review follow-up for linked document \"${options.documentTitle}\".`,
+      "Implement the work described by this document in the current worktree.",
+      environmentContext,
+      "Continue the implementation directly in code. Treat the linked document as requirements context and the review thread as the ordered record of feedback and prior AI work.",
+      "Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take.",
+      "Return your normal coding-agent response with what changed, any important residual issues, and how you verified the work.",
+    ],
+    sections: [
+      buildPromptSection("Original context:", originalRequest),
+      buildPromptSection(
+        "Linked document context:",
+        `Title: ${options.documentTitle}`,
+        `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
+        options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
+      ),
+      buildPromptSection("Ordered review thread context:", reviewThreadContext),
+      buildPromptSection("New follow-up request:", options.followUp.newRequest.trim()),
+    ],
+    closing: ["Implement the requested work in code in this repository."],
+  });
+}
+
+function formatReviewDiff(diff: string) {
+  const trimmed = diff.trim();
+  return trimmed ? trimmed : "(no branch diff or working tree changes were available)";
+}
+
+export async function buildReviewOnlyRequest(options: {
+  repoRoot: string;
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  documentId: string;
+  documentTitle: string;
+  documentSummary?: string | null;
+  documentMarkdown?: string | null;
+  request: string;
+  comparison: GitComparisonResponse;
+}): Promise<string> {
+  const { reviewThreadContext, originalContextFallback } = await buildOrderedReviewThreadContext({
+    repoRoot: options.repoRoot,
+    documentId: options.documentId,
+  });
+
+  const originalRequest = originalContextFallback
+    || options.documentSummary?.trim()
+    || options.documentTitle;
+
+  const environmentContext = buildAiEnvironmentContext({
+    repoRoot: options.repoRoot,
+    config: options.config,
+    branch: options.branch,
+    worktreePath: options.worktreePath,
+    backgroundCommands: [],
+  });
+
+  return buildPrompt({
+    preamble: [
+      `Review branch changes for linked document \"${options.documentTitle}\".`,
+      environmentContext,
+      "Do not change code, files, git state, or the project-management document. This is a review-only pass.",
+      "Review whether everything in the original document is correct, whether everything in the requested updates is correct, and whether the current branch diff actually satisfies them.",
+      "Return markdown only. Put the actual review content inside <wtm-review>...</wtm-review> so the application can extract and display it.",
+      "Inside the tagged review, prioritize bugs, risks, behavioral regressions, missing verification, and mismatches between the document, requested updates, and the implemented diff.",
+    ],
+    sections: [
+      buildPromptSection("Original context:", originalRequest),
+      buildPromptSection(
+        "Linked document context:",
+        `Title: ${options.documentTitle}`,
+        `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
+        options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
+      ),
+      buildPromptSection("Ordered review thread context:", reviewThreadContext),
+      buildPromptSection("Requested review focus:", options.request.trim()),
+      buildPromptSection(
+        "Branch diff to review:",
+        `Base branch: ${options.comparison.baseBranch}`,
+        `Compare branch: ${options.comparison.compareBranch}`,
+        `Ahead: ${options.comparison.ahead}`,
+        `Behind: ${options.comparison.behind}`,
+        `Effective diff:\n${formatReviewDiff(options.comparison.effectiveDiff)}`,
+      ),
+    ],
+    closing: [
+      "Do not apply fixes. Review only.",
+      "The final response must be markdown only, and the actual review must appear inside <wtm-review>...</wtm-review>.",
+    ],
+  });
 }
 
 function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLogEntry {
@@ -753,7 +1349,6 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
     worktreePath: entry.worktreePath,
-    command: entry.command,
     requestPreview: toAiCommandLogPreview(entry.request),
     status: historicalStatus,
     pid: entry.pid ?? null,
@@ -772,7 +1367,6 @@ function toAiCommandLogSummaryFromIndex(entry: AiCommandLogIndexEntry): AiComman
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
     worktreePath: entry.worktreePath,
-    command: entry.command,
     requestPreview: toAiCommandLogPreview(entry.request),
     status: historicalStatus,
     pid: entry.pid ?? null,
@@ -951,7 +1545,8 @@ export async function readAiCommandLogEntryByIdentifier(repoRoot: string, identi
 }
 
 export function renderAiCommand(template: string, input: string): string {
-  return template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+  void input;
+  return template.replace(/(?<!["'])\$WTM_AI_INPUT(?!["'])/g, '"$WTM_AI_INPUT"');
 }
 
 export async function reconcileAiCommandLogEntry(options: {
@@ -976,6 +1571,7 @@ export async function reconcileAiCommandLogEntry(options: {
       isProcessActive: options.aiProcesses.isProcessActive,
     },
     reconcile: options.reconcileJobs ?? true,
+    treatProcessNameAsObserved: hasObservedAiCommandLogProcess(refreshedEntry),
   });
   if (!reconciledJob || reconciledJob.jobId !== refreshedEntry.jobId) {
     return refreshedEntry;

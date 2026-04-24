@@ -15,6 +15,7 @@ import {
 import { loadConfig, parseConfigContents, readConfigContents, serializeConfigContents, updateAiCommandInConfigContents } from "../services/config-service.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import { getProjectManagementDocument, getProjectManagementDocumentHistory } from "../services/project-management-service.js";
+import { getProjectManagementDocumentReview } from "../services/project-management-review-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
@@ -77,20 +78,20 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(capturedCommand.includes("tighten this plan"), true);
     assert.equal(capturedPrompt.includes("You are rewriting the project-management markdown document"), true);
     assert.equal(capturedPrompt.includes("Requested change: tighten this plan"), true);
-    assert.equal(capturedPrompt.includes("Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>."), true);
-    assert.equal(capturedPrompt.includes("You are not creating files, not writing a .md file"), true);
-    assert.equal(capturedPrompt.includes("Document history is the rollback mechanism."), true);
+    assert.equal(capturedPrompt.includes("Your job is to return a full replacement markdown document"), true);
+    assert.equal(capturedPrompt.includes("The server will persist your response as the next version of this existing project-management document."), true);
     assert.equal(capturedPrompt.includes("Environment wrapper:"), true);
     assert.equal(capturedPrompt.includes(`- Repository root: ${repo.repoRoot}`), true);
     assert.equal(capturedPrompt.includes("- Running services:"), true);
     assert.equal(capturedPrompt.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
-    assert.equal(capturedPrompt.includes("You can use `npx -y worktreeman api`"), true);
-    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev start`"), true);
-    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev stop`"), true);
-    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev status`"), true);
-    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`"), true);
-    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`"), true);
-    assert.equal(capturedPrompt.includes("`npx -y worktreeman api documents read <document-id>`"), true);
+    assert.equal(capturedPrompt.includes("You can use `npx -y --package file:. worktreeman api`"), true);
+    assert.equal(capturedPrompt.includes("current checked-out worktree code instead of a published package"), true);
+    assert.equal(capturedPrompt.includes("`npx -y --package file:. worktreeman api dev start`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y --package file:. worktreeman api dev stop`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y --package file:. worktreeman api dev status`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y --package file:. worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y --package file:. worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y --package file:. worktreeman api documents read <document-id>`"), true);
     assert.equal(capturedPrompt.includes("Current markdown:"), true);
 
     await waitFor(async () => {
@@ -409,7 +410,7 @@ test("project-management AI rejects unknown target documents and logs the failur
   }
 });
 
-test("project-management routes preserve summary and add attributed comments", { concurrency: false }, async () => {
+test("project-management review routes preserve summary and add attributed entries", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const server = await startApiServer(repo);
 
@@ -422,7 +423,7 @@ test("project-management routes preserve summary and add attributed comments", {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: "Comments rollout",
-        summary: "Track the document comments launch.",
+        summary: "Track the review timeline launch.",
         markdown: "# Comments rollout\n",
         tags: ["feature", "ux"],
         status: "todo",
@@ -431,45 +432,72 @@ test("project-management routes preserve summary and add attributed comments", {
     });
     assert.equal(createResponse.status, 201);
     const createPayload = await createResponse.json() as { document: { id: string; summary: string } };
-    assert.equal(createPayload.document.summary, "Track the document comments launch.");
+    assert.equal(createPayload.document.summary, "Track the review timeline launch.");
 
     const documentId = createPayload.document.id;
 
-    const commentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+    const commentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ body: "Need one more pass on author attribution." }),
     });
     assert.equal(commentResponse.status, 201);
     const commentPayload = await commentResponse.json() as {
-      document: {
-        summary: string;
-        historyCount: number;
+      review: {
+        documentId: string;
+        entries: Array<{
+          body: string;
+          authorName: string;
+          authorEmail: string;
+          eventType: string;
+        }>;
       };
     };
-    assert.equal(commentPayload.document.summary, "Track the document comments launch.");
-    assert.equal(commentPayload.document.historyCount, 2);
-
-    const history = await getProjectManagementDocumentHistory(repo.repoRoot, documentId);
-    assert.equal(history.history.at(-1)?.action, "comment");
-    assert.equal(history.history.at(-1)?.authorName, "Riley Maintainer");
-    assert.equal(history.history.at(-1)?.authorEmail, "riley@example.com");
+    assert.equal(commentPayload.review.documentId, documentId);
+    assert.equal(commentPayload.review.entries.length, 1);
+    assert.equal(commentPayload.review.entries[0]?.body, "Need one more pass on author attribution.");
+    assert.equal(commentPayload.review.entries[0]?.authorName, "Riley Maintainer");
+    assert.equal(commentPayload.review.entries[0]?.authorEmail, "riley@example.com");
+    assert.equal(commentPayload.review.entries[0]?.eventType, "comment");
 
     const updatedDocument = await getProjectManagementDocument(repo.repoRoot, documentId);
-    assert.equal(updatedDocument.document.summary, "Track the document comments launch.");
-    assert.equal(updatedDocument.document.comments.length, 1);
-    assert.equal(updatedDocument.document.comments[0]?.body, "Need one more pass on author attribution.");
-    assert.equal(updatedDocument.document.comments[0]?.authorName, "Riley Maintainer");
-    assert.equal(updatedDocument.document.comments[0]?.authorEmail, "riley@example.com");
+    assert.equal(updatedDocument.document.summary, "Track the review timeline launch.");
 
-    const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/comments`, {
+    const updatedReview = await getProjectManagementDocumentReview(repo.repoRoot, documentId);
+    assert.equal(updatedReview.review.entries.length, 1);
+    assert.equal(updatedReview.review.entries[0]?.body, "Need one more pass on author attribution.");
+    assert.equal(updatedReview.review.entries[0]?.authorName, "Riley Maintainer");
+    assert.equal(updatedReview.review.entries[0]?.authorEmail, "riley@example.com");
+
+    const reviewEntryId = updatedReview.review.entries[0]?.id;
+    assert.ok(reviewEntryId);
+
+    const deleteResponse = await server.fetch(
+      `/api/project-management/documents/${encodeURIComponent(documentId)}/review/${encodeURIComponent(reviewEntryId)}`,
+      { method: "DELETE" },
+    );
+    assert.equal(deleteResponse.status, 204);
+
+    const deletedReview = await getProjectManagementDocumentReview(repo.repoRoot, documentId);
+    assert.equal(deletedReview.review.entries.length, 0);
+
+    const reviewResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`);
+    assert.equal(reviewResponse.status, 200);
+    const reviewPayload = await reviewResponse.json() as {
+      review: {
+        entries: Array<unknown>;
+      };
+    };
+    assert.equal(reviewPayload.review.entries.length, 0);
+
+    const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ body: "   " }),
     });
     assert.equal(invalidCommentResponse.status, 400);
     const invalidCommentPayload = await invalidCommentResponse.json() as { message: string };
-    assert.equal(invalidCommentPayload.message, "Comment body is required.");
+    assert.equal(invalidCommentPayload.message, "Review body is required.");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -723,8 +751,29 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(storedLink.worktreePath, createdWorktree.worktreePath);
 
     assert.equal(createdWorktree.runtime?.tmuxSession?.length ? true : false, true);
-    const capturedCommand = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-input"), "utf8");
-    const capturedEnv = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-env"), "utf8");
+    const capturedCommandPath = path.join(createdWorktree.worktreePath, ".wtm-captured-input");
+    const capturedEnvPath = path.join(createdWorktree.worktreePath, ".wtm-captured-env");
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
+    }, 15000);
+    await waitFor(async () => {
+      try {
+        await fs.access(capturedCommandPath);
+        await fs.access(capturedEnvPath);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 15000);
+    const capturedCommand = await fs.readFile(capturedCommandPath, "utf8");
+    const capturedEnv = await fs.readFile(capturedEnvPath, "utf8");
     const firstSessionMatch = capturedEnv.match(/^AI_SESSION_ID=(.*)$/m);
     assert.equal(capturedEnv.includes(`WORKTREE_BRANCH=${payload.job.branch}`), true);
     assert.equal(capturedEnv.includes(`WORKTREE_PATH=${createdWorktree.worktreePath}`), true);
@@ -749,13 +798,14 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(capturedCommand.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
     assert.equal(capturedCommand.includes("- Running services:"), true);
     assert.equal(capturedCommand.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
-    assert.equal(capturedCommand.includes("You can use `npx -y worktreeman api`"), true);
-    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev start`"), true);
-    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev stop`"), true);
-    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev status`"), true);
-    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`"), true);
-    assert.equal(capturedCommand.includes("`npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`"), true);
-    assert.equal(capturedCommand.includes("`npx -y worktreeman api documents read <document-id>`"), true);
+    assert.equal(capturedCommand.includes("You can use `npx -y --package file:. worktreeman api`"), true);
+    assert.equal(capturedCommand.includes("current checked-out worktree code instead of a published package"), true);
+    assert.equal(capturedCommand.includes("`npx -y --package file:. worktreeman api dev start`"), true);
+    assert.equal(capturedCommand.includes("`npx -y --package file:. worktreeman api dev stop`"), true);
+    assert.equal(capturedCommand.includes("`npx -y --package file:. worktreeman api dev status`"), true);
+    assert.equal(capturedCommand.includes("`npx -y --package file:. worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`"), true);
+    assert.equal(capturedCommand.includes("`npx -y --package file:. worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`"), true);
+    assert.equal(capturedCommand.includes("`npx -y --package file:. worktreeman api documents read <document-id>`"), true);
     assert.equal(capturedCommand.includes("in worktree"), false);
     assert.equal(capturedCommand.includes("Worktree path:"), true);
     assert.equal(capturedCommand.includes("Document number:"), false);
@@ -799,25 +849,32 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(updated.document.title, "Project Outline");
     assert.equal(updated.document.status, "in-progress");
     assert.equal(updated.document.markdown.includes("implemented"), false);
-    assert.equal(updated.document.comments.length >= 2, true);
-    const startedComment = updated.document.comments.at(-2);
-    const latestComment = updated.document.comments.at(-1);
+
+    const updatedReview = await getProjectManagementDocumentReview(repo.repoRoot, outline.id);
+    assert.equal(updatedReview.review.entries.length >= 2, true);
+    const startedComment = updatedReview.review.entries.at(-2);
+    const latestComment = updatedReview.review.entries.at(-1);
     assert.ok(startedComment);
     assert.ok(latestComment);
+    assert.equal(startedComment.eventType, "ai-started");
+    assert.equal(startedComment.source, "ai");
     assert.match(startedComment.body, /## Worktree AI started/);
     assert.equal(startedComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(startedComment.body, /- Command: `smart`/);
+    assert.equal(latestComment.eventType, "ai-completed");
+    assert.equal(latestComment.source, "ai");
     assert.match(latestComment.body, /## Worktree AI completed/);
     assert.equal(latestComment.body.includes(`- Branch: \`${payload.job.branch}\``), true);
     assert.match(latestComment.body, /- Command: `smart`/);
     assert.match(latestComment.body, /- Output: 2 stdout lines, 0 stderr lines/);
-    assert.match(latestComment.body, /### Output/);
+    assert.match(latestComment.body, /<details>/);
+    assert.match(latestComment.body, /<summary>Output details<\/summary>/);
     assert.match(latestComment.body, /#### Stdout/);
     assert.match(latestComment.body, /```text\nplanning\.\.\.\nimplemented/);
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, outline.id);
     assert.equal(history.history.length >= 2, true);
-    assert.match(history.history.at(-1)?.diff ?? "", /\+  ## Worktree AI completed/);
+    assert.equal(history.history.at(-1)?.action, "update");
 
     const aiLogsResponse = await server.fetch(`/api/ai/logs`);
     assert.equal(aiLogsResponse.status, 200);

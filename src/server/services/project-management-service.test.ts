@@ -7,7 +7,6 @@ import { DEFAULT_PROJECT_MANAGEMENT_DOCUMENT_TITLE } from "../../shared/constant
 import { runCommand } from "../utils/process.js";
 import { createBareRepoLayout } from "./repository-layout-service.js";
 import {
-  addProjectManagementComment,
   appendProjectManagementBatch,
   clearProjectManagementCache,
   createProjectManagementDocument,
@@ -20,6 +19,7 @@ import {
   updateProjectManagementStatus,
 } from "./project-management-service.js";
 import { closeManagedDatabaseClient } from "./database-client-service.js";
+import { addProjectManagementReviewEntry, getProjectManagementDocumentReview } from "./project-management-review-service.js";
 
 async function createTestRepo(): Promise<string> {
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-project-management-"));
@@ -104,7 +104,7 @@ test("create and update project-management documents persist markdown, summary, 
   }
 });
 
-test("comments use the repo git user for attribution and history", async () => {
+test("review entries use the repo git user for attribution", async () => {
   const repoRoot = await createTestRepo();
 
   try {
@@ -118,33 +118,34 @@ test("comments use the repo git user for attribution and history", async () => {
       tags: ["review"],
     });
 
-    const commented = await addProjectManagementComment(repoRoot, created.document.id, {
+    const reviewed = await addProjectManagementReviewEntry(repoRoot, created.document.id, {
       body: "  Waiting on final QA verification.  ",
     });
 
-    assert.equal(commented.document.summary, "Collect feedback before shipping.");
-    assert.equal(commented.document.historyCount, 2);
+    assert.equal(reviewed.review.documentId, created.document.id);
+    assert.equal(reviewed.review.entries.length, 1);
+    assert.equal(reviewed.review.entries[0]?.body, "Waiting on final QA verification.");
+    assert.equal(reviewed.review.entries[0]?.authorName, "Casey Reviewer");
+    assert.equal(reviewed.review.entries[0]?.authorEmail, "casey@example.com");
+    assert.equal(reviewed.review.entries[0]?.eventType, "comment");
 
-    const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
-    assert.equal(history.history.at(-1)?.action, "comment");
-    assert.equal(history.history.at(-1)?.authorName, "Casey Reviewer");
-    assert.equal(history.history.at(-1)?.authorEmail, "casey@example.com");
-    assert.match(history.history.at(-1)?.diff ?? "", /Waiting on final QA verification/);
-
-    const commit = await runCommand("git", ["show", "-s", "--format=%an <%ae>", commented.headSha], { cwd: repoRoot });
+    const commit = await runCommand("git", ["show", "-s", "--format=%an <%ae>", reviewed.headSha], { cwd: repoRoot });
     assert.equal(commit.stdout.trim(), "Casey Reviewer <casey@example.com>");
 
     const persisted = await getProjectManagementDocument(repoRoot, created.document.id);
-    assert.equal(persisted.document.comments.length, 1);
-    assert.equal(persisted.document.comments[0]?.body, "Waiting on final QA verification.");
-    assert.equal(persisted.document.comments[0]?.authorName, "Casey Reviewer");
-    assert.equal(persisted.document.comments[0]?.authorEmail, "casey@example.com");
+    assert.equal(persisted.document.summary, "Collect feedback before shipping.");
+
+    const persistedReview = await getProjectManagementDocumentReview(repoRoot, created.document.id);
+    assert.equal(persistedReview.review.entries.length, 1);
+    assert.equal(persistedReview.review.entries[0]?.body, "Waiting on final QA verification.");
+    assert.equal(persistedReview.review.entries[0]?.authorName, "Casey Reviewer");
+    assert.equal(persistedReview.review.entries[0]?.authorEmail, "casey@example.com");
   } finally {
     await destroyTestRepo(repoRoot);
   }
 });
 
-test("comments fall back to default author when git is unavailable", async () => {
+test("review entries fall back to default author when git is unavailable", async () => {
   const repoRoot = await createTestRepo();
   const originalPath = process.env.PATH;
   const shimDir = await fs.mkdtemp(path.join(repoRoot, "git-shim-"));
@@ -168,19 +169,16 @@ exec ${realGit} "$@"
     await fs.chmod(shimPath, 0o755);
     process.env.PATH = `${shimDir}:${originalPath ?? ""}`;
 
-    const commented = await addProjectManagementComment(repoRoot, created.document.id, {
+    const reviewed = await addProjectManagementReviewEntry(repoRoot, created.document.id, {
       body: "Git config lookup failures should not break comment writes.",
     });
 
-    assert.equal(commented.document.historyCount, 2);
+    assert.equal(reviewed.review.entries.at(-1)?.authorName, "worktreeman");
+    assert.equal(reviewed.review.entries.at(-1)?.authorEmail, "worktreeman@example.com");
 
-    const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
-    assert.equal(history.history.at(-1)?.authorName, "worktreeman");
-    assert.equal(history.history.at(-1)?.authorEmail, "worktreeman@example.com");
-
-    const persisted = await getProjectManagementDocument(repoRoot, created.document.id);
-    assert.equal(persisted.document.comments.at(-1)?.authorName, "worktreeman");
-    assert.equal(persisted.document.comments.at(-1)?.authorEmail, "worktreeman@example.com");
+    const persistedReview = await getProjectManagementDocumentReview(repoRoot, created.document.id);
+    assert.equal(persistedReview.review.entries.at(-1)?.authorName, "worktreeman");
+    assert.equal(persistedReview.review.entries.at(-1)?.authorEmail, "worktreeman@example.com");
   } finally {
     process.env.PATH = originalPath;
     await fs.rm(shimDir, { recursive: true, force: true });

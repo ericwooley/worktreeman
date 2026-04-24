@@ -9,9 +9,23 @@ import { getAiCommandProcessName, startAiCommandProcess, waitForAiCommandProcess
 import { completeAiCommandRun } from "./ai-command-completion-service.js";
 
 const PROJECT_MANAGEMENT_AI_QUEUE = "project-management-ai-update";
-const JOB_POLL_INTERVAL_SECONDS = 0.5;
-const WORKER_STOP_TIMEOUT_MS = 60_000;
+const DEFAULT_JOB_POLL_INTERVAL_SECONDS = 0.5;
 
+function resolveJobPollIntervalSeconds(): number {
+  const raw = process.env.WTM_AI_JOB_POLL_INTERVAL_SECONDS;
+  if (!raw) {
+    return DEFAULT_JOB_POLL_INTERVAL_SECONDS;
+  }
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_JOB_POLL_INTERVAL_SECONDS;
+  }
+  return parsed;
+}
+
+function isInlineJobMode(): boolean {
+  return process.env.WTM_AI_JOB_INLINE === "1";
+}
 export interface ProjectManagementAiQueuePayload {
   jobId?: string;
   worktreeId: WorktreeId;
@@ -27,17 +41,44 @@ export interface ProjectManagementAiQueuePayload {
   applyDocumentUpdateToDocumentId?: string | null;
   reviewDocumentId?: string | null;
   reviewRequestSummary?: string | null;
+  reviewAction?: "implement" | "review" | null;
   autoCommitDirtyWorktree?: boolean;
 }
 
 interface ManagedAiCommandJobQueue {
-  boss: PgBoss;
+  boss: PgBoss | null;
   workerId: string | null;
   readyPromise: Promise<void>;
   activeJobs: Set<Promise<void>>;
+  inline: boolean;
+  inlineHandler: ((payload: ProjectManagementAiQueuePayload) => Promise<void>) | null;
 }
 
 const managedQueues = new Map<string, ManagedAiCommandJobQueue>();
+
+async function shutdownManager(repoRoot: string, manager: ManagedAiCommandJobQueue, removeFromMap = true) {
+  if (removeFromMap) {
+    managedQueues.delete(repoRoot);
+  }
+
+  if (manager.workerId && manager.boss) {
+    await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
+    manager.workerId = null;
+  }
+  manager.inlineHandler = null;
+
+  if (manager.activeJobs.size > 0) {
+    await Promise.allSettled(Array.from(manager.activeJobs));
+  }
+
+  const shutdownTasks: Promise<unknown>[] = [
+    closeManagedDatabaseClient(repoRoot, "jobs"),
+  ];
+  if (manager.boss) {
+    shutdownTasks.unshift(manager.boss.stop());
+  }
+  await Promise.allSettled(shutdownTasks);
+}
 
 function summarizeQueuePayload(payload: ProjectManagementAiQueuePayload) {
   return {
@@ -114,6 +155,7 @@ async function runManagedAiProcess(options: {
         applyDocumentUpdateToDocumentId: options.payload.applyDocumentUpdateToDocumentId,
         reviewDocumentId: options.payload.reviewDocumentId,
         reviewRequestSummary: options.payload.reviewRequestSummary,
+        reviewAction: options.payload.reviewAction,
         autoCommitDirtyWorktree: options.payload.autoCommitDirtyWorktree,
       });
     },
@@ -140,6 +182,28 @@ async function ensureJobManager(repoRoot: string): Promise<ManagedAiCommandJobQu
     return existing;
   }
 
+  const inline = isInlineJobMode();
+
+  if (inline) {
+    const managed: ManagedAiCommandJobQueue = {
+      boss: null,
+      workerId: null,
+      activeJobs: new Set(),
+      inline: true,
+      inlineHandler: null,
+      readyPromise: (async () => {
+        logServerEvent("ai-job-queue", "manager-ready", {
+          repoRoot,
+          queue: PROJECT_MANAGEMENT_AI_QUEUE,
+          inline: true,
+        });
+      })(),
+    };
+    managedQueues.set(repoRoot, managed);
+    await managed.readyPromise;
+    return managed;
+  }
+
   const db = await getManagedDatabaseClient(repoRoot, "jobs");
   const boss = new PgBoss({
     db: {
@@ -158,6 +222,8 @@ async function ensureJobManager(repoRoot: string): Promise<ManagedAiCommandJobQu
     boss,
     workerId: null,
     activeJobs: new Set(),
+    inline: false,
+    inlineHandler: null,
     readyPromise: (async () => {
       boss.on("error", (error) => {
         logServerEvent("ai-job-queue", "pg-boss-error", {
@@ -207,10 +273,43 @@ export async function enqueueProjectManagementAiJob(options: {
     worktreePath: options.payload.worktreePath,
   });
 
-  const queueJobId = await manager.boss.send(PROJECT_MANAGEMENT_AI_QUEUE, {
-    ...options.payload,
-    jobId: job.jobId,
-  }, { retryLimit: 0 });
+  const fullPayload = { ...options.payload, jobId: job.jobId };
+
+  if (manager.inline) {
+    const handler = manager.inlineHandler;
+    if (!handler) {
+      throw new Error("Inline AI job mode requires a worker to be registered before enqueueing.");
+    }
+
+    const inlineJobId = `inline-${job.jobId}`;
+    logServerEvent("ai-job-queue", "enqueued", {
+      repoRoot: options.repoRoot,
+      queueJobId: inlineJobId,
+      inline: true,
+      ...summarizeQueuePayload(fullPayload),
+      duration: formatDurationMs(Date.now() - enqueueStartedAt),
+    });
+
+    // Dispatch asynchronously so the HTTP request returns before the handler runs.
+    const activeJob = (async () => {
+      // Yield once so the caller's Promise resolves first; preserves the
+      // real queue's semantics where the worker runs after enqueue returns.
+      await Promise.resolve();
+      await handler(fullPayload);
+    })();
+    manager.activeJobs.add(activeJob);
+    activeJob.finally(() => {
+      manager.activeJobs.delete(activeJob);
+    }).catch(() => undefined);
+
+    return job;
+  }
+
+  if (!manager.boss) {
+    throw new Error("AI job manager is missing a queue instance.");
+  }
+
+  const queueJobId = await manager.boss.send(PROJECT_MANAGEMENT_AI_QUEUE, fullPayload, { retryLimit: 0 });
 
   if (!queueJobId) {
     throw new Error("Failed to enqueue the project management AI job.");
@@ -228,40 +327,65 @@ export async function enqueueProjectManagementAiJob(options: {
 
 export async function startProjectManagementAiWorker(options: { repoRoot: string }): Promise<{ close: () => Promise<void> }> {
   const manager = await ensureJobManager(options.repoRoot);
+  const pollingIntervalSeconds = resolveJobPollIntervalSeconds();
+
+  const runHandler = async (queueJobId: string, payload: ProjectManagementAiQueuePayload) => {
+    const startedAt = Date.now();
+    logServerEvent("ai-job-queue", "dequeued", {
+      repoRoot: options.repoRoot,
+      queueJobId,
+      ...summarizeQueuePayload(payload),
+    });
+    try {
+      await processProjectManagementJob(options.repoRoot, payload);
+      logServerEvent("ai-job-queue", "completed", {
+        repoRoot: options.repoRoot,
+        queueJobId,
+        ...summarizeQueuePayload(payload),
+        duration: formatDurationMs(Date.now() - startedAt),
+      });
+    } catch (error) {
+      logServerEvent("ai-job-queue", "failed", {
+        repoRoot: options.repoRoot,
+        queueJobId,
+        ...summarizeQueuePayload(payload),
+        duration: formatDurationMs(Date.now() - startedAt),
+        ...describeError(error),
+      }, "error");
+      throw error;
+    }
+  };
+
+  if (manager.inline) {
+    manager.inlineHandler = async (payload) => {
+      const queueJobId = `inline-${payload.jobId ?? "unknown"}`;
+      await runHandler(queueJobId, payload);
+    };
+    logServerEvent("ai-job-queue", "worker-ready", {
+      repoRoot: options.repoRoot,
+      queue: PROJECT_MANAGEMENT_AI_QUEUE,
+      inline: true,
+    });
+    return {
+      close: async () => {
+        await shutdownManager(options.repoRoot, manager);
+      },
+    };
+  }
+
+  if (!manager.boss) {
+    throw new Error("AI job manager is missing a queue instance.");
+  }
+
   let workerId: string;
 
   try {
     workerId = await manager.boss.work<ProjectManagementAiQueuePayload>(
       PROJECT_MANAGEMENT_AI_QUEUE,
-      { pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS },
+      { pollingIntervalSeconds },
       async (jobs) => {
         for (const job of jobs) {
-          const activeJob = (async () => {
-            const startedAt = Date.now();
-            logServerEvent("ai-job-queue", "dequeued", {
-              repoRoot: options.repoRoot,
-              queueJobId: job.id,
-              ...summarizeQueuePayload(job.data),
-            });
-            try {
-              await processProjectManagementJob(options.repoRoot, job.data);
-              logServerEvent("ai-job-queue", "completed", {
-                repoRoot: options.repoRoot,
-                queueJobId: job.id,
-                ...summarizeQueuePayload(job.data),
-                duration: formatDurationMs(Date.now() - startedAt),
-              });
-            } catch (error) {
-              logServerEvent("ai-job-queue", "failed", {
-                repoRoot: options.repoRoot,
-                queueJobId: job.id,
-                ...summarizeQueuePayload(job.data),
-                duration: formatDurationMs(Date.now() - startedAt),
-                ...describeError(error),
-              }, "error");
-              throw error;
-            }
-          })();
+          const activeJob = runHandler(job.id, job.data);
           manager.activeJobs.add(activeJob);
           try {
             await activeJob;
@@ -275,7 +399,7 @@ export async function startProjectManagementAiWorker(options: { repoRoot: string
     logServerEvent("ai-job-queue", "worker-start-failed", {
       repoRoot: options.repoRoot,
       queue: PROJECT_MANAGEMENT_AI_QUEUE,
-      pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS,
+      pollingIntervalSeconds,
       ...describeError(error),
     }, "error");
     throw error;
@@ -286,19 +410,12 @@ export async function startProjectManagementAiWorker(options: { repoRoot: string
     repoRoot: options.repoRoot,
     queue: PROJECT_MANAGEMENT_AI_QUEUE,
     workerId,
-    pollingIntervalSeconds: JOB_POLL_INTERVAL_SECONDS,
+    pollingIntervalSeconds,
   });
 
   return {
     close: async () => {
-      if (manager.workerId) {
-        await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
-        manager.workerId = null;
-      }
-      if (manager.activeJobs.size > 0) {
-        await Promise.allSettled(Array.from(manager.activeJobs));
-      }
-      await manager.boss.stop({ graceful: true, timeout: WORKER_STOP_TIMEOUT_MS }).catch(() => undefined);
+      await shutdownManager(options.repoRoot, manager);
     },
   };
 }
@@ -308,13 +425,7 @@ export async function stopAllAiCommandJobManagers() {
   managedQueues.clear();
 
   await Promise.all(entries.map(async ([repoRoot, manager]) => {
-    if (manager.workerId) {
-      await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
-    }
-    await Promise.allSettled([
-      manager.boss.stop({ graceful: true, timeout: WORKER_STOP_TIMEOUT_MS }),
-      closeManagedDatabaseClient(repoRoot, "jobs"),
-    ]);
+    await shutdownManager(repoRoot, manager, false);
   }));
 }
 
@@ -324,12 +435,5 @@ export async function stopAiCommandJobManager(repoRoot: string) {
     return;
   }
 
-  managedQueues.delete(repoRoot);
-  if (manager.workerId) {
-    await manager.boss.offWork(PROJECT_MANAGEMENT_AI_QUEUE, { id: manager.workerId, wait: true }).catch(() => undefined);
-  }
-  await Promise.allSettled([
-    manager.boss.stop({ graceful: true, timeout: WORKER_STOP_TIMEOUT_MS }),
-    closeManagedDatabaseClient(repoRoot, "jobs"),
-  ]);
+  await shutdownManager(repoRoot, manager);
 }

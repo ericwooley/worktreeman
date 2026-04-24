@@ -91,6 +91,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         aiProcesses: context.passiveAiProcesses,
         reconcileJobs: context.shouldReconcileAiJobs,
       });
+      let currentAiCommandLogsSerialized = JSON.stringify({ type: "ai-logs", event: { type: "snapshot", logs: currentAiCommandLogs } });
       let currentProjectManagementUsers = await listProjectManagementUsers(context.repoRoot, initialConfig.projectManagement.users);
       let currentProjectManagementDocuments = await context.listProjectManagementDocuments();
       let currentProjectManagementReviews = await context.listProjectManagementReviews();
@@ -141,13 +142,13 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         }
       };
 
-      const writeEvent = (event: DashboardEventsStreamEvent) => {
+      const writeEvent = (event: DashboardEventsStreamEvent, serializedPayload?: string) => {
         if (isStreamClosed()) {
           return;
         }
 
         try {
-          const payload = JSON.stringify(event);
+          const payload = serializedPayload ?? JSON.stringify(event);
           noteDashboardPayload("events-stream", event.type, payload);
           res.write(`data: ${payload}\n\n`);
         } catch {
@@ -167,8 +168,12 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         writeEvent({ type: "system-status", event: { type, status } });
       };
 
-      const writeAiCommandLogsEvent = (type: AiCommandLogsStreamEvent["type"], logs: AiCommandLogsResponse) => {
-        writeEvent({ type: "ai-logs", event: { type, logs } });
+      const writeAiCommandLogsEvent = (
+        type: AiCommandLogsStreamEvent["type"],
+        logs: AiCommandLogsResponse,
+        serializedPayload?: string,
+      ) => {
+        writeEvent({ type: "ai-logs", event: { type, logs } }, serializedPayload);
       };
 
       const writeProjectManagementUsersEvent = (
@@ -195,7 +200,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
       writeStateEvent("snapshot", currentState);
       writeShutdownEvent("snapshot", currentShutdownStatus);
       writeSystemEvent("snapshot", currentSystemStatus);
-      writeAiCommandLogsEvent("snapshot", currentAiCommandLogs);
+      writeAiCommandLogsEvent("snapshot", currentAiCommandLogs, currentAiCommandLogsSerialized);
       writeProjectManagementUsersEvent("snapshot", currentProjectManagementUsers);
       writeProjectManagementDocumentsEvent("snapshot", currentProjectManagementDocuments);
       writeProjectManagementReviewsEvent("snapshot", currentProjectManagementReviews);
@@ -298,14 +303,27 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
             return;
           }
 
+          const serializedEvent = JSON.stringify({ type: "ai-logs", event: { type: "update", logs: nextLogs } });
+          if (serializedEvent === currentAiCommandLogsSerialized) {
+            noteDashboardRebuild("events-stream", {
+              section: "ai-logs",
+              stage: "skipped",
+              reason: "unchanged",
+              logs: nextLogs.logs.length,
+              runningJobs: nextLogs.runningJobs.length,
+            });
+            return;
+          }
+
           currentAiCommandLogs = nextLogs;
+          currentAiCommandLogsSerialized = serializedEvent;
           noteDashboardRebuild("events-stream", {
             section: "ai-logs",
             stage: "done",
             logs: nextLogs.logs.length,
             runningJobs: nextLogs.runningJobs.length,
           });
-          writeAiCommandLogsEvent("update", nextLogs);
+          writeAiCommandLogsEvent("update", nextLogs, serializedEvent);
         }).catch((error) => {
           logServerEvent("events-stream", "ai-logs-rebuild-failed", {
             error: error instanceof Error ? error.message : String(error),

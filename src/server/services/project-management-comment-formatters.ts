@@ -1,5 +1,15 @@
 import type { AiCommandId, GitCompareCommit } from "../../shared/types.js";
 
+type WorktreeReviewAction = "implement" | "review";
+
+function getAiActivityHeading(phase: "started" | "completed", reviewAction?: WorktreeReviewAction | null) {
+  if (reviewAction === "review") {
+    return phase === "started" ? "## Worktree AI review started" : "## Worktree AI review completed";
+  }
+
+  return phase === "started" ? "## Worktree AI started" : "## Worktree AI completed";
+}
+
 function normalizeInlineText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -50,6 +60,25 @@ function formatLogSection(title: string, value: string): string | null {
   ].join("\n");
 }
 
+function formatCombinedLogDetails(stdout: string, stderr: string): string | null {
+  const sections = [
+    formatLogSection("Stdout", stdout),
+    formatLogSection("Stderr", stderr),
+  ].filter((section): section is string => Boolean(section));
+
+  if (!sections.length) {
+    return null;
+  }
+
+  return [
+    "<details>",
+    "<summary>Output details</summary>",
+    "",
+    ...sections.flatMap((section, index) => (index === 0 ? [section] : ["", section])),
+    "</details>",
+  ].join("\n");
+}
+
 function formatCommitDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.valueOf())) {
@@ -63,9 +92,10 @@ export function buildWorktreeAiStartedComment(details: {
   branch: string;
   commandId: AiCommandId;
   requestSummary?: string | null;
+  reviewAction?: WorktreeReviewAction | null;
 }) {
   const lines = [
-    "## Worktree AI started",
+    getAiActivityHeading("started", details.reviewAction),
     "",
     `- Branch: \`${details.branch}\``,
     `- Command: \`${details.commandId}\``,
@@ -84,11 +114,12 @@ export function buildWorktreeAiCompletedComment(details: {
   requestSummary?: string | null;
   stdout: string;
   stderr: string;
+  reviewAction?: WorktreeReviewAction | null;
 }) {
   const stdoutLineCount = countNonEmptyLines(details.stdout);
   const stderrLineCount = countNonEmptyLines(details.stderr);
   const lines = [
-    "## Worktree AI completed",
+    getAiActivityHeading("completed", details.reviewAction),
     "",
     `- Branch: \`${details.branch}\``,
     `- Command: \`${details.commandId}\``,
@@ -99,16 +130,9 @@ export function buildWorktreeAiCompletedComment(details: {
     lines.push(`- Request: ${normalizeInlineText(details.requestSummary)}`);
   }
 
-  const stdoutSection = formatLogSection("Stdout", details.stdout);
-  const stderrSection = formatLogSection("Stderr", details.stderr);
-  if (stdoutSection || stderrSection) {
-    lines.push("", "### Output");
-  }
-  if (stdoutSection) {
-    lines.push("", stdoutSection);
-  }
-  if (stderrSection) {
-    lines.push("", stderrSection);
+  const outputDetails = formatCombinedLogDetails(details.stdout, details.stderr);
+  if (outputDetails) {
+    lines.push("", outputDetails);
   }
 
   return lines.join("\n");

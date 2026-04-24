@@ -14,6 +14,7 @@ import type {
   TmuxClientsStreamEvent,
   WorktreeRecord,
 } from "../../shared/types.js";
+import type { WorktreeId } from "../../shared/worktree-id.js";
 import {
   parseAiCommandOrigin,
   resolveAiCommandTemplate,
@@ -22,6 +23,7 @@ import { listBackgroundCommands } from "../services/background-command-service.j
 import {
   createWorktree,
   deleteBranch,
+  getGitComparison,
   listWorktrees,
   removeWorktree,
   validateDeleteWorktreeRequest,
@@ -54,8 +56,12 @@ import {
   buildAiCommandProcessEnv,
   buildAiEnvironmentContext,
   buildProjectManagementAiPrompt,
+  buildProjectManagementExecutionAiPrompt,
+  buildReviewFollowUpRequest,
+  buildReviewOnlyRequest,
   buildWorktreeAiPrompt,
   createProjectManagementDocumentOrigin,
+  createWorktreeReviewOrigin,
   createWorktreeEnvironmentOrigin,
   formatLogSnippet,
   isAiCommandLogActivelyRunning,
@@ -397,6 +403,20 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       worktree = worktrees.find((entry) => entry.branch === req.params.branch) ?? null;
       const body = req.body as RunAiCommandRequest;
       input = typeof body?.input === "string" ? body.input : "";
+      const requestedReviewAction: RunAiCommandRequest["reviewAction"] | null = body?.reviewAction === "review"
+        ? "review"
+        : body?.reviewAction === "implement"
+          ? "implement"
+          : null;
+      let reviewFollowUp = body?.reviewFollowUp
+        && typeof body.reviewFollowUp === "object"
+        && typeof body.reviewFollowUp.originalRequest === "string"
+        && typeof body.reviewFollowUp.newRequest === "string"
+          ? {
+              originalRequest: body.reviewFollowUp.originalRequest,
+              newRequest: body.reviewFollowUp.newRequest,
+            }
+          : null;
       const explicitDocumentId = typeof body?.documentId === "string" && body.documentId.trim() ? body.documentId.trim() : null;
       const requestedReviewDocumentId = typeof body?.reviewDocumentId === "string" && body.reviewDocumentId.trim()
         ? body.reviewDocumentId.trim()
@@ -423,10 +443,31 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         : (await getWorktreeDocumentLink(context.repoRoot, worktree.id))?.documentId ?? null;
       const documentId = explicitDocumentId ?? linkedDocumentId;
       const reviewDocumentId = explicitDocumentId ? null : requestedReviewDocumentId ?? linkedDocumentId;
+      const isReviewOriginRequest = requestedOrigin?.kind === "worktree-review"
+        || requestedOrigin?.location.tab === "review";
+
+      if (!explicitDocumentId && reviewDocumentId && isReviewOriginRequest && requestedReviewAction !== "review" && !reviewFollowUp && input.trim()) {
+        reviewFollowUp = {
+          originalRequest: input,
+          newRequest: input,
+        };
+      }
+
+      const reviewAction: RunAiCommandRequest["reviewAction"] | null = !explicitDocumentId && reviewDocumentId
+        ? requestedReviewAction ?? (reviewFollowUp ? "implement" : null)
+        : null;
+
       commandId = resolveRequestedAiCommandId(body?.commandId, { documentId: explicitDocumentId });
       worktreePath = worktree.worktreePath;
       branch = worktree.branch;
-      origin = requestedOrigin ?? createWorktreeEnvironmentOrigin(worktree.branch, worktree.id);
+      origin = requestedOrigin ?? ((reviewFollowUp || reviewAction === "review") && reviewDocumentId
+        ? createWorktreeReviewOrigin({
+            branch: worktree.branch,
+            worktreeId: worktree.id,
+            documentId: reviewDocumentId,
+            reviewAction: reviewAction ?? undefined,
+          })
+        : createWorktreeEnvironmentOrigin(worktree.branch, worktree.id));
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
@@ -542,11 +583,58 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         input = buildProjectManagementAiPrompt({
           branch: worktree.branch,
           worktreePath,
-          requestedChange: input.trim(),
           environmentContext,
           document: explicitDocumentPayload.document,
           relatedDocuments: documentsPayload.documents,
+          requestedChange: input.trim(),
         });
+      }
+
+      if (!explicitDocumentId && reviewDocumentId && (reviewFollowUp || reviewAction === "review")) {
+        let reviewDocumentPayload: ProjectManagementDocumentResponse | null = null;
+
+        try {
+          reviewDocumentPayload = await getProjectManagementDocument(context.repoRoot, reviewDocumentId);
+        } catch {
+          reviewDocumentPayload = null;
+        }
+
+        const reviewDocumentTitle = reviewDocumentPayload?.document.title
+          ?? (linkedDocumentId && linkedDocumentId === reviewDocumentId
+            ? worktree.linkedDocument?.title
+            : null)
+          ?? `Document ${reviewDocumentId}`;
+        const reviewDocumentSummary = reviewDocumentPayload?.document.summary
+          ?? (linkedDocumentId && linkedDocumentId === reviewDocumentId ? worktree.linkedDocument?.summary ?? null : null);
+        const reviewDocumentMarkdown = reviewDocumentPayload?.document.markdown ?? null;
+
+        if (reviewAction === "review") {
+          const comparison = await getGitComparison(context.repoRoot, worktree.branch);
+          input = await buildReviewOnlyRequest({
+            repoRoot: context.repoRoot,
+            config,
+            branch: worktree.branch,
+            worktreePath,
+            documentId: reviewDocumentId,
+            documentTitle: reviewDocumentTitle,
+            documentSummary: reviewDocumentSummary,
+            documentMarkdown: reviewDocumentMarkdown,
+            request: body.input,
+            comparison,
+          });
+        } else if (reviewFollowUp) {
+          input = await buildReviewFollowUpRequest({
+            repoRoot: context.repoRoot,
+            config,
+            branch: worktree.branch,
+            worktreePath,
+            documentId: reviewDocumentId,
+            documentTitle: reviewDocumentTitle,
+            documentSummary: reviewDocumentSummary,
+            documentMarkdown: reviewDocumentMarkdown,
+            followUp: reviewFollowUp,
+          });
+        }
       }
 
       logServerEvent("ai-command", "request-started", {
@@ -558,7 +646,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         input: formatLogSnippet(input),
       });
 
-      if (!explicitDocumentId) {
+      if (!explicitDocumentId && !(reviewDocumentId && (reviewFollowUp || reviewAction === "review"))) {
         input = buildWorktreeAiPrompt({
           request: input,
           environmentContext,
@@ -574,7 +662,29 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       });
 
       renderedCommand = renderAiCommand(template, input);
-      const runDetails = {
+      const reviewRequestSummary = explicitDocumentId
+        ? null
+        : reviewAction === "review"
+          ? body.input
+          : reviewFollowUp?.newRequest ?? body.input;
+
+      const runDetails: {
+        worktreeId: WorktreeId;
+        branch: string;
+        documentId: string | null;
+        commandId: AiCommandId;
+        aiCommands: typeof config.aiCommands;
+        origin: AiCommandOrigin;
+        input: string;
+        renderedCommand: string;
+        worktreePath: string;
+        env: NodeJS.ProcessEnv;
+        applyDocumentUpdateToDocumentId: string | null;
+        reviewDocumentId: string | null;
+        reviewRequestSummary: string | null;
+        reviewAction: RunAiCommandRequest["reviewAction"] | null;
+        autoCommitDirtyWorktree: boolean;
+      } = {
         worktreeId: worktree.id,
         branch: worktree.branch,
         documentId,
@@ -587,8 +697,9 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         env,
         applyDocumentUpdateToDocumentId: explicitDocumentId,
         reviewDocumentId,
-        reviewRequestSummary: explicitDocumentId ? null : body.input,
-        autoCommitDirtyWorktree: true,
+        reviewRequestSummary,
+        reviewAction,
+        autoCommitDirtyWorktree: reviewAction !== "review",
       };
       const job = explicitDocumentId
         ? context.hasInjectedAiProcesses
@@ -607,6 +718,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
               applyDocumentUpdateToDocumentId: runDetails.applyDocumentUpdateToDocumentId,
               reviewDocumentId: runDetails.reviewDocumentId,
               reviewRequestSummary: runDetails.reviewRequestSummary,
+              reviewAction: runDetails.reviewAction,
               autoCommitDirtyWorktree: runDetails.autoCommitDirtyWorktree,
             })
         : await (await context.startAiProcessJob(runDetails)).started;
@@ -615,6 +727,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         commandId: runDetails.commandId,
         reviewDocumentId: runDetails.reviewDocumentId,
         requestSummary: runDetails.reviewRequestSummary,
+        reviewAction: runDetails.reviewAction,
       });
       context.scheduleRuntimeStopAfterAiJob({
         worktree,

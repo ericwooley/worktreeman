@@ -5,7 +5,7 @@ import type { ProjectManagementDocumentFormViewMode } from "./project-management
 import { readProjectManagementDocumentPath, type ProjectManagementDocumentPresentation } from "./project-management-document-route";
 import type { WorktreeEnvironmentSubTab } from "./worktree-detail";
 
-export type DashboardActiveTab = "environment" | "git" | "project-management" | "system" | "ai-log";
+export type DashboardActiveTab = "environment" | "git" | "project-management" | "review" | "system" | "ai-log";
 
 export interface DashboardUrlState {
   selectedBranch: string | null;
@@ -71,6 +71,8 @@ export function readDashboardUrlState(
     ? "project-management"
     : tab === "git" || tab === "merge"
     ? "git"
+    : tab === "review"
+      ? "review"
     : tab === "system"
         ? "system"
       : tab === "ai-log"

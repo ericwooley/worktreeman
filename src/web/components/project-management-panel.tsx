@@ -1,5 +1,4 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { marked } from "marked";
 import type {
   AiCommandOrigin,
   AiCommandConfig,
@@ -8,11 +7,9 @@ import type {
   ProjectManagementUser,
   RunAiCommandRequest,
   ProjectManagementDocument,
-  ProjectManagementDocumentReview,
   ProjectManagementDocumentSummaryResponse,
   ProjectManagementDocumentSummary,
   ProjectManagementHistoryEntry,
-  ProjectManagementReviewEntry,
   ProjectManagementUsersResponse,
   RunProjectManagementDocumentAiRequest,
   RunAiCommandResponse,
@@ -31,7 +28,7 @@ import {
   useProjectManagementDocumentBrowserState,
 } from "./project-management-document-browser";
 import { ProjectManagementDocumentDetail } from "./project-management-document-detail";
-import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardHeader, MatrixCardTitle } from "./matrix-card";
+import { MatrixCard, MatrixCardDescription, MatrixCardFooter, MatrixCardTitle } from "./matrix-card";
 import { MatrixBadge, MatrixSectionIntro, MatrixSkeletonCard, MatrixSpinner, MatrixTabs, getMatrixTabPanelId } from "./matrix-primitives";
 import { LoadingOverlay } from "./loading";
 import { useItemLoading } from "../hooks/useItemLoading";
@@ -49,57 +46,8 @@ import {
   summarizeDocumentText,
 } from "./project-management-document-utils";
 
-export type ProjectManagementSubTab = "document" | "review" | "board" | "dependency-tree" | "history" | "create" | "users";
+export type ProjectManagementSubTab = "document" | "board" | "dependency-tree" | "history" | "create" | "users";
 export type ProjectManagementDocumentViewMode = "document" | "edit";
-
-function getReviewEventLabel(entry: ProjectManagementReviewEntry) {
-  switch (entry.eventType) {
-    case "ai-started":
-      return "AI started";
-    case "ai-completed":
-      return "AI completed";
-    case "merge":
-      return "Merged";
-    default:
-      return "Comment";
-  }
-}
-
-function getReviewEventTone(entry: ProjectManagementReviewEntry) {
-  switch (entry.eventType) {
-    case "ai-started":
-      return "warning" as const;
-    case "ai-completed":
-      return "active" as const;
-    case "merge":
-      return "neutral" as const;
-    default:
-      return entry.kind === "activity" ? "idle" as const : "active" as const;
-  }
-}
-
-function getReviewSourceTone(entry: ProjectManagementReviewEntry) {
-  switch (entry.source) {
-    case "ai":
-      return "active" as const;
-    case "system":
-      return "idle" as const;
-    default:
-      return "neutral" as const;
-  }
-}
-
-function getReviewSourceLabel(entry: ProjectManagementReviewEntry) {
-  if (entry.source === "ai") {
-    return "AI";
-  }
-
-  if (entry.source === "system") {
-    return "System";
-  }
-
-  return "User";
-}
 
 interface ProjectManagementPanelProps {
   documents: ProjectManagementDocumentSummary[];
@@ -113,8 +61,6 @@ interface ProjectManagementPanelProps {
   editFormTab: ProjectManagementDocumentFormViewMode;
   createFormTab: ProjectManagementDocumentFormViewMode;
   document: ProjectManagementDocument | null;
-  reviews: ProjectManagementDocumentReview[];
-  review: ProjectManagementDocumentReview | null;
   history: ProjectManagementHistoryEntry[];
   loading: boolean;
   refreshError?: string | null;
@@ -158,7 +104,6 @@ interface ProjectManagementPanelProps {
     status?: string;
     archived?: boolean;
   }) => Promise<boolean>;
-  onAddReviewEntry: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentReview | null>;
   onRunAiCommand: (payload: RunAiCommandRequest & {
     input: string;
     documentId: string;
@@ -216,8 +161,6 @@ export function ProjectManagementPanel({
   editFormTab,
   createFormTab,
   document,
-  reviews,
-  review,
   history,
   loading,
   refreshError = null,
@@ -241,7 +184,6 @@ export function ProjectManagementPanel({
   onUpdateStatus,
   onUpdateUsers,
   onBatchUpdateDocuments,
-  onAddReviewEntry,
   onRunAiCommand,
   onRunDocumentAi,
   onCancelDocumentAiCommand,
@@ -277,7 +219,6 @@ export function ProjectManagementPanel({
   const [newUserName, setNewUserName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [userFormError, setUserFormError] = useState<string | null>(null);
-  const [reviewDraft, setReviewDraft] = useState("");
   const [aiRunSummary, setAiRunSummary] = useState<string | null>(null);
   const [aiChangeRequest, setAiChangeRequest] = useState("");
   const [aiFailureToast, setAiFailureToast] = useState<string | null>(null);
@@ -379,7 +320,6 @@ export function ProjectManagementPanel({
     setAiFailureToast(null);
     setAiRequestModalOpen(false);
     setDependencyModalOpen(false);
-    setCommentDraft("");
     setSelectedAiCommandId("simple");
     setDocumentRunFailureToast(null);
     setDocumentWorktreeModalOpen(false);
@@ -554,9 +494,8 @@ export function ProjectManagementPanel({
     () => new Set(projectManagementUsersConfig.customUsers.map((entry) => normalizeProjectManagementUserEmail(entry.email)).filter(Boolean)),
     [projectManagementUsersConfig.customUsers],
   );
-
   const emptyStateMessage = activeSubTab === "document"
-    ? "Open a document to inspect its markdown, tags, comments, and worktree links."
+    ? "Open a document to inspect its markdown, tags, and linked worktrees."
     : activeSubTab === "board"
       ? "No documents are available for the current filters."
       : activeSubTab === "history"
@@ -577,7 +516,7 @@ export function ProjectManagementPanel({
     if (!options?.silent) {
       startLoadingDocument(documentId);
     }
-    onSubTabChange("document");
+    onSubTabChange(activeSubTab === "history" ? "history" : "document");
     onDocumentViewModeChange("document");
     try {
       return await onSelectDocument(documentId, options);
@@ -720,17 +659,6 @@ export function ProjectManagementPanel({
     }
   }
 
-  async function handleAddComment() {
-    if (!document || !commentDraft.trim()) {
-      return;
-    }
-
-    const updated = await onAddComment(document.id, { body: commentDraft });
-    if (updated) {
-      setCommentDraft("");
-    }
-  }
-
   async function handleRunUiMagic() {
     if (!document) {
       setAiFailureToast("Select a document before running ⚡.");
@@ -742,8 +670,8 @@ export function ProjectManagementPanel({
       return false;
     }
 
-    if (!isAiCommandReady(aiCommands, selectedAiCommandId)) {
-      setAiFailureToast(`Configure ${getAiCommandLabel(selectedAiCommandId)} with $WTM_AI_INPUT in settings first.`);
+    if (!isAiCommandReady(aiCommands, "simple")) {
+      setAiFailureToast("Configure Simple AI with $WTM_AI_INPUT in settings first.");
       return false;
     }
 
@@ -761,16 +689,16 @@ export function ProjectManagementPanel({
     setAiRunSummary(null);
     setAiFailureToast(null);
     setAiRequestModalOpen(false);
-    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} is starting. Live output will stream in the editor while the saved document updates.`);
+    setAiRunSummary("Simple AI is starting. Live output will stream in the editor while the saved document updates.");
 
-    const job = await onRunAiCommand({ input: requestedChange, documentId: document.id, commandId: selectedAiCommandId });
+    const job = await onRunAiCommand({ input: requestedChange, documentId: document.id, reviewDocumentId: document.id, commandId: "simple" });
     if (!job) {
       setAiRunSummary(null);
-      setAiFailureToast(`${getAiCommandLabel(selectedAiCommandId)} request failed. Check the AI command output for details.`);
+      setAiFailureToast("Simple AI request failed. Check the AI command output for details.");
       return false;
     }
 
-    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} started for ${job.branch}. Live output is streaming below while the saved document updates on the server.`);
+    setAiRunSummary(`Simple AI started for ${job.branch}. Live output is streaming below while the saved document updates on the server.`);
     return true;
   }
 
@@ -1109,7 +1037,6 @@ export function ProjectManagementPanel({
                   editAssignee={editAssignee}
                   dependencySelection={dependencySelection}
                   currentDependencyDocuments={currentDependencyDocuments}
-                  commentDraft={commentDraft}
                   aiRunSummary={aiRunSummary}
                   documentRunSummary={documentRunSummary}
                   aiFailureToast={aiFailureToast}
@@ -1142,14 +1069,12 @@ export function ProjectManagementPanel({
                   onEditTagsChange={setEditTags}
                   onEditStatusChange={setEditStatus}
                   onEditAssigneeChange={setEditAssignee}
-                  onCommentDraftChange={setCommentDraft}
                   onSetEditingState={setIsEditing}
                   onSaveDocument={handleSaveDocument}
                   onQuickDocumentUpdate={handleQuickDocumentUpdate}
                   onSaveAssignee={handleSaveAssignee}
                   onToggleArchive={handleToggleArchive}
                   onSelectWorktree={onSelectWorktree}
-                  onAddComment={handleAddComment}
                   onOpenDependencyGraph={() => onSubTabChange("dependency-tree")}
                   onOpenDependencyModal={() => setDependencyModalOpen(true)}
                   onCloseDependencyModal={() => setDependencyModalOpen(false)}
@@ -1199,7 +1124,6 @@ export function ProjectManagementPanel({
                       editAssignee={editAssignee}
                       dependencySelection={dependencySelection}
                       currentDependencyDocuments={currentDependencyDocuments}
-                      commentDraft={commentDraft}
                       aiRunSummary={aiRunSummary}
                       documentRunSummary={documentRunSummary}
                       aiFailureToast={aiFailureToast}
@@ -1236,14 +1160,12 @@ export function ProjectManagementPanel({
                       onEditTagsChange={setEditTags}
                       onEditStatusChange={setEditStatus}
                       onEditAssigneeChange={setEditAssignee}
-                      onCommentDraftChange={setCommentDraft}
                       onSetEditingState={setIsEditing}
                       onSaveDocument={handleSaveDocument}
                       onQuickDocumentUpdate={handleQuickDocumentUpdate}
                       onSaveAssignee={handleSaveAssignee}
                       onToggleArchive={handleToggleArchive}
                       onSelectWorktree={onSelectWorktree}
-                      onAddComment={handleAddComment}
                       onOpenDependencyGraph={() => onSubTabChange("dependency-tree")}
                       onOpenDependencyModal={() => setDependencyModalOpen(true)}
                       onCloseDependencyModal={() => setDependencyModalOpen(false)}
