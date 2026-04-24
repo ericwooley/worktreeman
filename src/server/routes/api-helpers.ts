@@ -1545,7 +1545,10 @@ export async function readAiCommandLogEntryByIdentifier(repoRoot: string, identi
 }
 
 export function renderAiCommand(template: string, input: string): string {
-  void input;
+  return template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
+}
+
+export function renderAiExecutionCommand(template: string): string {
   return template.replace(/(?<!["'])\$WTM_AI_INPUT(?!["'])/g, '"$WTM_AI_INPUT"');
 }
 

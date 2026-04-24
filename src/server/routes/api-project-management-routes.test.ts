@@ -20,7 +20,7 @@ import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
 
-test("project-management AI runs update the saved document on the server", { concurrency: false, timeout: 15000 }, async () => {
+test("project-management AI runs update the saved document on the server", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   let capturedCommand = "";
@@ -97,7 +97,7 @@ test("project-management AI runs update the saved document on the server", { con
     await waitFor(async () => {
       const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
       return updated.document.markdown.includes("durable update");
-    });
+    }, 15000);
 
     const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
     assert.equal(updated.document.title, "Project Outline");

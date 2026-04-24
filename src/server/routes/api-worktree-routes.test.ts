@@ -25,6 +25,7 @@ import { getProjectManagementDocumentReview } from "../services/project-manageme
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
+import type { ApiAiProcesses } from "./api-types.js";
 
 async function createReviewDocument(server: Awaited<ReturnType<typeof startApiServer>>, payload: {
   title: string;
@@ -1153,7 +1154,7 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
   let capturedPrompt = "";
   const aiProcesses = {
     ...fakeAiProcesses.aiProcesses,
-    async startProcess(options: { command: string; processName: string; input: string; worktreePath: string; env: NodeJS.ProcessEnv; hooks?: unknown }) {
+    async startProcess(options: Parameters<ApiAiProcesses["startProcess"]>[0]) {
       const match = options.command.match(/^printf %s '([\s\S]*)'$/);
       capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
       return fakeAiProcesses.aiProcesses.startProcess(options);
