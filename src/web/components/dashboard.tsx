@@ -10,7 +10,11 @@ import {
   type CommandPaletteItem,
   type CommandPaletteShortcutSetting,
 } from "./command-palette";
-import { useDashboardState } from "../hooks/use-dashboard-state";
+import {
+  DASHBOARD_NOTIFICATION_AUTO_DISMISS_MS,
+  useDashboardState,
+} from "../hooks/use-dashboard-state";
+import type { DashboardNotification } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { useTheme } from "./theme-provider";
@@ -52,6 +56,96 @@ const EMPTY_AI_COMMANDS: AiCommandConfig = {
 const EMPTY_AUTO_SYNC: AutoSyncConfig = {
   remote: "origin",
 };
+
+function getNotificationToneClasses(tone: DashboardNotification["tone"]) {
+  if (tone === "danger") {
+    return {
+      panel: "theme-inline-panel-danger",
+      kicker: "theme-kicker-danger",
+      text: "theme-text-danger",
+      badge: "theme-badge-danger",
+    };
+  }
+
+  if (tone === "warning") {
+    return {
+      panel: "theme-inline-panel-warning",
+      kicker: "theme-kicker-warning",
+      text: "theme-text-warning",
+      badge: "theme-badge-warning",
+    };
+  }
+
+  if (tone === "success") {
+    return {
+      panel: "theme-inline-panel",
+      kicker: "theme-text-emphasis",
+      text: "theme-text-strong",
+      badge: "theme-badge-active",
+    };
+  }
+
+  return {
+    panel: "theme-inline-panel-emphasis",
+    kicker: "theme-text-emphasis",
+    text: "theme-text",
+    badge: "theme-badge-neutral",
+  };
+}
+
+export function DashboardNotificationStack({
+  notifications,
+  onDismiss,
+}: {
+  notifications: DashboardNotification[];
+  onDismiss: (notificationId: string) => void;
+}) {
+  if (!notifications.length) {
+    return null;
+  }
+
+  const stackBottomOffset = "calc(var(--terminal-drawer-stowed-height) + var(--terminal-drawer-page-gap) + 1rem)";
+
+  return (
+    <div
+      className="pointer-events-none fixed right-4 z-[60] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-3"
+      style={{ bottom: stackBottomOffset }}
+    >
+      {notifications.map((notification) => {
+        const classes = getNotificationToneClasses(notification.tone);
+
+        return (
+          <section
+            key={notification.id}
+            className={`pointer-events-auto border ${classes.panel} rounded-none px-4 py-3 shadow-[0_16px_40px_rgb(var(--rgb-base00)_/_0.42)]`}
+            role="status"
+            aria-live={notification.tone === "danger" || notification.tone === "warning" ? "assertive" : "polite"}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className={`border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] ${classes.badge}`}>
+                    {notification.tone}
+                  </span>
+                  <p className={`text-xs uppercase tracking-[0.18em] ${classes.kicker}`}>{notification.title}</p>
+                </div>
+                <p className={`mt-2 text-sm ${classes.text}`}>{notification.message}</p>
+              </div>
+              <button
+                type="button"
+                className="matrix-button rounded-none px-2 py-1 text-xs"
+                onClick={() => onDismiss(notification.id)}
+                aria-label={`Dismiss ${notification.title}`}
+              >
+                Dismiss
+              </button>
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
 
 function normalizeAiCommands(aiCommands?: Partial<AiCommandConfig> | null): AiCommandConfig {
   return {
@@ -174,7 +268,6 @@ export function Dashboard() {
   );
   const {
     state,
-    error,
     loading,
     hasLoadedInitialState,
     busyBranch,
@@ -212,6 +305,8 @@ export function Dashboard() {
     projectManagementError,
     projectManagementLastUpdatedAt,
     projectManagementSaving,
+    notifications,
+    dismissNotification,
     clearLastEnvSync,
     clearBackgroundLogs,
     addProjectManagementReviewEntry,
@@ -322,6 +417,22 @@ export function Dashboard() {
   });
   const [pwaInstallStatus, setPwaInstallStatus] = useState<PwaInstallStatus>("manual");
   const [pwaPromptEvent, setPwaPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
+
+  useEffect(() => {
+    if (!notifications.length) {
+      return;
+    }
+
+    const timers = notifications.map((notification) => window.setTimeout(() => {
+      dismissNotification(notification.id);
+    }, DASHBOARD_NOTIFICATION_AUTO_DISMISS_MS));
+
+    return () => {
+      for (const timer of timers) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [dismissNotification, notifications]);
 
   const openCommandPalette = useCallback((scope: CommandPaletteScope = "main", initialQuery = "") => {
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
@@ -1654,13 +1765,6 @@ export function Dashboard() {
             </div>
           ) : null}
 
-          {error ? (
-            <div className="matrix-panel mb-4 rounded-none border-x-0 theme-inline-panel-danger p-4 sm:p-5">
-              <p className="matrix-kicker theme-kicker-danger">Request error</p>
-              <p className="mt-2 text-sm theme-text-danger">{error}</p>
-            </div>
-          ) : null}
-
           <WorktreeDetail
             repoRoot={state?.repoRoot ?? null}
             worktree={selected}
@@ -2035,6 +2139,8 @@ export function Dashboard() {
           </div>
         </MatrixModal>
       ) : null}
+
+      <DashboardNotificationStack notifications={notifications} onDismiss={dismissNotification} />
 
       {configEditorOpen ? (
         <MatrixModal

@@ -1346,6 +1346,124 @@ test("review follow-up AI runs include prior outputs from other linked worktrees
   }
 });
 
+test("review follow-up AI runs honor explicit original context from the current review state", { concurrency: false, timeout: 20000 }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const reviewWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-review-explicit-original-context" });
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+
+  const linkedDocumentId = "doc-review-explicit-original-context";
+  await operationalState.setWorktreeDocumentLink({
+    worktreeId: reviewWorktree.id,
+    branch: reviewWorktree.branch,
+    worktreePath: reviewWorktree.worktreePath,
+    documentId: linkedDocumentId,
+  });
+  await operationalState.upsertAiCommandLogEntry({
+    fileName: "review-explicit-original-context.md",
+    jobId: "review-explicit-original-context-job",
+    timestamp: "2026-04-20T09:00:00.000Z",
+    worktreeId: reviewWorktree.id,
+    branch: reviewWorktree.branch,
+    documentId: linkedDocumentId,
+    commandId: "smart",
+    worktreePath: reviewWorktree.worktreePath,
+    command: "printf %s 'prior run'",
+    request: "Deleted AI-started request that should not override the current review state",
+    response: {
+      stdout: "Implemented an earlier draft.",
+      stderr: "",
+    },
+    status: "completed",
+    pid: 303,
+    processName: "wtm:ai:review-explicit-original-context-job",
+    completedAt: "2026-04-20T09:02:00.000Z",
+    exitCode: 0,
+    error: null,
+    origin: {
+      kind: "worktree-review",
+      label: "Review follow-up",
+      description: "Continue review activity",
+      location: {
+        tab: "review",
+        branch: reviewWorktree.branch,
+        worktreeId: reviewWorktree.id,
+        documentId: linkedDocumentId,
+      },
+    },
+  });
+
+  let capturedPrompt = "";
+  const aiProcesses = {
+    ...createFakeAiProcesses().aiProcesses,
+    async startProcess(options: { command: string }) {
+      const match = options.command.match(/^printf %s '([\s\S]*)'$/);
+      capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
+      return {
+        name: "wtm:ai:test-review-explicit-original-context",
+        pid: 9996,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async getProcess() {
+      return {
+        name: "wtm:ai:test-review-explicit-original-context",
+        pid: 9996,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async waitForProcess() {
+      return {
+        name: "wtm:ai:test-review-explicit-original-context",
+        pid: 9996,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    isProcessActive(status: string | undefined) {
+      return status === "online";
+    },
+  };
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const response = await server.fetch(`/api/worktrees/${reviewWorktree.branch}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "Continue with the remaining fixes",
+        reviewDocumentId: linkedDocumentId,
+        reviewFollowUp: {
+          originalRequest: "Filtered review-state request that should be used for continue work",
+          newRequest: "Continue with the remaining fixes",
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    assert.equal(capturedPrompt.includes("Original context:"), true);
+    assert.equal(capturedPrompt.includes("Filtered review-state request that should be used for continue work"), true);
+    assert.equal(capturedPrompt.includes("Deleted AI-started request that should not override the current review state"), true);
+    assert.equal(
+      capturedPrompt.indexOf("Filtered review-state request that should be used for continue work")
+        < capturedPrompt.indexOf("Prior AI run log:"),
+      true,
+    );
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("review follow-up AI runs summarize older history and persist cached summaries", { concurrency: false, timeout: 20000 }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({

@@ -902,8 +902,8 @@ export async function buildReviewFollowUpRequest(options: {
 
   const executionHistoryLogs = allDocumentLogs.filter(isExecutionReviewHistoryEntry);
 
-  const originalRequest = executionHistoryLogs.find((entry) => entry.request.trim())?.request.trim()
-    || options.followUp.originalRequest.trim()
+  const originalRequest = options.followUp.originalRequest.trim()
+    || executionHistoryLogs.find((entry) => entry.request.trim())?.request.trim()
     || options.documentSummary?.trim()
     || options.documentTitle;
 

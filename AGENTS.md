@@ -15,6 +15,7 @@
 - Do not start long-running async work with bare `void` promises in server code. If background polling, timers, or cleanup must run detached, wrap them in a shared helper that catches and reports errors so they cannot become `unhandledRejection` process failures.
 - Any polling or reconciliation loop that touches durable state must handle read/write failures explicitly and settle or log them locally. Never rely on process-level unhandled rejection handlers as the safety net.
 - Treat git config/user lookup as optional metadata. Failures reading `git config` should fall back to defaults or env overrides instead of breaking the underlying operation.
+- Tests should be as fast as possible, and cover the core logic. Avoid moching wherever possible, but do reuse test fixtures for common scenarios. If a test is slow, look for ways to refactor the code to be more testable without mocks or external dependencies.
 
 ## Keep in mind
 
@@ -45,3 +46,4 @@ Any time you make any edits, make sure the builds all work before you respond to
 ## UI Instructions
 
 - Do not use gradients. They look dated, and the text contrast can be hard to read. Stick to solid colors with good contrast from the themes that are loaded.
+- Do not depend on frontend state other than for user input. The frontend can be out of sync etc... Submitting a request should provide the new user input and id's etc... in order to do the work. The server should be the source of truth for generating the state needed to do work on the backend. The frontend should not be posting large amounts of state or metadata that the server needs to do its work. The server should be able to do the work with just the user input and the repo context, and then return the new state needed for the frontend to render after the work is done.
