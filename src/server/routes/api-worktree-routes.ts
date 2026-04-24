@@ -53,8 +53,9 @@ import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service
 import {
   buildAiCommandProcessEnv,
   buildAiEnvironmentContext,
-  buildReviewFollowUpRequest,
   buildProjectManagementAiPrompt,
+  buildProjectManagementExecutionAiPrompt,
+  buildReviewFollowUpRequest,
   buildWorktreeAiPrompt,
   createProjectManagementDocumentOrigin,
   createWorktreeReviewOrigin,
@@ -565,10 +566,10 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         input = buildProjectManagementAiPrompt({
           branch: worktree.branch,
           worktreePath,
-          requestedChange: input.trim(),
           environmentContext,
           document: explicitDocumentPayload.document,
           relatedDocuments: documentsPayload.documents,
+          requestedChange: input.trim(),
         });
       }
 

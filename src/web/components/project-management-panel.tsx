@@ -670,8 +670,8 @@ export function ProjectManagementPanel({
       return false;
     }
 
-    if (!isAiCommandReady(aiCommands, selectedAiCommandId)) {
-      setAiFailureToast(`Configure ${getAiCommandLabel(selectedAiCommandId)} with $WTM_AI_INPUT in settings first.`);
+    if (!isAiCommandReady(aiCommands, "simple")) {
+      setAiFailureToast("Configure Simple AI with $WTM_AI_INPUT in settings first.");
       return false;
     }
 
@@ -689,16 +689,16 @@ export function ProjectManagementPanel({
     setAiRunSummary(null);
     setAiFailureToast(null);
     setAiRequestModalOpen(false);
-    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} is starting. Live output will stream in the editor while the saved document updates.`);
+    setAiRunSummary("Simple AI is starting. Live output will stream in the editor while the saved document updates.");
 
-    const job = await onRunAiCommand({ input: requestedChange, documentId: document.id, reviewDocumentId: document.id, commandId: selectedAiCommandId });
+    const job = await onRunAiCommand({ input: requestedChange, documentId: document.id, reviewDocumentId: document.id, commandId: "simple" });
     if (!job) {
       setAiRunSummary(null);
-      setAiFailureToast(`${getAiCommandLabel(selectedAiCommandId)} request failed. Check the AI command output for details.`);
+      setAiFailureToast("Simple AI request failed. Check the AI command output for details.");
       return false;
     }
 
-    setAiRunSummary(`${getAiCommandLabel(selectedAiCommandId)} started for ${job.branch}. Live output is streaming below while the saved document updates on the server.`);
+    setAiRunSummary(`Simple AI started for ${job.branch}. Live output is streaming below while the saved document updates on the server.`);
     return true;
   }
 

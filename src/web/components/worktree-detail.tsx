@@ -2382,17 +2382,17 @@ export function WorktreeDetail({
                 ) : (
                   <div className="theme-inline-panel p-4">
                     <label className="block space-y-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Continue with AI</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Continue implementation</span>
                       <textarea
                         value={reviewFollowUpDraft}
                         onChange={(event) => setReviewFollowUpDraft(event.target.value)}
-                        placeholder="Ask AI to continue from the existing review context, prior AI outputs, and your next request."
+                        placeholder="Tell Smart AI what implementation work to do next for this review."
                         rows={5}
                         className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
                       />
                     </label>
                     <p className="mt-3 text-sm theme-text-muted">
-                      The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request.
+                      Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request.
                     </p>
                     <div className="mt-3 flex flex-wrap justify-end gap-2">
                       <button
@@ -2401,7 +2401,7 @@ export function WorktreeDetail({
                         disabled={reviewFollowUpSubmitting || !reviewFollowUpDraft.trim()}
                         onClick={() => void submitReviewFollowUp()}
                       >
-                        {reviewFollowUpSubmitting ? "Starting AI follow-up..." : "Continue with AI"}
+                        {reviewFollowUpSubmitting ? "Starting implementation..." : "Continue implementation"}
                       </button>
                     </div>
                   </div>

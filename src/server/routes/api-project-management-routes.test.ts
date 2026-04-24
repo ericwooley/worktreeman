@@ -78,9 +78,8 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(capturedCommand.includes("tighten this plan"), true);
     assert.equal(capturedPrompt.includes("You are rewriting the project-management markdown document"), true);
     assert.equal(capturedPrompt.includes("Requested change: tighten this plan"), true);
-    assert.equal(capturedPrompt.includes("Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>."), true);
-    assert.equal(capturedPrompt.includes("You are not creating files, not writing a .md file"), true);
-    assert.equal(capturedPrompt.includes("Document history is the rollback mechanism."), true);
+    assert.equal(capturedPrompt.includes("Your job is to return a full replacement markdown document"), true);
+    assert.equal(capturedPrompt.includes("The server will persist your response as the next version of this existing project-management document."), true);
     assert.equal(capturedPrompt.includes("Environment wrapper:"), true);
     assert.equal(capturedPrompt.includes(`- Repository root: ${repo.repoRoot}`), true);
     assert.equal(capturedPrompt.includes("- Running services:"), true);

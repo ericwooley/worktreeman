@@ -284,8 +284,8 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Add review entry/);
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
-  assert.match(markup, /Continue with AI/);
-  assert.match(markup, /The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request\./);
+  assert.match(markup, /Continue implementation/);
+  assert.match(markup, /Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request\./);
 });
 
 test("Review tab shows live AI output instead of the follow-up composer while AI is active", async () => {
@@ -304,6 +304,7 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
     },
     projectManagementRunningAiJobs: [{
       jobId: "job-1",
+      fileName: "job-1.md",
       worktreeId: sampleWorktree.id,
       branch: sampleWorktree.branch,
       worktreePath: sampleWorktree.worktreePath,
@@ -345,5 +346,5 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
   assert.match(markup, /Worktree AI is working/);
   assert.match(markup, /Mixed output timeline/);
   assert.match(markup, /Cancel AI/);
-  assert.doesNotMatch(markup, /The next AI run will include the original request, a fast summary of previous AI outputs in this review, and your new follow-up request\./);
+  assert.doesNotMatch(markup, /Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request\./);
 });

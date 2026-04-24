@@ -726,6 +726,40 @@ function formatReviewFollowUpLogOutput(entry: AiCommandLogEntry): string | null 
   ].join("\n\n");
 }
 
+function isExecutionReviewHistoryEntry(entry: AiCommandLogEntry): boolean {
+  const originKind = entry.origin?.kind;
+  if (originKind === "worktree-review" || originKind === "project-management-document-run") {
+    return true;
+  }
+
+  const request = entry.request.trim();
+  if (!request) {
+    return false;
+  }
+
+  if (request.includes('You are rewriting the project-management markdown document')) {
+    return false;
+  }
+
+  return request.includes('You are implementing the work described by the project-management document')
+    || request.includes('Review follow-up for linked document');
+}
+
+function formatReviewFollowUpHistoryEntry(entry: AiCommandLogEntry): string {
+  const sections = [
+    `- Timestamp: ${entry.timestamp}`,
+    `- Branch: ${entry.branch}`,
+    `- Command: ${entry.commandId}`,
+    `- Status: ${entry.status}`,
+    `- Request summary: ${entry.request.trim() || "(empty request)"}`,
+    entry.response.stdout.trim() ? `- Stdout:\n${entry.response.stdout.trim()}` : null,
+    entry.response.stderr.trim() ? `- Stderr:\n${entry.response.stderr.trim()}` : null,
+    entry.error?.message?.trim() ? `- Error: ${entry.error.message.trim()}` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return sections.join("\n\n");
+}
+
 export async function buildReviewFollowUpRequest(options: {
   repoRoot: string;
   config: WorktreeManagerConfig;
@@ -737,19 +771,25 @@ export async function buildReviewFollowUpRequest(options: {
   documentMarkdown?: string | null;
   followUp: NonNullable<RunAiCommandRequest["reviewFollowUp"]>;
 }): Promise<string> {
-  const priorLogs = (await listAiCommandLogEntries(options.repoRoot))
+  const allDocumentLogs = (await listAiCommandLogEntries(options.repoRoot))
     .filter((entry) => entry.documentId === options.documentId)
     .filter((entry) => entry.status !== "running")
     .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
 
-  const originalRequest = priorLogs.find((entry) => entry.request.trim())?.request.trim()
+  const executionHistoryLogs = allDocumentLogs.filter(isExecutionReviewHistoryEntry);
+
+  const originalRequest = executionHistoryLogs.find((entry) => entry.request.trim())?.request.trim()
     || options.followUp.originalRequest.trim()
     || options.documentSummary?.trim()
     || options.documentTitle;
 
-  const priorOutputs = priorLogs
+  const priorOutputs = executionHistoryLogs
     .map(formatReviewFollowUpLogOutput)
     .filter((entry): entry is string => Boolean(entry));
+
+  const priorHistoryLog = executionHistoryLogs.length
+    ? executionHistoryLogs.map(formatReviewFollowUpHistoryEntry).join("\n\n---\n\n")
+    : "No prior implementation runs were available for this review yet.";
 
   let previousRunSummary = "No previous AI outputs were available for this review yet.";
   if (priorOutputs.length) {
@@ -795,7 +835,7 @@ export async function buildReviewFollowUpRequest(options: {
 
   return [
     `Review follow-up for linked document \"${options.documentTitle}\".`,
-    "Use the existing worktree context and continue from the prior AI work rather than restarting from scratch.",
+    "Implement the work described by this document in the current worktree. Continue from the prior AI work rather than rewriting or re-planning the document.",
     "",
     "Original context:",
     originalRequest,
@@ -805,11 +845,16 @@ export async function buildReviewFollowUpRequest(options: {
     `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
     options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
     "",
+    "Prior AI run log:",
+    priorHistoryLog,
+    "",
     "Summary of previous AI outputs:",
     previousRunSummary,
     "",
     "New follow-up request:",
     options.followUp.newRequest.trim(),
+    "",
+    "Implement the requested work in code in this repository. Do not rewrite the project-management document unless the operator explicitly asks for document edits.",
   ].join("\n");
 }
 
