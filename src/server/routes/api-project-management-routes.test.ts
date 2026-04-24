@@ -461,6 +461,27 @@ test("project-management review routes preserve summary and add attributed entri
     assert.equal(updatedReview.review.entries[0]?.authorName, "Riley Maintainer");
     assert.equal(updatedReview.review.entries[0]?.authorEmail, "riley@example.com");
 
+    const reviewEntryId = updatedReview.review.entries[0]?.id;
+    assert.ok(reviewEntryId);
+
+    const deleteResponse = await server.fetch(
+      `/api/project-management/documents/${encodeURIComponent(documentId)}/review/${encodeURIComponent(reviewEntryId)}`,
+      { method: "DELETE" },
+    );
+    assert.equal(deleteResponse.status, 204);
+
+    const deletedReview = await getProjectManagementDocumentReview(repo.repoRoot, documentId);
+    assert.equal(deletedReview.review.entries.length, 0);
+
+    const reviewResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`);
+    assert.equal(reviewResponse.status, 200);
+    const reviewPayload = await reviewResponse.json() as {
+      review: {
+        entries: Array<unknown>;
+      };
+    };
+    assert.equal(reviewPayload.review.entries.length, 0);
+
     const invalidCommentResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(documentId)}/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

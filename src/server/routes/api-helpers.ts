@@ -658,6 +658,13 @@ function buildReviewFollowUpSummaryPrompt(options: {
   ].join("\n\n");
 }
 
+const REVIEW_FOLLOW_UP_RAW_HISTORY_LIMIT = 4;
+const REVIEW_FOLLOW_UP_OLDER_SUMMARY_LIMIT = 6;
+const REVIEW_FOLLOW_UP_SUMMARY_INPUT_LIMIT = 8;
+const REVIEW_FOLLOW_UP_REQUEST_MAX_LENGTH = 1_200;
+const REVIEW_FOLLOW_UP_OUTPUT_MAX_LENGTH = 2_400;
+const REVIEW_FOLLOW_UP_SUMMARY_TEXT_MAX_LENGTH = 480;
+
 export async function generateProjectManagementDocumentSummary(options: {
   repoRoot: string;
   config: WorktreeManagerConfig;
@@ -710,8 +717,11 @@ export async function generateProjectManagementDocumentSummary(options: {
 }
 
 function formatReviewFollowUpLogOutput(entry: AiCommandLogEntry): string | null {
+  const request = formatReviewFollowUpMultilineSnippet(entry.request, REVIEW_FOLLOW_UP_REQUEST_MAX_LENGTH);
   const sections = [
-    entry.response.stdout.trim() ? `stdout:\n${entry.response.stdout.trim()}` : null,
+    entry.response.stdout.trim()
+      ? `stdout:\n${formatReviewFollowUpMultilineSnippet(entry.response.stdout, REVIEW_FOLLOW_UP_OUTPUT_MAX_LENGTH)}`
+      : null,
     entry.error?.message?.trim() ? `error: ${entry.error.message.trim()}` : null,
   ].filter((value): value is string => Boolean(value));
 
@@ -720,7 +730,7 @@ function formatReviewFollowUpLogOutput(entry: AiCommandLogEntry): string | null 
   }
 
   return [
-    `Request: ${entry.request.trim() || "(empty request)"}`,
+    `Request: ${request || "(empty request)"}`,
     ...sections,
   ].join("\n\n");
 }
@@ -750,12 +760,128 @@ function formatReviewFollowUpHistoryEntry(entry: AiCommandLogEntry): string {
     `- Branch: ${entry.branch}`,
     `- Command: ${entry.commandId}`,
     `- Status: ${entry.status}`,
-    `- Request summary: ${entry.request.trim() || "(empty request)"}`,
-    entry.response.stdout.trim() ? `- Stdout:\n${entry.response.stdout.trim()}` : null,
+    `- Request summary: ${formatReviewFollowUpMultilineSnippet(entry.request, REVIEW_FOLLOW_UP_REQUEST_MAX_LENGTH) || "(empty request)"}`,
+    entry.response.stdout.trim()
+      ? `- Stdout:\n${formatReviewFollowUpMultilineSnippet(entry.response.stdout, REVIEW_FOLLOW_UP_OUTPUT_MAX_LENGTH)}`
+      : null,
     entry.error?.message?.trim() ? `- Error: ${entry.error.message.trim()}` : null,
   ].filter((value): value is string => Boolean(value));
 
   return sections.join("\n\n");
+}
+
+function formatReviewFollowUpMultilineSnippet(value: string, maxLength: number): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).trimEnd()}\n...[truncated]`;
+}
+
+function buildReviewHistorySummarySourceHash(entry: AiCommandLogEntry): string {
+  return createHash("sha256").update(JSON.stringify({
+    branch: entry.branch,
+    commandId: entry.commandId,
+    status: entry.status,
+    request: entry.request.trim(),
+    stdout: entry.response.stdout.trim(),
+    error: entry.error?.message?.trim() ?? "",
+  })).digest("hex");
+}
+
+function createReviewHistorySummary(entry: AiCommandLogEntry): string | null {
+  const requestSummary = formatLogSnippet(entry.request, 160) || "(empty request)";
+  const outcomeSummary = formatLogSnippet(entry.response.stdout, 220)
+    || formatLogSnippet(entry.error?.message ?? "", 220)
+    || "No stdout or explicit error was captured.";
+
+  return formatReviewFollowUpMultilineSnippet(
+    [
+      `${entry.timestamp} on ${entry.branch} (${entry.commandId}, ${entry.status}).`,
+      `Request: ${requestSummary}`,
+      `Outcome: ${outcomeSummary}`,
+    ].join(" "),
+    REVIEW_FOLLOW_UP_SUMMARY_TEXT_MAX_LENGTH,
+  );
+}
+
+async function getCachedReviewHistorySummary(options: {
+  repoRoot: string;
+  entry: AiCommandLogEntry;
+}): Promise<string | null> {
+  const sourceHash = buildReviewHistorySummarySourceHash(options.entry);
+  const cachedSummary = options.entry.historySummary?.trim() ?? "";
+  if (cachedSummary && options.entry.historySummarySourceHash === sourceHash) {
+    return cachedSummary;
+  }
+
+  const summary = createReviewHistorySummary(options.entry);
+  if (!summary) {
+    return null;
+  }
+
+  const store = await createOperationalStateStore(options.repoRoot);
+  await store.upsertAiCommandLogEntry({
+    ...options.entry,
+    historySummary: summary,
+    historySummaryGeneratedAt: new Date().toISOString(),
+    historySummarySourceHash: sourceHash,
+  }, { preserveOutputText: true });
+  return summary;
+}
+
+async function buildReviewFollowUpHistoryContext(options: {
+  repoRoot: string;
+  executionHistoryLogs: AiCommandLogEntry[];
+}): Promise<{ priorHistoryLog: string; summaryInputs: string[] }> {
+  if (!options.executionHistoryLogs.length) {
+    return {
+      priorHistoryLog: "No prior implementation runs were available for this review yet.",
+      summaryInputs: [],
+    };
+  }
+
+  const rawHistoryEntries = options.executionHistoryLogs.slice(-REVIEW_FOLLOW_UP_RAW_HISTORY_LIMIT);
+  const olderHistoryEntries = options.executionHistoryLogs.slice(0, -rawHistoryEntries.length);
+  const olderHistorySummaries = (await Promise.all(
+    olderHistoryEntries.map((entry) => getCachedReviewHistorySummary({ repoRoot: options.repoRoot, entry })),
+  )).filter((entry): entry is string => Boolean(entry));
+  const visibleOlderSummaries = olderHistorySummaries.slice(-REVIEW_FOLLOW_UP_OLDER_SUMMARY_LIMIT);
+  const omittedOlderSummaryCount = Math.max(olderHistorySummaries.length - visibleOlderSummaries.length, 0);
+  const recentRawHistory = rawHistoryEntries.map(formatReviewFollowUpHistoryEntry);
+  const sections: string[] = [];
+
+  if (visibleOlderSummaries.length) {
+    sections.push([
+      `Earlier AI runs summarized (${olderHistorySummaries.length} total):`,
+      ...visibleOlderSummaries.map((summary, index) => `${index + 1}. ${summary}`),
+      omittedOlderSummaryCount > 0
+        ? `${omittedOlderSummaryCount} additional earlier run summaries were omitted to keep this follow-up request bounded.`
+        : null,
+    ].filter((value): value is string => Boolean(value)).join("\n"));
+  }
+
+  if (recentRawHistory.length) {
+    sections.push([
+      visibleOlderSummaries.length ? "Most recent AI runs:" : null,
+      recentRawHistory.join("\n\n---\n\n"),
+    ].filter((value): value is string => Boolean(value)).join("\n"));
+  }
+
+  const recentOutputInputs = rawHistoryEntries
+    .map(formatReviewFollowUpLogOutput)
+    .filter((entry): entry is string => Boolean(entry));
+  const summaryInputs = [...visibleOlderSummaries, ...recentOutputInputs].slice(-REVIEW_FOLLOW_UP_SUMMARY_INPUT_LIMIT);
+
+  return {
+    priorHistoryLog: sections.join("\n\n") || "No prior implementation runs were available for this review yet.",
+    summaryInputs,
+  };
 }
 
 export async function buildReviewFollowUpRequest(options: {
@@ -781,23 +907,20 @@ export async function buildReviewFollowUpRequest(options: {
     || options.documentSummary?.trim()
     || options.documentTitle;
 
-  const priorOutputs = executionHistoryLogs
-    .map(formatReviewFollowUpLogOutput)
-    .filter((entry): entry is string => Boolean(entry));
-
-  const priorHistoryLog = executionHistoryLogs.length
-    ? executionHistoryLogs.map(formatReviewFollowUpHistoryEntry).join("\n\n---\n\n")
-    : "No prior implementation runs were available for this review yet.";
+  const { priorHistoryLog, summaryInputs } = await buildReviewFollowUpHistoryContext({
+    repoRoot: options.repoRoot,
+    executionHistoryLogs,
+  });
 
   let previousRunSummary = "No previous AI outputs were available for this review yet.";
-  if (priorOutputs.length) {
+  if (summaryInputs.length) {
     const template = resolveAiCommandTemplate(options.config.aiCommands, "simple");
     if (template.includes("$WTM_AI_INPUT")) {
       const input = buildReviewFollowUpSummaryPrompt({
         branch: options.branch,
         documentTitle: options.documentTitle,
         originalRequest,
-        priorOutputs,
+        priorOutputs: summaryInputs,
       });
       const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
 

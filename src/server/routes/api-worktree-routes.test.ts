@@ -1346,6 +1346,153 @@ test("review follow-up AI runs include prior outputs from other linked worktrees
   }
 });
 
+test("review follow-up AI runs summarize older history and persist cached summaries", { concurrency: false, timeout: 20000 }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const reviewWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-review-history-bounded" });
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+
+  const linkedDocumentId = "doc-review-history-bounded";
+  await operationalState.setWorktreeDocumentLink({
+    worktreeId: reviewWorktree.id,
+    branch: reviewWorktree.branch,
+    worktreePath: reviewWorktree.worktreePath,
+    documentId: linkedDocumentId,
+  });
+
+  const timestamps = [
+    "2026-04-20T08:00:00.000Z",
+    "2026-04-20T09:00:00.000Z",
+    "2026-04-20T10:00:00.000Z",
+    "2026-04-20T11:00:00.000Z",
+    "2026-04-20T12:00:00.000Z",
+    "2026-04-20T13:00:00.000Z",
+  ];
+  const completedAtTimestamps = [
+    "2026-04-20T08:02:00.000Z",
+    "2026-04-20T09:02:00.000Z",
+    "2026-04-20T10:02:00.000Z",
+    "2026-04-20T11:02:00.000Z",
+    "2026-04-20T12:02:00.000Z",
+    "2026-04-20T13:02:00.000Z",
+  ];
+
+  for (let index = 0; index < 6; index += 1) {
+    await operationalState.upsertAiCommandLogEntry({
+      fileName: `review-bounded-${index + 1}.md`,
+      jobId: `review-bounded-job-${index + 1}`,
+      timestamp: timestamps[index]!,
+      worktreeId: reviewWorktree.id,
+      branch: reviewWorktree.branch,
+      documentId: linkedDocumentId,
+      commandId: "smart",
+      worktreePath: reviewWorktree.worktreePath,
+      command: `printf %s 'prior run ${index + 1}'`,
+      request: `Review follow-up request ${index + 1}`,
+      response: {
+        stdout: `Older run ${index + 1} completed implementation step ${index + 1}.`,
+        stderr: index === 4 ? "warning output" : "",
+      },
+      status: "completed",
+      pid: 500 + index,
+      processName: `wtm:ai:review-bounded-job-${index + 1}`,
+      completedAt: completedAtTimestamps[index]!,
+      exitCode: 0,
+      error: null,
+      origin: {
+        kind: "worktree-review",
+        label: "Review follow-up",
+        description: "Continue review activity",
+        location: {
+          tab: "review",
+          branch: reviewWorktree.branch,
+          worktreeId: reviewWorktree.id,
+          documentId: linkedDocumentId,
+        },
+      },
+    });
+  }
+
+  let capturedPrompt = "";
+  const aiProcesses = {
+    ...createFakeAiProcesses().aiProcesses,
+    async startProcess(options: { command: string }) {
+      const match = options.command.match(/^printf %s '([\s\S]*)'$/);
+      capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
+      return {
+        name: "wtm:ai:test-review-history-bounded",
+        pid: 9998,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async getProcess() {
+      return {
+        name: "wtm:ai:test-review-history-bounded",
+        pid: 9998,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    async waitForProcess() {
+      return {
+        name: "wtm:ai:test-review-history-bounded",
+        pid: 9998,
+        status: "stopped",
+        exitCode: 0,
+      };
+    },
+    isProcessActive(status: string | undefined) {
+      return status === "online";
+    },
+  };
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const response = await server.fetch(`/api/worktrees/${reviewWorktree.branch}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "Finish the remaining release checks",
+        reviewDocumentId: linkedDocumentId,
+        reviewFollowUp: {
+          originalRequest: "temporary client fallback",
+          newRequest: "Finish the remaining release checks",
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    assert.equal(capturedPrompt.includes("Prior AI run log:"), true);
+    assert.equal(capturedPrompt.includes("Earlier AI runs summarized (2 total):"), true);
+    assert.equal(capturedPrompt.includes("Outcome: Older run 1 completed implementation step 1."), true);
+    assert.equal(capturedPrompt.includes("Outcome: Older run 2 completed implementation step 2."), true);
+    assert.equal(capturedPrompt.includes("Most recent AI runs:"), true);
+    assert.equal(capturedPrompt.includes("Request summary: Review follow-up request 6"), true);
+    assert.equal(capturedPrompt.includes("warning output"), false);
+    assert.equal(capturedPrompt.includes("Summary of previous AI outputs:"), true);
+
+    const oldestEntry = await operationalState.getAiCommandLogEntryByJobId("review-bounded-job-1");
+    const secondOldestEntry = await operationalState.getAiCommandLogEntryByJobId("review-bounded-job-2");
+    assert.equal(typeof oldestEntry?.historySummary, "string");
+    assert.equal(typeof oldestEntry?.historySummaryGeneratedAt, "string");
+    assert.equal(typeof oldestEntry?.historySummarySourceHash, "string");
+    assert.equal(typeof secondOldestEntry?.historySummary, "string");
+    assert.equal(typeof secondOldestEntry?.historySummaryGeneratedAt, "string");
+    assert.equal(typeof secondOldestEntry?.historySummarySourceHash, "string");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("review follow-up ignores document-rewrite prompts in history and includes prior implementation logs", { concurrency: false, timeout: 20000 }, async () => {
   const repo = await createApiTestRepo();
   const config = await loadConfig({

@@ -731,6 +731,7 @@ interface WorktreeDetailProps {
     archived?: boolean;
   }) => Promise<boolean>;
   onAddProjectManagementReviewEntry: (documentId: string, payload: { body: string }) => Promise<ProjectManagementDocumentReview | null>;
+  onDeleteProjectManagementReviewEntry: (documentId: string, reviewEntryId: string) => Promise<boolean>;
   onRunProjectManagementAiCommand: (payload: RunAiCommandRequest & {
     input: string;
     documentId?: string;
@@ -854,6 +855,7 @@ export function WorktreeDetail({
   onUpdateProjectManagementUsers,
   onBatchUpdateProjectManagementDocuments,
   onAddProjectManagementReviewEntry,
+  onDeleteProjectManagementReviewEntry,
   onRunProjectManagementAiCommand,
   onRunProjectManagementDocumentAi,
   onCancelProjectManagementDocumentAiCommand,
@@ -990,6 +992,7 @@ export function WorktreeDetail({
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewFollowUpDraft, setReviewFollowUpDraft] = useState("");
   const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
+  const [deletingReviewEntryId, setDeletingReviewEntryId] = useState<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
@@ -1506,6 +1509,19 @@ export function WorktreeDetail({
       }
     } finally {
       setReviewFollowUpSubmitting(false);
+    }
+  };
+
+  const deleteReviewEntry = async (entry: ProjectManagementReviewEntry) => {
+    if (!linkedDocument?.id || deletingReviewEntryId) {
+      return;
+    }
+
+    setDeletingReviewEntryId(entry.id);
+    try {
+      await onDeleteProjectManagementReviewEntry(linkedDocument.id, entry.id);
+    } finally {
+      setDeletingReviewEntryId(null);
     }
   };
 
@@ -2351,8 +2367,18 @@ export function WorktreeDetail({
                           dangerouslySetInnerHTML={{ __html: marked.parse(entry.body) }}
                         />
                         <MatrixCardFooter className="mt-4 justify-between gap-3 text-xs theme-text-muted">
-                          <span>{entry.kind}</span>
-                          <span>{entry.updatedAt !== entry.createdAt ? `Updated ${new Date(entry.updatedAt).toLocaleString()}` : ""}</span>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span>{entry.kind}</span>
+                            {entry.updatedAt !== entry.createdAt ? <span>{`Updated ${new Date(entry.updatedAt).toLocaleString()}`}</span> : null}
+                          </div>
+                          <button
+                            type="button"
+                            className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-xs"
+                            disabled={projectManagementSaving || deletingReviewEntryId === entry.id}
+                            onClick={() => void deleteReviewEntry(entry)}
+                          >
+                            {deletingReviewEntryId === entry.id ? "Deleting..." : "Delete entry"}
+                          </button>
                         </MatrixCardFooter>
                       </MatrixCard>
                     ))}

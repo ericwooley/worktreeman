@@ -206,6 +206,7 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         onUpdateProjectManagementUsers={createAsyncNoop(null as ProjectManagementUsersResponse | null)}
         onBatchUpdateProjectManagementDocuments={createAsyncNoop(false)}
         onAddProjectManagementReviewEntry={createAsyncNoop(null as ProjectManagementDocumentReview | null)}
+        onDeleteProjectManagementReviewEntry={createAsyncNoop(true)}
         onRunProjectManagementAiCommand={createAsyncNoop(null as AiCommandJob | null)}
         onRunProjectManagementDocumentAi={createAsyncNoop(null as RunAiCommandResponse | null)}
         onCancelProjectManagementDocumentAiCommand={createAsyncNoop(null as AiCommandJob | null)}
@@ -284,6 +285,7 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Add review entry/);
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
+  assert.match(markup, /Delete entry/);
   assert.match(markup, /Continue implementation/);
   assert.match(markup, /Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request\./);
 });

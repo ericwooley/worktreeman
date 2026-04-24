@@ -46,6 +46,7 @@ import {
 } from "../services/project-management-service.js";
 import {
   addProjectManagementReviewEntry,
+  deleteProjectManagementReviewEntry,
   getProjectManagementDocumentReview,
   listProjectManagementReviews,
 } from "../services/project-management-review-service.js";
@@ -403,6 +404,20 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
       );
       context.emitProjectManagementReviewsRefresh();
       res.status(201).json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.delete("/project-management/documents/:id/review/:entryId", async (req, res, next) => {
+    try {
+      await deleteProjectManagementReviewEntry(
+        context.repoRoot,
+        decodeURIComponent(req.params.id),
+        decodeURIComponent(req.params.entryId),
+      );
+      context.emitProjectManagementReviewsRefresh();
+      res.status(204).end();
     } catch (error) {
       next(error);
     }

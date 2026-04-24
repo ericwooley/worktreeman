@@ -55,6 +55,7 @@ import {
   getProjectManagementDocumentReview as fetchProjectManagementDocumentReview,
   getProjectManagementHistory as fetchProjectManagementHistory,
   getProjectManagementReviews as fetchProjectManagementReviews,
+  deleteProjectManagementReviewEntry as deleteProjectManagementReviewEntryRequest,
   listProjectManagementDocuments as fetchProjectManagementDocuments,
   getProjectManagementUsers as fetchProjectManagementUsers,
   getConfigDocument as fetchConfigDocument,
@@ -1303,6 +1304,45 @@ function useDashboardStateInternal() {
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to add project management review entry.");
           return null;
+        } finally {
+          setProjectManagementSaving(false);
+        }
+      },
+      async deleteProjectManagementReviewEntry(documentId: string, reviewEntryId: string) {
+        setProjectManagementSaving(true);
+        try {
+          await deleteProjectManagementReviewEntryRequest(documentId, reviewEntryId);
+          setProjectManagementDocumentReview((current) => {
+            if (!current || current.documentId !== documentId) {
+              return current;
+            }
+
+            return {
+              ...current,
+              entries: current.entries.filter((entry) => entry.id !== reviewEntryId),
+            };
+          });
+          setProjectManagementReviews((current) => {
+            if (!current) {
+              return current;
+            }
+
+            return {
+              ...current,
+              reviews: current.reviews.map((entry) => entry.documentId === documentId
+                ? {
+                    ...entry,
+                    entries: entry.entries.filter((reviewEntry) => reviewEntry.id !== reviewEntryId),
+                  }
+                : entry),
+            };
+          });
+          setProjectManagementLastUpdatedAt(new Date().toISOString());
+          setError(null);
+          return true;
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to delete project management review entry.");
+          return false;
         } finally {
           setProjectManagementSaving(false);
         }

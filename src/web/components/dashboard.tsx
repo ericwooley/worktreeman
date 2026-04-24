@@ -215,6 +215,7 @@ export function Dashboard() {
     clearLastEnvSync,
     clearBackgroundLogs,
     addProjectManagementReviewEntry,
+    deleteProjectManagementReviewEntry,
     batchUpdateProjectManagementDocuments,
     create,
     createProjectManagementDocument,
@@ -1783,6 +1784,9 @@ export function Dashboard() {
             }}
             onAddProjectManagementReviewEntry={async (documentId, payload) => {
               return addProjectManagementReviewEntry(documentId, payload);
+            }}
+            onDeleteProjectManagementReviewEntry={async (documentId, reviewEntryId) => {
+              return deleteProjectManagementReviewEntry(documentId, reviewEntryId);
             }}
             projectManagementAiCommands={configuredAiCommands}
             projectManagementAiJob={selected?.branch && aiCommandJob?.branch === selected.branch ? aiCommandJob : null}
