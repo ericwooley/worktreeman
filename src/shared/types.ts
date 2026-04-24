@@ -781,6 +781,9 @@ export interface AiCommandLogEntry {
   completedAt?: string;
   error: AiCommandLogError | null;
   origin?: AiCommandOrigin | null;
+  historySummary?: string | null;
+  historySummaryGeneratedAt?: string;
+  historySummarySourceHash?: string | null;
 }
 
 export interface AiCommandLogsResponse {

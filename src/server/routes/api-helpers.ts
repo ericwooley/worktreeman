@@ -712,7 +712,6 @@ export async function generateProjectManagementDocumentSummary(options: {
 function formatReviewFollowUpLogOutput(entry: AiCommandLogEntry): string | null {
   const sections = [
     entry.response.stdout.trim() ? `stdout:\n${entry.response.stdout.trim()}` : null,
-    entry.response.stderr.trim() ? `stderr:\n${entry.response.stderr.trim()}` : null,
     entry.error?.message?.trim() ? `error: ${entry.error.message.trim()}` : null,
   ].filter((value): value is string => Boolean(value));
 
@@ -753,7 +752,6 @@ function formatReviewFollowUpHistoryEntry(entry: AiCommandLogEntry): string {
     `- Status: ${entry.status}`,
     `- Request summary: ${entry.request.trim() || "(empty request)"}`,
     entry.response.stdout.trim() ? `- Stdout:\n${entry.response.stdout.trim()}` : null,
-    entry.response.stderr.trim() ? `- Stderr:\n${entry.response.stderr.trim()}` : null,
     entry.error?.message?.trim() ? `- Error: ${entry.error.message.trim()}` : null,
   ].filter((value): value is string => Boolean(value));
 

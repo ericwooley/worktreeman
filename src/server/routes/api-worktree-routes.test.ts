@@ -1336,7 +1336,7 @@ test("review follow-up AI runs include prior outputs from other linked worktrees
     assert.equal(capturedPrompt.includes("Summary of previous AI outputs:"), true);
     assert.equal(capturedPrompt.includes("Implemented the first draft and found two risks."), true);
     assert.equal(capturedPrompt.includes("Closed one risk but left a deployment issue unresolved."), true);
-    assert.equal(capturedPrompt.includes("warning output"), true);
+    assert.equal(capturedPrompt.includes("warning output"), false);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("Make sure the remaining deployment issue is fixed"), true);
     assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository. Do not rewrite the project-management document unless the operator explicitly asks for document edits."), true);
@@ -1499,7 +1499,7 @@ test("review follow-up ignores document-rewrite prompts in history and includes 
     assert.equal(capturedPrompt.includes("Your job is to return a full replacement markdown document"), false);
     assert.equal(capturedPrompt.includes("Prior AI run log:"), true);
     assert.equal(capturedPrompt.includes("Implemented the CLI support but left one retry bug unresolved."), true);
-    assert.equal(capturedPrompt.includes("intermittent warning output"), true);
+    assert.equal(capturedPrompt.includes("intermittent warning output"), false);
     assert.equal(capturedPrompt.includes("Summary of previous AI outputs:"), true);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("Finish the retry bug and verify the CLI flow end to end"), true);
