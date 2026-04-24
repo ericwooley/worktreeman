@@ -59,12 +59,36 @@ async function waitForChildExit(child: ChildProcess, timeoutMs = 20000): Promise
   });
 }
 
+// These tests validate the pg-boss contract directly. The vitest setup forces
+// `WTM_AI_JOB_INLINE=1` for speed in all other suites; each test in this file
+// must opt out so it exercises the real queue.
+function withRealQueue<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.WTM_AI_JOB_INLINE;
+  delete process.env.WTM_AI_JOB_INLINE;
+  return fn().finally(() => {
+    if (previous === undefined) {
+      delete process.env.WTM_AI_JOB_INLINE;
+    } else {
+      process.env.WTM_AI_JOB_INLINE = previous;
+    }
+  });
+}
+
+function envWithoutInlineFlag(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.WTM_AI_JOB_INLINE;
+  return env;
+}
+
 test("startProjectManagementAiWorker logs manager and worker readiness", async () => {
+  await withRealQueue(async () => {
   configureDatabaseConnection(null);
 
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-worker-"));
   const stdoutLines: string[] = [];
   const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const previousPollEnv = process.env.WTM_AI_JOB_POLL_INTERVAL_SECONDS;
+  delete process.env.WTM_AI_JOB_POLL_INTERVAL_SECONDS;
   process.stdout.write = ((chunk: string | Uint8Array) => {
     stdoutLines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
     return true;
@@ -87,11 +111,18 @@ test("startProjectManagementAiWorker logs manager and worker readiness", async (
     assert.match(output, /pollingIntervalSeconds=0\.5/);
   } finally {
     process.stdout.write = originalStdoutWrite;
+    if (previousPollEnv === undefined) {
+      delete process.env.WTM_AI_JOB_POLL_INTERVAL_SECONDS;
+    } else {
+      process.env.WTM_AI_JOB_POLL_INTERVAL_SECONDS = previousPollEnv;
+    }
     await fs.rm(rootDir, { recursive: true, force: true });
   }
+  });
 });
 
 test("worker entrypoint shutdown drains active AI job without killing its child process", { timeout: 20000 }, async () => {
+  await withRealQueue(async () => {
   configureDatabaseConnection(null);
 
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-worker-"));
@@ -116,7 +147,7 @@ test("worker entrypoint shutdown drains active AI job without killing its child 
     const workerEntrypointPath = fileURLToPath(new URL("../entrypoints/worker-entrypoint.ts", import.meta.url));
     workerChild = spawn("node", ["--import", "tsx", workerEntrypointPath, "--cwd", repo.repoRoot, "--database-url", database.connectionString], {
       cwd: process.cwd(),
-      env: process.env,
+      env: envWithoutInlineFlag(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     workerChild.stdout?.on("data", collectStdout);
@@ -181,9 +212,11 @@ test("worker entrypoint shutdown drains active AI job without killing its child 
     }
     await fs.rm(rootDir, { recursive: true, force: true });
   }
+  });
 });
 
 test("queued project-management AI jobs stay running before the worker spawns the process", async () => {
+  await withRealQueue(async () => {
   configureDatabaseConnection(null);
 
   const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-worker-"));
@@ -245,4 +278,5 @@ test("queued project-management AI jobs stay running before the worker spawns th
     await stopOperationalStateStore(rootDir).catch(() => undefined);
     await fs.rm(rootDir, { recursive: true, force: true });
   }
+  });
 });
