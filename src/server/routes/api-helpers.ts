@@ -15,6 +15,7 @@ import type {
   BackgroundCommandState,
   ProjectManagementDocumentResponse,
   ProjectManagementListResponse,
+  ProjectManagementReviewEntry,
   WorktreeManagerConfig,
   WorktreeRuntime,
 } from "../../shared/types.js";
@@ -39,6 +40,7 @@ import { listWorktrees } from "../services/git-service.js";
 import { sanitizeBranchName } from "../utils/paths.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import type { AiCommandLogIndexEntry } from "../services/operational-state-service.js";
+import { getProjectManagementDocumentReview } from "../services/project-management-review-service.js";
 import { runCommand } from "../utils/process.js";
 import {
   formatDurationMs,
@@ -664,6 +666,8 @@ const REVIEW_FOLLOW_UP_SUMMARY_INPUT_LIMIT = 8;
 const REVIEW_FOLLOW_UP_REQUEST_MAX_LENGTH = 1_200;
 const REVIEW_FOLLOW_UP_OUTPUT_MAX_LENGTH = 2_400;
 const REVIEW_FOLLOW_UP_SUMMARY_TEXT_MAX_LENGTH = 480;
+const REVIEW_THREAD_ENTRY_BODY_MAX_LENGTH = 1_200;
+const REVIEW_OUTPUT_SUMMARY_HASH_VERSION = "review-output-summary-v2";
 
 export async function generateProjectManagementDocumentSummary(options: {
   repoRoot: string;
@@ -884,6 +888,226 @@ async function buildReviewFollowUpHistoryContext(options: {
   };
 }
 
+function extractReviewEntryRequestSummary(body: string): string | null {
+  const match = body.match(/^- Request:\s*(.+)$/m);
+  return match?.[1]?.trim() || null;
+}
+
+function formatReviewEntryBodySnippet(body: string): string {
+  const normalized = body
+    .replace(/<details>[\s\S]*?<\/details>/gi, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/<[^>]+>/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
+
+  return formatReviewFollowUpMultilineSnippet(normalized, REVIEW_THREAD_ENTRY_BODY_MAX_LENGTH);
+}
+
+function getReviewThreadEntryTitle(entry: ProjectManagementReviewEntry): string {
+  if (entry.eventType === "ai-started") {
+    return "AI work started";
+  }
+
+  if (entry.eventType === "ai-completed") {
+    return "AI work completed";
+  }
+
+  if (entry.eventType === "merge") {
+    return "Merge activity";
+  }
+
+  if (entry.source === "ai") {
+    return "AI review note";
+  }
+
+  if (entry.source === "system") {
+    return "System review note";
+  }
+
+  return "Review feedback";
+}
+
+function normalizeReviewRequestMatch(value: string | null | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function buildReviewOutputSummarySourceHash(entry: AiCommandLogEntry): string {
+  return createHash("sha256").update(JSON.stringify({
+    version: REVIEW_OUTPUT_SUMMARY_HASH_VERSION,
+    branch: entry.branch,
+    commandId: entry.commandId,
+    status: entry.status,
+    completedAt: entry.completedAt ?? null,
+    request: entry.request.trim(),
+    stdout: entry.response.stdout.trim(),
+    error: entry.error?.message?.trim() ?? "",
+  })).digest("hex");
+}
+
+function createReviewOutputSummary(entry: AiCommandLogEntry): string | null {
+  const outcomeSummary = formatLogSnippet(entry.response.stdout, 260)
+    || formatLogSnippet(entry.error?.message ?? "", 220)
+    || "No stdout or explicit error was captured.";
+
+  return formatReviewFollowUpMultilineSnippet(
+    [
+      `${entry.branch} ${entry.commandId} run (${entry.status}).`,
+      `Stdout summary: ${outcomeSummary}`,
+      entry.error?.message?.trim() ? `Explicit error: ${entry.error.message.trim()}` : null,
+    ].filter((value): value is string => Boolean(value)).join(" "),
+    REVIEW_FOLLOW_UP_SUMMARY_TEXT_MAX_LENGTH,
+  );
+}
+
+async function getCachedReviewOutputSummary(options: {
+  repoRoot: string;
+  entry: AiCommandLogEntry;
+}): Promise<string | null> {
+  const sourceHash = buildReviewOutputSummarySourceHash(options.entry);
+  const cachedSummary = options.entry.historySummary?.trim() ?? "";
+  if (cachedSummary && options.entry.historySummarySourceHash === sourceHash) {
+    return cachedSummary;
+  }
+
+  const summary = createReviewOutputSummary(options.entry);
+  if (!summary) {
+    return null;
+  }
+
+  const store = await createOperationalStateStore(options.repoRoot);
+  await store.upsertAiCommandLogEntry({
+    ...options.entry,
+    historySummary: summary,
+    historySummaryGeneratedAt: new Date().toISOString(),
+    historySummarySourceHash: sourceHash,
+  }, { preserveOutputText: true });
+  return summary;
+}
+
+function findMatchingReviewLogIndex(entry: ProjectManagementReviewEntry, logs: AiCommandLogEntry[]): number {
+  const requestSummary = normalizeReviewRequestMatch(extractReviewEntryRequestSummary(entry.body));
+  if (requestSummary) {
+    const exactIndex = logs.findIndex((log) => normalizeReviewRequestMatch(log.request) === requestSummary);
+    if (exactIndex >= 0) {
+      return exactIndex;
+    }
+
+    const partialIndex = logs.findIndex((log) => {
+      const normalizedRequest = normalizeReviewRequestMatch(log.request);
+      return normalizedRequest.includes(requestSummary) || requestSummary.includes(normalizedRequest);
+    });
+    if (partialIndex >= 0) {
+      return partialIndex;
+    }
+  }
+
+  const entryTime = Date.parse(entry.updatedAt || entry.createdAt);
+  if (!Number.isFinite(entryTime)) {
+    return logs.length ? 0 : -1;
+  }
+
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const [index, log] of logs.entries()) {
+    const logTime = Date.parse(log.completedAt ?? log.timestamp);
+    if (!Number.isFinite(logTime)) {
+      continue;
+    }
+
+    const distance = Math.abs(logTime - entryTime);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex >= 0 ? bestIndex : (logs.length ? 0 : -1);
+}
+
+function matchReviewEntriesToLogs(entries: ProjectManagementReviewEntry[], logs: AiCommandLogEntry[]) {
+  const remainingLogs = [...logs];
+  const matchedLogs = new Map<string, AiCommandLogEntry>();
+
+  for (const entry of entries) {
+    if (entry.eventType !== "ai-completed") {
+      continue;
+    }
+
+    const matchIndex = findMatchingReviewLogIndex(entry, remainingLogs);
+    if (matchIndex < 0) {
+      continue;
+    }
+
+    const [matchedLog] = remainingLogs.splice(matchIndex, 1);
+    if (matchedLog) {
+      matchedLogs.set(entry.id, matchedLog);
+    }
+  }
+
+  return matchedLogs;
+}
+
+async function formatReviewThreadContextEntry(options: {
+  repoRoot: string;
+  index: number;
+  entry: ProjectManagementReviewEntry;
+  matchedLog: AiCommandLogEntry | null;
+}): Promise<string> {
+  const author = options.entry.authorName || options.entry.authorEmail || options.entry.source;
+  const bodySnippet = formatReviewEntryBodySnippet(options.entry.body) || "(empty review entry)";
+  const outputSummary = options.matchedLog
+    ? await getCachedReviewOutputSummary({ repoRoot: options.repoRoot, entry: options.matchedLog })
+    : null;
+
+  return [
+    `${options.index}. ${getReviewThreadEntryTitle(options.entry)}`,
+    `- Timestamp: ${options.entry.createdAt}`,
+    `- Author: ${author}`,
+    `- Review entry:\n${bodySnippet}`,
+    outputSummary ? `- Cached stdout summary:\n${outputSummary}` : null,
+  ].filter((value): value is string => Boolean(value)).join("\n");
+}
+
+async function buildOrderedReviewThreadContext(options: {
+  repoRoot: string;
+  documentId: string;
+}): Promise<{ reviewThreadContext: string; originalContextFallback: string | null }> {
+  const review = await getProjectManagementDocumentReview(options.repoRoot, options.documentId);
+  const entries = review.review.entries;
+  if (!entries.length) {
+    return {
+      reviewThreadContext: "No visible review feedback was recorded for this document yet.",
+      originalContextFallback: null,
+    };
+  }
+
+  const reviewLogs = (await listAiCommandLogEntries(options.repoRoot))
+    .filter((entry) => entry.documentId === options.documentId)
+    .filter((entry) => entry.status !== "running")
+    .filter((entry) => entry.origin?.kind === "worktree-review")
+    .sort((left, right) => (left.completedAt ?? left.timestamp).localeCompare(right.completedAt ?? right.timestamp));
+  const matchedLogs = matchReviewEntriesToLogs(entries, reviewLogs);
+  const formattedEntries = await Promise.all(entries.map((entry, index) => formatReviewThreadContextEntry({
+    repoRoot: options.repoRoot,
+    index: index + 1,
+    entry,
+    matchedLog: matchedLogs.get(entry.id) ?? null,
+  })));
+  const originalContextFallback = entries
+    .map((entry) => extractReviewEntryRequestSummary(entry.body))
+    .find((value): value is string => Boolean(value?.trim()))
+    ?? reviewLogs.find((entry) => entry.request.trim())?.request.trim()
+    ?? null;
+
+  return {
+    reviewThreadContext: formattedEntries.join("\n\n"),
+    originalContextFallback,
+  };
+}
+
 export async function buildReviewFollowUpRequest(options: {
   repoRoot: string;
   config: WorktreeManagerConfig;
@@ -895,64 +1119,15 @@ export async function buildReviewFollowUpRequest(options: {
   documentMarkdown?: string | null;
   followUp: NonNullable<RunAiCommandRequest["reviewFollowUp"]>;
 }): Promise<string> {
-  const allDocumentLogs = (await listAiCommandLogEntries(options.repoRoot))
-    .filter((entry) => entry.documentId === options.documentId)
-    .filter((entry) => entry.status !== "running")
-    .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
-
-  const executionHistoryLogs = allDocumentLogs.filter(isExecutionReviewHistoryEntry);
-
-  const originalRequest = options.followUp.originalRequest.trim()
-    || executionHistoryLogs.find((entry) => entry.request.trim())?.request.trim()
-    || options.documentSummary?.trim()
-    || options.documentTitle;
-
-  const { priorHistoryLog, summaryInputs } = await buildReviewFollowUpHistoryContext({
+  const { reviewThreadContext, originalContextFallback } = await buildOrderedReviewThreadContext({
     repoRoot: options.repoRoot,
-    executionHistoryLogs,
+    documentId: options.documentId,
   });
 
-  let previousRunSummary = "No previous AI outputs were available for this review yet.";
-  if (summaryInputs.length) {
-    const template = resolveAiCommandTemplate(options.config.aiCommands, "simple");
-    if (template.includes("$WTM_AI_INPUT")) {
-      const input = buildReviewFollowUpSummaryPrompt({
-        branch: options.branch,
-        documentTitle: options.documentTitle,
-        originalRequest,
-        priorOutputs: summaryInputs,
-      });
-      const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
-
-      try {
-        const { stdout } = await runCommand("bash", ["-lc", renderedCommand], {
-          cwd: options.repoRoot,
-          env: buildAiCommandProcessEnv({
-            repoRoot: options.repoRoot,
-            worktreePath: options.worktreePath,
-            documentId: options.documentId,
-            env: {
-              ...process.env,
-              ...options.config.env,
-              WTM_AI_INPUT: input,
-              WORKTREE_BRANCH: options.branch,
-              WORKTREE_PATH: options.worktreePath,
-            },
-          }),
-        });
-        const summary = stdout.trim();
-        if (summary) {
-          previousRunSummary = summary;
-        }
-      } catch (error) {
-        logServerEvent("review-follow-up", "summary-failed", {
-          branch: options.branch,
-          documentId: options.documentId,
-          error: error instanceof Error ? error.message : String(error),
-        }, "error");
-      }
-    }
-  }
+  const originalRequest = options.followUp.originalRequest.trim()
+    || originalContextFallback
+    || options.documentSummary?.trim()
+    || options.documentTitle;
 
   return [
     `Review follow-up for linked document \"${options.documentTitle}\".`,
@@ -966,11 +1141,8 @@ export async function buildReviewFollowUpRequest(options: {
     `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
     options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
     "",
-    "Prior AI run log:",
-    priorHistoryLog,
-    "",
-    "Summary of previous AI outputs:",
-    previousRunSummary,
+    "Ordered review thread context:",
+    reviewThreadContext,
     "",
     "New follow-up request:",
     options.followUp.newRequest.trim(),

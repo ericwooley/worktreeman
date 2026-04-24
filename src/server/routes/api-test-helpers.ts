@@ -49,6 +49,7 @@ async function repoRootExists(repoRoot: string) {
 async function stopRunningAiJobsForRepo(
   repoRoot: string,
   deleteProcess: (processName: string) => Promise<void>,
+  waitForProcess?: (processName: string) => Promise<unknown>,
 ) {
   const operationalState = await createOperationalStateStore(repoRoot);
   const jobs = await operationalState.listAiCommandJobs().catch(() => []);
@@ -56,7 +57,12 @@ async function stopRunningAiJobsForRepo(
     .filter((job) => job.status === "running" && typeof job.processName === "string" && job.processName.length > 0)
     .map((job) => job.processName as string);
 
-  await Promise.all(runningProcessNames.map((processName) => deleteProcess(processName).catch(() => undefined)));
+  await Promise.all(runningProcessNames.map(async (processName) => {
+    await deleteProcess(processName).catch(() => undefined);
+    if (waitForProcess) {
+      await waitForProcess(processName).catch(() => undefined);
+    }
+  }));
 }
 
 export function createFakeAiProcesses() {
@@ -66,6 +72,7 @@ export function createFakeAiProcesses() {
     cursor: number;
     current: number;
     completion: Promise<FakeAiProcessSnapshot | null>;
+    settled: boolean;
     settleCompletion: {
       resolve: (snapshot: FakeAiProcessSnapshot | null) => void;
       reject: (error: unknown) => void;
@@ -74,6 +81,7 @@ export function createFakeAiProcesses() {
   const manualStates = new Map<string, FakeAiProcessSnapshot>();
   const manualCompletions = new Map<string, {
     promise: Promise<FakeAiProcessSnapshot | null>;
+    settled: boolean;
     resolve: (snapshot: FakeAiProcessSnapshot | null) => void;
     reject: (error: unknown) => void;
   }>();
@@ -101,6 +109,47 @@ export function createFakeAiProcesses() {
     };
   };
 
+  const settleScriptedCompletion = (
+    processName: string,
+    settle: (entry: {
+      snapshots: FakeAiProcessSnapshot[];
+      cursor: number;
+      current: number;
+      completion: Promise<FakeAiProcessSnapshot | null>;
+      settled: boolean;
+      settleCompletion: {
+        resolve: (snapshot: FakeAiProcessSnapshot | null) => void;
+        reject: (error: unknown) => void;
+      };
+    }) => void,
+  ) => {
+    const state = scriptedStates.get(processName);
+    if (!state || state.settled) {
+      return;
+    }
+
+    state.settled = true;
+    settle(state);
+  };
+
+  const settleManualCompletion = (
+    processName: string,
+    settle: (entry: {
+      promise: Promise<FakeAiProcessSnapshot | null>;
+      settled: boolean;
+      resolve: (snapshot: FakeAiProcessSnapshot | null) => void;
+      reject: (error: unknown) => void;
+    }) => void,
+  ) => {
+    const state = manualCompletions.get(processName);
+    if (!state || state.settled) {
+      return;
+    }
+
+    state.settled = true;
+    settle(state);
+  };
+
   const aiProcesses: InjectedAiProcesses = {
     async startProcess({ processName, hooks }) {
       const snapshots = queuedScripts.shift()?.map(normalizeSnapshot) ?? [
@@ -113,11 +162,13 @@ export function createFakeAiProcesses() {
         resolveCompletion = resolve;
         rejectCompletion = reject;
       });
+      void completion.catch(() => null);
       scriptedStates.set(processName, {
         snapshots,
         cursor: 0,
         current: 0,
         completion,
+        settled: false,
         settleCompletion: {
           resolve: resolveCompletion,
           reject: rejectCompletion,
@@ -151,10 +202,14 @@ export function createFakeAiProcesses() {
         }
 
         if (!isActiveStatus(previous.status)) {
-          scriptedStates.get(processName)?.settleCompletion.resolve(previous);
+          settleScriptedCompletion(processName, (state) => {
+            state.settleCompletion.resolve(previous);
+          });
         }
       }).catch((error) => {
-        scriptedStates.get(processName)?.settleCompletion.reject(error);
+        settleScriptedCompletion(processName, (state) => {
+          state.settleCompletion.reject(error);
+        });
       });
 
       return toProcessDescription(processName, snapshots[0]) ?? {
@@ -206,7 +261,9 @@ export function createFakeAiProcesses() {
           exitCode: manual.exitCode ?? null,
         };
         manualStates.set(processName, nextManual);
-        manualCompletions.get(processName)?.resolve(nextManual);
+        settleManualCompletion(processName, (state) => {
+          state.resolve(nextManual);
+        });
         return;
       }
 
@@ -220,7 +277,9 @@ export function createFakeAiProcesses() {
         }];
         state.cursor = 0;
         state.current = 0;
-        state.settleCompletion.resolve(state.snapshots[0] ?? null);
+        settleScriptedCompletion(processName, (entry) => {
+          entry.settleCompletion.resolve(entry.snapshots[0] ?? null);
+        });
       }
     },
     isProcessActive(status) {
@@ -243,7 +302,8 @@ export function createFakeAiProcesses() {
           resolve = nextResolve;
           reject = nextReject;
         });
-        manualCompletions.set(processName, { promise, resolve, reject });
+        void promise.catch(() => null);
+        manualCompletions.set(processName, { promise, settled: false, resolve, reject });
       }
     },
     updateManualProcess(processName: string, updates: Partial<FakeAiProcessSnapshot>) {
@@ -254,7 +314,9 @@ export function createFakeAiProcesses() {
       });
       manualStates.set(processName, nextSnapshot);
       if (nextSnapshot.status && nextSnapshot.status !== "online" && nextSnapshot.status !== "launching") {
-        manualCompletions.get(processName)?.resolve(nextSnapshot);
+        settleManualCompletion(processName, (state) => {
+          state.resolve(nextSnapshot);
+        });
       }
     },
   };
@@ -540,6 +602,7 @@ export async function startApiServer(
   const operationalState = await createOperationalStateStore(repo.repoRoot);
   testContextRepoRoots.add(repo.repoRoot);
   const deleteProcess = overrides?.aiProcesses?.deleteProcess ?? deleteAiCommandProcess;
+  const waitForProcess = overrides?.aiProcesses?.waitForProcess;
   const apiRouter = createApiRouter({
     repoRoot: repo.repoRoot,
     configPath: repo.configPath,
@@ -649,9 +712,9 @@ export async function startApiServer(
         if (options?.shutdownRuntimes ?? true) {
           await apiRouter.shutdownRuntimes().catch(() => undefined);
         }
+        await stopRunningAiJobsForRepo(repo.repoRoot, deleteProcess, waitForProcess).catch(() => undefined);
+        await waitForActiveAiCommandJobs(repo.repoRoot, { timeoutMs: 1000 }).catch(() => undefined);
         await apiRouter.dispose().catch(() => undefined);
-        await stopRunningAiJobsForRepo(repo.repoRoot, deleteProcess).catch(() => undefined);
-        await waitForActiveAiCommandJobs(repo.repoRoot, { timeoutMs: 500 });
         await worker.close();
         await stopAiCommandJobManager(repo.repoRoot);
         await stopOperationalStateStore(repo.repoRoot);
