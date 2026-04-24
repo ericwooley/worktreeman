@@ -21,6 +21,7 @@ import { createWorktree } from "../services/git-service.js";
 import { getAiCommandJob, startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { buildWorktreeAiCompletedComment, buildWorktreeAiStartedComment } from "../services/project-management-comment-formatters.js";
+import { getProjectManagementDocumentReview } from "../services/project-management-review-service.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
@@ -1124,6 +1125,94 @@ test("review follow-up AI runs build ordered review-thread context from visible 
     assert.equal(capturedPrompt.includes("Return your normal coding-agent response with what changed, any important residual issues, and how you verified the work."), true);
     assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository."), true);
     assert.equal(capturedPrompt.includes("Do not rewrite the project-management document unless the operator explicitly asks for document edits."), false);
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("review-only AI runs build a branch-diff review prompt and persist extracted review markdown", { concurrency: false, timeout: 20000 }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const reviewWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-review-only-pass" });
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+  const fakeAiProcesses = createFakeAiProcesses();
+
+  let capturedPrompt = "";
+  const aiProcesses = {
+    ...fakeAiProcesses.aiProcesses,
+    async startProcess(options: { command: string; processName: string; input: string; worktreePath: string; env: NodeJS.ProcessEnv; hooks?: unknown }) {
+      const match = options.command.match(/^printf %s '([\s\S]*)'$/);
+      capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
+      return fakeAiProcesses.aiProcesses.startProcess(options);
+    },
+  };
+  const server = await startApiServer(repo, {
+    aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const linkedDocumentId = await createReviewDocument(server, {
+      title: "Review-only pass",
+      summary: "Check the branch diff against the latest requests.",
+      markdown: "# Review-only pass\n\nThe branch should satisfy the requested updates before sign-off.",
+    });
+    await operationalState.setWorktreeDocumentLink({
+      worktreeId: reviewWorktree.id,
+      branch: reviewWorktree.branch,
+      worktreePath: reviewWorktree.worktreePath,
+      documentId: linkedDocumentId,
+    });
+    await addReviewEntry(server, linkedDocumentId, {
+      body: "Please verify the final branch diff against the requested updates.",
+    });
+    await fs.writeFile(path.join(reviewWorktree.worktreePath, "review-target.txt"), "needs review\n", "utf8");
+
+    fakeAiProcesses.queueStartScript([
+      {
+        status: "stopped",
+        stdout: "<wtm-review>## Findings\n\n- Missing verification for review-target.txt changes.</wtm-review>",
+        stderr: "",
+        exitCode: 0,
+      },
+    ]);
+
+    const response = await server.fetch(`/api/worktrees/${reviewWorktree.branch}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "Check whether the requested updates are correct and whether this diff satisfies them",
+        reviewDocumentId: linkedDocumentId,
+        reviewAction: "review",
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as { job: { jobId: string } };
+    const job = await waitForAiCommandJob(repo.repoRoot, reviewWorktree.id, payload.job.jobId);
+    assert.equal(job.status, "completed");
+
+    assert.equal(capturedPrompt.includes("Review branch changes for linked document"), true);
+    assert.equal(capturedPrompt.includes("Do not change code, files, git state, or the project-management document. This is a review-only pass."), true);
+    assert.equal(capturedPrompt.includes("Review whether everything in the original document is correct, whether everything in the requested updates is correct, and whether the current branch diff actually satisfies them."), true);
+    assert.equal(capturedPrompt.includes("Return markdown only. Put the actual review content inside <wtm-review>...</wtm-review> so the application can extract and display it."), true);
+    assert.equal(capturedPrompt.includes("Requested review focus:"), true);
+    assert.equal(capturedPrompt.includes("Branch diff to review:"), true);
+    assert.equal(capturedPrompt.includes("review-target.txt"), true);
+    assert.equal(capturedPrompt.includes("Implement the work described by this document in the current worktree."), false);
+    assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository."), false);
+
+    const review = await getProjectManagementDocumentReview(repo.repoRoot, linkedDocumentId);
+    assert.equal(review.review.entries.length, 3);
+    assert.match(review.review.entries[1]?.body ?? "", /## Worktree AI review started/);
+    assert.equal(review.review.entries[2]?.body, "## Findings\n\n- Missing verification for review-target.txt changes.");
+    assert.equal(review.review.entries[2]?.source, "ai");
+    assert.equal(review.review.entries[2]?.eventType, "ai-completed");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

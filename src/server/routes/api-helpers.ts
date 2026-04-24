@@ -13,6 +13,7 @@ import type {
   RunAiCommandRequest,
   AiCommandOutputEvent,
   BackgroundCommandState,
+  GitComparisonResponse,
   ProjectManagementDocumentResponse,
   ProjectManagementListResponse,
   ProjectManagementReviewEntry,
@@ -620,11 +621,17 @@ export function createWorktreeReviewOrigin(options: {
   branch: string;
   worktreeId?: WorktreeId;
   documentId: string;
+  reviewAction?: RunAiCommandRequest["reviewAction"];
 }): AiCommandOrigin {
+  const label = options.reviewAction === "review" ? "Review pass" : "Review follow-up";
+  const description = options.reviewAction === "review"
+    ? `Review branch changes for linked document ${options.documentId}.`
+    : `Continue review activity for linked document ${options.documentId}.`;
+
   return {
     kind: "worktree-review",
-    label: "Review follow-up",
-    description: `Continue review activity for linked document ${options.documentId}.`,
+    label,
+    description,
     location: {
       tab: "review",
       branch: options.branch,
@@ -1183,6 +1190,75 @@ export async function buildReviewFollowUpRequest(options: {
       buildPromptSection("New follow-up request:", options.followUp.newRequest.trim()),
     ],
     closing: ["Implement the requested work in code in this repository."],
+  });
+}
+
+function formatReviewDiff(diff: string) {
+  const trimmed = diff.trim();
+  return trimmed ? trimmed : "(no branch diff or working tree changes were available)";
+}
+
+export async function buildReviewOnlyRequest(options: {
+  repoRoot: string;
+  config: WorktreeManagerConfig;
+  branch: string;
+  worktreePath: string;
+  documentId: string;
+  documentTitle: string;
+  documentSummary?: string | null;
+  documentMarkdown?: string | null;
+  request: string;
+  comparison: GitComparisonResponse;
+}): Promise<string> {
+  const { reviewThreadContext, originalContextFallback } = await buildOrderedReviewThreadContext({
+    repoRoot: options.repoRoot,
+    documentId: options.documentId,
+  });
+
+  const originalRequest = originalContextFallback
+    || options.documentSummary?.trim()
+    || options.documentTitle;
+
+  const environmentContext = buildAiEnvironmentContext({
+    repoRoot: options.repoRoot,
+    config: options.config,
+    branch: options.branch,
+    worktreePath: options.worktreePath,
+    backgroundCommands: [],
+  });
+
+  return buildPrompt({
+    preamble: [
+      `Review branch changes for linked document \"${options.documentTitle}\".`,
+      environmentContext,
+      "Do not change code, files, git state, or the project-management document. This is a review-only pass.",
+      "Review whether everything in the original document is correct, whether everything in the requested updates is correct, and whether the current branch diff actually satisfies them.",
+      "Return markdown only. Put the actual review content inside <wtm-review>...</wtm-review> so the application can extract and display it.",
+      "Inside the tagged review, prioritize bugs, risks, behavioral regressions, missing verification, and mismatches between the document, requested updates, and the implemented diff.",
+    ],
+    sections: [
+      buildPromptSection("Original context:", originalRequest),
+      buildPromptSection(
+        "Linked document context:",
+        `Title: ${options.documentTitle}`,
+        `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
+        options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
+      ),
+      buildPromptSection("Ordered review thread context:", reviewThreadContext),
+      buildPromptSection("Requested review focus:", options.request.trim()),
+      buildPromptSection(
+        "Branch diff to review:",
+        `Base branch: ${options.comparison.baseBranch}`,
+        `Compare branch: ${options.comparison.compareBranch}`,
+        `Ahead: ${options.comparison.ahead}`,
+        `Behind: ${options.comparison.behind}`,
+        `Effective diff:\n${formatReviewDiff(options.comparison.effectiveDiff)}`,
+      ),
+    ],
+    closing: [
+      "Do not apply fixes. Review only.",
+      "The final response must be markdown only, and the actual review must appear inside <wtm-review>...</wtm-review>.",
+    ],
   });
 }
 

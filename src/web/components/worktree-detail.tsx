@@ -1476,6 +1476,10 @@ export function WorktreeDetail({
       return;
     }
 
+    const trimmedDraft = reviewFollowUpDraft.trim();
+    const parsedCommand = trimmedDraft.match(/^@(dowork|review)\b/i);
+    const reviewAction = parsedCommand?.[1]?.toLowerCase() === "review" ? "review" : "implement";
+    const requestText = trimmedDraft.replace(/^@(dowork|review)\b\s*/i, "").trim() || trimmedDraft;
     const latestAiRequest = [...linkedDocumentReviewEntries]
       .reverse()
       .find((entry) => entry.source === "ai" && entry.eventType === "ai-started");
@@ -1484,13 +1488,16 @@ export function WorktreeDetail({
     setReviewFollowUpSubmitting(true);
     try {
       const job = await onRunProjectManagementAiCommand({
-        input: reviewFollowUpDraft,
+        input: requestText,
         reviewDocumentId: linkedDocument.id,
         commandId: "smart",
+        reviewAction,
         origin: {
           kind: "worktree-review",
-          label: "Review follow-up",
-          description: `Continue review activity for ${linkedDocument.title}`,
+          label: reviewAction === "review" ? "Review pass" : "Review follow-up",
+          description: reviewAction === "review"
+            ? `Review branch changes for ${linkedDocument.title}`
+            : `Continue review activity for ${linkedDocument.title}`,
           location: {
             tab: "review",
             branch: worktree?.branch ?? null,
@@ -1498,10 +1505,12 @@ export function WorktreeDetail({
             documentId: linkedDocument.id,
           },
         },
-        reviewFollowUp: {
-          originalRequest,
-          newRequest: reviewFollowUpDraft,
-        },
+        reviewFollowUp: reviewAction === "review"
+          ? undefined
+          : {
+              originalRequest,
+              newRequest: requestText,
+            },
       });
 
       if (job) {
@@ -2408,17 +2417,17 @@ export function WorktreeDetail({
                 ) : (
                   <div className="theme-inline-panel p-4">
                     <label className="block space-y-2">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Continue implementation</span>
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Smart AI command</span>
                       <textarea
                         value={reviewFollowUpDraft}
                         onChange={(event) => setReviewFollowUpDraft(event.target.value)}
-                        placeholder="Tell Smart AI what implementation work to do next for this review."
+                        placeholder="Use @dowork to continue implementation or @review to review the current branch diff."
                         rows={5}
                         className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
                       />
                     </label>
                     <p className="mt-3 text-sm theme-text-muted">
-                      Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request.
+                      Use <code>@dowork</code> to keep implementing with the linked document and review history, or <code>@review</code> to run a review-only pass over the current branch diff.
                     </p>
                     <div className="mt-3 flex flex-wrap justify-end gap-2">
                       <button
@@ -2427,7 +2436,7 @@ export function WorktreeDetail({
                         disabled={reviewFollowUpSubmitting || !reviewFollowUpDraft.trim()}
                         onClick={() => void submitReviewFollowUp()}
                       >
-                        {reviewFollowUpSubmitting ? "Starting implementation..." : "Continue implementation"}
+                        {reviewFollowUpSubmitting ? "Starting Smart AI..." : "Start Smart AI"}
                       </button>
                     </div>
                   </div>

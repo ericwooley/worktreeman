@@ -286,8 +286,11 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
   assert.match(markup, /Delete entry/);
-  assert.match(markup, /Continue implementation/);
-  assert.match(markup, /Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request\./);
+  assert.match(markup, /Smart AI command/);
+  assert.match(markup, /placeholder="Use @dowork to continue implementation or @review to review the current branch diff\."/);
+  assert.match(markup, /<code>@dowork<\/code>/);
+  assert.match(markup, /<code>@review<\/code>/);
+  assert.match(markup, /Start Smart AI/);
 
   const reviewEntryIndex = markup.indexOf("Casey Reviewer");
   const addReviewEntryIndex = markup.indexOf("Add review entry");
@@ -353,5 +356,5 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
   assert.match(markup, /Worktree AI is working/);
   assert.match(markup, /Mixed output timeline/);
   assert.match(markup, /Cancel AI/);
-  assert.doesNotMatch(markup, /Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request\./);
+  assert.doesNotMatch(markup, /placeholder="Use @dowork to continue implementation or @review to review the current branch diff\."/);
 });

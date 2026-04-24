@@ -709,6 +709,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     applyDocumentUpdateToDocumentId?: string | null;
     reviewDocumentId?: string | null;
     reviewRequestSummary?: string | null;
+    reviewAction?: "implement" | "review" | null;
     autoCommitDirtyWorktree?: boolean;
   }): Promise<StartedAiCommandJob> => startAiCommandJob({
     worktreeId: details.worktreeId,
@@ -761,6 +762,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
             applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId,
             reviewDocumentId: details.reviewDocumentId,
             reviewRequestSummary: details.reviewRequestSummary,
+            reviewAction: details.reviewAction,
             autoCommitDirtyWorktree: details.autoCommitDirtyWorktree,
           });
           if (details.reviewDocumentId) {
@@ -784,6 +786,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     applyDocumentUpdateToDocumentId?: string | null;
     reviewDocumentId?: string | null;
     reviewRequestSummary?: string | null;
+    reviewAction?: "implement" | "review" | null;
     autoCommitDirtyWorktree?: boolean;
   }) => enqueueProjectManagementAiJob({
     repoRoot: options.repoRoot,
@@ -801,6 +804,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId ?? null,
       reviewDocumentId: details.reviewDocumentId ?? null,
       reviewRequestSummary: details.reviewRequestSummary ?? null,
+      reviewAction: details.reviewAction ?? null,
       autoCommitDirtyWorktree: details.autoCommitDirtyWorktree ?? false,
     },
   });
@@ -810,6 +814,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     commandId: AiCommandId;
     reviewDocumentId?: string | null;
     requestSummary?: string | null;
+    reviewAction?: "implement" | "review" | null;
   }) => {
     if (!details.reviewDocumentId) {
       return;
@@ -821,6 +826,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
           branch: details.branch,
           commandId: details.commandId,
           requestSummary: details.requestSummary,
+          reviewAction: details.reviewAction,
         }),
         kind: "activity",
         source: "ai",

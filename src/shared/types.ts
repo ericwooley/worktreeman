@@ -644,6 +644,7 @@ export interface RunAiCommandRequest {
   reviewDocumentId?: string;
   commandId?: AiCommandId;
   origin?: AiCommandOrigin | null;
+  reviewAction?: "implement" | "review";
   reviewFollowUp?: {
     originalRequest: string;
     newRequest: string;

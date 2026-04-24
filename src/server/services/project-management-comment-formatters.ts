@@ -1,5 +1,15 @@
 import type { AiCommandId, GitCompareCommit } from "../../shared/types.js";
 
+type WorktreeReviewAction = "implement" | "review";
+
+function getAiActivityHeading(phase: "started" | "completed", reviewAction?: WorktreeReviewAction | null) {
+  if (reviewAction === "review") {
+    return phase === "started" ? "## Worktree AI review started" : "## Worktree AI review completed";
+  }
+
+  return phase === "started" ? "## Worktree AI started" : "## Worktree AI completed";
+}
+
 function normalizeInlineText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -82,9 +92,10 @@ export function buildWorktreeAiStartedComment(details: {
   branch: string;
   commandId: AiCommandId;
   requestSummary?: string | null;
+  reviewAction?: WorktreeReviewAction | null;
 }) {
   const lines = [
-    "## Worktree AI started",
+    getAiActivityHeading("started", details.reviewAction),
     "",
     `- Branch: \`${details.branch}\``,
     `- Command: \`${details.commandId}\``,
@@ -103,11 +114,12 @@ export function buildWorktreeAiCompletedComment(details: {
   requestSummary?: string | null;
   stdout: string;
   stderr: string;
+  reviewAction?: WorktreeReviewAction | null;
 }) {
   const stdoutLineCount = countNonEmptyLines(details.stdout);
   const stderrLineCount = countNonEmptyLines(details.stderr);
   const lines = [
-    "## Worktree AI completed",
+    getAiActivityHeading("completed", details.reviewAction),
     "",
     `- Branch: \`${details.branch}\``,
     `- Command: \`${details.commandId}\``,

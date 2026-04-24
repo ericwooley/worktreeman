@@ -58,6 +58,32 @@ test("buildWorktreeAiCompletedComment omits empty output sections", () => {
   assert.doesNotMatch(comment, /```text/);
 });
 
+test("buildWorktreeAiStartedComment uses review heading for review-only runs", () => {
+  const comment = buildWorktreeAiStartedComment({
+    branch: "feature/comments",
+    commandId: "smart",
+    requestSummary: "review the current diff",
+    reviewAction: "review",
+  });
+
+  assert.match(comment, /## Worktree AI review started/);
+  assert.match(comment, /- Request: review the current diff/);
+});
+
+test("buildWorktreeAiCompletedComment uses review heading for review-only runs", () => {
+  const comment = buildWorktreeAiCompletedComment({
+    branch: "feature/comments",
+    commandId: "smart",
+    requestSummary: "review the current diff",
+    stdout: "<wtm-review>Looks good</wtm-review>",
+    stderr: "",
+    reviewAction: "review",
+  });
+
+  assert.match(comment, /## Worktree AI review completed/);
+  assert.match(comment, /- Request: review the current diff/);
+});
+
 test("buildWorktreeMergeComment formats merged commit bullets", () => {
   const comment = buildWorktreeMergeComment({
     branch: "feature/comments",
