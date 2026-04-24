@@ -403,12 +403,21 @@ export function buildAiEnvironmentContext(options: {
   ].join("\n");
 }
 
+export function buildAiLocalHelperInstructions(): string[] {
+  return [
+    "You can use `npx -y worktreeman api` for local worktree helpers when that is useful.",
+    "Supported helpers include `npx -y worktreeman api dev start`, `npx -y worktreeman api dev stop`, `npx -y worktreeman api dev status`, `npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`, `npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`, `npx -y worktreeman api documents list`, `npx -y worktreeman api documents read <document-id>`, and `npx -y worktreeman api documents history <document-id>`.",
+    "Use the dev logs helpers to read stdout/stderr for configured background commands or grep those logs without guessing process names or log file paths.",
+  ];
+}
+
 export function buildWorktreeAiPrompt(options: {
   request: string;
   environmentContext: string;
 }) {
   return [
     options.environmentContext,
+    ...buildAiLocalHelperInstructions(),
     "",
     "Operator request:",
     options.request,
@@ -433,6 +442,7 @@ export function buildProjectManagementAiPrompt(options: {
     `Worktree path: ${options.worktreePath}`,
     `Requested change: ${options.requestedChange}`,
     options.environmentContext,
+    ...buildAiLocalHelperInstructions(),
     "Your job is to return a full replacement markdown document, not commentary about the document.",
     "The server will persist your response as the next version of this existing project-management document. Document history is the rollback mechanism.",
     "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change.",
@@ -519,8 +529,7 @@ export function buildProjectManagementExecutionAiPrompt(options: {
     `You are implementing the work described by the project-management document \"${options.document.title}\".`,
     "Use this document as the main instruction set for the engineering work to perform in the repository.",
     options.environmentContext,
-    "You can use `npx -y worktreeman api` for local worktree helpers when that is useful.",
-    "Supported helpers include `npx -y worktreeman api dev start`, `npx -y worktreeman api dev stop`, `npx -y worktreeman api dev status`, `npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`, `npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`, `npx -y worktreeman api documents list`, `npx -y worktreeman api documents read <document-id>`, and `npx -y worktreeman api documents history <document-id>`.",
+    ...buildAiLocalHelperInstructions(),
     "Make code changes directly in the repository. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
     "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
     "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",

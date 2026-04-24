@@ -922,6 +922,13 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     assert.equal(capturedPrompt.includes("- Quicklinks: App: http://127.0.0.1:"), true);
     assert.equal(capturedPrompt.includes(`web (wtm:${featureAiEnv.id}:web, online)`), true);
     assert.equal(capturedPrompt.includes(`pm2 logs wtm:${featureAiEnv.id}:web`), true);
+    assert.equal(capturedPrompt.includes("You can use `npx -y worktreeman api`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev start`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev stop`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev status`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api documents read <document-id>`"), true);
     assert.equal(capturedPrompt.includes("Operator request:"), true);
     assert.equal(capturedPrompt.includes("inspect the runtime"), true);
 

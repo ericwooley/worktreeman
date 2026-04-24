@@ -84,6 +84,13 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(capturedPrompt.includes(`- Repository root: ${repo.repoRoot}`), true);
     assert.equal(capturedPrompt.includes("- Running services:"), true);
     assert.equal(capturedPrompt.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
+    assert.equal(capturedPrompt.includes("You can use `npx -y worktreeman api`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev start`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev stop`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev status`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`"), true);
+    assert.equal(capturedPrompt.includes("`npx -y worktreeman api documents read <document-id>`"), true);
     assert.equal(capturedPrompt.includes("Current markdown:"), true);
 
     await waitFor(async () => {
