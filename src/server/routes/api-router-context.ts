@@ -23,6 +23,7 @@ import {
 import {
   getWorktreeDeletionState,
   listWorktrees,
+  resolveDefaultBranch,
 } from "../services/git-service.js";
 import {
   buildRuntimeProcessEnv,
@@ -195,8 +196,8 @@ export function createApiRouterContext(options: ApiRouterOptions) {
 
   const getMergeAiLockReason = (branch: string) => `Cancel the running AI job on ${branch} before merging these branches.`;
 
-  const buildDeletionState = async (worktree: WorktreeRecord) => {
-    const deletion = await getWorktreeDeletionState(options.repoRoot, worktree);
+  const buildDeletionState = async (worktree: WorktreeRecord, cachedDefaultBranch?: string) => {
+    const deletion = await getWorktreeDeletionState(options.repoRoot, worktree, cachedDefaultBranch);
     if (await getRunningAiJobForBranch(worktree)) {
       return {
         ...deletion,
@@ -811,21 +812,24 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const resolveEnvSyncSourceRoot = async (_worktrees: Awaited<ReturnType<typeof listWorktrees>>) => options.configWorktreePath;
 
   const buildWorktreePayload = async (worktrees: Awaited<ReturnType<typeof listWorktrees>>) => {
-    const merged = await options.operationalState.mergeInto(worktrees);
-    const [documentsPayload, links] = await Promise.all([
+    const [merged, documentsPayload, links, defaultBranch] = await Promise.all([
+      options.operationalState.mergeInto(worktrees),
       listProjectManagementDocuments(options.repoRoot),
       getWorktreeDocumentLinks(options.repoRoot),
+      resolveDefaultBranch(options.repoRoot),
     ]);
     const linkedWorktrees = attachWorktreeDocumentLinks(merged, links, documentsPayload.documents);
-    return await Promise.all(linkedWorktrees.map(async (worktree) => ({
+    const payload = await Promise.all(linkedWorktrees.map(async (worktree) => ({
       ...worktree,
-      deletion: await buildDeletionState(worktree),
+      deletion: await buildDeletionState(worktree, defaultBranch),
     })));
+    return payload;
   };
 
   const loadState = async (): Promise<ApiStateResponse> => {
     const config = await loadCurrentConfig();
     const worktrees = await listWorktrees(options.repoRoot);
+    const built = await buildWorktreePayload(worktrees);
     return {
       repoRoot: options.repoRoot,
       configPath: options.configPath,
@@ -833,7 +837,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       configSourceRef: options.configSourceRef,
       configWorktreePath: options.configWorktreePath,
       config,
-      worktrees: await buildWorktreePayload(worktrees),
+      worktrees: built,
     };
   };
 

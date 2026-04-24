@@ -69,12 +69,14 @@ function trackActiveAiCommandJob(repoRoot: string, jobId: string, completed: Pro
   }
 
   activeJobs.set(jobId, completed);
-  void completed.finally(() => {
-    activeJobs?.delete(jobId);
-    if (activeJobs && activeJobs.size === 0) {
-      activeAiCommandJobsByRepo.delete(repoRoot);
-    }
-  });
+  void completed
+    .catch(() => undefined)
+    .finally(() => {
+      activeJobs?.delete(jobId);
+      if (activeJobs && activeJobs.size === 0) {
+        activeAiCommandJobsByRepo.delete(repoRoot);
+      }
+    });
 
   return completed;
 }
