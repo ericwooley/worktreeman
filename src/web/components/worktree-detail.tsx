@@ -2320,29 +2320,6 @@ export function WorktreeDetail({
               </div>
             ) : (
               <>
-                <div className="theme-inline-panel p-4">
-                  <label className="block space-y-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Add review entry</span>
-                    <textarea
-                      value={reviewDraft}
-                      onChange={(event) => setReviewDraft(event.target.value)}
-                      placeholder="Add context for this worktree, call out concerns, or leave a handoff note."
-                      rows={5}
-                      className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
-                    />
-                  </label>
-                  <div className="mt-3 flex flex-wrap justify-end gap-2">
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={projectManagementSaving || !reviewDraft.trim()}
-                      onClick={() => void submitReviewEntry()}
-                    >
-                      {projectManagementSaving ? "Saving..." : "Add review entry"}
-                    </button>
-                  </div>
-                </div>
-
                 {linkedDocumentReviewEntries.length ? (
                   <div className="grid gap-3">
                     {linkedDocumentReviewEntries.map((entry) => (
@@ -2388,6 +2365,29 @@ export function WorktreeDetail({
                     No review entries yet. Add the first note here or run AI work from this worktree to start the timeline.
                   </div>
                 )}
+
+                <div className="theme-inline-panel p-4">
+                  <label className="block space-y-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Add review entry</span>
+                    <textarea
+                      value={reviewDraft}
+                      onChange={(event) => setReviewDraft(event.target.value)}
+                      placeholder="Add context for this worktree, call out concerns, or leave a handoff note."
+                      rows={5}
+                      className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
+                    />
+                  </label>
+                  <div className="mt-3 flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      className="matrix-button rounded-none px-3 py-2 text-sm"
+                      disabled={projectManagementSaving || !reviewDraft.trim()}
+                      onClick={() => void submitReviewEntry()}
+                    >
+                      {projectManagementSaving ? "Saving..." : "Add review entry"}
+                    </button>
+                  </div>
+                </div>
 
                 {activeReviewAiJob ? (
                   <div className="space-y-3 theme-inline-panel p-4">

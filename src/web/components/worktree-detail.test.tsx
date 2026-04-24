@@ -288,6 +288,11 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Delete entry/);
   assert.match(markup, /Continue implementation/);
   assert.match(markup, /Smart AI will continue implementing this review with the linked document, prior AI runs, and your new request\./);
+
+  const reviewEntryIndex = markup.indexOf("Casey Reviewer");
+  const addReviewEntryIndex = markup.indexOf("Add review entry");
+  assert.ok(reviewEntryIndex >= 0);
+  assert.ok(addReviewEntryIndex > reviewEntryIndex);
 });
 
 test("Review tab shows live AI output instead of the follow-up composer while AI is active", async () => {
