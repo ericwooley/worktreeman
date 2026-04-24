@@ -150,7 +150,6 @@ function toAiCommandLogSummary(log: AiCommandLogEntry): AiCommandLogSummary {
     sessionId: log.sessionId ?? null,
     origin: log.origin ?? null,
     worktreePath: log.worktreePath,
-    command: log.command,
     requestPreview: toAiCommandRequestPreview(log.request),
     status: log.status,
     pid: log.pid ?? null,

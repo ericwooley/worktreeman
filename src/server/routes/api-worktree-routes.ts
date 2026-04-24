@@ -613,7 +613,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         input: formatLogSnippet(input),
       });
 
-      if (!explicitDocumentId) {
+      if (!explicitDocumentId && !(reviewFollowUp && reviewDocumentId)) {
         input = buildWorktreeAiPrompt({
           request: input,
           environmentContext,

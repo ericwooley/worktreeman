@@ -750,7 +750,6 @@ export interface AiCommandLogSummary {
   documentId?: string | null;
   commandId: AiCommandId;
   worktreePath: string;
-  command: string;
   requestPreview: string;
   status: AiCommandLogStatus;
   pid?: number | null;

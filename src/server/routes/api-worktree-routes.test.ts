@@ -1120,7 +1120,10 @@ test("review follow-up AI runs build ordered review-thread context from visible 
     assert.equal(capturedPrompt.includes("Summary of previous AI outputs:"), false);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("Address the remaining QA concerns"), true);
-    assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository. Do not rewrite the project-management document unless the operator explicitly asks for document edits."), true);
+    assert.equal(capturedPrompt.includes("Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take."), true);
+    assert.equal(capturedPrompt.includes("Return your normal coding-agent response with what changed, any important residual issues, and how you verified the work."), true);
+    assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository."), true);
+    assert.equal(capturedPrompt.includes("Do not rewrite the project-management document unless the operator explicitly asks for document edits."), false);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1227,7 +1230,10 @@ test("review-origin AI runs recover follow-up context from visible review entrie
     assert.equal(capturedPrompt.includes("AI work started"), true);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("It does not appear you finished this work"), true);
-    assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository. Do not rewrite the project-management document unless the operator explicitly asks for document edits."), true);
+    assert.equal(capturedPrompt.includes("Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take."), true);
+    assert.equal(capturedPrompt.includes("Return your normal coding-agent response with what changed, any important residual issues, and how you verified the work."), true);
+    assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository."), true);
+    assert.equal(capturedPrompt.includes("Do not rewrite the project-management document unless the operator explicitly asks for document edits."), false);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1413,7 +1419,10 @@ test("review follow-up AI runs include ordered review feedback and cached stdout
     assert.equal(capturedPrompt.includes("warning output"), false);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("Make sure the remaining deployment issue is fixed"), true);
-    assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository. Do not rewrite the project-management document unless the operator explicitly asks for document edits."), true);
+    assert.equal(capturedPrompt.includes("Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take."), true);
+    assert.equal(capturedPrompt.includes("Return your normal coding-agent response with what changed, any important residual issues, and how you verified the work."), true);
+    assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository."), true);
+    assert.equal(capturedPrompt.includes("Do not rewrite the project-management document unless the operator explicitly asks for document edits."), false);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

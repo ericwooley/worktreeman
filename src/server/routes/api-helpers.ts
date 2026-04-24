@@ -354,6 +354,22 @@ function formatNamedEntries(entries: Array<[string, string | number]>): string {
     : "none";
 }
 
+function buildPromptSection(title: string, ...content: Array<string | null | undefined>): string {
+  return [title, ...content.filter((value): value is string => Boolean(value && value.trim()))].join("\n");
+}
+
+function buildPrompt(options: {
+  preamble?: Array<string | null | undefined>;
+  sections: Array<string | null | undefined>;
+  closing?: Array<string | null | undefined>;
+}): string {
+  return [
+    ...(options.preamble ?? []).filter((value): value is string => Boolean(value && value.trim())),
+    ...options.sections.filter((value): value is string => Boolean(value && value.trim())),
+    ...(options.closing ?? []).filter((value): value is string => Boolean(value && value.trim())),
+  ].join("\n\n");
+}
+
 export function buildAiEnvironmentContext(options: {
   repoRoot: string;
   config: WorktreeManagerConfig;
@@ -410,12 +426,12 @@ export function buildWorktreeAiPrompt(options: {
   request: string;
   environmentContext: string;
 }) {
-  return [
-    options.environmentContext,
-    "",
-    "Operator request:",
-    options.request,
-  ].join("\n");
+  return buildPrompt({
+    sections: [
+      options.environmentContext,
+      buildPromptSection("Operator request:", options.request),
+    ],
+  });
 }
 
 export function buildProjectManagementAiPrompt(options: {
@@ -431,28 +447,32 @@ export function buildProjectManagementAiPrompt(options: {
     .map((entry) => `#${entry.number} ${entry.title}`)
     .join(", ");
 
-  return [
-    `You are rewriting the project-management markdown document \"${options.document.title}\" for worktree ${options.branch}.`,
-    `Worktree path: ${options.worktreePath}`,
-    `Requested change: ${options.requestedChange}`,
-    options.environmentContext,
-    "Your job is to return a full replacement markdown document, not commentary about the document.",
-    "The server will persist your response as the next version of this existing project-management document. Document history is the rollback mechanism.",
-    "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change.",
-    "Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>. The response may contain nothing outside those tags. Do not wrap the document in code fences.",
-    "Quality bar: produce an execution-ready plan for the selected worktree. Make the document concrete, well-ordered, specific, and directly useful to an engineer or agent doing the work.",
-    "Call out assumptions, blockers, dependencies, and sequencing explicitly when they matter. Replace vague guidance with actionable steps.",
-    "Preserve the document's purpose, but improve clarity, structure, and usefulness based on the requested change and the current repository context.",
-    "",
-    `Document number: #${options.document.number}`,
-    `Status: ${options.document.status}`,
-    `Assignee: ${options.document.assignee || "Unassigned"}`,
-    `Tags: ${options.document.tags.join(", ") || "none"}`,
-    `Dependencies: ${dependencySummary || "none"}`,
-    "",
-    "Current markdown:",
-    options.document.markdown,
-  ].join("\n");
+  return buildPrompt({
+    preamble: [
+      `You are rewriting the project-management markdown document \"${options.document.title}\" for worktree ${options.branch}.`,
+      `Worktree path: ${options.worktreePath}`,
+      `Requested change: ${options.requestedChange}`,
+      options.environmentContext,
+      "Your job is to return a full replacement markdown document, not commentary about the document.",
+      "The server will persist your response as the next version of this existing project-management document. Document history is the rollback mechanism.",
+      "You are not creating files, not writing a .md file, not returning a patch, and not describing what you would change.",
+      "Output format: return the complete updated markdown document wrapped inside <wtm-new-document> and </wtm-new-document>. The response may contain nothing outside those tags. Do not wrap the document in code fences.",
+      "Quality bar: produce an execution-ready plan for the selected worktree. Make the document concrete, well-ordered, specific, and directly useful to an engineer or agent doing the work.",
+      "Call out assumptions, blockers, dependencies, and sequencing explicitly when they matter. Replace vague guidance with actionable steps.",
+      "Preserve the document's purpose, but improve clarity, structure, and usefulness based on the requested change and the current repository context.",
+    ],
+    sections: [
+      buildPromptSection(
+        "Document context:",
+        `Document number: #${options.document.number}`,
+        `Status: ${options.document.status}`,
+        `Assignee: ${options.document.assignee || "Unassigned"}`,
+        `Tags: ${options.document.tags.join(", ") || "none"}`,
+        `Dependencies: ${dependencySummary || "none"}`,
+      ),
+      buildPromptSection("Current markdown:", options.document.markdown),
+    ],
+  });
 }
 
 async function branchRefExists(repoRoot: string, branch: string): Promise<boolean> {
@@ -518,22 +538,27 @@ export function buildProjectManagementExecutionAiPrompt(options: {
     .filter((entry) => options.document.dependencies.includes(entry.id))
     .map((entry) => `#${entry.number} ${entry.title}`)
     .join(", ");
-  return [
-    `You are implementing the work described by the project-management document \"${options.document.title}\".`,
-    "Use this document as the main instruction set for the engineering work to perform in the repository.",
-    options.environmentContext,
-    "Make code changes directly in the repository. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
-    "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
-    "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",
-    "This is not an interactive user session, so make your best educated guesses and keep moving unless the prompt requires something specific you cannot infer.",
-    "Commit your work regularly as you complete meaningful milestones.",
-    "Return your normal coding-agent response after doing the work, including a concise summary of what you changed and how you verified it.",
-    options.requestedChange ? `Additional operator guidance: ${options.requestedChange}` : "",
-    dependencySummary ? `Dependencies: ${dependencySummary}` : "",
-    "",
-    "Current markdown:",
-    options.document.markdown,
-  ].filter(Boolean).join("\n");
+  return buildPrompt({
+    preamble: [
+      `You are implementing the work described by the project-management document \"${options.document.title}\".`,
+      "Use this document as the main instruction set for the engineering work to perform in the repository.",
+      options.environmentContext,
+      "Make code changes directly in the repository. Do not rewrite the project-management document unless the prompt explicitly asks for that.",
+      "If the document describes a bug, fix it. If it describes a feature, implement it. If it describes a refactor or infrastructure change, carry it out in code.",
+      "Follow the repository conventions already present in this worktree and add or update tests that prove the change.",
+      "This is not an interactive user session, so make your best educated guesses and keep moving unless the prompt requires something specific you cannot infer.",
+      "Commit your work regularly as you complete meaningful milestones.",
+      "Return your normal coding-agent response after doing the work, including a concise summary of what you changed and how you verified it.",
+    ],
+    sections: [
+      buildPromptSection(
+        "Execution context:",
+        options.requestedChange ? `Additional operator guidance: ${options.requestedChange}` : null,
+        dependencySummary ? `Dependencies: ${dependencySummary}` : null,
+      ),
+      buildPromptSection("Current markdown:", options.document.markdown),
+    ],
+  });
 }
 
 export function createWorktreeEnvironmentOrigin(branch: string, worktreeId?: WorktreeId): AiCommandOrigin {
@@ -1129,26 +1154,36 @@ export async function buildReviewFollowUpRequest(options: {
     || options.documentSummary?.trim()
     || options.documentTitle;
 
-  return [
-    `Review follow-up for linked document \"${options.documentTitle}\".`,
-    "Implement the work described by this document in the current worktree. Continue from the prior AI work rather than rewriting or re-planning the document.",
-    "",
-    "Original context:",
-    originalRequest,
-    "",
-    "Linked document context:",
-    `Title: ${options.documentTitle}`,
-    `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
-    options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
-    "",
-    "Ordered review thread context:",
-    reviewThreadContext,
-    "",
-    "New follow-up request:",
-    options.followUp.newRequest.trim(),
-    "",
-    "Implement the requested work in code in this repository. Do not rewrite the project-management document unless the operator explicitly asks for document edits.",
-  ].join("\n");
+  const environmentContext = buildAiEnvironmentContext({
+    repoRoot: options.repoRoot,
+    config: options.config,
+    branch: options.branch,
+    worktreePath: options.worktreePath,
+    backgroundCommands: [],
+  });
+
+  return buildPrompt({
+    preamble: [
+      `Review follow-up for linked document \"${options.documentTitle}\".`,
+      "Implement the work described by this document in the current worktree.",
+      environmentContext,
+      "Continue the implementation directly in code. Treat the linked document as requirements context and the review thread as the ordered record of feedback and prior AI work.",
+      "Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take.",
+      "Return your normal coding-agent response with what changed, any important residual issues, and how you verified the work.",
+    ],
+    sections: [
+      buildPromptSection("Original context:", originalRequest),
+      buildPromptSection(
+        "Linked document context:",
+        `Title: ${options.documentTitle}`,
+        `Summary: ${options.documentSummary?.trim() || "(no summary)"}`,
+        options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
+      ),
+      buildPromptSection("Ordered review thread context:", reviewThreadContext),
+      buildPromptSection("New follow-up request:", options.followUp.newRequest.trim()),
+    ],
+    closing: ["Implement the requested work in code in this repository."],
+  });
 }
 
 function parseAiCommandLogEntry(fileName: string, payload: string): AiCommandLogEntry {
@@ -1224,7 +1259,6 @@ function toAiCommandLogSummary(entry: AiCommandLogEntry): AiCommandLogSummary {
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
     worktreePath: entry.worktreePath,
-    command: entry.command,
     requestPreview: toAiCommandLogPreview(entry.request),
     status: historicalStatus,
     pid: entry.pid ?? null,
@@ -1243,7 +1277,6 @@ function toAiCommandLogSummaryFromIndex(entry: AiCommandLogIndexEntry): AiComman
     documentId: entry.documentId ?? null,
     commandId: entry.commandId,
     worktreePath: entry.worktreePath,
-    command: entry.command,
     requestPreview: toAiCommandLogPreview(entry.request),
     status: historicalStatus,
     pid: entry.pid ?? null,

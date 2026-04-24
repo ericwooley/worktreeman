@@ -544,17 +544,24 @@ export async function openSse(url: string) {
       }
     },
     async close() {
+      if (closed) {
+        return;
+      }
+
       closed = true;
       ended = true;
       streamError = null;
+      const ignoreClosedStreamError = () => undefined;
+      streamRequest.on("error", ignoreClosedStreamError);
+      response.on("error", ignoreClosedStreamError);
       const closePromise = response.destroyed
         ? Promise.resolve()
         : new Promise<void>((resolve) => {
             response.once("close", () => resolve());
             setTimeout(resolve, 100);
           });
+      response.resume();
       streamRequest.destroy();
-      response.destroy();
       wake();
       await closePromise;
     },
