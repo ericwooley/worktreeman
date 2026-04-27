@@ -7,8 +7,10 @@ import type {
   CreateWorktreeRequest,
   DeleteWorktreeRequest,
   GenerateGitCommitMessageResponse,
+  GitBranchHistoryResponse,
   GitBranchOption,
   GitCompareCommit,
+  GitCommitDetailResponse,
   GitComparisonResponse,
   GitMergeConflict,
   GitMergeStatus,
@@ -617,6 +619,142 @@ function parseCommitLines(stdout: string): GitCompareCommit[] {
         subject,
       };
     });
+}
+
+function parseHistoryCursor(cursor?: string | null): number {
+  if (!cursor?.trim()) {
+    return 0;
+  }
+
+  const parsed = Number(cursor);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 0) {
+    throw new Error("Invalid history cursor");
+  }
+
+  return parsed;
+}
+
+function parseHistoryLimit(limit?: number): number {
+  if (limit === undefined) {
+    return 30;
+  }
+
+  if (!Number.isFinite(limit) || limit <= 0) {
+    throw new Error("Invalid history limit");
+  }
+
+  return Math.min(Math.floor(limit), 100);
+}
+
+export async function getGitBranchHistory(
+  repoRoot: string,
+  branch: string,
+  options: { cursor?: string | null; limit?: number } = {},
+): Promise<GitBranchHistoryResponse> {
+  const normalizedBranch = parseGitBranchName(branch);
+  if (!normalizedBranch) {
+    throw new Error("Branch is required");
+  }
+
+  const branchHasCommit = await gitRefHasCommit(repoRoot, normalizedBranch);
+  if (!branchHasCommit) {
+    return {
+      branch: normalizedBranch,
+      commits: [],
+      nextCursor: null,
+      hasMore: false,
+    };
+  }
+
+  const offset = parseHistoryCursor(options.cursor);
+  const limit = parseHistoryLimit(options.limit);
+  const commitFormat = "%H%x09%h%x09%an%x09%aI%x09%s";
+  const { stdout } = await runCommand("git", [
+    "log",
+    `--format=${commitFormat}`,
+    "--max-count",
+    String(limit + 1),
+    "--skip",
+    String(offset),
+    normalizedBranch,
+  ], { cwd: repoRoot });
+  const parsedCommits = parseCommitLines(stdout);
+  const hasMore = parsedCommits.length > limit;
+
+  return {
+    branch: normalizedBranch,
+    commits: parsedCommits.slice(0, limit),
+    nextCursor: hasMore ? String(offset + limit) : null,
+    hasMore,
+  };
+}
+
+function parseCommitDetail(showOutput: string): GitCommitDetailResponse["commit"] {
+  const [metadataLine, ...bodyLines] = showOutput.split(/\r?\n/);
+  if (!metadataLine) {
+    throw new Error("Unable to parse commit details");
+  }
+
+  const [
+    hash,
+    shortHash,
+    authorName,
+    authorEmail,
+    authoredAt,
+    committerName,
+    committerEmail,
+    committedAt,
+    parentsRaw,
+    subject,
+  ] = metadataLine.split("\t");
+
+  if (!hash || !shortHash) {
+    throw new Error("Unable to parse commit details");
+  }
+
+  return {
+    hash,
+    shortHash,
+    subject: subject ?? "",
+    body: bodyLines.join("\n").trimEnd(),
+    authorName: authorName ?? "",
+    authorEmail: authorEmail ?? "",
+    authoredAt: authoredAt ?? "",
+    committerName: committerName ?? "",
+    committerEmail: committerEmail ?? "",
+    committedAt: committedAt ?? "",
+    parents: (parentsRaw ?? "").split(/\s+/).filter(Boolean),
+  };
+}
+
+export async function getGitCommitDetail(
+  repoRoot: string,
+  commitHash: string,
+  branch?: string | null,
+): Promise<GitCommitDetailResponse> {
+  const normalizedHash = commitHash.trim();
+  if (!normalizedHash) {
+    throw new Error("Commit hash is required");
+  }
+
+  const normalizedBranch = branch ? parseGitBranchName(branch) || null : null;
+  const [metadataResult, statsResult, diffResult] = await Promise.all([
+    runCommand("git", [
+      "show",
+      "-s",
+      "--format=%H%x09%h%x09%an%x09%ae%x09%aI%x09%cn%x09%ce%x09%cI%x09%P%x09%s%n%B",
+      normalizedHash,
+    ], { cwd: repoRoot }),
+    runCommand("git", ["show", "--stat", "--format=", normalizedHash], { cwd: repoRoot }),
+    runCommand("git", ["show", "--format=", "--patch", normalizedHash], { cwd: repoRoot }),
+  ]);
+
+  return {
+    branch: normalizedBranch,
+    commit: parseCommitDetail(metadataResult.stdout),
+    stats: statsResult.stdout.trimEnd(),
+    diff: diffResult.stdout.trimEnd(),
+  };
 }
 
 export async function resolveDefaultBranch(repoRoot: string): Promise<string> {

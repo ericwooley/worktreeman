@@ -9,7 +9,9 @@ import type {
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   CommitGitChangesResponse,
+  GitBranchHistoryResponse,
   GitComparisonResponse,
+  GitCommitDetailResponse,
   ProjectManagementDocument,
   ProjectManagementDocumentReview,
   ProjectManagementDocumentSummary,
@@ -74,6 +76,38 @@ const sampleGitComparison: GitComparisonResponse = {
   },
 };
 
+const sampleGitHistory: GitBranchHistoryResponse = {
+  branch: "feature/merge-actions",
+  commits: [{
+    hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    shortHash: "aaaaaaaa",
+    subject: "Add history tab",
+    authorName: "Eric",
+    authoredAt: "2026-04-01T10:00:00.000Z",
+  }],
+  nextCursor: "1",
+  hasMore: true,
+};
+
+const sampleGitCommitDetail: GitCommitDetailResponse = {
+  branch: "feature/merge-actions",
+  commit: {
+    hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    shortHash: "aaaaaaaa",
+    subject: "Add history tab",
+    body: "Document the new history view.",
+    authorName: "Eric",
+    authorEmail: "eric@example.com",
+    authoredAt: "2026-04-01T10:00:00.000Z",
+    committerName: "Eric",
+    committerEmail: "eric@example.com",
+    committedAt: "2026-04-01T10:05:00.000Z",
+    parents: ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+  },
+  stats: " history.txt | 1 +",
+  diff: "diff --git a/history.txt b/history.txt",
+};
+
 const sampleAiCommands: AiCommandConfig = {
   smart: "smart",
   simple: "simple",
@@ -130,6 +164,13 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         backgroundLogs={null as BackgroundCommandLogsResponse | null}
         gitComparison={sampleGitComparison}
         gitComparisonLoading={false}
+        gitHistory={sampleGitHistory}
+        gitHistoryLoading={false}
+        gitHistoryLoadingMore={false}
+        gitHistoryError={null}
+        gitCommitDetail={null as GitCommitDetailResponse | null}
+        gitCommitDetailLoading={false}
+        gitCommitDetailError={null}
         onLoadBackgroundCommands={createAsyncNoop([] as BackgroundCommandState[])}
         onStartBackgroundCommand={createAsyncNoop([] as BackgroundCommandState[])}
         onRestartBackgroundCommand={createAsyncNoop([] as BackgroundCommandState[])}
@@ -141,6 +182,9 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
           missing: false,
         } as BackgroundCommandLogsResponse)}
         onLoadGitComparison={createAsyncNoop(sampleGitComparison)}
+        onLoadGitHistory={createAsyncNoop(sampleGitHistory)}
+        onLoadGitCommitDetail={createAsyncNoop(sampleGitCommitDetail)}
+        onClearGitCommitDetail={() => undefined}
         onSubscribeToGitComparison={() => () => undefined}
         onMergeWorktreeIntoBase={createAsyncNoop(null as GitComparisonResponse | null)}
         onMergeDeleteWorktreeIntoBase={createAsyncNoop(false)}
@@ -232,6 +276,25 @@ test("Git tab shows merge actions with base/main labels", async () => {
   assert.match(markup, />Merge base into main</);
   assert.doesNotMatch(markup, />Merge worktree into base</);
   assert.doesNotMatch(markup, />Merge base into worktree</);
+});
+
+test("Git tab renders one view switcher with history", async () => {
+  const markup = await renderWorktreeDetail();
+  const gitTablists = markup.match(/aria-label="Git view tabs"/g) ?? [];
+
+  assert.equal(gitTablists.length, 1);
+  assert.match(markup, />Graph<\/button>/);
+  assert.match(markup, />Diff<\/button>/);
+  assert.match(markup, />History<\/button>/);
+});
+
+test("Git history tab renders branch commits", async () => {
+  const markup = await renderWorktreeDetail({ gitView: "history" });
+
+  assert.match(markup, /Branch history/);
+  assert.match(markup, /Add history tab/);
+  assert.match(markup, /aaaaaaaa/);
+  assert.match(markup, /Load older commits/);
 });
 
 test("Review tab renders linked document review timeline", async () => {

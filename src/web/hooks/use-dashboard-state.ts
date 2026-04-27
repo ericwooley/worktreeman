@@ -20,6 +20,8 @@ import type {
   DashboardEventsStreamEvent,
   DeleteWorktreeRequest,
   GenerateGitCommitMessageResponse,
+  GitBranchHistoryResponse,
+  GitCommitDetailResponse,
   GitComparisonResponse,
   ProjectManagementBatchUpdateEntry,
   ProjectManagementDocument,
@@ -63,6 +65,8 @@ import {
   getBackgroundCommands as fetchBackgroundCommands,
   getAiCommandSettings as fetchAiCommandSettings,
   getAiCommandLogs as fetchAiCommandLogs,
+  getGitBranchHistory as fetchGitBranchHistory,
+  getGitCommitDetail as fetchGitCommitDetail,
   getGitComparison as fetchGitComparison,
   getSystemStatus as fetchSystemStatus,
   cancelAiCommand as cancelAiCommandRequest,
@@ -315,6 +319,13 @@ function useDashboardStateInternal() {
   const [backgroundLogs, setBackgroundLogs] = useState<BackgroundCommandLogsResponse | null>(null);
   const [gitComparison, setGitComparison] = useState<GitComparisonResponse | null>(null);
   const [gitComparisonLoading, setGitComparisonLoading] = useState(false);
+  const [gitHistory, setGitHistory] = useState<GitBranchHistoryResponse | null>(null);
+  const [gitHistoryLoading, setGitHistoryLoading] = useState(false);
+  const [gitHistoryLoadingMore, setGitHistoryLoadingMore] = useState(false);
+  const [gitHistoryError, setGitHistoryError] = useState<string | null>(null);
+  const [gitCommitDetail, setGitCommitDetail] = useState<GitCommitDetailResponse | null>(null);
+  const [gitCommitDetailLoading, setGitCommitDetailLoading] = useState(false);
+  const [gitCommitDetailError, setGitCommitDetailError] = useState<string | null>(null);
   const [configDocument, setConfigDocument] = useState<ConfigDocumentResponse | null>(null);
   const [configDocumentLoading, setConfigDocumentLoading] = useState(false);
   const [aiCommandSettings, setAiCommandSettings] = useState<AiCommandSettingsResponse | null>(null);
@@ -957,6 +968,77 @@ function useDashboardStateInternal() {
           }
         }
       },
+      async loadGitHistory(
+        branch: string,
+        options: { cursor?: string | null; append?: boolean; silent?: boolean; limit?: number } = {},
+      ): Promise<GitBranchHistoryResponse | null> {
+        const append = options.append === true;
+        if (append) {
+          setGitHistoryLoadingMore(true);
+        } else if (!options.silent) {
+          setGitHistoryLoading(true);
+        }
+
+        try {
+          const history = await fetchGitBranchHistory(branch, {
+            cursor: options.cursor ?? null,
+            limit: options.limit,
+          });
+          setGitHistoryError(null);
+          setError(null);
+          setGitHistory((current) => {
+            if (!append || current?.branch !== history.branch) {
+              return history;
+            }
+
+            const seenHashes = new Set(current.commits.map((commit) => commit.hash));
+            const appendedCommits = history.commits.filter((commit) => !seenHashes.has(commit.hash));
+            return {
+              ...history,
+              commits: [...current.commits, ...appendedCommits],
+            };
+          });
+          return history;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to load git history.";
+          setGitHistoryError(message);
+          setError(message);
+          if (!append) {
+            setGitHistory(null);
+          }
+          return null;
+        } finally {
+          if (append) {
+            setGitHistoryLoadingMore(false);
+          } else if (!options.silent) {
+            setGitHistoryLoading(false);
+          }
+        }
+      },
+      async loadGitCommitDetail(
+        commitHash: string,
+        branch?: string | null,
+      ): Promise<GitCommitDetailResponse | null> {
+        setGitCommitDetailLoading(true);
+        setGitCommitDetailError(null);
+        try {
+          const detail = await fetchGitCommitDetail(commitHash, branch);
+          setGitCommitDetail(detail);
+          setError(null);
+          return detail;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Failed to load commit details.";
+          setGitCommitDetailError(message);
+          setError(message);
+          return null;
+        } finally {
+          setGitCommitDetailLoading(false);
+        }
+      },
+      clearGitCommitDetail() {
+        setGitCommitDetail(null);
+        setGitCommitDetailError(null);
+      },
       async mergeGitBranch(compareBranch: string, baseBranch?: string) {
         setGitComparisonLoading(true);
         try {
@@ -1469,6 +1551,13 @@ function useDashboardStateInternal() {
     backgroundLogs,
     gitComparison,
     gitComparisonLoading,
+    gitHistory,
+    gitHistoryLoading,
+    gitHistoryLoadingMore,
+    gitHistoryError,
+    gitCommitDetail,
+    gitCommitDetailLoading,
+    gitCommitDetailError,
     configDocument,
     configDocumentLoading,
     aiCommandSettings,

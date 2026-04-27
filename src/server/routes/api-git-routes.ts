@@ -7,6 +7,8 @@ import type {
   CommitGitChangesResponse,
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
+  GitBranchHistoryResponse,
+  GitCommitDetailResponse,
   GitComparisonResponse,
   GitComparisonStreamEvent,
   MergeGitBranchRequest,
@@ -22,6 +24,8 @@ import {
   commitGitChanges,
   formatMergeConflictResolutionPrompt,
   generateGitCommitMessage,
+  getGitBranchHistory,
+  getGitCommitDetail,
   getGitComparison,
   listWorktrees,
   mergeGitBranch,
@@ -162,6 +166,44 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
 
       const comparison: GitComparisonResponse = await getGitComparison(context.repoRoot, compareBranch, baseBranch);
       res.json(comparison);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/git/branches/:branch/history", async (req, res, next) => {
+    try {
+      const branch = decodeURIComponent(req.params.branch).trim();
+      const cursor = typeof req.query.cursor === "string" ? req.query.cursor : undefined;
+      const limit = typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+
+      if (!branch) {
+        res.status(400).json({ message: "branch is required" });
+        return;
+      }
+
+      const history: GitBranchHistoryResponse = await getGitBranchHistory(context.repoRoot, branch, {
+        cursor,
+        limit,
+      });
+      res.json(history);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/git/commits/:hash", async (req, res, next) => {
+    try {
+      const hash = decodeURIComponent(req.params.hash).trim();
+      const branch = typeof req.query.branch === "string" ? req.query.branch : undefined;
+
+      if (!hash) {
+        res.status(400).json({ message: "commit hash is required" });
+        return;
+      }
+
+      const commitDetail: GitCommitDetailResponse = await getGitCommitDetail(context.repoRoot, hash, branch);
+      res.json(commitDetail);
     } catch (error) {
       next(error);
     }

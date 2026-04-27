@@ -13,6 +13,8 @@ import type {
   BackgroundCommandLogsResponse,
   BackgroundCommandState,
   CommitGitChangesResponse,
+  GitBranchHistoryResponse,
+  GitCommitDetailResponse,
   GitComparisonResponse,
   ProjectManagementDocument,
   ProjectManagementDocumentReview,
@@ -114,6 +116,15 @@ function getReviewSourceLabel(entry: ProjectManagementReviewEntry) {
   }
 }
 
+function formatGitTimestamp(value: string): string {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 function mapOriginProjectManagementSubTabToUiTab(
   subTab: AiCommandOrigin["location"]["projectManagementSubTab"] | null | undefined,
 ): ProjectManagementSubTab {
@@ -171,6 +182,7 @@ type DiffTreeSection = {
 };
 
 export type WorktreeEnvironmentSubTab = "terminal" | "background";
+export type GitView = "graph" | "diff" | "history";
 
 function GitDiffAccordionContent({
   file,
@@ -622,8 +634,8 @@ interface WorktreeDetailProps {
   onTabChange: (tab: "environment" | "git" | "project-management" | "review" | "system" | "ai-log") => void;
   environmentSubTab: WorktreeEnvironmentSubTab;
   onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
-  gitView: "graph" | "diff";
-  onGitViewChange: (view: "graph" | "diff") => void;
+  gitView: GitView;
+  onGitViewChange: (view: GitView) => void;
   isTerminalVisible: boolean;
   onTerminalVisibilityChange: (visible: boolean) => void;
   commandPaletteShortcut: string;
@@ -642,12 +654,22 @@ interface WorktreeDetailProps {
   backgroundLogs: BackgroundCommandLogsResponse | null;
   gitComparison: GitComparisonResponse | null;
   gitComparisonLoading: boolean;
+  gitHistory: GitBranchHistoryResponse | null;
+  gitHistoryLoading: boolean;
+  gitHistoryLoadingMore: boolean;
+  gitHistoryError: string | null;
+  gitCommitDetail: GitCommitDetailResponse | null;
+  gitCommitDetailLoading: boolean;
+  gitCommitDetailError: string | null;
   onLoadBackgroundCommands: (branch: string) => Promise<BackgroundCommandState[]>;
   onStartBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onRestartBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onStopBackgroundCommand: (branch: string, commandName: string) => Promise<BackgroundCommandState[]>;
   onLoadBackgroundLogs: (branch: string, commandName: string) => Promise<BackgroundCommandLogsResponse>;
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
+  onLoadGitHistory: (branch: string, options?: { cursor?: string | null; append?: boolean; silent?: boolean; limit?: number }) => Promise<GitBranchHistoryResponse | null>;
+  onLoadGitCommitDetail: (commitHash: string, branch?: string | null) => Promise<GitCommitDetailResponse | null>;
+  onClearGitCommitDetail: () => void;
   onSubscribeToGitComparison: (compareBranch: string, baseBranch?: string) => () => void;
   onMergeWorktreeIntoBase: (branch: string, baseBranch?: string) => Promise<GitComparisonResponse | null>;
   onMergeDeleteWorktreeIntoBase: (branch: string, baseBranch?: string) => Promise<boolean>;
@@ -786,12 +808,22 @@ export function WorktreeDetail({
   backgroundLogs,
   gitComparison,
   gitComparisonLoading,
+  gitHistory,
+  gitHistoryLoading,
+  gitHistoryLoadingMore,
+  gitHistoryError,
+  gitCommitDetail,
+  gitCommitDetailLoading,
+  gitCommitDetailError,
   onLoadBackgroundCommands,
   onStartBackgroundCommand,
   onRestartBackgroundCommand,
   onStopBackgroundCommand,
   onLoadBackgroundLogs,
   onLoadGitComparison,
+  onLoadGitHistory,
+  onLoadGitCommitDetail,
+  onClearGitCommitDetail,
   onSubscribeToGitComparison,
   onMergeWorktreeIntoBase,
   onMergeDeleteWorktreeIntoBase,
@@ -965,7 +997,10 @@ export function WorktreeDetail({
   const [commitMessageLoading, setCommitMessageLoading] = useState(false);
   const [commitSubmitting, setCommitSubmitting] = useState(false);
   const [mergeConflictAiRunning, setMergeConflictAiRunning] = useState(false);
+  const [selectedGitHistoryCommitHash, setSelectedGitHistoryCommitHash] = useState<string | null>(null);
+  const [gitHistoryDetailView, setGitHistoryDetailView] = useState<"details" | "patch">("details");
   const backgroundLogViewportRef = useRef<HTMLDivElement | null>(null);
+  const gitHistorySentinelRef = useRef<HTMLDivElement | null>(null);
   const linkedDocument = worktree?.linkedDocument ?? null;
   const linkedDocumentDetails = useMemo(
     () => linkedDocument
@@ -1176,6 +1211,9 @@ export function WorktreeDetail({
     && gitComparison.workingTreeSummary.dirty,
   );
   const commitMessagePreview = commitMessageDraft.trim();
+  const visibleGitHistory = gitHistory?.branch === worktree?.branch ? gitHistory : null;
+  const gitHistoryCommits = visibleGitHistory?.commits ?? [];
+  const selectedGitHistoryCommit = gitHistoryCommits.find((commit) => commit.hash === selectedGitHistoryCommitHash) ?? null;
   const gitDiffFiles = useMemo<ParsedDiffEntry[]>(() => parsedDiffSections.flatMap((section, sectionIndex) => section.files.map((file) => {
     const displayName = getDiffDisplayName(file);
     const pathSegments = getDiffPathSegments(file);
@@ -1264,6 +1302,26 @@ export function WorktreeDetail({
   const refreshSystemStatus = useCallback(async (options?: { silent?: boolean }) => {
     await onLoadSystemStatus(options);
   }, [onLoadSystemStatus]);
+  const loadMoreGitHistory = useCallback(() => {
+    if (!worktree?.branch || !visibleGitHistory?.hasMore || !visibleGitHistory.nextCursor || gitHistoryLoading || gitHistoryLoadingMore) {
+      return;
+    }
+
+    void onLoadGitHistory(worktree.branch, {
+      append: true,
+      cursor: visibleGitHistory.nextCursor,
+    });
+  }, [gitHistoryLoading, gitHistoryLoadingMore, onLoadGitHistory, visibleGitHistory?.hasMore, visibleGitHistory?.nextCursor, worktree?.branch]);
+  const openGitHistoryCommit = useCallback((commitHash: string) => {
+    setSelectedGitHistoryCommitHash(commitHash);
+    setGitHistoryDetailView("details");
+    void onLoadGitCommitDetail(commitHash, worktree?.branch ?? undefined);
+  }, [onLoadGitCommitDetail, worktree?.branch]);
+  const closeGitHistoryCommit = useCallback(() => {
+    setSelectedGitHistoryCommitHash(null);
+    setGitHistoryDetailView("details");
+    onClearGitCommitDetail();
+  }, [onClearGitCommitDetail]);
 
   useEffect(() => {
     if (!selectedBackgroundCommandName && backgroundCommands[0]) {
@@ -1284,6 +1342,52 @@ export function WorktreeDetail({
     void onLoadGitComparison(worktree.branch, selectedGitBaseBranch ?? undefined, { silent: true });
     return onSubscribeToGitComparison(worktree.branch, selectedGitBaseBranch ?? undefined);
   }, [activeTab, onLoadGitComparison, onSubscribeToGitComparison, selectedGitBaseBranch, worktree?.branch]);
+
+  useEffect(() => {
+    if (!isGitTabActive || gitView !== "history" || !worktree?.branch) {
+      return;
+    }
+
+    void onLoadGitHistory(worktree.branch, { cursor: null, silent: true });
+  }, [gitView, isGitTabActive, onLoadGitHistory, worktree?.branch]);
+
+  useEffect(() => {
+    if (
+      !isGitTabActive
+      || gitView !== "history"
+      || !worktree?.branch
+      || !visibleGitHistory?.hasMore
+      || !visibleGitHistory.nextCursor
+      || gitHistoryLoading
+      || gitHistoryLoadingMore
+      || typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const sentinel = gitHistorySentinelRef.current;
+    if (!sentinel) {
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreGitHistory();
+      }
+    });
+    observer.observe(sentinel);
+
+    return () => observer.disconnect();
+  }, [
+    gitHistoryLoading,
+    gitHistoryLoadingMore,
+    gitView,
+    isGitTabActive,
+    loadMoreGitHistory,
+    visibleGitHistory?.hasMore,
+    visibleGitHistory?.nextCursor,
+    worktree?.branch,
+  ]);
 
   useEffect(() => {
     if (!gitComparison) {
@@ -1613,76 +1717,6 @@ export function WorktreeDetail({
 
   const gitDiffView = (
     <>
-      <div className="theme-inline-panel p-4">
-        <MatrixTabs
-          groupId="worktree-diff-view-tabs"
-          ariaLabel="Git view tabs"
-          activeTabId={gitView}
-          onChange={onGitViewChange}
-          className="theme-divider border-b pb-3"
-          tabs={[
-            { id: "graph", label: "Graph" },
-            { id: "diff", label: "Diff" },
-          ]}
-        />
-
-        <div className="mt-3">
-          <MatrixSectionIntro
-            kicker="Git / Diff"
-            title="Branch diff"
-            description="Review the diff between this worktree and the base branch, including staged, unstaged, and untracked local changes."
-            actions={(
-              <div className="grid gap-2 sm:grid-cols-[minmax(16rem,1fr)_auto] xl:min-w-[24rem] xl:grid-cols-[minmax(16rem,1fr)_auto]">
-                <MatrixDropdown
-                  label="Base branch"
-                  value={selectedGitBaseBranch}
-                  options={gitBranchOptions}
-                  placeholder="Choose base branch"
-                  disabled={!gitBranchOptions.length}
-                  emptyLabel="No branches available"
-                  onChange={setSelectedGitBaseBranch}
-                />
-                <button
-                  type="button"
-                  className="matrix-button rounded-none px-3 py-2 text-sm"
-                  disabled={!canCommitDiffChanges || gitComparisonLoading || !worktree?.branch}
-                  onClick={() => {
-                    if (!worktree?.branch || !gitComparison) {
-                      return;
-                    }
-                    void openCommitModal();
-                  }}
-                >
-                  Commit
-                </button>
-              </div>
-            )}
-          />
-        </div>
-
-        {gitComparison ? (
-          <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-            <MatrixDetailField label="Base" value={gitComparison.baseBranch} mono />
-            <MatrixDetailField label="Compare" value={gitComparison.compareBranch} mono />
-            <MatrixDetailField label="Ahead" value={String(gitComparison.ahead)} mono />
-            <MatrixDetailField label="Behind" value={String(gitComparison.behind)} mono />
-          </div>
-        ) : null}
-
-        {gitComparison ? (
-          <div className="mt-3 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-            <MatrixDetailField label="Changed files" value={String(gitComparison.workingTreeSummary.changedFiles)} mono />
-            <MatrixDetailField label="Conflicted files" value={String(gitComparison.workingTreeSummary.conflictedFiles ?? 0)} mono />
-            <MatrixDetailField label="Untracked files" value={String(gitComparison.workingTreeSummary.untrackedFiles)} mono />
-            <MatrixDetailField
-              label="Status"
-              value={gitComparison.workingTreeSummary.conflicted ? "Conflicted" : gitComparison.workingTreeSummary.unstaged ? "Unstaged" : "Clean"}
-              mono
-            />
-          </div>
-        ) : null}
-      </div>
-
       {!gitComparison && gitComparisonLoading ? (
         <div className="matrix-command rounded-none px-4 py-3 text-sm theme-empty-note">Loading git comparison…</div>
       ) : gitComparison ? gitView === "graph" ? (
@@ -1862,6 +1896,82 @@ export function WorktreeDetail({
     </>
   );
 
+  const gitHistoryView = (
+    <div className="theme-inline-panel p-4">
+      <MatrixSectionIntro
+        kicker="Git / History"
+        title="Branch history"
+        description={`Browse commits on ${worktree?.branch ?? "the selected branch"}. Older commits load as you scroll.`}
+        status={visibleGitHistory ? <MatrixBadge tone="neutral">{gitHistoryCommits.length} loaded</MatrixBadge> : undefined}
+      />
+
+      {gitHistoryError ? (
+        <div className="mt-3 theme-inline-panel-warning px-4 py-3 text-sm theme-text-warning">
+          Could not load history. {gitHistoryError}
+        </div>
+      ) : null}
+
+      {!worktree?.branch ? (
+        <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+          Select a worktree to load branch history.
+        </div>
+      ) : gitHistoryLoading && !visibleGitHistory ? (
+        <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+          Loading branch history...
+        </div>
+      ) : gitHistoryCommits.length ? (
+        <div className="mt-4 space-y-3">
+          {gitHistoryCommits.map((commit, index) => (
+            <MatrixCard key={commit.hash} as="div" interactive selected={commit.hash === selectedGitHistoryCommitHash}>
+              <button
+                type="button"
+                className="block w-full p-4 text-left"
+                aria-label={`Open commit ${commit.shortHash} ${commit.subject}`}
+                onClick={() => openGitHistoryCommit(commit.hash)}
+              >
+                <MatrixCardHeader
+                  eyebrow={(
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono">{commit.shortHash}</span>
+                      {index === 0 ? <MatrixBadge tone="active" compact>HEAD</MatrixBadge> : null}
+                    </span>
+                  )}
+                  title={<span>{commit.subject || "Untitled commit"}</span>}
+                  titleText={commit.subject || "Untitled commit"}
+                  titleLines={2}
+                  description={`${commit.authorName || "Unknown author"} - ${formatGitTimestamp(commit.authoredAt)}`}
+                  descriptionText={`${commit.authorName || "Unknown author"} - ${formatGitTimestamp(commit.authoredAt)}`}
+                  descriptionLines={1}
+                />
+              </button>
+            </MatrixCard>
+          ))}
+
+          <div ref={gitHistorySentinelRef} aria-hidden="true" />
+          {visibleGitHistory?.hasMore ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className="matrix-button rounded-none px-3 py-2 text-sm"
+                disabled={gitHistoryLoadingMore}
+                onClick={loadMoreGitHistory}
+              >
+                {gitHistoryLoadingMore ? "Loading older commits..." : "Load older commits"}
+              </button>
+              <span className="text-xs theme-text-muted">Older commits load automatically when this section reaches the viewport.</span>
+            </div>
+          ) : (
+            <div className="text-xs theme-text-muted">End of branch history.</div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-4 matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+          No commits found on {worktree.branch}.
+        </div>
+      )}
+    </div>
+  );
+
   const comparisonWorkspace = (
     <>
       <div className="theme-inline-panel p-4">
@@ -1874,6 +1984,7 @@ export function WorktreeDetail({
           tabs={[
             { id: "graph", label: "Graph" },
             { id: "diff", label: "Diff" },
+            { id: "history", label: "History" },
           ]}
         />
 
@@ -2028,7 +2139,7 @@ export function WorktreeDetail({
         ) : null}
       </div>
 
-      {gitDiffView}
+      {gitView === "history" ? gitHistoryView : gitDiffView}
     </>
   );
 
@@ -2708,6 +2819,76 @@ export function WorktreeDetail({
           <div className="space-y-4">{comparisonWorkspace}</div>
         ) : null}
       </div>
+
+      {selectedGitHistoryCommitHash ? (
+        <MatrixModal
+          kicker="Git / Commit"
+          title={gitCommitDetail?.commit.subject ?? selectedGitHistoryCommit?.subject ?? selectedGitHistoryCommitHash}
+          description={`${gitCommitDetail?.commit.shortHash ?? selectedGitHistoryCommit?.shortHash ?? selectedGitHistoryCommitHash.slice(0, 8)} on ${worktree?.branch ?? gitCommitDetail?.branch ?? "the selected branch"}`}
+          closeLabel="Close commit details"
+          maxWidthClass="max-w-5xl"
+          onClose={closeGitHistoryCommit}
+        >
+          <div className="space-y-4">
+            <MatrixTabs
+              groupId="git-history-detail-tabs"
+              ariaLabel="Commit detail tabs"
+              activeTabId={gitHistoryDetailView}
+              onChange={setGitHistoryDetailView}
+              tabs={[
+                { id: "details", label: "Details" },
+                { id: "patch", label: "Patch" },
+              ]}
+            />
+
+            {gitCommitDetailError ? (
+              <div className="theme-inline-panel-warning px-4 py-3 text-sm theme-text-warning">
+                Could not load commit details. {gitCommitDetailError}
+              </div>
+            ) : null}
+
+            {gitCommitDetailLoading && !gitCommitDetail ? (
+              <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                Loading commit details...
+              </div>
+            ) : gitCommitDetail ? gitHistoryDetailView === "details" ? (
+              <div className="space-y-4">
+                <div className="grid gap-3 text-sm md:grid-cols-2">
+                  <MatrixDetailField label="Full hash" value={gitCommitDetail.commit.hash} mono />
+                  <MatrixDetailField label="Author" value={gitCommitDetail.commit.authorName || "-"} />
+                  <MatrixDetailField label="Author email" value={gitCommitDetail.commit.authorEmail || "-"} mono />
+                  <MatrixDetailField label="Authored" value={formatGitTimestamp(gitCommitDetail.commit.authoredAt)} />
+                  <MatrixDetailField label="Committer" value={gitCommitDetail.commit.committerName || "-"} />
+                  <MatrixDetailField label="Committed" value={formatGitTimestamp(gitCommitDetail.commit.committedAt)} />
+                  <MatrixDetailField label="Parents" value={gitCommitDetail.commit.parents.join(", ") || "-"} mono />
+                </div>
+
+                {gitCommitDetail.commit.body ? (
+                  <div>
+                    <p className="matrix-kicker">Message body</p>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words border theme-border-subtle px-3 py-3 text-sm theme-text">{gitCommitDetail.commit.body}</pre>
+                  </div>
+                ) : null}
+
+                {gitCommitDetail.stats ? (
+                  <div>
+                    <p className="matrix-kicker">Stats</p>
+                    <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words border theme-border-subtle px-3 py-3 font-mono text-xs theme-text">{gitCommitDetail.stats}</pre>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap break-words border theme-border-subtle px-3 py-3 font-mono text-xs theme-text">
+                {gitCommitDetail.diff || "No patch available for this commit."}
+              </pre>
+            ) : (
+              <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                Select a commit to load details.
+              </div>
+            )}
+          </div>
+        </MatrixModal>
+      ) : null}
 
       {commitModalOpen ? (
         <MatrixModal

@@ -318,6 +318,34 @@ export interface GitCompareCommit {
   authoredAt: string;
 }
 
+export interface GitBranchHistoryResponse {
+  branch: string;
+  commits: GitCompareCommit[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export interface GitCommitDetail {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  body: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  committerName: string;
+  committerEmail: string;
+  committedAt: string;
+  parents: string[];
+}
+
+export interface GitCommitDetailResponse {
+  branch: string | null;
+  commit: GitCommitDetail;
+  stats: string;
+  diff: string;
+}
+
 export interface GitWorkingTreeSummary {
   dirty: boolean;
   staged: boolean;

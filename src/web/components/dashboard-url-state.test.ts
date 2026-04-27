@@ -60,6 +60,10 @@ test("readDashboardUrlState reads nested environment and project management stat
   );
 });
 
+test("readDashboardUrlState reads the git history view", () => {
+  assert.equal(readDashboardUrlState("?tab=git&git=history").gitView, "history");
+});
+
 test("readDashboardUrlState maps legacy merge tab URLs into the git tab", () => {
   assert.deepEqual(
     readDashboardUrlState("?tab=merge&git=status&gitPr=doc-pr-9"),

@@ -3,7 +3,7 @@ import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from 
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import { readProjectManagementDocumentPath, type ProjectManagementDocumentPresentation } from "./project-management-document-route";
-import type { WorktreeEnvironmentSubTab } from "./worktree-detail";
+import type { GitView, WorktreeEnvironmentSubTab } from "./worktree-detail";
 
 export type DashboardActiveTab = "environment" | "git" | "project-management" | "review" | "system" | "ai-log";
 
@@ -13,7 +13,7 @@ export interface DashboardUrlState {
   aiActivitySubTab: AiActivitySubTab;
   selectedAiLogJobId: string | null;
   environmentSubTab: WorktreeEnvironmentSubTab;
-  gitView: "diff" | "graph";
+  gitView: GitView;
   isTerminalVisible: boolean;
   systemSubTab: SystemSubTab;
   projectManagementSubTab: ProjectManagementSubTab;
@@ -44,6 +44,10 @@ export function parseProjectManagementDocumentFormViewMode(value: string | null)
 
 export function parseWorktreeEnvironmentSubTab(value: string | null): WorktreeEnvironmentSubTab {
   return value === "background" ? "background" : "terminal";
+}
+
+export function parseGitView(value: string | null): GitView {
+  return value === "diff" || value === "history" ? value : "graph";
 }
 
 export function parseAiActivitySubTab(value: string | null): AiActivitySubTab {
@@ -91,7 +95,7 @@ export function readDashboardUrlState(
       : tab === "shell"
       ? "terminal"
       : parseWorktreeEnvironmentSubTab(params.get("envTab")),
-    gitView: params.get("git") === "diff" ? "diff" : "graph",
+    gitView: parseGitView(params.get("git")),
     isTerminalVisible: params.get("terminal") === "open",
     systemSubTab: parseSystemSubTab(params.get("systemTab")),
     projectManagementSubTab: projectManagementDocumentRoute.presentation === "page"

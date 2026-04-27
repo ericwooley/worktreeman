@@ -20,6 +20,8 @@ import type {
   ProjectManagementDocumentSummaryResponse,
   GenerateGitCommitMessageRequest,
   GenerateGitCommitMessageResponse,
+  GitBranchHistoryResponse,
+  GitCommitDetailResponse,
   GitComparisonResponse,
   GitComparisonStreamEvent,
   MergeGitBranchRequest,
@@ -318,6 +320,36 @@ export function getGitComparison(compareBranch: string, baseBranch?: string): Pr
   }
 
   return request<GitComparisonResponse>(`/api/git/compare?${params.toString()}`);
+}
+
+export function getGitBranchHistory(
+  branch: string,
+  options: { cursor?: string | null; limit?: number } = {},
+): Promise<GitBranchHistoryResponse> {
+  const params = new URLSearchParams();
+  if (options.cursor) {
+    params.set("cursor", options.cursor);
+  }
+  if (typeof options.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+
+  const query = params.toString();
+  return request<GitBranchHistoryResponse>(
+    `/api/git/branches/${encodeURIComponent(branch)}/history${query ? `?${query}` : ""}`,
+  );
+}
+
+export function getGitCommitDetail(commitHash: string, branch?: string | null): Promise<GitCommitDetailResponse> {
+  const params = new URLSearchParams();
+  if (branch) {
+    params.set("branch", branch);
+  }
+
+  const query = params.toString();
+  return request<GitCommitDetailResponse>(
+    `/api/git/commits/${encodeURIComponent(commitHash)}${query ? `?${query}` : ""}`,
+  );
 }
 
 export function subscribeToGitComparison(

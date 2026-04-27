@@ -18,7 +18,7 @@ import type { DashboardNotification } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { useTheme } from "./theme-provider";
-import { WorktreeDetail, type WorktreeEnvironmentSubTab } from "./worktree-detail";
+import { WorktreeDetail, type GitView, type WorktreeEnvironmentSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
@@ -290,6 +290,13 @@ export function Dashboard() {
     backgroundLogs,
     gitComparison,
     gitComparisonLoading,
+    gitHistory,
+    gitHistoryLoading,
+    gitHistoryLoadingMore,
+    gitHistoryError,
+    gitCommitDetail,
+    gitCommitDetailLoading,
+    gitCommitDetailError,
     configDocument,
     configDocumentLoading,
     aiCommandSettings,
@@ -347,6 +354,9 @@ export function Dashboard() {
     loadAiCommandLogs,
     loadSystemStatus,
     loadGitComparison,
+    loadGitHistory,
+    loadGitCommitDetail,
+    clearGitCommitDetail,
     subscribeToGitComparison,
     mergeGitBranch,
     mergeBaseBranchIntoWorktree,
@@ -393,7 +403,7 @@ export function Dashboard() {
   const [projectManagementCreateFormTab, setProjectManagementCreateFormTab] = useState<ProjectManagementDocumentFormViewMode>(
     initialUrlState.projectManagementCreateFormTab,
   );
-  const [gitView, setGitView] = useState<"graph" | "diff">(initialUrlState.gitView);
+  const [gitView, setGitView] = useState<GitView>(initialUrlState.gitView);
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialUrlState.isTerminalVisible);
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmationState | null>(null);
   const [deleteConfirmationError, setDeleteConfirmationError] = useState<string | null>(null);
@@ -1830,12 +1840,22 @@ export function Dashboard() {
             backgroundLogs={backgroundLogs}
             gitComparison={gitComparison}
             gitComparisonLoading={gitComparisonLoading}
+            gitHistory={gitHistory}
+            gitHistoryLoading={gitHistoryLoading}
+            gitHistoryLoadingMore={gitHistoryLoadingMore}
+            gitHistoryError={gitHistoryError}
+            gitCommitDetail={gitCommitDetail}
+            gitCommitDetailLoading={gitCommitDetailLoading}
+            gitCommitDetailError={gitCommitDetailError}
             onLoadBackgroundCommands={loadBackgroundCommands}
             onStartBackgroundCommand={startBackgroundCommand}
             onRestartBackgroundCommand={restartBackgroundCommand}
             onStopBackgroundCommand={stopBackgroundCommand}
             onLoadBackgroundLogs={loadBackgroundLogs}
             onLoadGitComparison={loadGitComparison}
+            onLoadGitHistory={loadGitHistory}
+            onLoadGitCommitDetail={loadGitCommitDetail}
+            onClearGitCommitDetail={clearGitCommitDetail}
             onSubscribeToGitComparison={subscribeToGitComparison}
             onMergeWorktreeIntoBase={mergeGitBranch}
             onMergeDeleteWorktreeIntoBase={async (branch, baseBranch) => {
