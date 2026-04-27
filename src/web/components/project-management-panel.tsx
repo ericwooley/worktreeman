@@ -372,7 +372,7 @@ export function ProjectManagementPanel({
     }
 
     if (documentRunJob.status === "completed") {
-      setDocumentRunSummary(`${getAiCommandLabel(documentRunJob.commandId)} finished in ${documentRunJob.branch}.`);
+      setDocumentRunSummary(null);
       return;
     }
 
@@ -435,16 +435,8 @@ export function ProjectManagementPanel({
       : null;
     const matchingDocumentJob = aiJob?.documentId === document.id ? aiJob : null;
 
-    if (matchingWorktreeJob?.status === "running") {
-      return { source: "worktree" as const, job: matchingWorktreeJob, summary: documentRunSummary };
-    }
-
     if (matchingDocumentJob?.status === "running") {
       return { source: "document" as const, job: matchingDocumentJob, summary: aiRunSummary };
-    }
-
-    if (matchingWorktreeJob) {
-      return { source: "worktree" as const, job: matchingWorktreeJob, summary: documentRunSummary };
     }
 
     if (matchingDocumentJob) {
@@ -452,7 +444,7 @@ export function ProjectManagementPanel({
     }
 
     return null;
-  }, [aiJob, aiRunSummary, document, documentRunJob, documentRunSummary, selectedWorktreeBranch]);
+  }, [aiJob, aiRunSummary, document]);
   const showInlineSelectedAiOutput = Boolean(
     document
     && selectedDocumentAiOutput
@@ -777,7 +769,7 @@ export function ProjectManagementPanel({
     }
 
     setDocumentWorktreeInstructions("");
-    setDocumentRunSummary(`Smart AI started in ${result.job.branch}. This worktree is now selected, its runtime is running, and live output is streaming in the work panel on the right.`);
+    setDocumentRunSummary(null);
     return true;
   }
 

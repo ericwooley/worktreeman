@@ -1968,6 +1968,11 @@ export function Dashboard() {
                 }
 
                 setSelectedBranch(result.job.branch);
+                setActiveTab("review");
+                setProjectManagementSubTab("document");
+                setProjectManagementDocumentPresentation("modal");
+                setProjectManagementDocumentViewMode("document");
+                setProjectManagementSelectedDocumentId(null);
                 return result;
               });
             }}

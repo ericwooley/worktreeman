@@ -417,6 +417,19 @@ test("worktree AI modal enables auto loop by default", () => {
   assert.match(markup, /name="pm-document-worktree-auto-loop"[^>]*checked=""/);
 });
 
+test("document detail does not render worktree AI output inline", () => {
+  const markup = renderProjectManagementPanel({
+    documentRunJob: createAiJob({ jobId: "job-worktree", startedAt: "2026-03-26T10:05:00.000Z" }),
+    selectedWorktreeBranch: "pm-doc-1-dependencies",
+  });
+
+  assert.match(markup, /Document worktree AI run in progress/);
+  assert.doesNotMatch(markup, /AI output/);
+  assert.doesNotMatch(markup, /Document AI is working/);
+  assert.doesNotMatch(markup, /worktree run is active\./);
+  assert.doesNotMatch(markup, /Live worktree output/);
+});
+
 test("edit form uses write and preview tabs instead of multiple editor modes", () => {
   const markup = renderProjectManagementPanel({
     documentViewMode: "edit",
@@ -731,7 +744,7 @@ test("document worktree run in another branch does not lock this worktree UI", (
   assert.match(markup, />Start Worktree AI</);
   assert.doesNotMatch(markup, /Start Worktree AI \(running\)/);
   assert.doesNotMatch(markup, /Document worktree AI run in progress/);
-  assert.doesNotMatch(markup, /Streaming live output from pm-doc-1-dependencies while the worktree run is active\./);
+  assert.doesNotMatch(markup, /worktree run is active\./);
 });
 
 test("document worktree run in the selected branch shows running state and controls", () => {
@@ -743,7 +756,7 @@ test("document worktree run in the selected branch shows running state and contr
   assert.match(markup, /Start Worktree AI \(running\)/);
   assert.match(markup, /Document worktree AI run in progress/);
   assert.match(markup, /Cancel worktree AI/);
-  assert.match(markup, /Streaming the combined AI log from pm-doc-1-dependencies while the worktree run is active\./);
+  assert.doesNotMatch(markup, /worktree run is active\./);
 });
 
 test("getProjectManagementDocumentRunDefaults prefers continuing the selected linked worktree", () => {
