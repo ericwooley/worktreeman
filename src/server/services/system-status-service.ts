@@ -164,6 +164,12 @@ function toPayloadSummary(value: unknown): SystemJobPayloadSummary {
         : null,
     reviewDocumentId: typeof payload?.reviewDocumentId === "string" ? payload.reviewDocumentId : null,
     reviewRequestSummaryPreview: previewText(payload?.reviewRequestSummary),
+    reviewAction: payload?.reviewAction === "review"
+      ? "review"
+      : payload?.reviewAction === "implement"
+        ? "implement"
+        : null,
+    autoReviewLoop: payload?.autoReviewLoop === true,
     autoCommitDirtyWorktree: payload?.autoCommitDirtyWorktree === true,
   };
 }

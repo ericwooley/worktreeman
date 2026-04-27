@@ -7,6 +7,8 @@ import type {
   ShutdownLogEntry,
   ShutdownStatus,
   WorktreeAutoSyncState,
+  WorktreeReviewLoopState,
+  WorktreeReviewResult,
   WorktreeRuntime,
 } from "../../shared/types.js";
 import { cloneAiCommandJob, parseAiCommandOrigin, toAiCommandLogError } from "../../shared/ai-command-utils.js";
@@ -166,6 +168,11 @@ interface WorktreeAutoSyncStateRow {
   snapshot_json: string;
 }
 
+interface WorktreeReviewLoopStateRow {
+  worktree_id: string;
+  snapshot_json: string;
+}
+
 const RUNTIME_STATE_TABLE = "runtime_state_v2";
 const AI_JOB_STATE_TABLE = "ai_job_state_v2";
 const AI_RUN_LOGS_TABLE = "ai_run_logs_v2";
@@ -173,6 +180,7 @@ const AI_RUN_OUTPUT_TABLE = "ai_run_output_entries_v2";
 const WORKTREE_DOCUMENT_LINKS_TABLE = "worktree_document_links";
 const BACKGROUND_COMMAND_METADATA_TABLE = "background_command_metadata";
 const WORKTREE_AUTO_SYNC_STATE_TABLE = "worktree_auto_sync_state_v1";
+const WORKTREE_REVIEW_LOOP_STATE_TABLE = "worktree_review_loop_state_v1";
 
 const managedStores = new Map<string, ManagedOperationalStateStore>();
 
@@ -191,6 +199,24 @@ function cloneRuntime(runtime: WorktreeRuntime | null): WorktreeRuntime | null {
 
 function cloneAutoSyncState(state: WorktreeAutoSyncState | null): WorktreeAutoSyncState | null {
   return state ? { ...state } : null;
+}
+
+function cloneReviewResult(result: WorktreeReviewResult | null | undefined): WorktreeReviewResult | null | undefined {
+  return result
+    ? {
+        ...result,
+        issues: result.issues.map((issue) => ({ ...issue })),
+      }
+    : result;
+}
+
+function cloneReviewLoopState(state: WorktreeReviewLoopState | null): WorktreeReviewLoopState | null {
+  return state
+    ? {
+        ...state,
+        latestReviewResult: cloneReviewResult(state.latestReviewResult) ?? null,
+      }
+    : null;
 }
 
 function cloneAiCommandOutputEvent(event: AiCommandOutputEvent): AiCommandOutputEvent {
@@ -260,6 +286,14 @@ function parseAutoSyncState(value: unknown): WorktreeAutoSyncState | null {
   }
 
   return cloneAutoSyncState(value as WorktreeAutoSyncState);
+}
+
+function parseReviewLoopState(value: unknown): WorktreeReviewLoopState | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  return cloneReviewLoopState(value as WorktreeReviewLoopState);
 }
 
 function parseAiCommandJob(value: unknown): AiCommandJob | null {
@@ -610,8 +644,17 @@ async function ensureManagedStore(repoRoot: string): Promise<ManagedOperationalS
         updated_at timestamptz not null default now()
       );
 
+      create table if not exists ${WORKTREE_REVIEW_LOOP_STATE_TABLE} (
+        worktree_id text primary key,
+        snapshot_json text not null,
+        updated_at timestamptz not null default now()
+      );
+
       create index if not exists worktree_auto_sync_state_updated_idx
         on ${WORKTREE_AUTO_SYNC_STATE_TABLE} (updated_at desc);
+
+      create index if not exists worktree_review_loop_state_updated_idx
+        on ${WORKTREE_REVIEW_LOOP_STATE_TABLE} (updated_at desc);
 
       alter table ${AI_RUN_LOGS_TABLE}
         add column if not exists session_id text;
@@ -814,15 +857,62 @@ export class OperationalStateStore {
       .filter((state): state is WorktreeAutoSyncState => state !== null);
   }
 
-  async mergeInto<T extends { id: WorktreeId }>(worktrees: T[]): Promise<Array<T & { runtime?: WorktreeRuntime; autoSync?: WorktreeAutoSyncState }>> {
+  async getReviewLoopById(worktreeId: WorktreeId): Promise<WorktreeReviewLoopState | null> {
+    return await querySnapshot(
+      this.repoRoot,
+      `select snapshot_json from ${WORKTREE_REVIEW_LOOP_STATE_TABLE} where worktree_id = $1`,
+      [worktreeId],
+      parseReviewLoopState,
+    );
+  }
+
+  async setReviewLoop(state: WorktreeReviewLoopState): Promise<void> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(
+      `
+        insert into ${WORKTREE_REVIEW_LOOP_STATE_TABLE} (worktree_id, snapshot_json, updated_at)
+        values ($1, $2, now())
+        on conflict (worktree_id) do update
+        set snapshot_json = excluded.snapshot_json,
+            updated_at = now()
+      `,
+      [state.worktreeId, JSON.stringify(cloneReviewLoopState(state))],
+    );
+  }
+
+  async deleteReviewLoopById(worktreeId: WorktreeId): Promise<WorktreeReviewLoopState | null> {
+    const existing = await this.getReviewLoopById(worktreeId);
+    if (!existing) {
+      return null;
+    }
+
+    const managed = await ensureManagedStore(this.repoRoot);
+    await managed.db.query(`delete from ${WORKTREE_REVIEW_LOOP_STATE_TABLE} where worktree_id = $1`, [worktreeId]);
+    return existing;
+  }
+
+  async listReviewLoops(): Promise<WorktreeReviewLoopState[]> {
+    const managed = await ensureManagedStore(this.repoRoot);
+    const result = await managed.db.query<WorktreeReviewLoopStateRow>(
+      `select worktree_id, snapshot_json from ${WORKTREE_REVIEW_LOOP_STATE_TABLE} order by updated_at asc`,
+    );
+    return result.rows
+      .map((row) => parseReviewLoopState(JSON.parse(row.snapshot_json)))
+      .filter((state): state is WorktreeReviewLoopState => state !== null);
+  }
+
+  async mergeInto<T extends { id: WorktreeId }>(worktrees: T[]): Promise<Array<T & { runtime?: WorktreeRuntime; autoSync?: WorktreeAutoSyncState; reviewLoop?: WorktreeReviewLoopState }>> {
     const runtimeEntries = await this.listRuntimes();
     const autoSyncEntries = await this.listAutoSyncStates();
+    const reviewLoopEntries = await this.listReviewLoops();
     const runtimeById = new Map(runtimeEntries.map((runtime) => [runtime.id, runtime]));
     const autoSyncById = new Map(autoSyncEntries.map((state) => [state.worktreeId, state]));
+    const reviewLoopById = new Map(reviewLoopEntries.map((state) => [state.worktreeId, state]));
     return worktrees.map((worktree) => ({
       ...worktree,
       runtime: runtimeById.get(worktree.id),
       autoSync: autoSyncById.get(worktree.id),
+      reviewLoop: reviewLoopById.get(worktree.id),
     }));
   }
 

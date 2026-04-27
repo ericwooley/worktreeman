@@ -108,6 +108,89 @@ test("GET /api/events/stream multiplexes initial dashboard snapshots", async () 
   }
 });
 
+test("GET /api/state/stream emits linked document state after worktree creation", { concurrency: false }, async () => {
+  const repo = await createApiTestRepo();
+
+  try {
+    const server = await startApiServer(repo);
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string; number: number }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const stream = await openSse(`${await server.url()}/api/state/stream`);
+
+    try {
+      const snapshot = await stream.nextEvent() as unknown as {
+        type: string;
+        state: {
+          worktrees: Array<{
+            branch: string;
+            linkedDocument?: {
+              id: string;
+              number: number;
+              title: string;
+              archived: boolean;
+            } | null;
+          }>;
+        };
+      };
+      assert.equal(snapshot.type, "snapshot");
+
+      const createResponse = await server.fetch(`/api/worktrees`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          branch: "feature-linked-doc-stream",
+          documentId: outline.id,
+        }),
+      });
+      assert.equal(createResponse.status, 201);
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const event = await stream.nextEvent() as unknown as {
+          type: string;
+          state?: {
+            worktrees: Array<{
+              branch: string;
+              linkedDocument?: {
+                id: string;
+                number: number;
+                title: string;
+                archived: boolean;
+              } | null;
+            }>;
+          };
+        };
+        if (event.type !== "update" || !event.state) {
+          continue;
+        }
+
+        const linkedWorktree = event.state.worktrees.find((entry) => entry.branch === "feature-linked-doc-stream");
+        if (!linkedWorktree?.linkedDocument) {
+          continue;
+        }
+
+        assert.equal(linkedWorktree.linkedDocument.id, outline.id);
+        assert.equal(linkedWorktree.linkedDocument.number, outline.number);
+        assert.equal(linkedWorktree.linkedDocument.title, outline.title);
+        assert.equal(linkedWorktree.linkedDocument.archived, false);
+        return;
+      }
+
+      assert.fail("Expected a state-stream update containing the linked document summary.");
+    } finally {
+      await stream.close();
+      await server.close();
+    }
+  } finally {
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("GET /api/events/stream multiplexes AI log updates", { concurrency: false }, async () => {
   const repo = await createApiTestRepo();
   const worktreePath = path.join(repo.repoRoot, "feature-ai-log");

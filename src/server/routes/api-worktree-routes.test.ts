@@ -1127,6 +1127,8 @@ test("review follow-up AI runs build ordered review-thread context from visible 
     assert.equal(capturedPrompt.includes("2. AI work completed"), true);
     assert.equal(capturedPrompt.includes("Cached stdout summary:"), true);
     assert.equal(capturedPrompt.includes("Stdout summary: Implemented the first draft and found two risks."), true);
+    assert.equal(capturedPrompt.includes("Latest full review entry:"), true);
+    assert.equal(capturedPrompt.includes("Need one more pass on author attribution."), true);
     assert.equal(capturedPrompt.includes("warning output"), false);
     assert.equal(capturedPrompt.includes("Prior AI run log:"), false);
     assert.equal(capturedPrompt.includes("Summary of previous AI outputs:"), false);
@@ -1187,7 +1189,7 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
     fakeAiProcesses.queueStartScript([
       {
         status: "stopped",
-        stdout: "<wtm-review>## Findings\n\n- Missing verification for review-target.txt changes.</wtm-review>",
+        stdout: "<wtm-review>## Findings\n\n- Missing verification for review-target.txt changes.</wtm-review>\n<wtm-review-result passed=\"false\"><wtm-review-issue id=\"review-target-check\"><summary>Missing verification</summary><details>Add verification for review-target.txt changes.</details></wtm-review-issue></wtm-review-result>",
         stderr: "",
         exitCode: 0,
       },
@@ -1199,6 +1201,7 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
       body: JSON.stringify({
         input: "Check whether the requested updates are correct and whether this diff satisfies them",
         reviewDocumentId: linkedDocumentId,
+        baseBranch: "main",
         reviewAction: "review",
       }),
     });
@@ -1213,9 +1216,12 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
     assert.equal(capturedPrompt.includes("Do not change code, files, git state, or the project-management document. This is a review-only pass."), true);
     assert.equal(capturedPrompt.includes("Review whether everything in the original document is correct, whether everything in the requested updates is correct, and whether the current branch diff actually satisfies them."), true);
     assert.equal(capturedPrompt.includes("Return markdown only. Put the actual review content inside <wtm-review>...</wtm-review> so the application can extract and display it."), true);
+    assert.equal(capturedPrompt.includes("<wtm-review-result passed=\"true|false\">"), true);
+    assert.equal(capturedPrompt.includes("<wtm-review-issue id=\"short-kebab-id\">"), true);
     assert.equal(capturedPrompt.includes("Requested review focus:"), true);
     assert.equal(capturedPrompt.includes("Branch diff to review:"), true);
     assert.equal(capturedPrompt.includes("review-target.txt"), true);
+    assert.equal(capturedPrompt.includes("Base branch: main"), true);
     assert.equal(capturedPrompt.includes("Implement the work described by this document in the current worktree."), false);
     assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository."), false);
 
@@ -1225,6 +1231,95 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
     assert.equal(review.review.entries[2]?.body, "## Findings\n\n- Missing verification for review-target.txt changes.");
     assert.equal(review.review.entries[2]?.source, "ai");
     assert.equal(review.review.entries[2]?.eventType, "ai-completed");
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("review follow-up AI can start an automatic review loop and persist passed loop state", { concurrency: false, timeout: 30000 }, async () => {
+  const repo = await createApiTestRepo();
+  const config = await loadConfig({
+    path: repo.configPath,
+    repoRoot: repo.repoRoot,
+    gitFile: repo.configFile,
+  });
+  const reviewWorktree = await createWorktree(repo.repoRoot, config, { branch: "feature-review-auto-loop" });
+  const operationalState = await createOperationalStateStore(repo.repoRoot);
+  const fakeAiProcesses = createFakeAiProcesses();
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const linkedDocumentId = await createReviewDocument(server, {
+      title: "Auto review loop",
+      summary: "Keep iterating until review passes.",
+      markdown: "# Auto review loop\n\nFix review issues until the branch passes.",
+    });
+    await operationalState.setWorktreeDocumentLink({
+      worktreeId: reviewWorktree.id,
+      branch: reviewWorktree.branch,
+      worktreePath: reviewWorktree.worktreePath,
+      documentId: linkedDocumentId,
+    });
+
+    fakeAiProcesses.queueStartScript([
+      { status: "stopped", stdout: "implemented first pass", stderr: "", exitCode: 0 },
+    ]);
+    fakeAiProcesses.queueStartScript([
+      {
+        status: "stopped",
+        stdout: "<wtm-review>## Findings\n\n- Fix the deployment issue.</wtm-review>\n<wtm-review-result passed=\"false\"><wtm-review-issue id=\"deployment-issue\"><summary>Fix deployment issue</summary><details>Resolve the outstanding deployment problem before sign-off.</details></wtm-review-issue></wtm-review-result>",
+        stderr: "",
+        exitCode: 0,
+      },
+    ]);
+    fakeAiProcesses.queueStartScript([
+      { status: "stopped", stdout: "implemented deployment fix", stderr: "", exitCode: 0 },
+    ]);
+    fakeAiProcesses.queueStartScript([
+      {
+        status: "stopped",
+        stdout: "<wtm-review>## Passed\n\n- Review passed with no blocking issues.</wtm-review>\n<wtm-review-result passed=\"true\"></wtm-review-result>",
+        stderr: "",
+        exitCode: 0,
+      },
+    ]);
+
+    const response = await server.fetch(`/api/worktrees/${reviewWorktree.branch}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: "Finish the remaining review work",
+        reviewDocumentId: linkedDocumentId,
+        baseBranch: "main",
+        reviewFollowUp: {
+          originalRequest: "Finish the remaining review work",
+          newRequest: "Finish the remaining review work",
+        },
+        reviewAction: "implement",
+        autoReviewLoop: true,
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as { job: { jobId: string } };
+    await waitForAiCommandJob(repo.repoRoot, reviewWorktree.id, payload.job.jobId);
+
+    await waitFor(async () => {
+      const loopState = await operationalState.getReviewLoopById(reviewWorktree.id);
+      return loopState?.status === "passed";
+    }, 15000);
+
+    const loopState = await operationalState.getReviewLoopById(reviewWorktree.id);
+    assert.ok(loopState);
+    assert.equal(loopState.status, "passed");
+    assert.equal(loopState.attemptCount, 2);
+    assert.equal(loopState.currentPhase, null);
+    assert.equal(loopState.latestReviewResult?.passed, true);
+    assert.equal(loopState.failureMessage, null);
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });
@@ -1330,6 +1425,8 @@ test("review-origin AI runs recover follow-up context from visible review entrie
     assert.equal(capturedPrompt.includes("Original review request"), true);
     assert.equal(capturedPrompt.includes("Ordered review thread context:"), true);
     assert.equal(capturedPrompt.includes("AI work started"), true);
+    assert.equal(capturedPrompt.includes("Latest full review entry:"), false);
+    assert.equal(capturedPrompt.includes("## Worktree AI started"), true);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("It does not appear you finished this work"), true);
     assert.equal(capturedPrompt.includes("Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take."), true);
@@ -1518,6 +1615,8 @@ test("review follow-up AI runs include ordered review feedback and cached stdout
     assert.equal(capturedPrompt.includes("Address the deployment issue before sign-off."), true);
     assert.equal(capturedPrompt.includes("Implemented the first draft and found two risks."), true);
     assert.equal(capturedPrompt.includes("Closed one risk but left a deployment issue unresolved."), true);
+    assert.equal(capturedPrompt.includes("Latest full review entry:"), true);
+    assert.equal(capturedPrompt.includes("Address the deployment issue before sign-off."), true);
     assert.equal(capturedPrompt.includes("warning output"), false);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("Make sure the remaining deployment issue is fixed"), true);
