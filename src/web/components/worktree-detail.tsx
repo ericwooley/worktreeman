@@ -53,6 +53,7 @@ import { getAiResolveButtonState, getResolvableConflictCount } from "./git-statu
 import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 import { ProjectManagementAiTab } from "./project-management-ai-tab";
 import { ProjectManagementPanel } from "./project-management-panel";
+import { ReviewCommandEditor, getReviewCommandToken } from "./review-command-editor";
 import { SystemTab } from "./system-tab";
 import { getWorktreeDeleteAiDisabledReason, getWorktreeMergeAiDisabledReason } from "./worktree-action-guards";
 
@@ -111,34 +112,6 @@ function getReviewSourceLabel(entry: ProjectManagementReviewEntry) {
     default:
       return "Comment";
   }
-}
-
-type ReviewCommandToken = "ai" | "review";
-
-function getReviewCommandToken(value: string): ReviewCommandToken | null {
-  const match = value.trimStart().match(/^@(ai|review)\b/i);
-  const token = match?.[1]?.toLowerCase();
-  return token === "ai" || token === "review" ? token : null;
-}
-
-function renderReviewDraftWithMentions(value: string) {
-  if (!value) {
-    return null;
-  }
-
-  return value.split(/(@(?:ai|review)\b)/gi).map((part, index) => {
-    const isCommand = /^@(ai|review)$/i.test(part);
-
-    if (!isCommand) {
-      return <span key={`${index}-${part}`} className="theme-text">{part}</span>;
-    }
-
-    return (
-      <span key={`${index}-${part}`} className="border theme-border-emphasis px-1 font-mono theme-text-accent">
-        {part}
-      </span>
-    );
-  });
 }
 
 function mapOriginProjectManagementSubTabToUiTab(
@@ -1304,7 +1277,7 @@ export function WorktreeDetail({
   }, [backgroundCommands, selectedBackgroundCommandName]);
 
   useEffect(() => {
-    if (activeTab !== "git" || !worktree?.branch) {
+    if ((activeTab !== "git" && activeTab !== "review") || !worktree?.branch) {
       return;
     }
 
@@ -2503,20 +2476,11 @@ export function WorktreeDetail({
                         </div>
                         <label className="block space-y-2">
                           <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Message</span>
-                          <div className="relative">
-                            {reviewCommandDraft ? (
-                              <div className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-sm leading-5" aria-hidden="true">
-                                {renderReviewDraftWithMentions(reviewCommandDraft)}
-                              </div>
-                            ) : null}
-                            <textarea
-                              value={reviewCommandDraft}
-                              onChange={(event) => setReviewCommandDraft(event.target.value)}
-                              placeholder="Write a review note, or start with @ai / @review."
-                              rows={5}
-                              className={`matrix-input relative min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none ${reviewCommandDraft ? "bg-transparent text-transparent caret-current" : ""}`}
-                            />
-                          </div>
+                          <ReviewCommandEditor
+                            value={reviewCommandDraft}
+                            placeholder="Write a review note, or start with @ai / @review."
+                            onChange={setReviewCommandDraft}
+                          />
                         </label>
                         {reviewCommandToken ? (
                           <div className="border theme-border-emphasis px-3 py-2 text-sm theme-inline-panel-emphasis">
@@ -2610,6 +2574,13 @@ export function WorktreeDetail({
 
                 {!activeReviewAiJob ? (
                   <MatrixCard as="div" className="p-4">
+                    {(() => {
+                      const reviewMergeDisabledReason = mergeIntoBaseButtonDisabledReason
+                        ?? (!selectedGitBaseBranch && !gitComparison?.baseBranch
+                          ? "Load or choose a review target before landing the branch."
+                          : null);
+
+                      return (
                     <MatrixCardHeader
                       eyebrow="Landing"
                       title="Ready to land?"
@@ -2625,7 +2596,8 @@ export function WorktreeDetail({
                         <button
                           type="button"
                           className="matrix-button matrix-button-danger rounded-none px-3 py-2 text-sm"
-                          disabled={!worktree?.branch || !gitComparison?.baseBranch}
+                          disabled={Boolean(reviewMergeDisabledReason)}
+                          title={reviewMergeDisabledReason ? `Merge disabled: ${reviewMergeDisabledReason}` : undefined}
                           onClick={() => {
                             if (!worktree?.branch) {
                               return;
@@ -2637,6 +2609,20 @@ export function WorktreeDetail({
                         </button>
                       )}
                     />
+                      );
+                    })()}
+                    {(() => {
+                      const reviewMergeDisabledReason = mergeIntoBaseButtonDisabledReason
+                        ?? (!selectedGitBaseBranch && !gitComparison?.baseBranch
+                          ? "Load or choose a review target before landing the branch."
+                          : null);
+
+                      return reviewMergeDisabledReason ? (
+                        <p className="mt-3 text-sm theme-text-warning-soft">
+                          Merge and delete is unavailable: {reviewMergeDisabledReason}
+                        </p>
+                      ) : null;
+                    })()}
                   </MatrixCard>
                 ) : null}
               </>

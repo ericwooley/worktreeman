@@ -3,7 +3,7 @@
   "version": "0.2.3",
   "type": "module",
   "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319",
-  "repository":"https://github.com/ericwooley/worktreeman",
+  "repository": "https://github.com/ericwooley/worktreeman",
   "imports": {
     "#test-runtime": "./src/shared/test-runtime.ts"
   },
@@ -46,6 +46,11 @@
     "@gitgraph/react": "^1.6.0",
     "@inquirer/prompts": "^8.3.2",
     "@monaco-editor/react": "^4.7.0",
+    "@tiptap/core": "^3.22.4",
+    "@tiptap/extension-placeholder": "^3.22.4",
+    "@tiptap/pm": "^3.22.4",
+    "@tiptap/react": "^3.22.4",
+    "@tiptap/starter-kit": "^3.22.4",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "@xyflow/react": "^12.10.1",

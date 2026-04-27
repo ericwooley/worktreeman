@@ -345,6 +345,38 @@ body,
   box-shadow: 0 0 0 1px rgb(var(--rgb-base0B) / 0.15);
 }
 
+.review-command-editor {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.review-command-editor .tiptap {
+  min-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  outline: none;
+}
+
+.review-command-editor p {
+  margin: 0;
+}
+
+.review-command-editor .is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: rgb(var(--rgb-base04) / 0.7);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.review-command-token {
+  border: 1px solid rgb(var(--rgb-base0E) / 0.24);
+  background: rgb(var(--rgb-base01) / 0.92);
+  color: var(--base0E);
+  font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+  padding: 0 0.25rem;
+}
+
 .matrix-theme-chip {
   border: 1px solid rgb(var(--rgb-base0B) / 0.14);
   background: rgb(var(--rgb-base00) / 0.2);

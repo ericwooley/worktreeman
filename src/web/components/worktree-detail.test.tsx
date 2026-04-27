@@ -288,7 +288,7 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
   assert.match(markup, /Delete entry/);
-  assert.match(markup, /placeholder="Write a review note, or start with @ai \/ @review\."/);
+  assert.match(markup, /Write a review note, or start with @ai \/ @review\./);
   assert.match(markup, /<span class="font-mono text-sm theme-text-accent">@ai<\/span>/);
   assert.match(markup, /<span class="font-mono text-sm theme-text-accent">@review<\/span>/);
   assert.match(markup, /Continue implementation against the selected target\./);
@@ -695,4 +695,48 @@ test("Review tab merge-delete action uses the selected base branch", async () =>
   assert.match(markup, /Ready to land\?/);
   assert.match(markup, /Merge <code>feature\/merge-actions<\/code> into <code>main<\/code>, then delete the worktree in one step\./);
   assert.match(markup, />Merge and delete</);
+});
+
+test("Review tab explains why merge-delete is disabled", async () => {
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    gitComparison: {
+      ...sampleGitComparison,
+      mergeStatus: {
+        canMerge: false,
+        hasConflicts: false,
+        reason: "Branch is behind the selected target.",
+        conflicts: [],
+      },
+    },
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+    },
+    projectManagementDocuments: [{
+      id: "doc-1",
+      number: 1,
+      title: "Dependencies",
+      summary: "Track prerequisite document work.",
+      tags: ["feature"],
+      dependencies: [],
+      status: "todo",
+      assignee: "Eric",
+      archived: false,
+      createdAt: "2026-03-20T10:00:00.000Z",
+      updatedAt: "2026-03-25T10:00:00.000Z",
+      historyCount: 2,
+    }],
+  });
+
+  assert.match(markup, /Merge and delete is unavailable: Branch is behind the selected target\./);
+  assert.match(markup, /title="Merge disabled: Branch is behind the selected target\."/);
+  assert.match(markup, /<button[^>]*disabled=""[^>]*>Merge and delete<\/button>/);
 });
