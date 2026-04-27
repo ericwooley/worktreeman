@@ -143,6 +143,7 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         onLoadGitComparison={createAsyncNoop(sampleGitComparison)}
         onSubscribeToGitComparison={() => () => undefined}
         onMergeWorktreeIntoBase={createAsyncNoop(null as GitComparisonResponse | null)}
+        onMergeDeleteWorktreeIntoBase={createAsyncNoop(false)}
         onMergeBaseIntoWorktree={createAsyncNoop(null as GitComparisonResponse | null)}
         onResolveGitMergeConflicts={createAsyncNoop(null as GitComparisonResponse | null)}
         onGenerateGitCommitMessage={createAsyncNoop(null as { message: string } | null)}
@@ -291,6 +292,9 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /<code>@review<\/code>/);
   assert.match(markup, /Plain text adds a review entry\./);
   assert.match(markup, /Auto-review loop: after <code>@ai<\/code>, keep alternating implementation and review on the server until review passes or 10 attempts are used\./);
+  assert.match(markup, /Review target/);
+  assert.match(markup, /main/);
+  assert.match(markup, /Merge and delete/);
   assert.match(markup, />Submit review</);
 
   const reviewEntryIndex = markup.indexOf("Casey Reviewer");
@@ -650,4 +654,39 @@ test("Review tab renders auto-review loop status from worktree state", async () 
   assert.match(markup, /Blocking review issues:/);
   assert.match(markup, /Fix deployment issue/);
   assert.match(markup, /Resolve the outstanding deployment problem before sign-off\./);
+});
+
+test("Review tab merge-delete action uses the selected base branch", async () => {
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+    },
+    projectManagementDocuments: [{
+      id: "doc-1",
+      number: 1,
+      title: "Dependencies",
+      summary: "Track prerequisite document work.",
+      tags: ["feature"],
+      dependencies: [],
+      status: "todo",
+      assignee: "Eric",
+      archived: false,
+      createdAt: "2026-03-20T10:00:00.000Z",
+      updatedAt: "2026-03-25T10:00:00.000Z",
+      historyCount: 2,
+    }],
+  });
+
+  assert.match(markup, /Review actions/);
+  assert.match(markup, /Merge <code>feature\/merge-actions<\/code> into <code>main<\/code> and then delete the worktree in one step\./);
+  assert.match(markup, />Merge and delete</);
 });

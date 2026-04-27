@@ -155,6 +155,19 @@ function normalizeAiCommands(aiCommands?: Partial<AiCommandConfig> | null): AiCo
   };
 }
 
+async function mergeDeleteWorktree(
+  worktree: WorktreeRecord,
+  baseBranch: string | undefined,
+  mergeGitBranch: (compareBranch: string, baseBranch?: string) => Promise<unknown>,
+  remove: (branch: string, payload?: { deleteBranch?: boolean; confirmWorktreeName?: string }) => Promise<void>,
+) {
+  await mergeGitBranch(worktree.branch, baseBranch);
+  await remove(worktree.branch, {
+    deleteBranch: true,
+    confirmWorktreeName: worktree.branch,
+  });
+}
+
 function normalizeAutoSync(autoSync?: Partial<AutoSyncConfig> | null): AutoSyncConfig {
   return {
     remote: typeof autoSync?.remote === "string" && autoSync.remote.trim() ? autoSync.remote.trim() : "origin",
@@ -1825,6 +1838,15 @@ export function Dashboard() {
             onLoadGitComparison={loadGitComparison}
             onSubscribeToGitComparison={subscribeToGitComparison}
             onMergeWorktreeIntoBase={mergeGitBranch}
+            onMergeDeleteWorktreeIntoBase={async (branch, baseBranch) => {
+              const selectedWorktree = visibleWorktrees.find((entry) => entry.branch === branch);
+              if (!selectedWorktree) {
+                return false;
+              }
+
+              await mergeDeleteWorktree(selectedWorktree, baseBranch, mergeGitBranch, remove);
+              return true;
+            }}
             onMergeBaseIntoWorktree={mergeBaseBranchIntoWorktree}
             onResolveGitMergeConflicts={resolveGitMergeConflicts}
             onGenerateGitCommitMessage={generateGitCommitMessage}

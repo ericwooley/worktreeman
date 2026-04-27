@@ -105,6 +105,7 @@ type ReviewLoopStartDetails = {
   commandId: AiCommandId;
   env: NodeJS.ProcessEnv;
   shouldStopRuntimeOnFinish: boolean;
+  baseBranch?: string | null;
   reviewDocumentId: string;
   documentTitle: string;
   documentSummary: string | null;
@@ -200,7 +201,11 @@ async function runAutoReviewLoop(details: ReviewLoopStartDetails) {
     }));
 
     while (state.attemptCount < state.maxAttempts) {
-      const comparison = await getGitComparison(details.context.repoRoot, details.worktree.branch);
+      const comparison = await getGitComparison(
+        details.context.repoRoot,
+        details.worktree.branch,
+        details.baseBranch ?? undefined,
+      );
       const reviewPrompt = await buildReviewOnlyRequest({
         repoRoot: details.context.repoRoot,
         config: details.config,
@@ -219,6 +224,7 @@ async function runAutoReviewLoop(details: ReviewLoopStartDetails) {
         documentId: details.reviewDocumentId,
         reviewAction: "review",
       });
+      reviewOrigin.location.gitBaseBranch = details.baseBranch ?? null;
       const renderedReviewCommand = renderAiCommand(resolveAiCommandTemplate(details.config.aiCommands, details.commandId), reviewPrompt);
       const reviewRun = await details.context.startAiProcessJob({
         worktreeId: details.worktree.id,
@@ -293,12 +299,13 @@ async function runAutoReviewLoop(details: ReviewLoopStartDetails) {
           newRequest: implementRequest,
         },
       });
-      const implementOrigin = createWorktreeReviewOrigin({
-        branch: details.worktree.branch,
-        worktreeId: details.worktree.id,
-        documentId: details.reviewDocumentId,
-        reviewAction: "implement",
-      });
+        const implementOrigin = createWorktreeReviewOrigin({
+          branch: details.worktree.branch,
+          worktreeId: details.worktree.id,
+          documentId: details.reviewDocumentId,
+          reviewAction: "implement",
+        });
+        implementOrigin.location.gitBaseBranch = details.baseBranch ?? null;
       const renderedImplementCommand = renderAiCommand(resolveAiCommandTemplate(details.config.aiCommands, details.commandId), implementPrompt);
       const implementRun = await details.context.startAiProcessJob({
         worktreeId: details.worktree.id,
@@ -704,6 +711,9 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         : body?.reviewAction === "implement"
           ? "implement"
           : null;
+      const requestedBaseBranch = typeof body?.baseBranch === "string" && body.baseBranch.trim()
+        ? body.baseBranch.trim()
+        : null;
       const autoReviewLoop = body?.autoReviewLoop === true;
       let reviewFollowUp = body?.reviewFollowUp
         && typeof body.reviewFollowUp === "object"
@@ -765,6 +775,9 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
             reviewAction: reviewAction ?? undefined,
           })
         : createWorktreeEnvironmentOrigin(worktree.branch, worktree.id));
+      if (origin.location.tab === "review") {
+        origin.location.gitBaseBranch = requestedBaseBranch;
+      }
 
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
       if (!template) {
@@ -906,7 +919,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         const reviewDocumentMarkdown = reviewDocumentPayload?.document.markdown ?? null;
 
         if (reviewAction === "review") {
-          const comparison = await getGitComparison(context.repoRoot, worktree.branch);
+          const comparison = await getGitComparison(context.repoRoot, worktree.branch, requestedBaseBranch ?? undefined);
           input = await buildReviewOnlyRequest({
             repoRoot: context.repoRoot,
             config,
@@ -1046,6 +1059,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
             commandId,
             env,
             shouldStopRuntimeOnFinish: stopAutoStartedRuntimeOnError,
+            baseBranch: requestedBaseBranch,
             reviewDocumentId,
             documentTitle: reviewDocumentTitle,
             documentSummary: reviewDocumentSummary,

@@ -649,6 +649,7 @@ interface WorktreeDetailProps {
   onLoadGitComparison: (compareBranch: string, baseBranch?: string, options?: { silent?: boolean }) => Promise<GitComparisonResponse | null>;
   onSubscribeToGitComparison: (compareBranch: string, baseBranch?: string) => () => void;
   onMergeWorktreeIntoBase: (branch: string, baseBranch?: string) => Promise<GitComparisonResponse | null>;
+  onMergeDeleteWorktreeIntoBase: (branch: string, baseBranch?: string) => Promise<boolean>;
   onMergeBaseIntoWorktree: (branch: string, baseBranch: string) => Promise<GitComparisonResponse | null>;
   onResolveGitMergeConflicts: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<GitComparisonResponse | null>;
   onGenerateGitCommitMessage: (branch: string, baseBranch?: string, commandId?: AiCommandId) => Promise<{ message: string } | null>;
@@ -792,6 +793,7 @@ export function WorktreeDetail({
   onLoadGitComparison,
   onSubscribeToGitComparison,
   onMergeWorktreeIntoBase,
+  onMergeDeleteWorktreeIntoBase,
   onMergeBaseIntoWorktree,
   onResolveGitMergeConflicts,
   onGenerateGitCommitMessage,
@@ -1523,6 +1525,7 @@ export function WorktreeDetail({
       const job = await onRunProjectManagementAiCommand({
         input: requestText,
         reviewDocumentId: linkedDocument.id,
+        baseBranch: selectedGitBaseBranch ?? undefined,
         commandId: "smart",
         reviewAction,
         autoReviewLoop: reviewAction === "implement" && autoReviewLoopEnabled,
@@ -1535,6 +1538,7 @@ export function WorktreeDetail({
           location: {
             tab: "review",
             branch: worktree?.branch ?? null,
+            gitBaseBranch: selectedGitBaseBranch ?? null,
             worktreeId: worktree?.id ?? null,
             documentId: linkedDocument.id,
           },
@@ -2418,6 +2422,16 @@ export function WorktreeDetail({
                 )}
 
                 <div className="theme-inline-panel p-4 space-y-3">
+                  {gitBranchOptions.length ? (
+                    <MatrixDropdown
+                      label="Review target"
+                      placeholder="Select review target"
+                      value={selectedGitBaseBranch ?? gitComparison?.baseBranch ?? ""}
+                      options={gitBranchOptions}
+                      disabled={Boolean(activeReviewAiJob)}
+                      onChange={(value) => setSelectedGitBaseBranch(value)}
+                    />
+                  ) : null}
                   <label className="block space-y-2">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Review entry or Smart AI command</span>
                     <textarea
@@ -2495,6 +2509,31 @@ export function WorktreeDetail({
                       />
                     </div>
                   ) : null}
+                  <div className="border theme-border-subtle p-3 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Review actions</p>
+                        <p className="mt-2 text-sm theme-text-muted">
+                          Merge <code>{worktree?.branch ?? "this worktree"}</code> into <code>{selectedGitBaseBranch ?? gitComparison?.baseBranch ?? "the selected target"}</code> and then delete the worktree in one step.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <button
+                        type="button"
+                        className="matrix-button matrix-button-danger rounded-none px-3 py-2 text-sm"
+                        disabled={Boolean(activeReviewAiJob) || !worktree?.branch || !gitComparison?.baseBranch}
+                        onClick={() => {
+                          if (!worktree?.branch) {
+                            return;
+                          }
+                          void onMergeDeleteWorktreeIntoBase(worktree.branch, selectedGitBaseBranch ?? gitComparison?.baseBranch ?? undefined);
+                        }}
+                      >
+                        Merge and delete
+                      </button>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap justify-end gap-2">
                     <button
                       type="button"

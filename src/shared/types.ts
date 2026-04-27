@@ -680,6 +680,7 @@ export interface RunAiCommandRequest {
   input: string;
   documentId?: string;
   reviewDocumentId?: string;
+  baseBranch?: string;
   commandId?: AiCommandId;
   origin?: AiCommandOrigin | null;
   reviewAction?: "implement" | "review";

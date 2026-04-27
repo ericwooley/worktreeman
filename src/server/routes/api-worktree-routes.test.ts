@@ -1190,6 +1190,7 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
       body: JSON.stringify({
         input: "Check whether the requested updates are correct and whether this diff satisfies them",
         reviewDocumentId: linkedDocumentId,
+        baseBranch: "main",
         reviewAction: "review",
       }),
     });
@@ -1208,6 +1209,7 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
     assert.equal(capturedPrompt.includes("Requested review focus:"), true);
     assert.equal(capturedPrompt.includes("Branch diff to review:"), true);
     assert.equal(capturedPrompt.includes("review-target.txt"), true);
+    assert.equal(capturedPrompt.includes("Base branch: main"), true);
     assert.equal(capturedPrompt.includes("Implement the work described by this document in the current worktree."), false);
     assert.equal(capturedPrompt.includes("Implement the requested work in code in this repository."), false);
 
@@ -1280,6 +1282,7 @@ test("review follow-up AI can start an automatic review loop and persist passed 
       body: JSON.stringify({
         input: "Finish the remaining review work",
         reviewDocumentId: linkedDocumentId,
+        baseBranch: "main",
         reviewFollowUp: {
           originalRequest: "Finish the remaining review work",
           newRequest: "Finish the remaining review work",
