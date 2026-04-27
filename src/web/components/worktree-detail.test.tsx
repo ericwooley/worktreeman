@@ -283,22 +283,27 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Linked document/);
   assert.match(markup, /Dependencies/);
   assert.match(markup, /Track comments, AI activity, and merge events/);
-  assert.match(markup, /Review entry or Smart AI command/);
+  assert.match(markup, /Review composer/);
+  assert.match(markup, /Add to review/);
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
   assert.match(markup, /Delete entry/);
-  assert.match(markup, /placeholder="Add a review note, or start with @ai or @review\."/);
-  assert.match(markup, /<code>@ai<\/code>/);
-  assert.match(markup, /<code>@review<\/code>/);
-  assert.match(markup, /Plain text adds a review entry\./);
-  assert.match(markup, /Auto-review loop: after <code>@ai<\/code>, keep alternating implementation and review on the server until review passes or 10 attempts are used\./);
+  assert.match(markup, /placeholder="Write a review note, or start with @ai \/ @review\."/);
+  assert.match(markup, /<span class="font-mono text-sm theme-text-accent">@ai<\/span>/);
+  assert.match(markup, /<span class="font-mono text-sm theme-text-accent">@review<\/span>/);
+  assert.match(markup, /Continue implementation against the selected target\./);
+  assert.match(markup, /Run a review-only pass over the selected target diff\./);
+  assert.match(markup, /No command detected\. This will save as a normal review note\./);
+  assert.match(markup, /Loop <code>@ai<\/code> until review passes, up to 10 attempts\./);
   assert.match(markup, /Review target/);
+  assert.match(markup, /Routing/);
   assert.match(markup, /main/);
+  assert.match(markup, /Ready to land\?/);
   assert.match(markup, /Merge and delete/);
-  assert.match(markup, />Submit review</);
+  assert.match(markup, />Add note</);
 
   const reviewEntryIndex = markup.indexOf("Casey Reviewer");
-  const addReviewEntryIndex = markup.indexOf("Review entry or Smart AI command");
+  const addReviewEntryIndex = markup.indexOf("Add to review");
   assert.ok(reviewEntryIndex >= 0);
   assert.ok(addReviewEntryIndex > reviewEntryIndex);
 });
@@ -419,16 +424,17 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
     }],
   });
 
-  assert.match(markup, /Review entry or Smart AI command/);
-  assert.match(markup, /AI is active/);
-  assert.match(markup, /Review input is disabled while AI is active\. Wait for the current AI run to finish before adding notes or starting another command\./);
+  assert.match(markup, /AI is working from Review/);
+  assert.match(markup, /The composer is hidden while the worktree stream is active\. Finish or cancel this run before adding notes, starting another command, or landing the branch\./);
   assert.match(markup, /Worktree AI is working/);
   assert.match(markup, /Mixed output timeline/);
   assert.match(markup, /Cancel AI/);
-  assert.match(markup, /placeholder="Add a review note, or start with @ai or @review\."/);
-  assert.match(markup, /<textarea[^>]*disabled=""/);
-  assert.match(markup, /<input[^>]*type="checkbox"[^>]*disabled=""/);
-  assert.match(markup, /<button[^>]*disabled=""[^>]*>Submit review<\/button>/);
+  assert.doesNotMatch(markup, /Review composer/);
+  assert.doesNotMatch(markup, /Add to review/);
+  assert.doesNotMatch(markup, /placeholder="Write a review note, or start with @ai \/ @review\."/);
+  assert.doesNotMatch(markup, /Loop <code>@ai<\/code> until review passes/);
+  assert.doesNotMatch(markup, />Add note<\/button>/);
+  assert.doesNotMatch(markup, /Ready to land\?/);
 });
 
 test("Review tab prefers streamed worktree AI job output over stale running job summaries", async () => {
@@ -602,7 +608,7 @@ test("Review tab hides stale active AI state when the streamed job already compl
 
   assert.doesNotMatch(markup, /AI is active/);
   assert.doesNotMatch(markup, /No output captured\./);
-  assert.match(markup, />Submit review</);
+  assert.match(markup, />Add note</);
 });
 
 test("Review tab renders auto-review loop status from worktree state", async () => {
@@ -686,7 +692,7 @@ test("Review tab merge-delete action uses the selected base branch", async () =>
     }],
   });
 
-  assert.match(markup, /Review actions/);
-  assert.match(markup, /Merge <code>feature\/merge-actions<\/code> into <code>main<\/code> and then delete the worktree in one step\./);
+  assert.match(markup, /Ready to land\?/);
+  assert.match(markup, /Merge <code>feature\/merge-actions<\/code> into <code>main<\/code>, then delete the worktree in one step\./);
   assert.match(markup, />Merge and delete</);
 });

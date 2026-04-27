@@ -113,6 +113,34 @@ function getReviewSourceLabel(entry: ProjectManagementReviewEntry) {
   }
 }
 
+type ReviewCommandToken = "ai" | "review";
+
+function getReviewCommandToken(value: string): ReviewCommandToken | null {
+  const match = value.trimStart().match(/^@(ai|review)\b/i);
+  const token = match?.[1]?.toLowerCase();
+  return token === "ai" || token === "review" ? token : null;
+}
+
+function renderReviewDraftWithMentions(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  return value.split(/(@(?:ai|review)\b)/gi).map((part, index) => {
+    const isCommand = /^@(ai|review)$/i.test(part);
+
+    if (!isCommand) {
+      return <span key={`${index}-${part}`} className="theme-text">{part}</span>;
+    }
+
+    return (
+      <span key={`${index}-${part}`} className="border theme-border-emphasis px-1 font-mono theme-text-accent">
+        {part}
+      </span>
+    );
+  });
+}
+
 function mapOriginProjectManagementSubTabToUiTab(
   subTab: AiCommandOrigin["location"]["projectManagementSubTab"] | null | undefined,
 ): ProjectManagementSubTab {
@@ -1022,6 +1050,7 @@ export function WorktreeDetail({
   const [autoReviewLoopEnabled, setAutoReviewLoopEnabled] = useState(false);
   const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
   const [deletingReviewEntryId, setDeletingReviewEntryId] = useState<string | null>(null);
+  const reviewCommandToken = useMemo(() => getReviewCommandToken(reviewCommandDraft), [reviewCommandDraft]);
   const shouldStickToBottomRef = useRef(true);
   const previousScrollHeightRef = useRef(0);
   const quickLinks = worktree?.runtime?.quickLinks ?? [];
@@ -2421,84 +2450,17 @@ export function WorktreeDetail({
                   </div>
                 )}
 
-                <div className="theme-inline-panel p-4 space-y-3">
-                  {gitBranchOptions.length ? (
-                    <MatrixDropdown
-                      label="Review target"
-                      placeholder="Select review target"
-                      value={selectedGitBaseBranch ?? gitComparison?.baseBranch ?? ""}
-                      options={gitBranchOptions}
-                      disabled={Boolean(activeReviewAiJob)}
-                      onChange={(value) => setSelectedGitBaseBranch(value)}
+                {activeReviewAiJob ? (
+                  <MatrixCard as="div" selected className="p-4">
+                    <MatrixCardHeader
+                      eyebrow="AI stream"
+                      title="AI is working from Review"
+                      titleText="AI is working from Review"
+                      description="The composer is hidden while the worktree stream is active. Finish or cancel this run before adding notes, starting another command, or landing the branch."
+                      descriptionText="The composer is hidden while the worktree stream is active. Finish or cancel this run before adding notes, starting another command, or landing the branch."
+                      badges={<MatrixBadge tone="active" compact>streaming</MatrixBadge>}
                     />
-                  ) : null}
-                  <label className="block space-y-2">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Review entry or Smart AI command</span>
-                    <textarea
-                      value={reviewCommandDraft}
-                      onChange={(event) => setReviewCommandDraft(event.target.value)}
-                      placeholder="Add a review note, or start with @ai or @review."
-                      rows={5}
-                      disabled={Boolean(activeReviewAiJob)}
-                      className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
-                    />
-                  </label>
-                  <p className="text-sm theme-text-muted">
-                    Plain text adds a review entry. Use <code>@ai</code> to continue implementation, or <code>@review</code> to run a review-only pass over the current branch diff.
-                  </p>
-                  <label className="flex items-start gap-3 text-sm theme-text-muted">
-                    <input
-                      type="checkbox"
-                      checked={autoReviewLoopEnabled}
-                      onChange={(event) => setAutoReviewLoopEnabled(event.target.checked)}
-                      disabled={Boolean(activeReviewAiJob)}
-                      className="mt-1 h-4 w-4 rounded-none border theme-border-subtle bg-transparent"
-                    />
-                    <span>
-                      Auto-review loop: after <code>@ai</code>, keep alternating implementation and review on the server until review passes or 10 attempts are used.
-                    </span>
-                  </label>
-                  {worktree?.reviewLoop ? (
-                    <div className="border theme-border-subtle p-3 text-sm">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Auto-review loop</p>
-                        <MatrixBadge tone={worktree.reviewLoop.status === "passed" ? "active" : worktree.reviewLoop.status === "failed" ? "warning" : "neutral"} compact>
-                          {worktree.reviewLoop.status}
-                        </MatrixBadge>
-                        <MatrixBadge tone="neutral" compact>
-                          attempt {worktree.reviewLoop.attemptCount}/{worktree.reviewLoop.maxAttempts}
-                        </MatrixBadge>
-                        {worktree.reviewLoop.currentPhase ? (
-                          <MatrixBadge tone="neutral" compact>
-                            {worktree.reviewLoop.currentPhase}
-                          </MatrixBadge>
-                        ) : null}
-                      </div>
-                      <p className="mt-2 theme-text-muted">Latest request: {worktree.reviewLoop.latestRequest}</p>
-                      {worktree.reviewLoop.failureMessage ? (
-                        <p className="mt-2 theme-text-warning">{worktree.reviewLoop.failureMessage}</p>
-                      ) : null}
-                      {worktree.reviewLoop.latestReviewResult && !worktree.reviewLoop.latestReviewResult.passed ? (
-                        <div className="mt-2 space-y-1">
-                          <p className="theme-text-muted">Blocking review issues:</p>
-                          {worktree.reviewLoop.latestReviewResult.issues.map((issue) => (
-                            <div key={issue.id} className="border theme-border-subtle p-2">
-                              <p className="font-medium theme-text">{issue.summary}</p>
-                              <p className="mt-1 theme-text-muted">{issue.details}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {activeReviewAiJob ? (
-                    <div className="space-y-3 border theme-border-subtle p-3">
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">AI is active</p>
-                        <p className="mt-2 text-sm theme-text-muted">
-                          Review input is disabled while AI is active. Wait for the current AI run to finish before adding notes or starting another command.
-                        </p>
-                      </div>
+                    <div className="mt-4">
                       <ProjectManagementAiStreamViewer
                         source="worktree"
                         jobId={activeReviewAiJob.jobId}
@@ -2508,43 +2470,175 @@ export function WorktreeDetail({
                         onCancel={() => void onCancelProjectManagementAiCommand()}
                       />
                     </div>
-                  ) : null}
-                  <div className="border theme-border-subtle p-3 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Review actions</p>
-                        <p className="mt-2 text-sm theme-text-muted">
-                          Merge <code>{worktree?.branch ?? "this worktree"}</code> into <code>{selectedGitBaseBranch ?? gitComparison?.baseBranch ?? "the selected target"}</code> and then delete the worktree in one step.
-                        </p>
+                  </MatrixCard>
+                ) : (
+                  <MatrixCard as="div" className="p-4">
+                    <MatrixCardHeader
+                      eyebrow="Review composer"
+                      title="Add to review"
+                      titleText="Add to review"
+                      description="Write a note, or start with a highlighted command to route the message to Smart AI."
+                      descriptionText="Write a note, or start with a highlighted command to route the message to Smart AI."
+                      badges={reviewCommandToken ? <MatrixBadge tone="active" compact>@{reviewCommandToken}</MatrixBadge> : <MatrixBadge tone="neutral" compact>plain note</MatrixBadge>}
+                    />
+                    <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
+                      <div className="space-y-3">
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <button
+                            type="button"
+                            className={`border px-3 py-2 text-left transition-colors ${reviewCommandToken === "ai" ? "theme-border-emphasis theme-inline-panel-emphasis" : "theme-border-subtle theme-hover-text-strong"}`}
+                            onClick={() => setReviewCommandDraft((current) => current.trim() ? `@ai ${current.replace(/^@(ai|review)\b\s*/i, "")}` : "@ai ")}
+                          >
+                            <span className="font-mono text-sm theme-text-accent">@ai</span>
+                            <span className="mt-1 block text-xs theme-text-muted">Continue implementation against the selected target.</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={`border px-3 py-2 text-left transition-colors ${reviewCommandToken === "review" ? "theme-border-emphasis theme-inline-panel-emphasis" : "theme-border-subtle theme-hover-text-strong"}`}
+                            onClick={() => setReviewCommandDraft((current) => current.trim() ? `@review ${current.replace(/^@(ai|review)\b\s*/i, "")}` : "@review ")}
+                          >
+                            <span className="font-mono text-sm theme-text-accent">@review</span>
+                            <span className="mt-1 block text-xs theme-text-muted">Run a review-only pass over the selected target diff.</span>
+                          </button>
+                        </div>
+                        <label className="block space-y-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Message</span>
+                          <div className="relative">
+                            {reviewCommandDraft ? (
+                              <div className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 text-sm leading-5" aria-hidden="true">
+                                {renderReviewDraftWithMentions(reviewCommandDraft)}
+                              </div>
+                            ) : null}
+                            <textarea
+                              value={reviewCommandDraft}
+                              onChange={(event) => setReviewCommandDraft(event.target.value)}
+                              placeholder="Write a review note, or start with @ai / @review."
+                              rows={5}
+                              className={`matrix-input relative min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none ${reviewCommandDraft ? "bg-transparent text-transparent caret-current" : ""}`}
+                            />
+                          </div>
+                        </label>
+                        {reviewCommandToken ? (
+                          <div className="border theme-border-emphasis px-3 py-2 text-sm theme-inline-panel-emphasis">
+                            Detected <code>@{reviewCommandToken}</code>: {reviewCommandToken === "ai" ? "Smart AI will continue implementation." : "Smart AI will review the selected target diff without changing files."}
+                          </div>
+                        ) : (
+                          <p className="text-sm theme-text-muted">No command detected. This will save as a normal review note.</p>
+                        )}
+                        <label className="flex items-start gap-3 border theme-border-subtle px-3 py-2 text-sm theme-text-muted">
+                          <input
+                            type="checkbox"
+                            checked={autoReviewLoopEnabled}
+                            onChange={(event) => setAutoReviewLoopEnabled(event.target.checked)}
+                            className="mt-1 h-4 w-4 rounded-none border theme-border-subtle bg-transparent"
+                          />
+                          <span>
+                            Loop <code>@ai</code> until review passes, up to 10 attempts.
+                          </span>
+                        </label>
+                      </div>
+                      <div className="space-y-3">
+                        {gitBranchOptions.length ? (
+                          <MatrixDropdown
+                            label="Review target"
+                            placeholder="Select review target"
+                            value={selectedGitBaseBranch ?? gitComparison?.baseBranch ?? ""}
+                            options={gitBranchOptions}
+                            onChange={(value) => setSelectedGitBaseBranch(value)}
+                          />
+                        ) : null}
+                        <div className="border theme-border-subtle px-3 py-3 text-sm theme-text-muted">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Routing</p>
+                          <p className="mt-2">
+                            Reviews compare <code>{worktree?.branch ?? "this worktree"}</code> against <code>{selectedGitBaseBranch ?? gitComparison?.baseBranch ?? "the selected target"}</code>.
+                          </p>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap justify-end gap-2">
+                    <MatrixCardFooter className="mt-4 justify-between gap-3">
+                      <p className="text-xs theme-text-muted">
+                        Commands only apply at the start of the message. Leave the message plain to add a comment.
+                      </p>
                       <button
                         type="button"
-                        className="matrix-button matrix-button-danger rounded-none px-3 py-2 text-sm"
-                        disabled={Boolean(activeReviewAiJob) || !worktree?.branch || !gitComparison?.baseBranch}
-                        onClick={() => {
-                          if (!worktree?.branch) {
-                            return;
-                          }
-                          void onMergeDeleteWorktreeIntoBase(worktree.branch, selectedGitBaseBranch ?? gitComparison?.baseBranch ?? undefined);
-                        }}
+                        className="matrix-button rounded-none px-3 py-2 text-sm"
+                        disabled={projectManagementSaving || reviewFollowUpSubmitting || !reviewCommandDraft.trim()}
+                        onClick={() => void submitReviewCommand()}
                       >
-                        Merge and delete
+                        {projectManagementSaving ? "Saving..." : reviewFollowUpSubmitting ? "Starting Smart AI..." : reviewCommandToken ? "Start command" : "Add note"}
                       </button>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <button
-                      type="button"
-                      className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={Boolean(activeReviewAiJob) || projectManagementSaving || reviewFollowUpSubmitting || !reviewCommandDraft.trim()}
-                      onClick={() => void submitReviewCommand()}
-                    >
-                      {projectManagementSaving ? "Saving..." : reviewFollowUpSubmitting ? "Starting Smart AI..." : "Submit review"}
-                    </button>
-                  </div>
-                </div>
+                    </MatrixCardFooter>
+                  </MatrixCard>
+                )}
+
+                {worktree?.reviewLoop ? (
+                  <MatrixCard as="div" className="p-4">
+                    <MatrixCardHeader
+                      eyebrow="Auto-review loop"
+                      title="Loop status"
+                      titleText="Loop status"
+                      description={`Latest request: ${worktree.reviewLoop.latestRequest}`}
+                      descriptionText={`Latest request: ${worktree.reviewLoop.latestRequest}`}
+                      badges={(
+                        <>
+                          <MatrixBadge tone={worktree.reviewLoop.status === "passed" ? "active" : worktree.reviewLoop.status === "failed" ? "warning" : "neutral"} compact>
+                            {worktree.reviewLoop.status}
+                          </MatrixBadge>
+                          <MatrixBadge tone="neutral" compact>
+                            attempt {worktree.reviewLoop.attemptCount}/{worktree.reviewLoop.maxAttempts}
+                          </MatrixBadge>
+                          {worktree.reviewLoop.currentPhase ? <MatrixBadge tone="neutral" compact>{worktree.reviewLoop.currentPhase}</MatrixBadge> : null}
+                        </>
+                      )}
+                    />
+                    {worktree.reviewLoop.failureMessage ? (
+                      <p className="mt-3 text-sm theme-text-warning">{worktree.reviewLoop.failureMessage}</p>
+                    ) : null}
+                    {worktree.reviewLoop.latestReviewResult && !worktree.reviewLoop.latestReviewResult.passed ? (
+                      <div className="mt-3 space-y-2 text-sm">
+                        <p className="theme-text-muted">Blocking review issues:</p>
+                        {worktree.reviewLoop.latestReviewResult.issues.map((issue) => (
+                          <div key={issue.id} className="border theme-border-subtle p-3">
+                            <p className="font-medium theme-text">{issue.summary}</p>
+                            <p className="mt-1 theme-text-muted">{issue.details}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </MatrixCard>
+                ) : null}
+
+                {!activeReviewAiJob ? (
+                  <MatrixCard as="div" className="p-4">
+                    <MatrixCardHeader
+                      eyebrow="Landing"
+                      title="Ready to land?"
+                      titleText="Ready to land?"
+                      description={(
+                        <span>
+                          Merge <code>{worktree?.branch ?? "this worktree"}</code> into <code>{selectedGitBaseBranch ?? gitComparison?.baseBranch ?? "the selected target"}</code>, then delete the worktree in one step.
+                        </span>
+                      )}
+                      descriptionText={`Merge ${worktree?.branch ?? "this worktree"} into ${selectedGitBaseBranch ?? gitComparison?.baseBranch ?? "the selected target"}, then delete the worktree in one step.`}
+                      badges={<MatrixBadge tone="danger" compact>destructive</MatrixBadge>}
+                      actions={(
+                        <button
+                          type="button"
+                          className="matrix-button matrix-button-danger rounded-none px-3 py-2 text-sm"
+                          disabled={!worktree?.branch || !gitComparison?.baseBranch}
+                          onClick={() => {
+                            if (!worktree?.branch) {
+                              return;
+                            }
+                            void onMergeDeleteWorktreeIntoBase(worktree.branch, selectedGitBaseBranch ?? gitComparison?.baseBranch ?? undefined);
+                          }}
+                        >
+                          Merge and delete
+                        </button>
+                      )}
+                    />
+                  </MatrixCard>
+                ) : null}
               </>
             )}
           </div>
