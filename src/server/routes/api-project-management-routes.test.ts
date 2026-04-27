@@ -597,7 +597,7 @@ test("project-management status route supports repeated lane moves for the same 
     assert.equal(createResponse.status, 201);
     const createPayload = await createResponse.json() as { document: { id: string } };
 
-    for (const status of ["todo", "in-progress", "done", "todo"]) {
+    for (const status of ["todo", "in-progress", "review_passed", "done", "todo"]) {
       const statusResponse = await server.fetch(`/api/project-management/documents/${encodeURIComponent(createPayload.document.id)}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -612,7 +612,7 @@ test("project-management status route supports repeated lane moves for the same 
     assert.equal(updatedDocument.document.status, "todo");
 
     const history = await getProjectManagementDocumentHistory(repo.repoRoot, createPayload.document.id);
-    assert.equal(history.history.length, 6);
+    assert.equal(history.history.length, 7);
     assert.equal(history.history.at(-1)?.status, "todo");
   } finally {
     await server.close();

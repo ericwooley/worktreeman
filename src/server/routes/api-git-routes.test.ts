@@ -115,6 +115,7 @@ test("git compare merge merges a feature branch into main", { concurrency: false
 
     const updatedDocument = await getProjectManagementDocument(repo.repoRoot, createDocumentPayload.document.id);
     assert.equal(updatedDocument.document.title, "Merge tracking doc");
+    assert.equal(updatedDocument.document.status, "done");
 
     const updatedReview = await getProjectManagementDocumentReview(repo.repoRoot, createDocumentPayload.document.id);
     const latestComment = updatedReview.review.entries.at(-1);

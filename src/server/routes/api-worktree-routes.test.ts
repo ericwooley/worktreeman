@@ -21,6 +21,7 @@ import { createWorktree } from "../services/git-service.js";
 import { getAiCommandJob, startAiCommandJob, waitForAiCommandJob } from "../services/ai-command-service.js";
 import { stopAllBackgroundCommands } from "../services/background-command-service.js";
 import { buildWorktreeAiCompletedComment, buildWorktreeAiStartedComment } from "../services/project-management-comment-formatters.js";
+import { getProjectManagementDocument } from "../services/project-management-service.js";
 import { getProjectManagementDocumentReview } from "../services/project-management-review-service.js";
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
@@ -1320,6 +1321,9 @@ test("review follow-up AI can start an automatic review loop and persist passed 
     assert.equal(loopState.currentPhase, null);
     assert.equal(loopState.latestReviewResult?.passed, true);
     assert.equal(loopState.failureMessage, null);
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, linkedDocumentId);
+    assert.equal(updatedDocument.document.status, "review_passed");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

@@ -35,7 +35,7 @@ test("mergeUpdatedProjectManagementDocumentIntoList updates the matching documen
       markdown: "# Second\n",
     }],
     availableTags: ["feature", "plan", "ux"],
-    availableStatuses: ["backlog", "todo", "in-progress", "blocked", "done", "reference"],
+    availableStatuses: ["backlog", "todo", "in-progress", "review_passed", "done", "reference"],
   }, {
     ...(sampleDocument as ProjectManagementDocumentSummary),
     status: "in-progress",

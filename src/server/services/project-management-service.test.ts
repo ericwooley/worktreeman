@@ -77,27 +77,27 @@ test("create and update project-management documents persist markdown, summary, 
 
     const updated = await updateProjectManagementDocument(repoRoot, created.document.id, {
       title: "Bug Inbox",
-      summary: "Track incoming bugs, blockers, and owner handoffs.",
+      summary: "Track incoming bugs, reviews, and owner handoffs.",
       markdown: "# Bug Inbox\n\n- Investigate login loop\n",
-      tags: ["bug", "blocked"],
-      status: "blocked",
+      tags: ["bug", "review"],
+      status: "review_passed",
       assignee: "Taylor",
     });
     const updatedDetail = await getProjectManagementDocument(repoRoot, created.document.id);
 
     assert.match(updatedDetail.document.markdown, /Investigate login loop/);
-    assert.equal(updated.document.summary, "Track incoming bugs, blockers, and owner handoffs.");
-    assert.deepEqual(updated.document.tags, ["bug", "blocked"]);
-    assert.equal(updated.document.status, "blocked");
+    assert.equal(updated.document.summary, "Track incoming bugs, reviews, and owner handoffs.");
+    assert.deepEqual(updated.document.tags, ["bug", "review"]);
+    assert.equal(updated.document.status, "review_passed");
     assert.equal(updated.document.assignee, "Taylor");
 
     const history = await getProjectManagementDocumentHistory(repoRoot, created.document.id);
     assert.equal(history.history.length, 2);
     assert.deepEqual(history.history.map((entry) => entry.action), ["create", "update"]);
     assert.match(history.history[1].diff, /-status: todo/);
-    assert.match(history.history[1].diff, /\+status: blocked/);
+    assert.match(history.history[1].diff, /\+status: review_passed/);
     assert.match(history.history[1].diff, /-summary: Track incoming bugs and research follow-ups\./);
-    assert.match(history.history[1].diff, /\+summary: Track incoming bugs, blockers, and owner handoffs\./);
+    assert.match(history.history[1].diff, /\+summary: Track incoming bugs, reviews, and owner handoffs\./);
     assert.match(history.history[1].diff, /\+\- Investigate login loop|\+Investigate login loop|Investigate login loop/);
   } finally {
     await destroyTestRepo(repoRoot);
@@ -201,6 +201,7 @@ test("reference status is preserved but excluded from the board status set", asy
 
     const list = await listProjectManagementDocuments(repoRoot);
     assert.equal(list.availableStatuses.includes("reference"), true);
+    assert.equal(list.availableStatuses.includes("review_passed"), true);
   } finally {
     await destroyTestRepo(repoRoot);
   }
@@ -483,11 +484,11 @@ test("moving a document toward in-progress only advances backlog and todo docume
       tags: ["feature"],
       status: "todo",
     });
-    const blocked = await createProjectManagementDocument(repoRoot, {
-      title: "Blocked document",
-      markdown: "# Blocked document\n",
-      tags: ["bug"],
-      status: "blocked",
+    const reviewPassed = await createProjectManagementDocument(repoRoot, {
+      title: "Review passed document",
+      markdown: "# Review passed document\n",
+      tags: ["review"],
+      status: "review_passed",
     });
     const done = await createProjectManagementDocument(repoRoot, {
       title: "Done document",
@@ -504,25 +505,25 @@ test("moving a document toward in-progress only advances backlog and todo docume
 
     const backlogMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, backlog.document.id);
     const todoMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, todo.document.id);
-    const blockedMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, blocked.document.id);
+    const reviewPassedMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, reviewPassed.document.id);
     const doneMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, done.document.id);
     const referenceMoved = await moveProjectManagementDocumentTowardInProgress(repoRoot, reference.document.id);
 
     assert.equal(backlogMoved.document.status, "in-progress");
     assert.equal(todoMoved.document.status, "in-progress");
-    assert.equal(blockedMoved.document.status, "blocked");
+    assert.equal(reviewPassedMoved.document.status, "review_passed");
     assert.equal(doneMoved.document.status, "done");
     assert.equal(referenceMoved.document.status, "reference");
 
     const backlogHistory = await getProjectManagementDocumentHistory(repoRoot, backlog.document.id);
     const todoHistory = await getProjectManagementDocumentHistory(repoRoot, todo.document.id);
-    const blockedHistory = await getProjectManagementDocumentHistory(repoRoot, blocked.document.id);
+    const reviewPassedHistory = await getProjectManagementDocumentHistory(repoRoot, reviewPassed.document.id);
     const doneHistory = await getProjectManagementDocumentHistory(repoRoot, done.document.id);
     const referenceHistory = await getProjectManagementDocumentHistory(repoRoot, reference.document.id);
 
     assert.equal(backlogHistory.history.length, 2);
     assert.equal(todoHistory.history.length, 2);
-    assert.equal(blockedHistory.history.length, 1);
+    assert.equal(reviewPassedHistory.history.length, 1);
     assert.equal(doneHistory.history.length, 1);
     assert.equal(referenceHistory.history.length, 1);
     assert.match(backlogHistory.history.at(-1)?.diff ?? "", /\+status: in-progress/);

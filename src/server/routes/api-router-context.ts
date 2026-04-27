@@ -752,7 +752,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     },
     onComplete: details.applyDocumentUpdateToDocumentId || details.reviewDocumentId || details.autoCommitDirtyWorktree
       ? async ({ stdout, stderr }) => {
-          await completeAiCommandRun({
+          const reviewResult = await completeAiCommandRun({
             repoRoot: options.repoRoot,
             branch: details.branch,
             commandId: details.commandId,
@@ -768,6 +768,9 @@ export function createApiRouterContext(options: ApiRouterOptions) {
           });
           if (details.reviewDocumentId) {
             emitProjectManagementReviewsRefresh();
+            if (reviewResult?.passed) {
+              emitProjectManagementDocumentsRefresh();
+            }
           }
         }
       : undefined,

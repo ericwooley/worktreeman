@@ -6,7 +6,11 @@ import type {
 } from "../../shared/types.js";
 import { autoCommitGitChanges } from "./git-service.js";
 import { addProjectManagementReviewEntry } from "./project-management-review-service.js";
-import { getProjectManagementDocument, updateProjectManagementDocument } from "./project-management-service.js";
+import {
+  getProjectManagementDocument,
+  updateProjectManagementDocument,
+  updateProjectManagementStatus,
+} from "./project-management-service.js";
 import { buildWorktreeAiCompletedComment } from "./project-management-comment-formatters.js";
 import { logServerEvent } from "../utils/server-logger.js";
 
@@ -155,6 +159,10 @@ export async function completeAiCommandRun(options: {
       documentId: options.reviewDocumentId,
       error: error instanceof Error ? error.message : String(error),
       }, "error");
+  }
+
+  if (reviewResult?.passed) {
+    await updateProjectManagementStatus(options.repoRoot, options.reviewDocumentId, "review_passed");
   }
 
   return reviewResult;

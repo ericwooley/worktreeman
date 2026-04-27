@@ -194,7 +194,7 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
     documents: [...sampleDocuments],
     worktrees: sampleWorktrees,
     availableTags: ["feature", "ux", "plan", "reference"],
-    availableStatuses: ["backlog", "todo", "in-progress", "blocked", "done", "reference"],
+    availableStatuses: ["backlog", "todo", "in-progress", "review_passed", "done", "reference"],
     projectManagementUsers: sampleUsers,
     activeSubTab: "document",
     selectedDocumentId: "doc-1",
@@ -263,7 +263,7 @@ test("create form renders without seeded defaults", () => {
       documents={[]}
       worktrees={[]}
       availableTags={[]}
-      availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      availableStatuses={["backlog", "todo", "in-progress", "review_passed", "done", "reference"]}
       projectManagementUsers={sampleUsers}
       activeSubTab="create"
       selectedDocumentId={null}
@@ -372,7 +372,7 @@ test("document view shows dependency summary and modal entrypoint", () => {
       documents={[...sampleDocuments]}
       worktrees={sampleWorktrees}
       availableTags={["feature", "ux", "plan", "reference"]}
-      availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      availableStatuses={["backlog", "todo", "in-progress", "review_passed", "done", "reference"]}
       projectManagementUsers={sampleUsers}
       activeSubTab="document"
       selectedDocumentId="doc-1"
@@ -445,7 +445,7 @@ test("document view renders summary without inline review timeline", () => {
       documents={[...sampleDocuments]}
       worktrees={sampleWorktrees}
       availableTags={["feature", "ux", "plan", "reference"]}
-      availableStatuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      availableStatuses={["backlog", "todo", "in-progress", "review_passed", "done", "reference"]}
       projectManagementUsers={sampleUsers}
       activeSubTab="document"
       selectedDocumentId="doc-1"
@@ -500,7 +500,7 @@ test("dependency picker modal renders current dependencies and searchable docume
       document={sampleDocument}
       documents={[...sampleDocuments]}
       availableTags={["feature", "ux", "plan", "reference"]}
-      statuses={["backlog", "todo", "in-progress", "blocked", "done", "reference"]}
+      statuses={["backlog", "todo", "in-progress", "review_passed", "done", "reference"]}
       dependencyIds={["doc-2"]}
       onClose={() => undefined}
       onOpenGraph={() => undefined}

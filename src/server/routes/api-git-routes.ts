@@ -33,6 +33,7 @@ import {
 import { listBackgroundCommands } from "../services/background-command-service.js";
 import { addProjectManagementReviewEntry } from "../services/project-management-review-service.js";
 import { buildWorktreeMergeComment } from "../services/project-management-comment-formatters.js";
+import { updateProjectManagementStatus } from "../services/project-management-service.js";
 import { buildRuntimeProcessEnv } from "../services/runtime-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
@@ -254,6 +255,18 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
             branch: compareBranch,
             documentId: linkedDocument.documentId,
             stage: "merge",
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        }
+
+        try {
+          await updateProjectManagementStatus(context.repoRoot, linkedDocument.documentId, "done");
+          context.emitProjectManagementDocumentsRefresh();
+        } catch (error) {
+          logServerEvent("project-management-status", "failed", {
+            branch: compareBranch,
+            documentId: linkedDocument.documentId,
+            stage: "merge-done",
             error: error instanceof Error ? error.message : String(error),
           }, "error");
         }
