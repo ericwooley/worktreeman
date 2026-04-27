@@ -94,12 +94,13 @@ test("AI log detail renders a mixed output timeline instead of split stdout and 
   assert.match(markup, /feature-ai-log/);
   assert.match(markup, /Mixed output timeline/);
   assert.match(markup, /Combined stdout and stderr in arrival order\./);
+  assert.match(markup, /Initial prompt/);
+  assert.match(markup, /Review the markdown prompt that Smart AI received before it started running\./);
   assert.match(markup, /Show elapsed time/);
   assert.match(markup, /stdout/);
   assert.match(markup, /stderr/);
   assert.match(markup, /Warning output/);
-  assert.doesNotMatch(markup, /Response stdout/);
-  assert.doesNotMatch(markup, /Response stderr/);
+  assert.doesNotMatch(markup, /Summarize the work\./);
   assert.doesNotMatch(markup, /pm-markdown text-sm theme-text/);
   assert.match(markup, /theme-ai-output-entry/);
   assert.match(markup, /theme-ai-output-entry-secondary/);
