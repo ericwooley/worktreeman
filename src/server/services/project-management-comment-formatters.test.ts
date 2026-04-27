@@ -71,9 +71,7 @@ test("buildWorktreeAiCompletedComment preserves full output details without elli
 
   assert.match(comment, /stdout line 120/);
   assert.match(comment, /stderr line 120/);
-  assert.doesNotMatch(comment, /
-…
-```/);
+  assert.equal(comment.includes("\n…\n```"), false);
 });
 
 test("buildWorktreeAiStartedComment uses review heading for review-only runs", () => {
