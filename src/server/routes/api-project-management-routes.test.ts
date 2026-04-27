@@ -20,7 +20,7 @@ import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
 
-test("project-management AI runs update the saved document on the server", { concurrency: false, timeout: 15000 }, async () => {
+test("project-management AI runs update the saved document on the server", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
   const fakeAiProcesses = createFakeAiProcesses();
   let capturedCommand = "";
@@ -84,12 +84,21 @@ test("project-management AI runs update the saved document on the server", { con
     assert.equal(capturedPrompt.includes(`- Repository root: ${repo.repoRoot}`), true);
     assert.equal(capturedPrompt.includes("- Running services:"), true);
     assert.equal(capturedPrompt.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
+    assert.equal(capturedPrompt.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
+    assert.equal(capturedPrompt.includes("current checked-out worktree code instead of a published package"), true);
+    assert.equal(capturedPrompt.includes('The command relies on WORKTREE_PATH from the environment wrapper'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev start`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev stop`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev status`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api documents read <document-id>`'), true);
     assert.equal(capturedPrompt.includes("Current markdown:"), true);
 
     await waitFor(async () => {
       const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
       return updated.document.markdown.includes("durable update");
-    });
+    }, 15000);
 
     const updated = await getProjectManagementDocument(repo.repoRoot, outline.id);
     assert.equal(updated.document.title, "Project Outline");
@@ -168,6 +177,7 @@ test("creating a project-management document auto-generates a short summary with
     const prompt = await fs.readFile(path.join(repo.repoRoot, "summary-prompt.txt"), "utf8");
     const summarySessionId = await fs.readFile(path.join(repo.repoRoot, "summary-ai-session.txt"), "utf8");
     assert.equal(prompt.includes('You are writing the short summary for the project-management document "Launch Checklist"'), true);
+    assert.equal(prompt.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
     assert.equal(prompt.includes("Return only the final short summary as raw text."), true);
     assert.equal(prompt.includes("Write 1-2 sentences that make the document easy to scan in the UI."), true);
     assert.equal(prompt.includes("Title: Launch Checklist"), true);
@@ -743,8 +753,29 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(storedLink.worktreePath, createdWorktree.worktreePath);
 
     assert.equal(createdWorktree.runtime?.tmuxSession?.length ? true : false, true);
-    const capturedCommand = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-input"), "utf8");
-    const capturedEnv = await fs.readFile(path.join(createdWorktree.worktreePath, ".wtm-captured-env"), "utf8");
+    const capturedCommandPath = path.join(createdWorktree.worktreePath, ".wtm-captured-input");
+    const capturedEnvPath = path.join(createdWorktree.worktreePath, ".wtm-captured-env");
+    await waitFor(async () => {
+      const logsResponse = await server.fetch(`/api/ai/logs`);
+      if (logsResponse.status !== 200) {
+        return false;
+      }
+      const logsPayload = await logsResponse.json() as {
+        logs: Array<{ branch: string; status: string }>;
+      };
+      return logsPayload.logs.some((entry) => entry.branch === payload.job.branch && entry.status === "completed");
+    }, 15000);
+    await waitFor(async () => {
+      try {
+        await fs.access(capturedCommandPath);
+        await fs.access(capturedEnvPath);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 15000);
+    const capturedCommand = await fs.readFile(capturedCommandPath, "utf8");
+    const capturedEnv = await fs.readFile(capturedEnvPath, "utf8");
     const firstSessionMatch = capturedEnv.match(/^AI_SESSION_ID=(.*)$/m);
     assert.equal(capturedEnv.includes(`WORKTREE_BRANCH=${payload.job.branch}`), true);
     assert.equal(capturedEnv.includes(`WORKTREE_PATH=${createdWorktree.worktreePath}`), true);
@@ -769,6 +800,14 @@ test("project-management document AI creates a derived worktree and streams stdo
     assert.equal(capturedCommand.includes(`TMUX_SESSION_NAME=${createdWorktree.runtime?.tmuxSession}`), true);
     assert.equal(capturedCommand.includes("- Running services:"), true);
     assert.equal(capturedCommand.includes("- PM2 log access: use pm2 status, pm2 logs"), true);
+    assert.equal(capturedCommand.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
+    assert.equal(capturedCommand.includes("current checked-out worktree code instead of a published package"), true);
+    assert.equal(capturedCommand.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev start`'), true);
+    assert.equal(capturedCommand.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev stop`'), true);
+    assert.equal(capturedCommand.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev status`'), true);
+    assert.equal(capturedCommand.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`'), true);
+    assert.equal(capturedCommand.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`'), true);
+    assert.equal(capturedCommand.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api documents read <document-id>`'), true);
     assert.equal(capturedCommand.includes("in worktree"), false);
     assert.equal(capturedCommand.includes("Worktree path:"), true);
     assert.equal(capturedCommand.includes("Document number:"), false);

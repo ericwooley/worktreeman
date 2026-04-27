@@ -714,6 +714,14 @@ test("git compare resolve-conflicts uses AI output to rewrite conflict files", {
     };
     assert.equal(detailPayload.log.branch, "feature-ai-resolve-merge");
     assert.equal(detailPayload.log.request.includes("Resolve merge conflicts while merging main into branch feature-ai-resolve-merge."), true);
+    assert.equal(detailPayload.log.request.includes("Environment wrapper:"), true);
+    assert.equal(detailPayload.log.request.includes(`- Repository root: ${repo.repoRoot}`), true);
+    assert.equal(detailPayload.log.request.includes(`- Branch: ${feature.branch}`), true);
+    assert.equal(detailPayload.log.request.includes(`- Worktree path: ${feature.worktreePath}`), true);
+    assert.equal(detailPayload.log.request.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
+    assert.equal(detailPayload.log.request.includes("current checked-out worktree code instead of a published package"), true);
+    assert.equal(detailPayload.log.request.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`'), true);
+    assert.equal(detailPayload.log.request.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api documents read <document-id>`'), true);
     assert.equal(detailPayload.log.response.stdout, "resolved by ai\n");
     assert.equal(detailPayload.log.origin?.kind, "git-conflict-resolution");
     assert.equal(detailPayload.log.origin?.location.tab, "git");

@@ -67,6 +67,7 @@ import {
   createProjectManagementDocumentOrigin,
   generateProjectManagementDocumentSummary,
   renderAiCommand,
+  renderAiExecutionCommand,
   resolveProjectManagementDocumentWorktreeBranch,
   resolveRequestedAiCommandId,
 } from "./api-helpers.js";
@@ -637,6 +638,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
       });
 
       const renderedCommand = renderAiCommand(template, input);
+      const executionCommand = context.hasInjectedAiProcesses ? undefined : renderAiExecutionCommand(template);
       const runDetails = {
         worktreeId: worktree.id,
         branch,
@@ -647,6 +649,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         origin,
         input,
         renderedCommand,
+        executionCommand,
         worktreePath,
         env,
         reviewDocumentId: documentId,

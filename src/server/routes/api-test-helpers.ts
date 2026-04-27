@@ -449,6 +449,7 @@ export async function openSse(url: string) {
   });
   assert.equal(response.statusCode, 200);
   const decoder = new TextDecoder();
+  const streamSocket = response.socket;
   let buffer = "";
   let ended = false;
   let closed = false;
@@ -554,6 +555,7 @@ export async function openSse(url: string) {
       const ignoreClosedStreamError = () => undefined;
       streamRequest.on("error", ignoreClosedStreamError);
       response.on("error", ignoreClosedStreamError);
+      streamSocket?.on("error", ignoreClosedStreamError);
       const closePromise = response.destroyed
         ? Promise.resolve()
         : new Promise<void>((resolve) => {
@@ -561,6 +563,7 @@ export async function openSse(url: string) {
             setTimeout(resolve, 100);
           });
       response.resume();
+      response.destroy();
       streamRequest.destroy();
       wake();
       await closePromise;
@@ -631,8 +634,13 @@ export async function startApiServer(
     }
 
     server = http.createServer(app);
+    server.on("error", () => undefined);
+    server.on("clientError", (_error, socket) => {
+      socket.destroy();
+    });
     server.on("connection", (socket) => {
       liveSockets.add(socket);
+      socket.on("error", () => undefined);
       socket.on("close", () => {
         liveSockets.delete(socket);
       });

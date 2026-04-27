@@ -16,6 +16,7 @@ import { getAiCommandJob } from "./ai-command-service.js";
 import { stopOperationalStateStore } from "./operational-state-service.js";
 import { getAiCommandProcessName } from "./ai-command-process-service.js";
 import { worktreeId } from "../../shared/worktree-id.js";
+import { renderAiExecutionCommand } from "../routes/api-helpers.js";
 
 async function waitFor<T>(callback: () => Promise<T | null | undefined> | T | null | undefined, timeoutMs = 15000, intervalMs = 50): Promise<T> {
   const startedAt = Date.now();
@@ -278,5 +279,74 @@ test("queued project-management AI jobs stay running before the worker spawns th
     await stopOperationalStateStore(rootDir).catch(() => undefined);
     await fs.rm(rootDir, { recursive: true, force: true });
   }
+  });
+});
+
+test("queued project-management AI jobs execute executionCommand templates with WTM_AI_INPUT", { timeout: 20000 }, async () => {
+  await withRealQueue(async () => {
+    configureDatabaseConnection(null);
+
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "wtm-ai-worker-"));
+    let databaseStarted = false;
+    let repoRoot = rootDir;
+
+    try {
+      await createBareRepoLayout({ rootDir });
+      await ensurePrimaryWorktrees({ rootDir, createMissingBranches: true });
+      await initRepository(rootDir, { baseDir: ".", runtimePorts: [], force: false });
+      const repo = await findRepoContext(rootDir);
+      repoRoot = repo.repoRoot;
+      const database = await startDatabaseSocketServer(repo.repoRoot);
+      databaseStarted = true;
+      configureDatabaseConnection(database.connectionString);
+
+      const worker = await startProjectManagementAiWorker({ repoRoot: repo.repoRoot });
+      try {
+        const targetWorktreePath = path.join(repo.repoRoot, "main");
+        const proofFilePath = path.join(targetWorktreePath, "execution-proof.txt");
+        const input = `queued input with 'quotes' and $dollars`;
+        const executionTemplate = "node -e 'require(\"node:fs\").writeFileSync(process.env.PROOF_PATH, process.env.WTM_AI_INPUT ?? \"\", \"utf8\")' && printf %s $WTM_AI_INPUT";
+        const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+        env.PROOF_PATH = proofFilePath;
+
+        const startedJob = await enqueueProjectManagementAiJob({
+          repoRoot: repo.repoRoot,
+          payload: {
+            branch: "main",
+            worktreeId: worktreeId(targetWorktreePath),
+            commandId: "smart",
+            worktreePath: targetWorktreePath,
+            input,
+            renderedCommand: "node -e \"process.exit(17)\"",
+            executionCommand: renderAiExecutionCommand(executionTemplate),
+            env,
+            aiCommands: {
+              smart: "smart",
+              simple: "simple",
+              autoStartRuntime: false,
+            },
+            documentId: "doc-456",
+          },
+        });
+
+        const completedJob = await waitFor(async () => {
+          const job = await getAiCommandJob(repo.repoRoot, worktreeId(targetWorktreePath), { reconcile: false });
+          return job?.jobId === startedJob.jobId && job.status === "completed" ? job : null;
+        }, 20000, 100);
+
+        assert.equal(completedJob.exitCode, 0);
+        assert.equal(await fs.readFile(proofFilePath, "utf8"), input);
+      } finally {
+        await worker.close();
+      }
+    } finally {
+      await stopAiCommandJobManager(repoRoot).catch(() => undefined);
+      await stopOperationalStateStore(repoRoot).catch(() => undefined);
+      configureDatabaseConnection(null);
+      if (databaseStarted) {
+        await stopDatabaseSocketServer(repoRoot).catch(() => undefined);
+      }
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
   });
 });

@@ -26,6 +26,7 @@ import {
   listWorktrees,
   mergeGitBranch,
 } from "../services/git-service.js";
+import { listBackgroundCommands } from "../services/background-command-service.js";
 import { addProjectManagementReviewEntry } from "../services/project-management-review-service.js";
 import { buildWorktreeMergeComment } from "../services/project-management-comment-formatters.js";
 import { buildRuntimeProcessEnv } from "../services/runtime-service.js";
@@ -33,6 +34,8 @@ import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import { logServerEvent } from "../utils/server-logger.js";
 import {
+  buildAiEnvironmentContext,
+  buildAiLocalHelperInstructions,
   buildAiCommandProcessEnv,
   createAiLogIdentifiers,
   createGitConflictResolutionOrigin,
@@ -268,6 +271,19 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
               WORKTREE_PATH: worktree.worktreePath,
             },
       });
+      const environmentContext = buildAiEnvironmentContext({
+        repoRoot: context.repoRoot,
+        config,
+        branch: worktree.branch,
+        worktreePath: worktree.worktreePath,
+        runtime: runtime ?? undefined,
+        backgroundCommands: await listBackgroundCommands(
+          config,
+          context.repoRoot,
+          worktree,
+          runtime ?? undefined,
+        ),
+      });
 
       const commandId = parseAiCommandId(body?.commandId ?? "smart");
       const template = resolveAiCommandTemplate(config.aiCommands, commandId);
@@ -311,11 +327,15 @@ export function registerApiGitRoutes(router: express.Router, context: ApiRouterC
       }
 
       for (const conflict of conflictsToResolve) {
-        const input = formatMergeConflictResolutionPrompt({
-          branch: worktree.branch,
-          baseBranch,
-          conflicts: [conflict],
-        });
+        const input = [
+          formatMergeConflictResolutionPrompt({
+            branch: worktree.branch,
+            baseBranch,
+            conflicts: [conflict],
+          }),
+          environmentContext,
+          ...buildAiLocalHelperInstructions(),
+        ].join("\n\n");
         const renderedCommand = template.split("$WTM_AI_INPUT").join(quoteShellArg(input));
         const completedAt = new Date().toISOString();
         try {

@@ -44,6 +44,36 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
+async function resolveWorktreemanRootFromGitFile(repoDir: string): Promise<string | null> {
+  const gitPath = path.join(repoDir, WORKTREEMAN_GIT_FILE);
+
+  let gitFileContents: string;
+  try {
+    gitFileContents = await fs.readFile(gitPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const match = gitFileContents.match(/^gitdir:\s*(.+)\s*$/m);
+  if (!match) {
+    return null;
+  }
+
+  const gitDir = path.resolve(repoDir, match[1]);
+  const worktreesDir = path.dirname(gitDir);
+  if (path.basename(worktreesDir) !== "worktrees") {
+    return null;
+  }
+
+  const bareDir = path.dirname(worktreesDir);
+  if (path.basename(bareDir) !== WORKTREEMAN_BARE_DIR) {
+    return null;
+  }
+
+  const repoRoot = path.dirname(bareDir);
+  return await isWorktreemanBareLayoutRoot(repoRoot) ? repoRoot : null;
+}
+
 export async function fileExists(filePath: string): Promise<boolean> {
   return exists(filePath);
 }
@@ -58,6 +88,11 @@ export async function findGitRoot(startDir: string): Promise<string> {
     }
 
     if (await exists(gitPath)) {
+      const repoRoot = await resolveWorktreemanRootFromGitFile(current);
+      if (repoRoot) {
+        return repoRoot;
+      }
+
       throw new InvalidWorktreemanLayoutError(
         `Git repository found at ${current}, but it is not a valid worktreeman bare layout. Expected ${WORKTREEMAN_GIT_FILE} to contain exactly \`${WORKTREEMAN_GIT_FILE_CONTENT.trim()}\` and ${WORKTREEMAN_BARE_DIR}/ to be a bare repository.`,
       );

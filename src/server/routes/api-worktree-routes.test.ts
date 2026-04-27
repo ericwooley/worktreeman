@@ -25,6 +25,7 @@ import { getProjectManagementDocumentReview } from "../services/project-manageme
 import { createOperationalStateStore } from "../services/operational-state-service.js";
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
+import type { ApiAiProcesses } from "./api-types.js";
 
 async function createReviewDocument(server: Awaited<ReturnType<typeof startApiServer>>, payload: {
   title: string;
@@ -958,6 +959,15 @@ test("worktree AI prompts include environment, ports, quicklinks, and pm2 guidan
     assert.equal(capturedPrompt.includes("- Quicklinks: App: http://127.0.0.1:"), true);
     assert.equal(capturedPrompt.includes(`web (wtm:${featureAiEnv.id}:web, online)`), true);
     assert.equal(capturedPrompt.includes(`pm2 logs wtm:${featureAiEnv.id}:web`), true);
+    assert.equal(capturedPrompt.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
+    assert.equal(capturedPrompt.includes("current checked-out worktree code instead of a published package"), true);
+    assert.equal(capturedPrompt.includes('The command relies on WORKTREE_PATH from the environment wrapper'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev start`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev stop`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev status`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev logs read --command <name> [--source stdout|stderr|all]`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]`'), true);
+    assert.equal(capturedPrompt.includes('`npx -y --package "file:$WORKTREE_PATH" worktreeman api documents read <document-id>`'), true);
     assert.equal(capturedPrompt.includes("Operator request:"), true);
     assert.equal(capturedPrompt.includes("inspect the runtime"), true);
 
@@ -1108,6 +1118,7 @@ test("review follow-up AI runs build ordered review-thread context from visible 
 
     assert.equal(capturedPrompt.includes("Review follow-up for linked document"), true);
     assert.equal(capturedPrompt.includes("Implement the work described by this document in the current worktree."), true);
+    assert.equal(capturedPrompt.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
     assert.equal(capturedPrompt.includes("Original context:"), true);
     assert.equal(capturedPrompt.includes("Original review request"), true);
     assert.equal(capturedPrompt.includes("Ordered review thread context:"), true);
@@ -1147,7 +1158,7 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
   let capturedPrompt = "";
   const aiProcesses = {
     ...fakeAiProcesses.aiProcesses,
-    async startProcess(options: { command: string; processName: string; input: string; worktreePath: string; env: NodeJS.ProcessEnv; hooks?: unknown }) {
+    async startProcess(options: Parameters<ApiAiProcesses["startProcess"]>[0]) {
       const match = options.command.match(/^printf %s '([\s\S]*)'$/);
       capturedPrompt = match ? match[1].replace(/'\\''/g, "'") : options.command;
       return fakeAiProcesses.aiProcesses.startProcess(options);
@@ -1201,6 +1212,7 @@ test("review-only AI runs build a branch-diff review prompt and persist extracte
     assert.equal(job.status, "completed");
 
     assert.equal(capturedPrompt.includes("Review branch changes for linked document"), true);
+    assert.equal(capturedPrompt.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
     assert.equal(capturedPrompt.includes("Do not change code, files, git state, or the project-management document. This is a review-only pass."), true);
     assert.equal(capturedPrompt.includes("Review whether everything in the original document is correct, whether everything in the requested updates is correct, and whether the current branch diff actually satisfies them."), true);
     assert.equal(capturedPrompt.includes("Return markdown only. Put the actual review content inside <wtm-review>...</wtm-review> so the application can extract and display it."), true);
@@ -1408,6 +1420,7 @@ test("review-origin AI runs recover follow-up context from visible review entrie
 
     assert.equal(capturedPrompt.includes("Review follow-up for linked document"), true);
     assert.equal(capturedPrompt.includes("Implement the work described by this document in the current worktree."), true);
+    assert.equal(capturedPrompt.includes('You can use `npx -y --package "file:$WORKTREE_PATH" worktreeman api`'), true);
     assert.equal(capturedPrompt.includes("Original context:"), true);
     assert.equal(capturedPrompt.includes("Original review request"), true);
     assert.equal(capturedPrompt.includes("Ordered review thread context:"), true);

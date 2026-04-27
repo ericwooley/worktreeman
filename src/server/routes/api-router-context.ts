@@ -704,6 +704,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
+    executionCommand?: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
     applyDocumentUpdateToDocumentId?: string | null;
@@ -726,7 +727,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       const processName = getAiCommandProcessName(payload.jobId);
       const processInfo = await executionAiProcesses.startProcess({
         processName,
-        command: details.renderedCommand,
+        command: details.executionCommand ?? details.renderedCommand,
         input: details.input,
         worktreePath: details.worktreePath,
         env: details.env,
@@ -781,6 +782,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     origin?: AiCommandOrigin | null;
     input: string;
     renderedCommand: string;
+    executionCommand?: string;
     worktreePath: string;
     env: NodeJS.ProcessEnv;
     applyDocumentUpdateToDocumentId?: string | null;
@@ -799,6 +801,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
       worktreePath: details.worktreePath,
       input: details.input,
       renderedCommand: details.renderedCommand,
+      executionCommand: details.executionCommand,
       env: Object.fromEntries(Object.entries(details.env).filter(([, value]) => typeof value === "string")) as Record<string, string>,
       documentId: details.documentId,
       applyDocumentUpdateToDocumentId: details.applyDocumentUpdateToDocumentId ?? null,
