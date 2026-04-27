@@ -240,6 +240,7 @@ export function ProjectManagementPanel({
   const [documentWorktreeInstructions, setDocumentWorktreeInstructions] = useState("");
   const [documentWorktreeStrategy, setDocumentWorktreeStrategy] = useState<"new" | "continue-current">("new");
   const [documentWorktreeName, setDocumentWorktreeName] = useState("");
+  const [documentWorktreeAutoReviewLoop, setDocumentWorktreeAutoReviewLoop] = useState(true);
   const documentWorktreeModalOpen = documentWorktreeModalOpenState;
   const aiRunning = aiJob?.status === "running";
   const documentRunInProgress = documentRunJob?.status === "running";
@@ -724,6 +725,7 @@ export function ProjectManagementPanel({
     setDocumentWorktreeInstructions("");
     setDocumentWorktreeStrategy(defaultDocumentWorktreeStrategy);
     setDocumentWorktreeName(generatedWorktreeName);
+    setDocumentWorktreeAutoReviewLoop(true);
     setDocumentWorktreeModalOpen(true);
   }
 
@@ -767,6 +769,7 @@ export function ProjectManagementPanel({
       worktreeStrategy: documentWorktreeStrategy,
       targetBranch: documentWorktreeStrategy === "continue-current" ? currentLinkedWorktree?.branch : undefined,
       worktreeName: documentWorktreeStrategy === "new" ? requestedWorktreeName : undefined,
+      autoReviewLoop: documentWorktreeAutoReviewLoop,
     });
     if (!result) {
       setDocumentRunFailureToast("Smart AI request failed. Check the AI command output for details.");
@@ -1054,6 +1057,7 @@ export function ProjectManagementPanel({
                   documentWorktreeInstructions={documentWorktreeInstructions}
                   documentWorktreeStrategy={documentWorktreeStrategy}
                   documentWorktreeName={documentWorktreeName}
+                  documentWorktreeAutoReviewLoop={documentWorktreeAutoReviewLoop}
                   compactDocumentSummary={compactDocumentSummary}
                   metadataControlsDisabled={metadataControlsDisabled}
                   assigneeActionDisabled={assigneeActionDisabled}
@@ -1093,6 +1097,7 @@ export function ProjectManagementPanel({
                   onDocumentWorktreeInstructionsChange={setDocumentWorktreeInstructions}
                   onDocumentWorktreeStrategyChange={setDocumentWorktreeStrategy}
                   onDocumentWorktreeNameChange={setDocumentWorktreeName}
+                  onDocumentWorktreeAutoReviewLoopChange={setDocumentWorktreeAutoReviewLoop}
                   onRunDocumentWork={handleRunDocumentWork}
                   onCancelDocumentAiCommand={onCancelDocumentAiCommand}
                   onOpenAiOutputModal={() => setAiOutputModalOpen(true)}
@@ -1141,6 +1146,7 @@ export function ProjectManagementPanel({
                       documentWorktreeInstructions={documentWorktreeInstructions}
                       documentWorktreeStrategy={documentWorktreeStrategy}
                       documentWorktreeName={documentWorktreeName}
+                      documentWorktreeAutoReviewLoop={documentWorktreeAutoReviewLoop}
                       compactDocumentSummary={compactDocumentSummary}
                       metadataControlsDisabled={metadataControlsDisabled}
                       assigneeActionDisabled={assigneeActionDisabled}
@@ -1184,6 +1190,7 @@ export function ProjectManagementPanel({
                       onDocumentWorktreeInstructionsChange={setDocumentWorktreeInstructions}
                       onDocumentWorktreeStrategyChange={setDocumentWorktreeStrategy}
                       onDocumentWorktreeNameChange={setDocumentWorktreeName}
+                      onDocumentWorktreeAutoReviewLoopChange={setDocumentWorktreeAutoReviewLoop}
                       onRunDocumentWork={handleRunDocumentWork}
                       onCancelDocumentAiCommand={onCancelDocumentAiCommand}
                       onOpenAiOutputModal={() => setAiOutputModalOpen(true)}

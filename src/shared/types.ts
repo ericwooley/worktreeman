@@ -726,6 +726,7 @@ export interface RunProjectManagementDocumentAiRequest {
   worktreeStrategy?: "new" | "continue-current";
   targetBranch?: string;
   worktreeName?: string;
+  autoReviewLoop?: boolean;
 }
 
 export type AiCommandOriginTab = "environment" | "git" | "project-management" | "review";

@@ -10,6 +10,7 @@ import type {
 } from "@shared/types";
 import { ProjectManagementBoardTab } from "./project-management-board-tab";
 import { ProjectManagementDependencyPickerModal } from "./project-management-dependency-picker-modal";
+import { ProjectManagementDocumentDetail } from "./project-management-document-detail";
 import { ProjectManagementDocumentForm } from "./project-management-document-form";
 import { sortProjectManagementDocuments } from "./project-management-document-browser";
 import { readProjectManagementDocumentPath } from "./project-management-document-route";
@@ -239,6 +240,96 @@ function renderProjectManagementPanel(overrides: Partial<Parameters<typeof Proje
   return renderToStaticMarkup(<ProjectManagementPanel {...props} />);
 }
 
+function renderDocumentWorktreeModal() {
+  return renderToStaticMarkup(
+    <ProjectManagementDocumentDetail
+      presentation="page"
+      document={sampleDocument}
+      documents={sampleDocuments}
+      availableTags={["feature", "ux", "plan", "reference"]}
+      statuses={["backlog", "todo", "in-progress", "review_passed", "done", "reference"]}
+      saving={false}
+      aiCommands={{ smart: "runner --prompt $WTM_AI_INPUT", simple: "runner --fast $WTM_AI_INPUT", autoStartRuntime: false }}
+      aiJob={null}
+      documentRunJob={null}
+      selectedWorktreeBranch={null}
+      documentViewMode="document"
+      editFormTab="write"
+      editTitle={sampleDocument.title}
+      editSummary={sampleDocument.summary}
+      editMarkdown={sampleDocument.markdown}
+      editTags={sampleDocument.tags.join(", ")}
+      editStatus={sampleDocument.status}
+      editAssignee={sampleDocument.assignee}
+      dependencySelection={sampleDocument.dependencies}
+      currentDependencyDocuments={[]}
+      aiRunSummary={null}
+      documentRunSummary={null}
+      aiFailureToast={null}
+      documentRunFailureToast={null}
+      aiRequestModalOpen={false}
+      aiOutputModalOpen={false}
+      dependencyModalOpen={false}
+      documentWorktreeModalOpen={true}
+      selectedAiCommandId="smart"
+      aiCommandOptions={[]}
+      linkedWorktrees={sampleWorktrees}
+      currentLinkedWorktree={null}
+      canContinueCurrent={false}
+      generatedWorktreeName="pm-doc-1-dependencies"
+      documentWorktreeInstructions=""
+      documentWorktreeStrategy="new"
+      documentWorktreeName="pm-doc-1-dependencies"
+      documentWorktreeAutoReviewLoop={true}
+      compactDocumentSummary={["#1", "todo", "Eric", "Active", "2 tags"]}
+      metadataControlsDisabled={false}
+      assigneeActionDisabled={false}
+      selectedDocumentAiOutput={null}
+      inlineSelectedAiOutput={null}
+      onClose={() => undefined}
+      onOpenPage={() => undefined}
+      onDocumentViewModeChange={() => undefined}
+      onEditFormTabChange={() => undefined}
+      onEditTitleChange={() => undefined}
+      onEditSummaryChange={() => undefined}
+      onEditMarkdownChange={() => undefined}
+      onEditTagsChange={() => undefined}
+      onEditStatusChange={() => undefined}
+      onEditAssigneeChange={() => undefined}
+      onSetEditingState={() => undefined}
+      onSaveDocument={async () => undefined}
+      onQuickDocumentUpdate={async () => undefined}
+      onSaveAssignee={async () => undefined}
+      onToggleArchive={async () => undefined}
+      onSelectWorktree={() => undefined}
+      onOpenDependencyGraph={() => undefined}
+      onOpenDependencyModal={() => undefined}
+      onCloseDependencyModal={() => undefined}
+      onToggleDependencySelection={async () => undefined}
+      onOpenAiRequest={() => undefined}
+      onCloseAiRequest={() => undefined}
+      onAiChangeRequestChange={() => undefined}
+      aiChangeRequest=""
+      onSelectedAiCommandIdChange={() => undefined}
+      onRunUiMagic={async () => false}
+      onCancelAiCommand={async () => null}
+      onDismissAiFailureToast={() => undefined}
+      onDismissDocumentRunFailureToast={() => undefined}
+      onOpenDocumentWorktreeModal={() => undefined}
+      onCloseDocumentWorktreeModal={() => undefined}
+      onDocumentWorktreeInstructionsChange={() => undefined}
+      onDocumentWorktreeStrategyChange={() => undefined}
+      onDocumentWorktreeNameChange={() => undefined}
+      onDocumentWorktreeAutoReviewLoopChange={() => undefined}
+      onRunDocumentWork={async () => false}
+      onCancelDocumentAiCommand={async () => null}
+      onOpenAiOutputModal={() => undefined}
+      onCloseAiOutputModal={() => undefined}
+      onCancelSelectedDocumentAiOutput={async () => undefined}
+    />,
+  );
+}
+
 function createAiJob(overrides: Partial<AiCommandJob> = {}): AiCommandJob {
   return {
     jobId: "job-1",
@@ -316,6 +407,14 @@ test("create form renders without seeded defaults", () => {
   assert.doesNotMatch(markup, />WYSIWYG</);
   assert.doesNotMatch(markup, />Monaco</);
   assert.doesNotMatch(markup, />Markdown</);
+});
+
+test("worktree AI modal enables auto loop by default", () => {
+  const markup = renderDocumentWorktreeModal();
+
+  assert.match(markup, /Enable auto loop/);
+  assert.match(markup, /Smart AI reviews the branch and loops on fixes until review passes/);
+  assert.match(markup, /name="pm-document-worktree-auto-loop"[^>]*checked=""/);
 });
 
 test("edit form uses write and preview tabs instead of multiple editor modes", () => {

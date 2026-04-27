@@ -99,7 +99,7 @@ function appendCancellationEvent(log: {
 
 const AUTO_REVIEW_LOOP_MAX_ATTEMPTS = 10;
 
-type ReviewLoopStartDetails = {
+export type ReviewLoopStartDetails = {
   context: ApiRouterContext;
   worktree: WorktreeRecord;
   config: ApiRouterContext["loadCurrentConfig"] extends () => Promise<infer T> ? T : never;
@@ -161,7 +161,7 @@ function buildLoopIssueRequest(result: WorktreeReviewResult): string {
   ].join("\n\n");
 }
 
-async function runAutoReviewLoop(details: ReviewLoopStartDetails) {
+export async function runAutoReviewLoop(details: ReviewLoopStartDetails) {
   let state = createReviewLoopState({
     worktree: details.worktree,
     reviewDocumentId: details.reviewDocumentId,

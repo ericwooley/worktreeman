@@ -19,6 +19,7 @@ import { getProjectManagementDocumentReview } from "../services/project-manageme
 import { getWorktreeDocumentLink } from "../services/worktree-link-service.js";
 import { runCommand } from "../utils/process.js";
 import type { AiCommandOrigin } from "../../shared/types.js";
+import { waitForAiCommandJob } from "../services/ai-command-service.js";
 
 test("project-management AI runs update the saved document on the server", { concurrency: false, timeout: 30000 }, async () => {
   const repo = await createApiTestRepo();
@@ -917,6 +918,80 @@ test("project-management document AI creates a derived worktree and streams stdo
       }>(server, 1000);
       return latestStatePayload.worktrees.find((entry) => entry.branch === payload.job.branch)?.runtime === undefined;
     });
+  } finally {
+    await server.close();
+    await fs.rm(repo.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("project-management document AI starts the review loop when requested", { concurrency: false, timeout: 30000 }, async () => {
+  const repo = await createApiTestRepo();
+  const fakeAiProcesses = createFakeAiProcesses();
+  fakeAiProcesses.queueStartScript([
+    { status: "stopped", pid: 6011, stdout: "implemented document work", stderr: "", exitCode: 0 },
+  ]);
+  fakeAiProcesses.queueStartScript([
+    {
+      status: "stopped",
+      pid: 6012,
+      stdout: "<wtm-review>## Passed\n\n- Review passed with no blocking issues.</wtm-review>\n<wtm-review-result passed=\"true\"></wtm-review-result>",
+      stderr: "",
+      exitCode: 0,
+    },
+  ]);
+  const server = await startApiServer(repo, {
+    aiProcesses: fakeAiProcesses.aiProcesses,
+    aiProcessPollIntervalMs: 10,
+  });
+
+  try {
+    const documentsResponse = await server.fetch(`/api/project-management/documents`);
+    assert.equal(documentsResponse.status, 200);
+    const documentsPayload = await documentsResponse.json() as {
+      documents: Array<{ id: string; title: string }>;
+    };
+    const outline = documentsPayload.documents.find((entry) => entry.title === "Project Outline");
+    assert.ok(outline);
+
+    const response = await server.fetch(`/api/project-management/documents/${encodeURIComponent(outline.id)}/ai-command/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoReviewLoop: true }),
+    });
+    assert.equal(response.status, 200);
+
+    const payload = await response.json() as {
+      job: { branch: string; jobId: string; status: string };
+    };
+    assert.equal(payload.job.status, "running");
+
+    const operationalState = await createOperationalStateStore(repo.repoRoot);
+    let createdWorktree: { branch: string; worktreePath: string } | null = null;
+    await waitFor(async () => {
+      const statePayload = await readStateSnapshot<{
+        worktrees: Array<{ branch: string; worktreePath: string }>;
+      }>(server, 1000);
+      createdWorktree = statePayload.worktrees.find((entry) => entry.branch === payload.job.branch) ?? null;
+      return createdWorktree != null;
+    }, 15000);
+    assert.ok(createdWorktree);
+    const createdWorktreeId = worktreeId(createdWorktree.worktreePath);
+
+    await waitForAiCommandJob(repo.repoRoot, createdWorktreeId, payload.job.jobId);
+    await waitFor(async () => {
+      const loopState = await operationalState.getReviewLoopById(createdWorktreeId);
+      return loopState?.status === "passed";
+    }, 15000);
+
+    const loopState = await operationalState.getReviewLoopById(createdWorktreeId);
+    assert.ok(loopState);
+    assert.equal(loopState.status, "passed");
+    assert.equal(loopState.attemptCount, 1);
+    assert.equal(loopState.latestReviewResult?.passed, true);
+    assert.equal(loopState.reviewDocumentId, outline.id);
+
+    const updatedDocument = await getProjectManagementDocument(repo.repoRoot, outline.id);
+    assert.equal(updatedDocument.document.status, "review_passed");
   } finally {
     await server.close();
     await fs.rm(repo.repoRoot, { recursive: true, force: true });

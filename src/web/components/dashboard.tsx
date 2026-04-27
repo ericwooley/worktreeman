@@ -1961,6 +1961,7 @@ export function Dashboard() {
                 worktreeStrategy: payload.worktreeStrategy,
                 targetBranch: payload.targetBranch,
                 worktreeName: payload.worktreeName,
+                autoReviewLoop: payload.autoReviewLoop,
               }).then((result) => {
                 if (!result) {
                   return null;

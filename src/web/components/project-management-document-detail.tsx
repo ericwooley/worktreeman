@@ -70,6 +70,7 @@ interface ProjectManagementDocumentDetailProps {
   documentWorktreeInstructions: string;
   documentWorktreeStrategy: "new" | "continue-current";
   documentWorktreeName: string;
+  documentWorktreeAutoReviewLoop: boolean;
   compactDocumentSummary: string[];
   metadataControlsDisabled: boolean;
   assigneeActionDisabled: boolean;
@@ -109,6 +110,7 @@ interface ProjectManagementDocumentDetailProps {
   onDocumentWorktreeInstructionsChange: (value: string) => void;
   onDocumentWorktreeStrategyChange: (value: "new" | "continue-current") => void;
   onDocumentWorktreeNameChange: (value: string) => void;
+  onDocumentWorktreeAutoReviewLoopChange: (enabled: boolean) => void;
   onRunDocumentWork: () => Promise<boolean>;
   onCancelDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onOpenAiOutputModal: () => void;
@@ -154,6 +156,7 @@ export function ProjectManagementDocumentDetail({
   documentWorktreeInstructions,
   documentWorktreeStrategy,
   documentWorktreeName,
+  documentWorktreeAutoReviewLoop,
   compactDocumentSummary,
   metadataControlsDisabled,
   assigneeActionDisabled,
@@ -193,6 +196,7 @@ export function ProjectManagementDocumentDetail({
   onDocumentWorktreeInstructionsChange,
   onDocumentWorktreeStrategyChange,
   onDocumentWorktreeNameChange,
+  onDocumentWorktreeAutoReviewLoopChange,
   onRunDocumentWork,
   onCancelDocumentAiCommand,
   onOpenAiOutputModal,
@@ -670,6 +674,22 @@ export function ProjectManagementDocumentDetail({
                 </p>
               </label>
             </div>
+
+            <label className="flex items-start gap-3 border theme-border-subtle px-3 py-3 text-sm theme-text-muted">
+              <input
+                type="checkbox"
+                name="pm-document-worktree-auto-loop"
+                checked={documentWorktreeAutoReviewLoop}
+                onChange={(event) => onDocumentWorktreeAutoReviewLoopChange(event.target.checked)}
+                className="mt-1 h-4 w-4 rounded-none border theme-border-subtle bg-transparent"
+              />
+              <span className="space-y-1">
+                <span className="block font-semibold theme-text-strong">Enable auto loop</span>
+                <span className="block text-xs theme-text-muted">
+                  After the first implementation run, Smart AI reviews the branch and loops on fixes until review passes, up to 10 attempts.
+                </span>
+              </span>
+            </label>
 
             <div className="border theme-border-subtle px-3 py-3">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Linked worktrees</p>

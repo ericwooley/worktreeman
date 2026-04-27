@@ -38,4 +38,5 @@ export interface RunProjectManagementDocumentAiRequest {
   worktreeStrategy?: unknown;
   targetBranch?: unknown;
   worktreeName?: unknown;
+  autoReviewLoop?: unknown;
 }

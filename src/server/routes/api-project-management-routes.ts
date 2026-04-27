@@ -70,9 +70,11 @@ import {
   renderAiExecutionCommand,
   resolveProjectManagementDocumentWorktreeBranch,
   resolveRequestedAiCommandId,
+  runBackgroundTask,
 } from "./api-helpers.js";
 import type { ApiRouterContext } from "./api-router-context.js";
 import type { RunProjectManagementDocumentAiRequest } from "./api-types.js";
+import { runAutoReviewLoop } from "./api-worktree-routes.js";
 
 export function registerApiProjectManagementRoutes(router: express.Router, context: ApiRouterContext) {
   router.get("/project-management/documents/stream", async (_req, res, next) => {
@@ -448,6 +450,7 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
       const requestedWorktreeName = typeof body?.worktreeName === "string" && body.worktreeName.trim()
         ? body.worktreeName.trim()
         : null;
+      const requestedAutoReviewLoop = body?.autoReviewLoop === true;
       const documentPayload = await getProjectManagementDocument(context.repoRoot, documentId);
       const documentsPayload = await listProjectManagementDocuments(context.repoRoot);
 
@@ -664,12 +667,46 @@ export function registerApiProjectManagementRoutes(router: express.Router, conte
         requestSummary: requestedChange,
       });
       await moveProjectManagementDocumentTowardInProgress(context.repoRoot, documentId);
-      context.scheduleRuntimeStopAfterAiJob({
-        worktree,
-        jobId: job.jobId,
-        shouldStopRuntime: stopAutoStartedRuntimeOnError,
-      });
-      stopAutoStartedRuntimeOnError = false;
+      if (requestedAutoReviewLoop) {
+        const loopWorktree = worktree;
+        const shouldStopRuntimeOnLoopFinish = stopAutoStartedRuntimeOnError;
+        const reviewLoopRequest = requestedChange?.trim()
+          || documentPayload.document.summary
+          || documentPayload.document.title;
+        runBackgroundTask(async () => {
+          await runAutoReviewLoop({
+            context,
+            worktree: loopWorktree,
+            config,
+            commandId,
+            env,
+            shouldStopRuntimeOnFinish: shouldStopRuntimeOnLoopFinish,
+            baseBranch: null,
+            reviewDocumentId: documentId,
+            documentTitle: documentPayload.document.title,
+            documentSummary: documentPayload.document.summary,
+            documentMarkdown: documentPayload.document.markdown,
+            originalRequest: reviewLoopRequest,
+            initialRequest: reviewLoopRequest,
+            initialJobId: job.jobId,
+          });
+        }, (error) => {
+          logServerEvent("review-loop", "project-management-background-task-failed", {
+            worktreeId: loopWorktree.id,
+            branch: loopWorktree.branch,
+            documentId,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        });
+        stopAutoStartedRuntimeOnError = false;
+      } else {
+        context.scheduleRuntimeStopAfterAiJob({
+          worktree,
+          jobId: job.jobId,
+          shouldStopRuntime: stopAutoStartedRuntimeOnError,
+        });
+        stopAutoStartedRuntimeOnError = false;
+      }
 
       const payload: RunAiCommandResponse = { job, runtime };
       context.emitStateRefresh();
