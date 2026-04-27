@@ -1492,6 +1492,10 @@ export function WorktreeDetail({
       return;
     }
 
+    if (activeReviewAiJob) {
+      return;
+    }
+
     const trimmedDraft = reviewCommandDraft.trim();
     const parsedCommand = trimmedDraft.match(/^@(ai|review)\b/i);
 
@@ -2421,6 +2425,7 @@ export function WorktreeDetail({
                       onChange={(event) => setReviewCommandDraft(event.target.value)}
                       placeholder="Add a review note, or start with @ai or @review."
                       rows={5}
+                      disabled={Boolean(activeReviewAiJob)}
                       className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
                     />
                   </label>
@@ -2432,6 +2437,7 @@ export function WorktreeDetail({
                       type="checkbox"
                       checked={autoReviewLoopEnabled}
                       onChange={(event) => setAutoReviewLoopEnabled(event.target.checked)}
+                      disabled={Boolean(activeReviewAiJob)}
                       className="mt-1 h-4 w-4 rounded-none border theme-border-subtle bg-transparent"
                     />
                     <span>
@@ -2476,7 +2482,7 @@ export function WorktreeDetail({
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">AI is active</p>
                         <p className="mt-2 text-sm theme-text-muted">
-                          You can still add review notes here. Wait for the current AI run to finish before starting another command.
+                          Review input is disabled while AI is active. Wait for the current AI run to finish before adding notes or starting another command.
                         </p>
                       </div>
                       <ProjectManagementAiStreamViewer
@@ -2493,7 +2499,7 @@ export function WorktreeDetail({
                     <button
                       type="button"
                       className="matrix-button rounded-none px-3 py-2 text-sm"
-                      disabled={projectManagementSaving || reviewFollowUpSubmitting || !reviewCommandDraft.trim()}
+                      disabled={Boolean(activeReviewAiJob) || projectManagementSaving || reviewFollowUpSubmitting || !reviewCommandDraft.trim()}
                       onClick={() => void submitReviewCommand()}
                     >
                       {projectManagementSaving ? "Saving..." : reviewFollowUpSubmitting ? "Starting Smart AI..." : "Submit review"}

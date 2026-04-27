@@ -417,11 +417,14 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
 
   assert.match(markup, /Review entry or Smart AI command/);
   assert.match(markup, /AI is active/);
-  assert.match(markup, /You can still add review notes here\. Wait for the current AI run to finish before starting another command\./);
+  assert.match(markup, /Review input is disabled while AI is active\. Wait for the current AI run to finish before adding notes or starting another command\./);
   assert.match(markup, /Worktree AI is working/);
   assert.match(markup, /Mixed output timeline/);
   assert.match(markup, /Cancel AI/);
   assert.match(markup, /placeholder="Add a review note, or start with @ai or @review\."/);
+  assert.match(markup, /<textarea[^>]*disabled=""/);
+  assert.match(markup, /<input[^>]*type="checkbox"[^>]*disabled=""/);
+  assert.match(markup, /<button[^>]*disabled=""[^>]*>Submit review<\/button>/);
 });
 
 test("Review tab prefers streamed worktree AI job output over stale running job summaries", async () => {
