@@ -58,6 +58,24 @@ test("buildWorktreeAiCompletedComment omits empty output sections", () => {
   assert.doesNotMatch(comment, /```text/);
 });
 
+test("buildWorktreeAiCompletedComment preserves full output details without ellipsis truncation", () => {
+  const longStdout = Array.from({ length: 120 }, (_, index) => `stdout line ${index + 1}`).join("\n");
+  const longStderr = Array.from({ length: 120 }, (_, index) => `stderr line ${index + 1}`).join("\n");
+
+  const comment = buildWorktreeAiCompletedComment({
+    branch: "feature/comments",
+    commandId: "smart",
+    stdout: longStdout,
+    stderr: longStderr,
+  });
+
+  assert.match(comment, /stdout line 120/);
+  assert.match(comment, /stderr line 120/);
+  assert.doesNotMatch(comment, /
+…
+```/);
+});
+
 test("buildWorktreeAiStartedComment uses review heading for review-only runs", () => {
   const comment = buildWorktreeAiStartedComment({
     branch: "feature/comments",

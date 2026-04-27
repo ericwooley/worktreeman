@@ -50,7 +50,7 @@ import {
   WORKTREE_ENVIRONMENT_TERMINAL_SUB_TAB_LABEL,
 } from "./worktree-environment-content";
 import { getAiResolveButtonState, getResolvableConflictCount } from "./git-status-actions";
-import { ProjectManagementAiOutputViewer } from "./project-management-ai-output-viewer";
+import { ProjectManagementAiStreamViewer } from "./project-management-ai-stream-viewer";
 import { ProjectManagementAiTab } from "./project-management-ai-tab";
 import { ProjectManagementPanel } from "./project-management-panel";
 import { SystemTab } from "./system-tab";
@@ -2433,10 +2433,11 @@ export function WorktreeDetail({
                           You can still add review notes here. Wait for the current AI run to finish before starting another command.
                         </p>
                       </div>
-                      <ProjectManagementAiOutputViewer
+                      <ProjectManagementAiStreamViewer
                         source="worktree"
-                        job={activeReviewAiJob}
+                        jobId={activeReviewAiJob.jobId}
                         summary={`AI is still running in ${activeReviewAiJob.branch}. Finish or cancel this run before prompting again from Review.`}
+                        fallbackJob={activeReviewAiJob}
                         expanded
                         onCancel={() => void onCancelProjectManagementAiCommand()}
                       />

@@ -14,27 +14,16 @@ function normalizeInlineText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function formatLogBlock(value: string, options?: { maxCharacters?: number; maxLines?: number }): string {
+function formatLogBlock(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
     return "";
   }
 
-  const maxCharacters = options?.maxCharacters ?? 4_000;
-  const maxLines = options?.maxLines ?? 80;
-  const lines = trimmed
+  return trimmed
     .split(/\r?\n/)
-    .slice(0, maxLines)
-    .map((line) => line.trimEnd());
-  let joined = lines.join("\n");
-
-  if (joined.length > maxCharacters) {
-    joined = `${joined.slice(0, maxCharacters)}\n…`;
-  } else if (trimmed.length > joined.length || trimmed.split(/\r?\n/).length > lines.length) {
-    joined = `${joined}\n…`;
-  }
-
-  return joined;
+    .map((line) => line.trimEnd())
+    .join("\n");
 }
 
 function countNonEmptyLines(value: string): number {
