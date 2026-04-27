@@ -398,12 +398,221 @@ test("worktreeman api dev commands manage runtime and filter logs", async () => 
   assert.equal(getBackgroundCommandLogs.mock.calls.length, 2);
 });
 
+test("worktreeman api dev stop cleans up services even when runtime state is missing", async () => {
+  const repoContext = {
+    repoRoot: "/repo",
+    gitDir: "/repo/.git",
+    bareDir: "/repo/.bare",
+    configPath: "/repo/wtm-settings/worktree.yml",
+    configFile: "worktree.yml",
+    configSourceRef: "wtm-settings",
+    configWorktreePath: "/repo/wtm-settings",
+  };
+  const worktree = {
+    id: "wt-missing-runtime" as never,
+    branch: "feature-ai-cli",
+    worktreePath: "/repo/feature-ai-cli",
+    isBare: false,
+    isDetached: false,
+    locked: false,
+    prunable: false,
+  };
+  const config = {
+    favicon: "",
+    env: { NODE_ENV: "development" },
+    runtimePorts: ["VITE_PORT", "WT_PORT"],
+    derivedEnv: {},
+    quickLinks: [],
+    autoSync: { remote: "origin" },
+    aiCommands: { smart: "", simple: "", autoStartRuntime: false },
+    startupCommands: [],
+    backgroundCommands: {
+      web: { command: "pnpm dev:web" },
+    },
+    projectManagement: {
+      users: {
+        customUsers: [],
+        archivedUserIds: [],
+      },
+    },
+    worktrees: {
+      baseDir: "worktrees",
+    },
+  };
+
+  const findRepoContext = vi.fn(async () => repoContext);
+  const loadConfig = vi.fn(async () => config);
+  const listWorktrees = vi.fn(async () => [worktree]);
+  const getRuntimeById = vi.fn(async () => null);
+  const deleteRuntimeById = vi.fn(async () => undefined);
+  const createOperationalStateStore = vi.fn(async () => ({
+    getRuntimeById,
+    setRuntime: vi.fn(async () => undefined),
+    deleteRuntimeById,
+  }));
+  const stopAllBackgroundCommands = vi.fn(async () => undefined);
+  const killTmuxSession = vi.fn(async () => undefined);
+  const killTmuxSessionByName = vi.fn(async () => undefined);
+  const getTmuxSessionName = vi.fn(() => "wtm-feature-ai-cli");
+  const listBackgroundCommands = vi.fn(async () => []);
+
+  vi.doMock("./server/utils/paths.js", () => ({ findRepoContext }));
+  vi.doMock("./server/services/config-service.js", () => ({ loadConfig }));
+  vi.doMock("./server/services/git-service.js", () => ({ listWorktrees }));
+  vi.doMock("./server/services/operational-state-service.js", () => ({ createOperationalStateStore }));
+  vi.doMock("./server/services/runtime-service.js", () => ({
+    createRuntime: vi.fn(),
+    buildRuntimeProcessEnv: vi.fn(),
+    runStartupCommands: vi.fn(),
+  }));
+  vi.doMock("./server/services/terminal-service.js", () => ({
+    ensureRuntimeTerminalSession: vi.fn(),
+    killTmuxSession,
+    killTmuxSessionByName,
+    getTmuxSessionName,
+  }));
+  vi.doMock("./server/services/background-command-service.js", () => ({
+    getBackgroundCommandLogs: vi.fn(),
+    listBackgroundCommands,
+    startConfiguredBackgroundCommands: vi.fn(),
+    stopAllBackgroundCommands,
+  }));
+
+  const { runCli } = await import("./cli.js");
+
+  const stopOutput = await captureStdout(() => runCli(["api", "dev", "stop", "--cwd", worktree.worktreePath]));
+  const stopPayload = JSON.parse(stopOutput.stdout) as { ok: boolean; runtime: null };
+
+  assert.equal(stopPayload.ok, true);
+  assert.equal(stopPayload.runtime, null);
+  assert.equal(stopAllBackgroundCommands.mock.calls.length, 1);
+  assert.deepEqual(stopAllBackgroundCommands.mock.calls[0], [repoContext.repoRoot, worktree]);
+  assert.equal(killTmuxSession.mock.calls.length, 0);
+  assert.equal(killTmuxSessionByName.mock.calls.length, 1);
+  assert.equal(deleteRuntimeById.mock.calls.length, 1);
+});
+
+test("worktreeman api dev start removes partial runtime setup on failure", async () => {
+  const repoContext = {
+    repoRoot: "/repo",
+    gitDir: "/repo/.git",
+    bareDir: "/repo/.bare",
+    configPath: "/repo/wtm-settings/worktree.yml",
+    configFile: "worktree.yml",
+    configSourceRef: "wtm-settings",
+    configWorktreePath: "/repo/wtm-settings",
+  };
+  const worktree = {
+    id: "wt-start-failure" as never,
+    branch: "feature-ai-cli",
+    worktreePath: "/repo/feature-ai-cli",
+    isBare: false,
+    isDetached: false,
+    locked: false,
+    prunable: false,
+  };
+  const config = {
+    favicon: "",
+    env: { NODE_ENV: "development" },
+    runtimePorts: ["VITE_PORT"],
+    derivedEnv: {},
+    quickLinks: [],
+    autoSync: { remote: "origin" },
+    aiCommands: { smart: "", simple: "", autoStartRuntime: false },
+    startupCommands: ["pnpm install"],
+    backgroundCommands: {
+      web: { command: "pnpm dev:web" },
+    },
+    projectManagement: {
+      users: {
+        customUsers: [],
+        archivedUserIds: [],
+      },
+    },
+    worktrees: {
+      baseDir: "worktrees",
+    },
+  };
+  const runtime = {
+    id: worktree.id,
+    branch: worktree.branch,
+    worktreePath: worktree.worktreePath,
+    env: { WORKTREE_BRANCH: worktree.branch, VITE_PORT: "4173" },
+    quickLinks: [],
+    allocatedPorts: { VITE_PORT: 4173 },
+    tmuxSession: "wtm-feature-ai-cli",
+    runtimeStartedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  const findRepoContext = vi.fn(async () => repoContext);
+  const loadConfig = vi.fn(async () => config);
+  const listWorktrees = vi.fn(async () => [worktree]);
+  const getRuntimeById = vi.fn(async () => null);
+  const setRuntime = vi.fn(async () => undefined);
+  const deleteRuntimeById = vi.fn(async () => undefined);
+  const createOperationalStateStore = vi.fn(async () => ({
+    getRuntimeById,
+    setRuntime,
+    deleteRuntimeById,
+  }));
+  const createRuntime = vi.fn(async () => ({ runtime }));
+  const buildRuntimeProcessEnv = vi.fn(() => ({ ...runtime.env }));
+  const ensureRuntimeTerminalSession = vi.fn(async () => undefined);
+  const runStartupCommands = vi.fn(async () => {
+    throw new Error("startup failed");
+  });
+  const startConfiguredBackgroundCommands = vi.fn(async () => undefined);
+  const stopAllBackgroundCommands = vi.fn(async () => undefined);
+  const killTmuxSession = vi.fn(async () => undefined);
+  const listBackgroundCommands = vi.fn(async () => []);
+
+  vi.doMock("./server/utils/paths.js", () => ({ findRepoContext }));
+  vi.doMock("./server/services/config-service.js", () => ({ loadConfig }));
+  vi.doMock("./server/services/git-service.js", () => ({ listWorktrees }));
+  vi.doMock("./server/services/operational-state-service.js", () => ({ createOperationalStateStore }));
+  vi.doMock("./server/services/runtime-service.js", () => ({
+    createRuntime,
+    buildRuntimeProcessEnv,
+    runStartupCommands,
+  }));
+  vi.doMock("./server/services/terminal-service.js", () => ({
+    ensureRuntimeTerminalSession,
+    killTmuxSession,
+    killTmuxSessionByName: vi.fn(async () => undefined),
+    getTmuxSessionName: vi.fn(() => runtime.tmuxSession),
+  }));
+  vi.doMock("./server/services/background-command-service.js", () => ({
+    getBackgroundCommandLogs: vi.fn(),
+    listBackgroundCommands,
+    startConfiguredBackgroundCommands,
+    stopAllBackgroundCommands,
+  }));
+
+  const { runCli } = await import("./cli.js");
+
+  await assert.rejects(
+    () => runCli(["api", "dev", "start", "--cwd", worktree.worktreePath]),
+    /startup failed/,
+  );
+
+  assert.equal(createRuntime.mock.calls.length, 1);
+  assert.equal(ensureRuntimeTerminalSession.mock.calls.length, 1);
+  assert.equal(runStartupCommands.mock.calls.length, 1);
+  assert.equal(startConfiguredBackgroundCommands.mock.calls.length, 0);
+  assert.equal(setRuntime.mock.calls.length, 0);
+  assert.equal(stopAllBackgroundCommands.mock.calls.length, 1);
+  assert.deepEqual(stopAllBackgroundCommands.mock.calls[0], [repoContext.repoRoot, worktree]);
+  assert.equal(killTmuxSession.mock.calls.length, 1);
+  assert.equal(deleteRuntimeById.mock.calls.length, 1);
+});
+
 test("AI local helper instructions use repo-local npx package invocation", async () => {
   const { buildAiLocalHelperInstructions } = await import("./server/routes/api-helpers.js");
 
   const instructions = buildAiLocalHelperInstructions().join("\n");
 
-  assert.equal(instructions.includes("npx -y --package file:. worktreeman api"), true);
+  assert.equal(instructions.includes('npx -y --package "file:$WORKTREE_PATH" worktreeman api'), true);
+  assert.equal(instructions.includes("WORKTREE_PATH from the environment wrapper"), true);
   assert.equal(instructions.includes("current checked-out worktree code instead of a published package"), true);
   assert.equal(instructions.includes("npx -y worktreeman api"), false);
 });

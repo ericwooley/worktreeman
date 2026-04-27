@@ -933,40 +933,71 @@ async function ensureCliWorktreeRuntime(target: CliApiTarget): Promise<WorktreeR
   }
 
   const { runtime } = await createRuntime(target.config, target.repo.repoRoot, target.worktree);
-  await target.operationalState.setRuntime(runtime);
-  await ensureRuntimeTerminalSession(runtime, target.repo.repoRoot);
-  await runStartupCommands(target.config.startupCommands, target.worktree.worktreePath, buildRuntimeProcessEnv(runtime));
-  await startConfiguredBackgroundCommands({
-    config: target.config,
-    repoRoot: target.repo.repoRoot,
-    worktree: target.worktree,
-    runtime,
-  });
-  return runtime;
-}
-
-async function stopCliWorktreeRuntime(target: CliApiTarget): Promise<void> {
-  const runtime = await target.operationalState.getRuntimeById(target.worktree.id);
-  if (!runtime) {
-    await killTmuxSessionByName(getTmuxSessionName(target.repo.repoRoot, target.worktree.id), target.worktree.worktreePath);
-    return;
-  }
-
-  let stopError: unknown = null;
+  let startupError: unknown = null;
 
   try {
-    await stopAllBackgroundCommands(target.repo.repoRoot, runtime);
+    await ensureRuntimeTerminalSession(runtime, target.repo.repoRoot);
+    await runStartupCommands(target.config.startupCommands, target.worktree.worktreePath, buildRuntimeProcessEnv(runtime));
+    await startConfiguredBackgroundCommands({
+      config: target.config,
+      repoRoot: target.repo.repoRoot,
+      worktree: target.worktree,
+      runtime,
+    });
+    await target.operationalState.setRuntime(runtime);
+    return runtime;
   } catch (error) {
-    stopError = error;
+    startupError = error;
+  }
+
+  let cleanupError: unknown = null;
+
+  try {
+    await stopAllBackgroundCommands(target.repo.repoRoot, target.worktree);
+  } catch (error) {
+    cleanupError = error;
   }
 
   try {
     await killTmuxSession(runtime);
   } catch (error) {
+    cleanupError ??= error;
+  }
+
+  await target.operationalState.deleteRuntimeById(target.worktree.id).catch(() => undefined);
+
+  if (startupError instanceof Error && cleanupError instanceof Error) {
+    startupError.message = `${startupError.message} Cleanup also failed: ${cleanupError.message}`;
+  } else if (!startupError && cleanupError) {
+    startupError = cleanupError;
+  }
+
+  throw startupError;
+}
+
+async function stopCliWorktreeRuntime(target: CliApiTarget): Promise<void> {
+  const runtime = await target.operationalState.getRuntimeById(target.worktree.id);
+  let stopError: unknown = null;
+
+  try {
+    await stopAllBackgroundCommands(target.repo.repoRoot, target.worktree);
+  } catch (error) {
+    stopError = error;
+  }
+
+  try {
+    if (runtime) {
+      await killTmuxSession(runtime);
+    } else {
+      await killTmuxSessionByName(getTmuxSessionName(target.repo.repoRoot, target.worktree.id), target.worktree.worktreePath);
+    }
+  } catch (error) {
     stopError ??= error;
   }
 
-  await target.operationalState.deleteRuntimeById(runtime.id);
+  await target.operationalState.deleteRuntimeById(target.worktree.id).catch((error) => {
+    stopError ??= error;
+  });
 
   if (stopError) {
     throw stopError;

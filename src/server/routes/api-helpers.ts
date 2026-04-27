@@ -424,10 +424,11 @@ export function buildAiEnvironmentContext(options: {
 }
 
 export function buildAiLocalHelperInstructions(): string[] {
-  const localHelperBaseCommand = "npx -y --package file:. worktreeman api";
+  const localHelperBaseCommand = "npx -y --package \"file:$WORKTREE_PATH\" worktreeman api";
 
   return [
     `You can use \`${localHelperBaseCommand}\` for repo-local worktree helpers when that is useful. This guarantees the command runs against the current checked-out worktree code instead of a published package.`,
+    "The command relies on WORKTREE_PATH from the environment wrapper so it keeps pointing at this checked-out worktree even if you run it from a nested directory.",
     `Supported helpers include \`${localHelperBaseCommand} dev start\`, \`${localHelperBaseCommand} dev stop\`, \`${localHelperBaseCommand} dev status\`, \`${localHelperBaseCommand} dev logs read --command <name> [--source stdout|stderr|all]\`, \`${localHelperBaseCommand} dev logs grep <pattern> --command <name> [--source stdout|stderr|all] [--regex] [--ignore-case]\`, \`${localHelperBaseCommand} documents list\`, \`${localHelperBaseCommand} documents read <document-id>\`, and \`${localHelperBaseCommand} documents history <document-id>\`.`,
     "Use the dev logs helpers to read stdout/stderr for configured background commands or grep those logs without guessing process names or log file paths.",
   ];
@@ -665,24 +666,29 @@ function buildProjectManagementSummaryPrompt(options: {
     .map((entry) => `#${entry.number} ${entry.title}`)
     .join(", ");
 
-  return [
-    `You are writing the short summary for the project-management document \"${options.document.title}\" on branch ${options.branch}.`,
-    "The server will persist your response into the saved document summary field in the same branch.",
-    "Return only the final short summary as raw text.",
-    "Write 1-2 sentences that make the document easy to scan in the UI.",
-    "Keep it concise, specific, and directly useful to an engineer deciding whether to open the document.",
-    "Do not use bullets, headings, markdown formatting, code fences, labels, or commentary outside the summary.",
-    "Prefer 160 characters or fewer when you can, but clarity matters more than a hard limit.",
-    "",
-    `Title: ${options.document.title}`,
-    `Status: ${options.document.status}`,
-    `Assignee: ${options.document.assignee || "Unassigned"}`,
-    `Tags: ${options.document.tags.join(", ") || "none"}`,
-    `Dependencies: ${dependencySummary || "none"}`,
-    "",
-    "Current markdown:",
-    options.document.markdown,
-  ].join("\n");
+  return buildPrompt({
+    preamble: [
+      `You are writing the short summary for the project-management document \"${options.document.title}\" on branch ${options.branch}.`,
+      "The server will persist your response into the saved document summary field in the same branch.",
+      ...buildAiLocalHelperInstructions(),
+      "Return only the final short summary as raw text.",
+      "Write 1-2 sentences that make the document easy to scan in the UI.",
+      "Keep it concise, specific, and directly useful to an engineer deciding whether to open the document.",
+      "Do not use bullets, headings, markdown formatting, code fences, labels, or commentary outside the summary.",
+      "Prefer 160 characters or fewer when you can, but clarity matters more than a hard limit.",
+    ],
+    sections: [
+      buildPromptSection(
+        "Document context:",
+        `Title: ${options.document.title}`,
+        `Status: ${options.document.status}`,
+        `Assignee: ${options.document.assignee || "Unassigned"}`,
+        `Tags: ${options.document.tags.join(", ") || "none"}`,
+        `Dependencies: ${dependencySummary || "none"}`,
+      ),
+      buildPromptSection("Current markdown:", options.document.markdown),
+    ],
+  });
 }
 
 function buildReviewFollowUpSummaryPrompt(options: {
@@ -694,6 +700,7 @@ function buildReviewFollowUpSummaryPrompt(options: {
   return [
     `You are summarizing previous AI work for the review activity linked to \"${options.documentTitle}\" on branch ${options.branch}.`,
     "The server will use your response as compact context for the next follow-up AI run.",
+    ...buildAiLocalHelperInstructions(),
     "Return only the final summary as raw text.",
     "Write a concise engineer-facing summary that captures what prior AI runs already did, key outcomes, unresolved risks, and any notable failures.",
     "Do not use markdown headings, bullets, code fences, or commentary outside the summary.",
@@ -1188,6 +1195,7 @@ export async function buildReviewFollowUpRequest(options: {
       `Review follow-up for linked document \"${options.documentTitle}\".`,
       "Implement the work described by this document in the current worktree.",
       environmentContext,
+      ...buildAiLocalHelperInstructions(),
       "Continue the implementation directly in code. Treat the linked document as requirements context and the review thread as the ordered record of feedback and prior AI work.",
       "Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take.",
       "Return your normal coding-agent response with what changed, any important residual issues, and how you verified the work.",
@@ -1245,6 +1253,7 @@ export async function buildReviewOnlyRequest(options: {
     preamble: [
       `Review branch changes for linked document \"${options.documentTitle}\".`,
       environmentContext,
+      ...buildAiLocalHelperInstructions(),
       "Do not change code, files, git state, or the project-management document. This is a review-only pass.",
       "Review whether everything in the original document is correct, whether everything in the requested updates is correct, and whether the current branch diff actually satisfies them.",
       "Return markdown only. Put the actual review content inside <wtm-review>...</wtm-review> so the application can extract and display it.",
