@@ -34,6 +34,7 @@ export interface ProjectManagementAiQueuePayload {
   worktreePath: string;
   input: string;
   renderedCommand: string;
+  executionCommand?: string;
   env: Record<string, string>;
   aiCommands: AiCommandConfig;
   documentId: string;
@@ -120,7 +121,7 @@ async function runManagedAiProcess(options: {
       const processName = getAiCommandProcessName(payload.jobId);
       const processInfo = await startAiCommandProcess({
         processName,
-        command: options.payload.renderedCommand,
+        command: options.payload.executionCommand ?? options.payload.renderedCommand,
         input: options.payload.input,
         worktreePath: options.payload.worktreePath,
         env: options.payload.env,

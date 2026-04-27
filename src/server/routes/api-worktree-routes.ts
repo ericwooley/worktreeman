@@ -69,6 +69,7 @@ import {
   readAiCommandLogEntryByJobId,
   reconcileAiCommandLogEntry,
   renderAiCommand,
+  renderAiExecutionCommand,
   resolveRequestedAiCommandId,
   runBackgroundTask,
   safeWriteAiRequestLog,
@@ -662,6 +663,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       });
 
       renderedCommand = renderAiCommand(template, input);
+      const executionCommand = context.hasInjectedAiProcesses ? undefined : renderAiExecutionCommand(template);
       const reviewRequestSummary = explicitDocumentId
         ? null
         : reviewAction === "review"
@@ -677,6 +679,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         origin: AiCommandOrigin;
         input: string;
         renderedCommand: string;
+        executionCommand?: string;
         worktreePath: string;
         env: NodeJS.ProcessEnv;
         applyDocumentUpdateToDocumentId: string | null;
@@ -693,6 +696,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         origin,
         input,
         renderedCommand,
+        executionCommand,
         worktreePath,
         env,
         applyDocumentUpdateToDocumentId: explicitDocumentId,
@@ -713,6 +717,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
               origin: runDetails.origin,
               input: runDetails.input,
               renderedCommand: runDetails.renderedCommand,
+              executionCommand: runDetails.executionCommand,
               worktreePath: runDetails.worktreePath,
               env: runDetails.env,
               applyDocumentUpdateToDocumentId: runDetails.applyDocumentUpdateToDocumentId,
