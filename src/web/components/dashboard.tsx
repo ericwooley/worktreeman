@@ -344,6 +344,7 @@ export function Dashboard() {
     runProjectManagementDocumentAi,
     cancelAiCommand,
     cancelProjectManagementDocumentAi,
+    trackAiCommandJob,
     saveAiCommandSettings,
     saveAutoSyncSettings,
     saveConfigDocument,
@@ -568,6 +569,10 @@ export function Dashboard() {
 
     setSelectedBranch(selected.branch);
   }, [selected?.branch, selectedBranch]);
+
+  useEffect(() => {
+    trackAiCommandJob(selected?.branch ?? null);
+  }, [selected?.branch, trackAiCommandJob]);
 
   useEffect(() => {
     window.localStorage.setItem(

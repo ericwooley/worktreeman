@@ -286,8 +286,8 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /Casey Reviewer/);
   assert.match(markup, /Need a <strong>final QA pass<\/strong>/);
   assert.match(markup, /Delete entry/);
-  assert.match(markup, /placeholder="Add a review note, or start with @dowork or @review\."/);
-  assert.match(markup, /<code>@dowork<\/code>/);
+  assert.match(markup, /placeholder="Add a review note, or start with @ai or @review\."/);
+  assert.match(markup, /<code>@ai<\/code>/);
   assert.match(markup, /<code>@review<\/code>/);
   assert.match(markup, /Plain text adds a review entry\./);
   assert.match(markup, />Submit review</);
@@ -296,6 +296,69 @@ test("Review tab renders linked document review timeline", async () => {
   const addReviewEntryIndex = markup.indexOf("Review entry or Smart AI command");
   assert.ok(reviewEntryIndex >= 0);
   assert.ok(addReviewEntryIndex > reviewEntryIndex);
+});
+
+test("Review tab collapses all but the latest three review entries by default", async () => {
+  const reviewEntries = Array.from({ length: 5 }, (_, index) => ({
+    id: `review-${index + 1}`,
+    documentId: "doc-1",
+    kind: "comment" as const,
+    source: "user" as const,
+    eventType: "comment" as const,
+    body: `Review entry ${index + 1}`,
+    createdAt: `2026-03-25T1${index}:00:00.000Z`,
+    updatedAt: `2026-03-25T1${index}:00:00.000Z`,
+    authorName: `Reviewer ${index + 1}`,
+    authorEmail: `reviewer${index + 1}@example.com`,
+  }));
+
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+    },
+    projectManagementDocuments: [{
+      id: "doc-1",
+      number: 1,
+      title: "Dependencies",
+      summary: "Track prerequisite document work.",
+      tags: ["feature"],
+      dependencies: [],
+      status: "todo",
+      assignee: "Eric",
+      archived: false,
+      createdAt: "2026-03-20T10:00:00.000Z",
+      updatedAt: "2026-03-25T10:00:00.000Z",
+      historyCount: 2,
+    }],
+    projectManagementReviews: [{
+      documentId: "doc-1",
+      entries: reviewEntries,
+    }],
+  });
+
+  const detailsOpenMatches = markup.match(/<details open="" class="group">/g) ?? [];
+  const collapsedMatches = markup.match(/<details class="group">/g) ?? [];
+  assert.equal(detailsOpenMatches.length, 3);
+  assert.equal(collapsedMatches.length, 2);
+
+  const reviewer1Index = markup.indexOf("Reviewer 1");
+  const firstClosedIndex = markup.indexOf("<details class=\"group\">", reviewer1Index - 200);
+  assert.ok(reviewer1Index >= 0);
+  assert.ok(firstClosedIndex >= 0);
+
+  const reviewer5Index = markup.indexOf("Reviewer 5");
+  const openNearReviewer5 = markup.lastIndexOf("<details open=\"\" class=\"group\">", reviewer5Index);
+  assert.ok(reviewer5Index >= 0);
+  assert.ok(openNearReviewer5 >= 0);
 });
 
 test("Review tab shows live AI output instead of the follow-up composer while AI is active", async () => {
@@ -357,5 +420,179 @@ test("Review tab shows live AI output instead of the follow-up composer while AI
   assert.match(markup, /Worktree AI is working/);
   assert.match(markup, /Mixed output timeline/);
   assert.match(markup, /Cancel AI/);
-  assert.match(markup, /placeholder="Add a review note, or start with @dowork or @review\."/);
+  assert.match(markup, /placeholder="Add a review note, or start with @ai or @review\."/);
+});
+
+test("Review tab prefers streamed worktree AI job output over stale running job summaries", async () => {
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+    },
+    projectManagementRunningAiJobs: [{
+      jobId: "job-1",
+      fileName: "job-1.md",
+      worktreeId: sampleWorktree.id,
+      branch: sampleWorktree.branch,
+      worktreePath: sampleWorktree.worktreePath,
+      commandId: "smart",
+      command: "opencode run ...",
+      input: "Continue this review",
+      status: "running",
+      startedAt: "2026-03-25T12:00:00.000Z",
+      completedAt: undefined,
+      pid: 1234,
+      processName: "wtm:ai:job-1",
+      exitCode: null,
+      stdout: "Stale summary output",
+      stderr: "",
+      error: null,
+      documentId: "doc-1",
+      origin: {
+        kind: "worktree-review",
+        label: "Review follow-up",
+        description: "Continue review activity for Dependencies",
+        location: {
+          tab: "review",
+          branch: sampleWorktree.branch,
+          worktreeId: sampleWorktree.id,
+          documentId: "doc-1",
+        },
+      },
+      outputEvents: [],
+    }],
+    projectManagementAiJob: {
+      jobId: "job-1",
+      fileName: "job-1.md",
+      worktreeId: sampleWorktree.id,
+      branch: sampleWorktree.branch,
+      worktreePath: sampleWorktree.worktreePath,
+      commandId: "smart",
+      command: "opencode run ...",
+      input: "Continue this review",
+      status: "running",
+      startedAt: "2026-03-25T12:00:00.000Z",
+      completedAt: undefined,
+      pid: 1234,
+      processName: "wtm:ai:job-1",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      error: null,
+      documentId: "doc-1",
+      origin: {
+        kind: "worktree-review",
+        label: "Review follow-up",
+        description: "Continue review activity for Dependencies",
+        location: {
+          tab: "review",
+          branch: sampleWorktree.branch,
+          worktreeId: sampleWorktree.id,
+          documentId: "doc-1",
+        },
+      },
+      outputEvents: [{
+        id: "evt-2",
+        source: "stdout",
+        text: "Live streamed worker output",
+        timestamp: "2026-03-25T12:00:02.000Z",
+      }],
+    },
+  });
+
+  assert.match(markup, /Live streamed worker output/);
+  assert.doesNotMatch(markup, /Stale summary output/);
+});
+
+test("Review tab hides stale active AI state when the streamed job already completed", async () => {
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+    },
+    projectManagementRunningAiJobs: [{
+      jobId: "job-1",
+      fileName: "job-1.md",
+      worktreeId: sampleWorktree.id,
+      branch: sampleWorktree.branch,
+      worktreePath: sampleWorktree.worktreePath,
+      commandId: "smart",
+      command: "opencode run ...",
+      input: "Continue this review",
+      status: "running",
+      startedAt: "2026-03-25T12:00:00.000Z",
+      completedAt: undefined,
+      pid: 1234,
+      processName: "wtm:ai:job-1",
+      exitCode: null,
+      stdout: "",
+      stderr: "",
+      error: null,
+      documentId: "doc-1",
+      origin: {
+        kind: "worktree-review",
+        label: "Review follow-up",
+        description: "Continue review activity for Dependencies",
+        location: {
+          tab: "review",
+          branch: sampleWorktree.branch,
+          worktreeId: sampleWorktree.id,
+          documentId: "doc-1",
+        },
+      },
+      outputEvents: [],
+    }],
+    projectManagementAiJob: {
+      jobId: "job-1",
+      fileName: "job-1.md",
+      worktreeId: sampleWorktree.id,
+      branch: sampleWorktree.branch,
+      worktreePath: sampleWorktree.worktreePath,
+      commandId: "smart",
+      command: "opencode run ...",
+      input: "Continue this review",
+      status: "completed",
+      startedAt: "2026-03-25T12:00:00.000Z",
+      completedAt: "2026-03-25T12:05:00.000Z",
+      pid: 1234,
+      processName: "wtm:ai:job-1",
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      error: null,
+      documentId: "doc-1",
+      origin: {
+        kind: "worktree-review",
+        label: "Review follow-up",
+        description: "Continue review activity for Dependencies",
+        location: {
+          tab: "review",
+          branch: sampleWorktree.branch,
+          worktreeId: sampleWorktree.id,
+          documentId: "doc-1",
+        },
+      },
+      outputEvents: [],
+    },
+  });
+
+  assert.doesNotMatch(markup, /AI is active/);
+  assert.doesNotMatch(markup, /No output captured\./);
+  assert.match(markup, />Submit review</);
 });

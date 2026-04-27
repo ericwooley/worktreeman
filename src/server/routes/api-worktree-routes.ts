@@ -277,11 +277,13 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
 
       if (sourceRoot) {
         const result = await syncEnvFiles(sourceRoot, worktree.worktreePath);
+        context.emitStateRefresh();
         context.emitGitStateRefresh();
         res.status(201).json(result);
         return;
       }
 
+      context.emitStateRefresh();
       context.emitGitStateRefresh();
       res.status(201).json({ copiedFiles: [] });
     } catch (error) {

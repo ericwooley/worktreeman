@@ -982,13 +982,40 @@ export function WorktreeDetail({
     return projectManagementReviews.find((entry) => entry.documentId === linkedDocument.id) ?? null;
   }, [linkedDocument?.id, projectManagementDocumentReview, projectManagementReviews]);
   const linkedDocumentReviewEntries = linkedDocumentReview?.entries ?? [];
-  const activeReviewAiJob = useMemo(() => {
+  const expandedReviewEntriesStartIndex = Math.max(0, linkedDocumentReviewEntries.length - 3);
+  const streamedWorktreeAiJob = useMemo(() => {
+    if (!worktree || !projectManagementAiJob) {
+      return null;
+    }
+
+    return projectManagementAiJob.branch === worktree.branch || projectManagementAiJob.worktreeId === worktree.id
+      ? projectManagementAiJob
+      : null;
+  }, [projectManagementAiJob, worktree]);
+  const runningReviewAiJob = useMemo(() => {
     if (!worktree) {
       return null;
     }
 
-    return projectManagementRunningAiJobs.find((job) => job.worktreeId === worktree.id || job.branch === worktree.branch) ?? null;
+    return projectManagementRunningAiJobs.find(
+      (job) => job.status === "running" && (job.worktreeId === worktree.id || job.branch === worktree.branch),
+    ) ?? null;
   }, [projectManagementRunningAiJobs, worktree]);
+  const activeReviewAiJob = useMemo(() => {
+    if (streamedWorktreeAiJob?.status === "running") {
+      return streamedWorktreeAiJob;
+    }
+
+    if (
+      streamedWorktreeAiJob
+      && runningReviewAiJob
+      && streamedWorktreeAiJob.jobId === runningReviewAiJob.jobId
+    ) {
+      return null;
+    }
+
+    return runningReviewAiJob;
+  }, [runningReviewAiJob, streamedWorktreeAiJob]);
   const [reviewCommandDraft, setReviewCommandDraft] = useState("");
   const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
   const [deletingReviewEntryId, setDeletingReviewEntryId] = useState<string | null>(null);
@@ -1465,7 +1492,7 @@ export function WorktreeDetail({
     }
 
     const trimmedDraft = reviewCommandDraft.trim();
-    const parsedCommand = trimmedDraft.match(/^@(dowork|review)\b/i);
+    const parsedCommand = trimmedDraft.match(/^@(ai|review)\b/i);
 
     if (!parsedCommand) {
       const nextReview = await onAddProjectManagementReviewEntry(linkedDocument.id, { body: trimmedDraft });
@@ -1480,7 +1507,7 @@ export function WorktreeDetail({
     }
 
     const reviewAction = parsedCommand?.[1]?.toLowerCase() === "review" ? "review" : "implement";
-    const requestText = trimmedDraft.replace(/^@(dowork|review)\b\s*/i, "").trim() || trimmedDraft;
+    const requestText = trimmedDraft.replace(/^@(ai|review)\b\s*/i, "").trim() || trimmedDraft;
     const latestAiRequest = [...linkedDocumentReviewEntries]
       .reverse()
       .find((entry) => entry.source === "ai" && entry.eventType === "ai-started");
@@ -2332,43 +2359,51 @@ export function WorktreeDetail({
               <>
                 {linkedDocumentReviewEntries.length ? (
                   <div className="grid gap-3">
-                    {linkedDocumentReviewEntries.map((entry) => (
-                      <MatrixCard key={entry.id} as="div" className="p-4">
-                        <MatrixCardHeader
-                          eyebrow={<span className="theme-text-soft">{new Date(entry.createdAt).toLocaleString()}</span>}
-                          title={entry.authorName ?? entry.authorEmail ?? getReviewSourceLabel(entry)}
-                          titleLines={1}
-                          titleText={entry.authorName ?? entry.authorEmail ?? getReviewSourceLabel(entry)}
-                          description={entry.authorEmail ?? undefined}
-                          descriptionLines={1}
-                          descriptionText={entry.authorEmail ?? undefined}
-                          badges={(
-                            <>
-                              <MatrixBadge tone={getReviewEventTone(entry)} compact>{getReviewEventLabel(entry)}</MatrixBadge>
-                              <MatrixBadge tone={getReviewSourceTone(entry)} compact>{getReviewSourceLabel(entry)}</MatrixBadge>
-                            </>
-                          )}
-                        />
-                        <div
-                          className="pm-markdown mt-4 text-sm theme-text"
-                          dangerouslySetInnerHTML={{ __html: marked.parse(entry.body) }}
-                        />
-                        <MatrixCardFooter className="mt-4 justify-between gap-3 text-xs theme-text-muted">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <span>{entry.kind}</span>
-                            {entry.updatedAt !== entry.createdAt ? <span>{`Updated ${new Date(entry.updatedAt).toLocaleString()}`}</span> : null}
-                          </div>
-                          <button
-                            type="button"
-                            className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-xs"
-                            disabled={projectManagementSaving || deletingReviewEntryId === entry.id}
-                            onClick={() => void deleteReviewEntry(entry)}
-                          >
-                            {deletingReviewEntryId === entry.id ? "Deleting..." : "Delete entry"}
-                          </button>
-                        </MatrixCardFooter>
-                      </MatrixCard>
-                    ))}
+                    {linkedDocumentReviewEntries.map((entry, index) => {
+                      const expandedByDefault = index >= expandedReviewEntriesStartIndex;
+
+                      return (
+                        <MatrixCard key={entry.id} as="div" className="p-4">
+                          <details open={expandedByDefault} className="group">
+                            <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                              <MatrixCardHeader
+                                eyebrow={<span className="theme-text-soft">{new Date(entry.createdAt).toLocaleString()}</span>}
+                                title={entry.authorName ?? entry.authorEmail ?? getReviewSourceLabel(entry)}
+                                titleLines={1}
+                                titleText={entry.authorName ?? entry.authorEmail ?? getReviewSourceLabel(entry)}
+                                description={entry.authorEmail ?? undefined}
+                                descriptionLines={1}
+                                descriptionText={entry.authorEmail ?? undefined}
+                                badges={(
+                                  <>
+                                    <MatrixBadge tone={getReviewEventTone(entry)} compact>{getReviewEventLabel(entry)}</MatrixBadge>
+                                    <MatrixBadge tone={getReviewSourceTone(entry)} compact>{getReviewSourceLabel(entry)}</MatrixBadge>
+                                  </>
+                                )}
+                              />
+                            </summary>
+                            <div
+                              className="pm-markdown mt-4 text-sm theme-text"
+                              dangerouslySetInnerHTML={{ __html: marked.parse(entry.body) }}
+                            />
+                            <MatrixCardFooter className="mt-4 justify-between gap-3 text-xs theme-text-muted">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span>{entry.kind}</span>
+                                {entry.updatedAt !== entry.createdAt ? <span>{`Updated ${new Date(entry.updatedAt).toLocaleString()}`}</span> : null}
+                              </div>
+                              <button
+                                type="button"
+                                className="matrix-button matrix-button-danger rounded-none px-3 py-1.5 text-xs"
+                                disabled={projectManagementSaving || deletingReviewEntryId === entry.id}
+                                onClick={() => void deleteReviewEntry(entry)}
+                              >
+                                {deletingReviewEntryId === entry.id ? "Deleting..." : "Delete entry"}
+                              </button>
+                            </MatrixCardFooter>
+                          </details>
+                        </MatrixCard>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
@@ -2382,13 +2417,13 @@ export function WorktreeDetail({
                     <textarea
                       value={reviewCommandDraft}
                       onChange={(event) => setReviewCommandDraft(event.target.value)}
-                      placeholder="Add a review note, or start with @dowork or @review."
+                      placeholder="Add a review note, or start with @ai or @review."
                       rows={5}
                       className="matrix-input min-h-[9rem] w-full rounded-none px-3 py-3 text-sm outline-none"
                     />
                   </label>
                   <p className="text-sm theme-text-muted">
-                    Plain text adds a review entry. Use <code>@dowork</code> to continue implementation, or <code>@review</code> to run a review-only pass over the current branch diff.
+                    Plain text adds a review entry. Use <code>@ai</code> to continue implementation, or <code>@review</code> to run a review-only pass over the current branch diff.
                   </p>
                   {activeReviewAiJob ? (
                     <div className="space-y-3 border theme-border-subtle p-3">

@@ -1106,13 +1106,14 @@ async function formatReviewThreadContextEntry(options: {
 async function buildOrderedReviewThreadContext(options: {
   repoRoot: string;
   documentId: string;
-}): Promise<{ reviewThreadContext: string; originalContextFallback: string | null }> {
+}): Promise<{ reviewThreadContext: string; originalContextFallback: string | null; latestFullReviewEntry: string | null }> {
   const review = await getProjectManagementDocumentReview(options.repoRoot, options.documentId);
   const entries = review.review.entries;
   if (!entries.length) {
     return {
       reviewThreadContext: "No visible review feedback was recorded for this document yet.",
       originalContextFallback: null,
+      latestFullReviewEntry: null,
     };
   }
 
@@ -1133,10 +1134,14 @@ async function buildOrderedReviewThreadContext(options: {
     .find((value): value is string => Boolean(value?.trim()))
     ?? reviewLogs.find((entry) => entry.request.trim())?.request.trim()
     ?? null;
+  const latestFullReviewEntry = [...entries]
+    .reverse()
+    .find((entry) => entry.kind === "comment")?.body.trim() ?? null;
 
   return {
     reviewThreadContext: formattedEntries.join("\n\n"),
     originalContextFallback,
+    latestFullReviewEntry,
   };
 }
 
@@ -1151,7 +1156,7 @@ export async function buildReviewFollowUpRequest(options: {
   documentMarkdown?: string | null;
   followUp: NonNullable<RunAiCommandRequest["reviewFollowUp"]>;
 }): Promise<string> {
-  const { reviewThreadContext, originalContextFallback } = await buildOrderedReviewThreadContext({
+  const { reviewThreadContext, originalContextFallback, latestFullReviewEntry } = await buildOrderedReviewThreadContext({
     repoRoot: options.repoRoot,
     documentId: options.documentId,
   });
@@ -1187,6 +1192,7 @@ export async function buildReviewFollowUpRequest(options: {
         options.documentMarkdown?.trim() ? `Markdown:\n${options.documentMarkdown.trim()}` : "Markdown: (no markdown)",
       ),
       buildPromptSection("Ordered review thread context:", reviewThreadContext),
+      latestFullReviewEntry ? buildPromptSection("Latest full review entry:", latestFullReviewEntry) : null,
       buildPromptSection("New follow-up request:", options.followUp.newRequest.trim()),
     ],
     closing: ["Implement the requested work in code in this repository."],

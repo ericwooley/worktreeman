@@ -1116,6 +1116,8 @@ test("review follow-up AI runs build ordered review-thread context from visible 
     assert.equal(capturedPrompt.includes("2. AI work completed"), true);
     assert.equal(capturedPrompt.includes("Cached stdout summary:"), true);
     assert.equal(capturedPrompt.includes("Stdout summary: Implemented the first draft and found two risks."), true);
+    assert.equal(capturedPrompt.includes("Latest full review entry:"), true);
+    assert.equal(capturedPrompt.includes("Need one more pass on author attribution."), true);
     assert.equal(capturedPrompt.includes("warning output"), false);
     assert.equal(capturedPrompt.includes("Prior AI run log:"), false);
     assert.equal(capturedPrompt.includes("Summary of previous AI outputs:"), false);
@@ -1317,6 +1319,8 @@ test("review-origin AI runs recover follow-up context from visible review entrie
     assert.equal(capturedPrompt.includes("Original review request"), true);
     assert.equal(capturedPrompt.includes("Ordered review thread context:"), true);
     assert.equal(capturedPrompt.includes("AI work started"), true);
+    assert.equal(capturedPrompt.includes("Latest full review entry:"), false);
+    assert.equal(capturedPrompt.includes("## Worktree AI started"), false);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("It does not appear you finished this work"), true);
     assert.equal(capturedPrompt.includes("Focus on finishing the requested engineering work. Do not spend response space on disclaimers about actions you did not take."), true);
@@ -1505,6 +1509,8 @@ test("review follow-up AI runs include ordered review feedback and cached stdout
     assert.equal(capturedPrompt.includes("Address the deployment issue before sign-off."), true);
     assert.equal(capturedPrompt.includes("Implemented the first draft and found two risks."), true);
     assert.equal(capturedPrompt.includes("Closed one risk but left a deployment issue unresolved."), true);
+    assert.equal(capturedPrompt.includes("Latest full review entry:"), true);
+    assert.equal(capturedPrompt.includes("Address the deployment issue before sign-off."), true);
     assert.equal(capturedPrompt.includes("warning output"), false);
     assert.equal(capturedPrompt.includes("New follow-up request:"), true);
     assert.equal(capturedPrompt.includes("Make sure the remaining deployment issue is fixed"), true);
