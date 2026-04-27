@@ -157,7 +157,43 @@ export interface WorktreeRecord {
   linkedDocument?: WorktreeLinkedDocumentSummary | null;
   runtime?: WorktreeRuntime;
   autoSync?: WorktreeAutoSyncState;
+  reviewLoop?: WorktreeReviewLoopState;
   deletion?: WorktreeDeletionState;
+}
+
+export type WorktreeReviewLoopStatus = "idle" | "running" | "passed" | "failed";
+
+export type WorktreeReviewLoopPhase = "implement" | "review";
+
+export interface WorktreeReviewIssue {
+  id: string;
+  summary: string;
+  details: string;
+}
+
+export interface WorktreeReviewResult {
+  passed: boolean;
+  issues: WorktreeReviewIssue[];
+}
+
+export interface WorktreeReviewLoopState {
+  worktreeId: WorktreeId;
+  branch: string;
+  worktreePath: string;
+  status: WorktreeReviewLoopStatus;
+  currentPhase: WorktreeReviewLoopPhase | null;
+  attemptCount: number;
+  maxAttempts: number;
+  reviewDocumentId: string;
+  originalRequest: string;
+  latestRequest: string;
+  activeJobId?: string | null;
+  lastCompletedJobId?: string | null;
+  latestReviewResult?: WorktreeReviewResult | null;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+  failureMessage?: string | null;
 }
 
 export interface WorktreeLinkedDocumentSummary {
@@ -414,6 +450,8 @@ export interface SystemJobPayloadSummary {
   applyDocumentUpdateToDocumentId: string | null;
   reviewDocumentId: string | null;
   reviewRequestSummaryPreview: string | null;
+  reviewAction: "implement" | "review" | null;
+  autoReviewLoop: boolean;
   autoCommitDirtyWorktree: boolean;
 }
 
@@ -645,6 +683,7 @@ export interface RunAiCommandRequest {
   commandId?: AiCommandId;
   origin?: AiCommandOrigin | null;
   reviewAction?: "implement" | "review";
+  autoReviewLoop?: boolean;
   reviewFollowUp?: {
     originalRequest: string;
     newRequest: string;

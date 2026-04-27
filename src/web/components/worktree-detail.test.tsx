@@ -290,6 +290,7 @@ test("Review tab renders linked document review timeline", async () => {
   assert.match(markup, /<code>@ai<\/code>/);
   assert.match(markup, /<code>@review<\/code>/);
   assert.match(markup, /Plain text adds a review entry\./);
+  assert.match(markup, /Auto-review loop: after <code>@ai<\/code>, keep alternating implementation and review on the server until review passes or 10 attempts are used\./);
   assert.match(markup, />Submit review</);
 
   const reviewEntryIndex = markup.indexOf("Casey Reviewer");
@@ -595,4 +596,55 @@ test("Review tab hides stale active AI state when the streamed job already compl
   assert.doesNotMatch(markup, /AI is active/);
   assert.doesNotMatch(markup, /No output captured\./);
   assert.match(markup, />Submit review</);
+});
+
+test("Review tab renders auto-review loop status from worktree state", async () => {
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    worktree: {
+      ...sampleWorktree,
+      linkedDocument: {
+        id: "doc-1",
+        number: 1,
+        title: "Dependencies",
+        summary: "Track prerequisite document work.",
+        status: "todo",
+        archived: false,
+      },
+      reviewLoop: {
+        worktreeId: sampleWorktree.id,
+        branch: sampleWorktree.branch,
+        worktreePath: sampleWorktree.worktreePath,
+        status: "running",
+        currentPhase: "review",
+        attemptCount: 2,
+        maxAttempts: 10,
+        reviewDocumentId: "doc-1",
+        originalRequest: "Finish the remaining review work",
+        latestRequest: "Address every blocking review issue before the next review pass:",
+        activeJobId: "job-loop-2",
+        lastCompletedJobId: "job-loop-1",
+        latestReviewResult: {
+          passed: false,
+          issues: [{
+            id: "deployment-issue",
+            summary: "Fix deployment issue",
+            details: "Resolve the outstanding deployment problem before sign-off.",
+          }],
+        },
+        startedAt: "2026-03-25T12:00:00.000Z",
+        updatedAt: "2026-03-25T12:10:00.000Z",
+        completedAt: null,
+        failureMessage: null,
+      },
+    },
+  });
+
+  assert.match(markup, /Auto-review loop/);
+  assert.match(markup, /attempt 2\/10/);
+  assert.match(markup, />review</);
+  assert.match(markup, /Latest request: Address every blocking review issue before the next review pass:/);
+  assert.match(markup, /Blocking review issues:/);
+  assert.match(markup, /Fix deployment issue/);
+  assert.match(markup, /Resolve the outstanding deployment problem before sign-off\./);
 });

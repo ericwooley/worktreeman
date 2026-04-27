@@ -1017,6 +1017,7 @@ export function WorktreeDetail({
     return runningReviewAiJob;
   }, [runningReviewAiJob, streamedWorktreeAiJob]);
   const [reviewCommandDraft, setReviewCommandDraft] = useState("");
+  const [autoReviewLoopEnabled, setAutoReviewLoopEnabled] = useState(false);
   const [reviewFollowUpSubmitting, setReviewFollowUpSubmitting] = useState(false);
   const [deletingReviewEntryId, setDeletingReviewEntryId] = useState<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -1520,6 +1521,7 @@ export function WorktreeDetail({
         reviewDocumentId: linkedDocument.id,
         commandId: "smart",
         reviewAction,
+        autoReviewLoop: reviewAction === "implement" && autoReviewLoopEnabled,
         origin: {
           kind: "worktree-review",
           label: reviewAction === "review" ? "Review pass" : "Review follow-up",
@@ -2425,6 +2427,50 @@ export function WorktreeDetail({
                   <p className="text-sm theme-text-muted">
                     Plain text adds a review entry. Use <code>@ai</code> to continue implementation, or <code>@review</code> to run a review-only pass over the current branch diff.
                   </p>
+                  <label className="flex items-start gap-3 text-sm theme-text-muted">
+                    <input
+                      type="checkbox"
+                      checked={autoReviewLoopEnabled}
+                      onChange={(event) => setAutoReviewLoopEnabled(event.target.checked)}
+                      className="mt-1 h-4 w-4 rounded-none border theme-border-subtle bg-transparent"
+                    />
+                    <span>
+                      Auto-review loop: after <code>@ai</code>, keep alternating implementation and review on the server until review passes or 10 attempts are used.
+                    </span>
+                  </label>
+                  {worktree?.reviewLoop ? (
+                    <div className="border theme-border-subtle p-3 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] theme-text-soft">Auto-review loop</p>
+                        <MatrixBadge tone={worktree.reviewLoop.status === "passed" ? "active" : worktree.reviewLoop.status === "failed" ? "warning" : "neutral"} compact>
+                          {worktree.reviewLoop.status}
+                        </MatrixBadge>
+                        <MatrixBadge tone="neutral" compact>
+                          attempt {worktree.reviewLoop.attemptCount}/{worktree.reviewLoop.maxAttempts}
+                        </MatrixBadge>
+                        {worktree.reviewLoop.currentPhase ? (
+                          <MatrixBadge tone="neutral" compact>
+                            {worktree.reviewLoop.currentPhase}
+                          </MatrixBadge>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 theme-text-muted">Latest request: {worktree.reviewLoop.latestRequest}</p>
+                      {worktree.reviewLoop.failureMessage ? (
+                        <p className="mt-2 theme-text-warning">{worktree.reviewLoop.failureMessage}</p>
+                      ) : null}
+                      {worktree.reviewLoop.latestReviewResult && !worktree.reviewLoop.latestReviewResult.passed ? (
+                        <div className="mt-2 space-y-1">
+                          <p className="theme-text-muted">Blocking review issues:</p>
+                          {worktree.reviewLoop.latestReviewResult.issues.map((issue) => (
+                            <div key={issue.id} className="border theme-border-subtle p-2">
+                              <p className="font-medium theme-text">{issue.summary}</p>
+                              <p className="mt-1 theme-text-muted">{issue.details}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {activeReviewAiJob ? (
                     <div className="space-y-3 border theme-border-subtle p-3">
                       <div>

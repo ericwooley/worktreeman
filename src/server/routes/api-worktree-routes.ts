@@ -13,6 +13,8 @@ import type {
   TmuxClientInfo,
   TmuxClientsStreamEvent,
   WorktreeRecord,
+  WorktreeReviewLoopState,
+  WorktreeReviewResult,
 } from "../../shared/types.js";
 import type { WorktreeId } from "../../shared/worktree-id.js";
 import {
@@ -50,6 +52,7 @@ import {
   getWorktreeDocumentLink,
   setWorktreeDocumentLink,
 } from "../services/worktree-link-service.js";
+import { extractTaggedReviewResult } from "../services/ai-command-completion-service.js";
 import { logServerEvent } from "../utils/server-logger.js";
 import { noteAiSsePayloadSize } from "../services/ai-command-diagnostics-service.js";
 import {
@@ -91,6 +94,297 @@ function appendCancellationEvent(log: {
       timestamp: new Date().toISOString(),
     },
   ];
+}
+
+const AUTO_REVIEW_LOOP_MAX_ATTEMPTS = 10;
+
+type ReviewLoopStartDetails = {
+  context: ApiRouterContext;
+  worktree: WorktreeRecord;
+  config: ApiRouterContext["loadCurrentConfig"] extends () => Promise<infer T> ? T : never;
+  commandId: AiCommandId;
+  env: NodeJS.ProcessEnv;
+  shouldStopRuntimeOnFinish: boolean;
+  reviewDocumentId: string;
+  documentTitle: string;
+  documentSummary: string | null;
+  documentMarkdown: string | null;
+  originalRequest: string;
+  initialRequest: string;
+  initialJobId: string;
+};
+
+function createReviewLoopState(details: {
+  worktree: WorktreeRecord;
+  reviewDocumentId: string;
+  originalRequest: string;
+}): WorktreeReviewLoopState {
+  const now = new Date().toISOString();
+  return {
+    worktreeId: details.worktree.id,
+    branch: details.worktree.branch,
+    worktreePath: details.worktree.worktreePath,
+    status: "running",
+    currentPhase: "implement",
+    attemptCount: 0,
+    maxAttempts: AUTO_REVIEW_LOOP_MAX_ATTEMPTS,
+    reviewDocumentId: details.reviewDocumentId,
+    originalRequest: details.originalRequest,
+    latestRequest: details.originalRequest,
+    activeJobId: null,
+    lastCompletedJobId: null,
+    latestReviewResult: null,
+    startedAt: now,
+    updatedAt: now,
+    completedAt: null,
+    failureMessage: null,
+  };
+}
+
+function updateReviewLoopState(
+  state: WorktreeReviewLoopState,
+  updates: Partial<WorktreeReviewLoopState>,
+): WorktreeReviewLoopState {
+  return {
+    ...state,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function buildLoopIssueRequest(result: WorktreeReviewResult): string {
+  return [
+    "Address every blocking review issue before the next review pass:",
+    ...result.issues.map((issue, index) => `${index + 1}. ${issue.summary}\nID: ${issue.id}\nDetails: ${issue.details}`),
+  ].join("\n\n");
+}
+
+async function runAutoReviewLoop(details: ReviewLoopStartDetails) {
+  let state = createReviewLoopState({
+    worktree: details.worktree,
+    reviewDocumentId: details.reviewDocumentId,
+    originalRequest: details.originalRequest,
+  });
+  state = updateReviewLoopState(state, {
+    attemptCount: 1,
+    currentPhase: "implement",
+    activeJobId: details.initialJobId,
+    latestRequest: details.initialRequest,
+  });
+
+  const persistState = async (nextState: WorktreeReviewLoopState) => {
+    state = nextState;
+    await details.context.operationalState.setReviewLoop(state);
+    details.context.emitStateRefresh();
+  };
+
+  try {
+    await persistState(state);
+
+    const initialImplementJob = await waitForAiCommandJob(details.context.repoRoot, details.worktree.id, details.initialJobId);
+    if (initialImplementJob.status !== "completed") {
+      await persistState(updateReviewLoopState(state, {
+        status: "failed",
+        currentPhase: null,
+        activeJobId: null,
+        lastCompletedJobId: initialImplementJob.jobId,
+        completedAt: new Date().toISOString(),
+        failureMessage: initialImplementJob.error ?? "Implementation step failed.",
+      }));
+      return;
+    }
+
+    await persistState(updateReviewLoopState(state, {
+      activeJobId: null,
+      lastCompletedJobId: initialImplementJob.jobId,
+    }));
+
+    while (state.attemptCount < state.maxAttempts) {
+      const comparison = await getGitComparison(details.context.repoRoot, details.worktree.branch);
+      const reviewPrompt = await buildReviewOnlyRequest({
+        repoRoot: details.context.repoRoot,
+        config: details.config,
+        branch: details.worktree.branch,
+        worktreePath: details.worktree.worktreePath,
+        documentId: details.reviewDocumentId,
+        documentTitle: details.documentTitle,
+        documentSummary: details.documentSummary,
+        documentMarkdown: details.documentMarkdown,
+        request: state.latestRequest,
+        comparison,
+      });
+      const reviewOrigin = createWorktreeReviewOrigin({
+        branch: details.worktree.branch,
+        worktreeId: details.worktree.id,
+        documentId: details.reviewDocumentId,
+        reviewAction: "review",
+      });
+      const renderedReviewCommand = renderAiCommand(resolveAiCommandTemplate(details.config.aiCommands, details.commandId), reviewPrompt);
+      const reviewRun = await details.context.startAiProcessJob({
+        worktreeId: details.worktree.id,
+        branch: details.worktree.branch,
+        commandId: details.commandId,
+        aiCommands: details.config.aiCommands,
+        origin: reviewOrigin,
+        input: reviewPrompt,
+        renderedCommand: renderedReviewCommand,
+        worktreePath: details.worktree.worktreePath,
+        env: details.env,
+        reviewDocumentId: details.reviewDocumentId,
+        reviewRequestSummary: state.latestRequest,
+        reviewAction: "review",
+        autoCommitDirtyWorktree: false,
+      });
+      const reviewJob = await reviewRun.started;
+      await details.context.addWorktreeAiStartedComment({
+        branch: details.worktree.branch,
+        commandId: details.commandId,
+        reviewDocumentId: details.reviewDocumentId,
+        requestSummary: state.latestRequest,
+        reviewAction: "review",
+      });
+      await persistState(updateReviewLoopState(state, {
+        currentPhase: "review",
+        activeJobId: reviewJob.jobId,
+      }));
+      const completedReviewJob = await reviewRun.completed;
+      if (completedReviewJob.status !== "completed") {
+        await persistState(updateReviewLoopState(state, {
+          status: "failed",
+          activeJobId: null,
+          lastCompletedJobId: completedReviewJob.jobId,
+          completedAt: new Date().toISOString(),
+          failureMessage: completedReviewJob.error ?? "Review step failed.",
+        }));
+        return;
+      }
+
+      const reviewLog = await readAiCommandLogEntryByJobId(details.context.repoRoot, completedReviewJob.jobId);
+      const reviewResult = extractTaggedReviewResult(reviewLog.response.stdout);
+      if (reviewResult.passed) {
+        await persistState(updateReviewLoopState(state, {
+          status: "passed",
+          currentPhase: null,
+          activeJobId: null,
+          lastCompletedJobId: completedReviewJob.jobId,
+          latestReviewResult: reviewResult,
+          completedAt: new Date().toISOString(),
+          failureMessage: null,
+        }));
+        return;
+      }
+
+      if (state.attemptCount >= state.maxAttempts) {
+        break;
+      }
+
+      const implementRequest = buildLoopIssueRequest(reviewResult);
+      const implementPrompt = await buildReviewFollowUpRequest({
+        repoRoot: details.context.repoRoot,
+        config: details.config,
+        branch: details.worktree.branch,
+        worktreePath: details.worktree.worktreePath,
+        documentId: details.reviewDocumentId,
+        documentTitle: details.documentTitle,
+        documentSummary: details.documentSummary,
+        documentMarkdown: details.documentMarkdown,
+        followUp: {
+          originalRequest: state.originalRequest,
+          newRequest: implementRequest,
+        },
+      });
+      const implementOrigin = createWorktreeReviewOrigin({
+        branch: details.worktree.branch,
+        worktreeId: details.worktree.id,
+        documentId: details.reviewDocumentId,
+        reviewAction: "implement",
+      });
+      const renderedImplementCommand = renderAiCommand(resolveAiCommandTemplate(details.config.aiCommands, details.commandId), implementPrompt);
+      const implementRun = await details.context.startAiProcessJob({
+        worktreeId: details.worktree.id,
+        branch: details.worktree.branch,
+        commandId: details.commandId,
+        aiCommands: details.config.aiCommands,
+        origin: implementOrigin,
+        input: implementPrompt,
+        renderedCommand: renderedImplementCommand,
+        worktreePath: details.worktree.worktreePath,
+        env: details.env,
+        reviewDocumentId: details.reviewDocumentId,
+        reviewRequestSummary: implementRequest,
+        reviewAction: "implement",
+        autoCommitDirtyWorktree: true,
+      });
+      const implementJob = await implementRun.started;
+      await details.context.addWorktreeAiStartedComment({
+        branch: details.worktree.branch,
+        commandId: details.commandId,
+        reviewDocumentId: details.reviewDocumentId,
+        requestSummary: implementRequest,
+        reviewAction: "implement",
+      });
+      await persistState(updateReviewLoopState(state, {
+        currentPhase: "implement",
+        attemptCount: state.attemptCount + 1,
+        activeJobId: implementJob.jobId,
+        latestRequest: implementRequest,
+        latestReviewResult: reviewResult,
+      }));
+      const completedImplementJob = await implementRun.completed;
+      if (completedImplementJob.status !== "completed") {
+        await persistState(updateReviewLoopState(state, {
+          status: "failed",
+          currentPhase: null,
+          activeJobId: null,
+          lastCompletedJobId: completedImplementJob.jobId,
+          completedAt: new Date().toISOString(),
+          failureMessage: completedImplementJob.error ?? "Implementation step failed.",
+        }));
+        return;
+      }
+
+      await persistState(updateReviewLoopState(state, {
+        currentPhase: null,
+        activeJobId: null,
+        lastCompletedJobId: completedImplementJob.jobId,
+      }));
+      details.context.emitProjectManagementReviewsRefresh();
+    }
+
+    await persistState(updateReviewLoopState(state, {
+      status: "failed",
+      currentPhase: null,
+      activeJobId: null,
+      completedAt: new Date().toISOString(),
+      failureMessage: `Reached the maximum of ${state.maxAttempts} review loop attempts without passing review.`,
+    }));
+  } catch (error) {
+    await details.context.operationalState.setReviewLoop(updateReviewLoopState(state, {
+      status: "failed",
+      currentPhase: null,
+      activeJobId: null,
+      completedAt: new Date().toISOString(),
+      failureMessage: error instanceof Error ? error.message : String(error),
+    }));
+    details.context.emitStateRefresh();
+    logServerEvent("review-loop", "failed", {
+      worktreeId: details.worktree.id,
+      branch: details.worktree.branch,
+      documentId: details.reviewDocumentId,
+      error: error instanceof Error ? error.message : String(error),
+    }, "error");
+  } finally {
+    details.context.emitProjectManagementReviewsRefresh();
+    if (details.shouldStopRuntimeOnFinish) {
+      await details.context.stopWorktreeRuntime(details.worktree).catch((error) => {
+        logServerEvent("review-loop", "runtime-stop-failed", {
+          worktreeId: details.worktree.id,
+          branch: details.worktree.branch,
+          error: error instanceof Error ? error.message : String(error),
+        }, "error");
+      });
+    }
+  }
 }
 
 export function registerApiWorktreeRoutes(router: express.Router, context: ApiRouterContext) {
@@ -410,6 +704,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         : body?.reviewAction === "implement"
           ? "implement"
           : null;
+      const autoReviewLoop = body?.autoReviewLoop === true;
       let reviewFollowUp = body?.reviewFollowUp
         && typeof body.reviewFollowUp === "object"
         && typeof body.reviewFollowUp.originalRequest === "string"
@@ -669,6 +964,11 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         : reviewAction === "review"
           ? body.input
           : reviewFollowUp?.newRequest ?? body.input;
+      const canAutoReviewLoop = autoReviewLoop
+        && !explicitDocumentId
+        && reviewDocumentId != null
+        && reviewAction === "implement"
+        && reviewFollowUp != null;
 
       const runDetails: {
         worktreeId: WorktreeId;
@@ -685,6 +985,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         reviewDocumentId: string | null;
         reviewRequestSummary: string | null;
         reviewAction: RunAiCommandRequest["reviewAction"] | null;
+        autoReviewLoop: boolean;
         autoCommitDirtyWorktree: boolean;
       } = {
         worktreeId: worktree.id,
@@ -701,8 +1002,10 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         reviewDocumentId,
         reviewRequestSummary,
         reviewAction,
+        autoReviewLoop: canAutoReviewLoop,
         autoCommitDirtyWorktree: reviewAction !== "review",
       };
+      await context.operationalState.deleteReviewLoopById(worktree.id);
       const job = explicitDocumentId
         ? context.hasInjectedAiProcesses
           ? await (await context.startAiProcessJob(runDetails)).started
@@ -731,12 +1034,43 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
         requestSummary: runDetails.reviewRequestSummary,
         reviewAction: runDetails.reviewAction,
       });
-      context.scheduleRuntimeStopAfterAiJob({
-        worktree,
-        jobId: job.jobId,
-        shouldStopRuntime: stopAutoStartedRuntimeOnError,
-      });
-      stopAutoStartedRuntimeOnError = false;
+      if (canAutoReviewLoop && worktree && reviewDocumentId && reviewFollowUp) {
+        const loopWorktree = worktree;
+        const reviewDocumentTitle = loopWorktree.linkedDocument?.title ?? `Document ${reviewDocumentId}`;
+        const reviewDocumentSummary = loopWorktree.linkedDocument?.summary ?? null;
+        runBackgroundTask(async () => {
+          await runAutoReviewLoop({
+            context,
+            worktree: loopWorktree,
+            config,
+            commandId,
+            env,
+            shouldStopRuntimeOnFinish: stopAutoStartedRuntimeOnError,
+            reviewDocumentId,
+            documentTitle: reviewDocumentTitle,
+            documentSummary: reviewDocumentSummary,
+            documentMarkdown: null,
+            originalRequest: reviewFollowUp.originalRequest,
+            initialRequest: reviewFollowUp.newRequest,
+            initialJobId: job.jobId,
+          });
+        }, (error) => {
+          logServerEvent("review-loop", "background-task-failed", {
+            worktreeId: loopWorktree.id,
+            branch: loopWorktree.branch,
+            documentId: reviewDocumentId,
+            error: error instanceof Error ? error.message : String(error),
+          }, "error");
+        });
+        stopAutoStartedRuntimeOnError = false;
+      } else {
+        context.scheduleRuntimeStopAfterAiJob({
+          worktree,
+          jobId: job.jobId,
+          shouldStopRuntime: stopAutoStartedRuntimeOnError,
+        });
+        stopAutoStartedRuntimeOnError = false;
+      }
 
       const payload: RunAiCommandResponse = { job, runtime };
       context.emitGitStateRefresh();

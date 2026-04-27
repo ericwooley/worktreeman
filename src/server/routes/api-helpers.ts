@@ -1240,6 +1240,9 @@ export async function buildReviewOnlyRequest(options: {
       "Do not change code, files, git state, or the project-management document. This is a review-only pass.",
       "Review whether everything in the original document is correct, whether everything in the requested updates is correct, and whether the current branch diff actually satisfies them.",
       "Return markdown only. Put the actual review content inside <wtm-review>...</wtm-review> so the application can extract and display it.",
+      "Also include machine-readable XML outside the review block using exactly one <wtm-review-result passed=\"true|false\"> element.",
+      "When passed=\"false\", include one or more <wtm-review-issue id=\"short-kebab-id\"><summary>short summary</summary><details>specific fix guidance</details></wtm-review-issue> elements inside <wtm-review-result>.",
+      "When passed=\"true\", do not include any <wtm-review-issue> elements.",
       "Inside the tagged review, prioritize bugs, risks, behavioral regressions, missing verification, and mismatches between the document, requested updates, and the implemented diff.",
     ],
     sections: [
@@ -1264,6 +1267,7 @@ export async function buildReviewOnlyRequest(options: {
     closing: [
       "Do not apply fixes. Review only.",
       "The final response must be markdown only, and the actual review must appear inside <wtm-review>...</wtm-review>.",
+      "The final response must also include the exact <wtm-review-result passed=\"true|false\">...</wtm-review-result> XML after the review block.",
     ],
   });
 }
