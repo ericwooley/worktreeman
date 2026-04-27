@@ -852,8 +852,11 @@ test("AI stream viewer prefers persisted log output over an empty fallback job",
   );
 
   assert.match(markup, /Worktree AI output/);
+  assert.match(markup, /Initial prompt/);
+  assert.match(markup, /Review the markdown prompt that Smart AI received before it started running\./);
   assert.match(markup, /AI process exited with code 1\./);
   assert.match(markup, />stderr</);
+  assert.doesNotMatch(markup, /Summarize the work\./);
   assert.doesNotMatch(markup, /Waiting for live output\.\.\./);
 });
 

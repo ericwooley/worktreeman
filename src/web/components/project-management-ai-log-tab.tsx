@@ -380,10 +380,6 @@ export function ProjectManagementAiLogTab({
                 <MatrixDetailField label="Command" value={logDetail.command} mono />
               </div>
 
-              <MatrixAccordion summary={renderAccordionSummary("Request", "Prompt passed into the configured AI command.")} defaultOpen>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words border theme-border-subtle p-3 text-xs theme-text-muted">{logDetail.request}</pre>
-              </MatrixAccordion>
-
               {logDetail.error ? (
                 <MatrixAccordion summary={renderAccordionSummary("Error", "Normalized error details captured for failed runs.")}>
                   <pre className="overflow-x-auto whitespace-pre-wrap break-words border theme-border-subtle p-3 text-xs theme-text-danger">{JSON.stringify(logDetail.error, null, 2)}</pre>

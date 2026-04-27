@@ -104,7 +104,9 @@ test("AI log sub tab renders saved log detail and origin actions", () => {
   assert.match(markup, /Saved logs/);
   assert.match(markup, /feature\/ai-log/);
   assert.match(markup, /Worktree AI output/);
-  assert.match(markup, /Prompt passed into the configured AI command/);
+  assert.match(markup, /Initial prompt/);
+  assert.match(markup, /Review the markdown prompt that Simple AI received before it started running\./);
+  assert.doesNotMatch(markup, /Summarize the implementation plan\./);
   assert.match(markup, /Project document #12/);
   assert.match(markup, />Open origin</);
 });

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { marked } from "marked";
 import type { AiCommandId, AiCommandJob, AiCommandOutputEvent } from "@shared/types";
 
-import { MatrixBadge } from "./matrix-primitives";
+import { MatrixAccordion, MatrixBadge } from "./matrix-primitives";
 
 const AI_OUTPUT_FOLLOW_THRESHOLD_PX = 12;
 
@@ -117,6 +118,13 @@ function getEmptyOutputMessage(status: AiCommandJob["status"]) {
   return status === "running" ? "Waiting for live output..." : "No output captured.";
 }
 
+function getInitialPromptSummary(commandId: AiCommandId) {
+  return {
+    title: "Initial prompt",
+    description: `Review the markdown prompt that ${getAiCommandLabel(commandId)} received before it started running.`,
+  };
+}
+
 export function shouldStickAiOutputToBottom(metrics: {
   scrollHeight: number;
   scrollTop: number;
@@ -167,6 +175,7 @@ export function ProjectManagementAiOutputViewer({
   const lastLoadedJobIdRef = useRef<string | null>(null);
   const running = job.status === "running";
   const title = source === "worktree" ? "Worktree AI" : "Document AI";
+  const initialPromptSummary = getInitialPromptSummary(job.commandId);
   const outputEvents = useMemo(() => getAiOutputEvents(job)
     .map((event, index) => ({ event, index }))
     .sort((left, right) => {
@@ -293,6 +302,24 @@ export function ProjectManagementAiOutputViewer({
           ) : null}
         </div>
       </div>
+
+      {job.input.trim() ? (
+        <div className="mt-4 border theme-border-subtle">
+          <MatrixAccordion
+            summary={(
+              <div>
+                <p className="text-sm font-semibold theme-text-strong">{initialPromptSummary.title}</p>
+                <p className="mt-1 text-xs theme-text-muted">{initialPromptSummary.description}</p>
+              </div>
+            )}
+          >
+            <div
+              className="pm-markdown text-sm theme-text"
+              dangerouslySetInnerHTML={{ __html: marked.parse(job.input) }}
+            />
+          </MatrixAccordion>
+        </div>
+      ) : null}
 
       <div className="mt-4 border theme-scroll-panel">
         <div className="flex flex-col gap-2 border-b theme-border-subtle px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
