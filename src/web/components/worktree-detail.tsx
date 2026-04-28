@@ -116,6 +116,14 @@ function getReviewSourceLabel(entry: ProjectManagementReviewEntry) {
   }
 }
 
+function getLatestReviewEntry(review: ProjectManagementDocumentReview): ProjectManagementReviewEntry | null {
+  return review.entries[review.entries.length - 1] ?? null;
+}
+
+function hasMergedReviewEntry(review: ProjectManagementDocumentReview): boolean {
+  return review.entries.some((entry) => entry.eventType === "merge");
+}
+
 function formatGitTimestamp(value: string): string {
   if (!value) {
     return "-";
@@ -183,6 +191,7 @@ type DiffTreeSection = {
 
 export type WorktreeEnvironmentSubTab = "terminal" | "background";
 export type GitView = "graph" | "diff" | "history";
+export type ReviewView = "current" | "history";
 
 function GitDiffAccordionContent({
   file,
@@ -634,6 +643,8 @@ interface WorktreeDetailProps {
   onTabChange: (tab: "environment" | "git" | "project-management" | "review" | "system" | "ai-log") => void;
   environmentSubTab: WorktreeEnvironmentSubTab;
   onEnvironmentSubTabChange: (tab: WorktreeEnvironmentSubTab) => void;
+  reviewView: ReviewView;
+  onReviewViewChange: (view: ReviewView) => void;
   gitView: GitView;
   onGitViewChange: (view: GitView) => void;
   isTerminalVisible: boolean;
@@ -788,6 +799,8 @@ export function WorktreeDetail({
   onTabChange,
   environmentSubTab,
   onEnvironmentSubTabChange,
+  reviewView,
+  onReviewViewChange,
   gitView,
   onGitViewChange,
   isTerminalVisible,
@@ -1021,6 +1034,35 @@ export function WorktreeDetail({
   }, [linkedDocument?.id, projectManagementDocumentReview, projectManagementReviews]);
   const linkedDocumentReviewEntries = linkedDocumentReview?.entries ?? [];
   const expandedReviewEntriesStartIndex = Math.max(0, linkedDocumentReviewEntries.length - 3);
+  const reviewHistoryItems = useMemo(() => {
+    const documentById = new Map(projectManagementDocuments.map((document) => [document.id, document]));
+    const activeDocumentIds = new Set(
+      projectManagementWorktrees
+        .map((entry) => entry.linkedDocument?.id)
+        .filter((documentId): documentId is string => Boolean(documentId)),
+    );
+
+    return projectManagementReviews
+      .map((review) => {
+        const document = documentById.get(review.documentId) ?? null;
+        const latestEntry = getLatestReviewEntry(review);
+        const active = activeDocumentIds.has(review.documentId);
+
+        return {
+          review,
+          document,
+          latestEntry,
+          active,
+          merged: hasMergedReviewEntry(review),
+        };
+      })
+      .filter((entry) => entry.review.entries.length > 0 || entry.active)
+      .sort((left, right) => {
+        const leftTime = left.latestEntry ? new Date(left.latestEntry.createdAt).getTime() : 0;
+        const rightTime = right.latestEntry ? new Date(right.latestEntry.createdAt).getTime() : 0;
+        return rightTime - leftTime;
+      });
+  }, [projectManagementDocuments, projectManagementReviews, projectManagementWorktrees]);
   const streamedWorktreeAiJob = useMemo(() => {
     if (!worktree || !projectManagementAiJob) {
       return null;
@@ -2439,6 +2481,19 @@ export function WorktreeDetail({
           </>
         ) : isReviewTabActive ? (
           <div className="space-y-4">
+            <MatrixTabs
+              groupId="worktree-review-view-tabs"
+              ariaLabel="Review view tabs"
+              activeTabId={reviewView}
+              onChange={onReviewViewChange}
+              tabs={[
+                { id: "current", label: "Current" },
+                { id: "history", label: "History" },
+              ]}
+            />
+
+            {reviewView === "current" ? (
+              <>
             <div className="theme-inline-panel p-4">
               <MatrixSectionIntro
                 kicker="Review"
@@ -2737,6 +2792,73 @@ export function WorktreeDetail({
                   </MatrixCard>
                 ) : null}
               </>
+            )}
+              </>
+            ) : (
+              <div className="space-y-4">
+                <div className="theme-inline-panel p-4">
+                  <MatrixSectionIntro
+                    kicker="Review / History"
+                    title="Review history"
+                    description="Browse every document review thread, including active worktrees and branches that have already landed."
+                    metrics={(
+                      <div className="grid w-full gap-2 text-left sm:grid-cols-3 xl:w-auto xl:min-w-[18rem]">
+                        <MatrixMetric label="Threads" value={String(reviewHistoryItems.length)} />
+                        <MatrixMetric label="Active" value={String(reviewHistoryItems.filter((entry) => entry.active).length)} />
+                        <MatrixMetric label="Merged" value={String(reviewHistoryItems.filter((entry) => entry.merged).length)} />
+                      </div>
+                    )}
+                  />
+                </div>
+
+                {reviewHistoryItems.length ? (
+                  <div className="grid gap-3">
+                    {reviewHistoryItems.map(({ review, document, latestEntry, active, merged }) => (
+                      <MatrixCard key={review.documentId} as="div" className="p-4">
+                        <MatrixCardHeader
+                          eyebrow={latestEntry ? <span className="theme-text-soft">Latest {new Date(latestEntry.createdAt).toLocaleString()}</span> : "Review thread"}
+                          title={document ? document.title : `Document ${review.documentId}`}
+                          titleText={document ? document.title : `Document ${review.documentId}`}
+                          description={document?.summary || `Review activity for ${review.documentId}`}
+                          descriptionLines={2}
+                          descriptionText={document?.summary || `Review activity for ${review.documentId}`}
+                          badges={(
+                            <>
+                              <MatrixBadge tone={active ? "active" : merged ? "warning" : "neutral"} compact>
+                                {active ? "Active review" : merged ? "Merged review" : "Review"}
+                              </MatrixBadge>
+                              {document ? <MatrixBadge tone="neutral" compact>{document.status}</MatrixBadge> : null}
+                              <MatrixBadge tone="neutral" compact>{review.entries.length} entries</MatrixBadge>
+                            </>
+                          )}
+                        />
+                        <div className="mt-4 grid gap-3 text-sm md:grid-cols-3">
+                          <MatrixDetailField label="Document" value={document ? `#${document.number}` : review.documentId} mono />
+                          <MatrixDetailField label="State" value={active ? "Active worktree" : merged ? "Merged" : "Inactive"} />
+                          <MatrixDetailField label="Last event" value={latestEntry ? getReviewEventLabel(latestEntry) : "-"} />
+                        </div>
+                        {latestEntry ? (
+                          <div className="mt-4 border theme-border-subtle p-3">
+                            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs theme-text-muted">
+                              <MatrixBadge tone={getReviewEventTone(latestEntry)} compact>{getReviewEventLabel(latestEntry)}</MatrixBadge>
+                              <MatrixBadge tone={getReviewSourceTone(latestEntry)} compact>{getReviewSourceLabel(latestEntry)}</MatrixBadge>
+                              <span>{latestEntry.authorName || latestEntry.authorEmail}</span>
+                            </div>
+                            <div
+                              className="pm-markdown text-sm theme-text"
+                              dangerouslySetInnerHTML={{ __html: marked.parse(latestEntry.body) }}
+                            />
+                          </div>
+                        ) : null}
+                      </MatrixCard>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="matrix-command rounded-none px-4 py-4 text-sm theme-empty-note">
+                    No review history yet. Start work from a project document or add review notes to build the timeline.
+                  </div>
+                )}
+              </div>
             )}
           </div>
         ) : activeTab === "project-management" ? (

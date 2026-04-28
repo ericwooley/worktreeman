@@ -144,6 +144,8 @@ async function renderWorktreeDetail(overrides: Partial<WorktreeDetailProps> = {}
         onTabChange={() => undefined}
         environmentSubTab="terminal"
         onEnvironmentSubTabChange={() => undefined}
+        reviewView="current"
+        onReviewViewChange={() => undefined}
         gitView="graph"
         onGitViewChange={() => undefined}
         isTerminalVisible={false}
@@ -369,6 +371,84 @@ test("Review tab renders linked document review timeline", async () => {
   const addReviewEntryIndex = markup.indexOf("Add to review");
   assert.ok(reviewEntryIndex >= 0);
   assert.ok(addReviewEntryIndex > reviewEntryIndex);
+});
+
+test("Review history tab shows active and merged document reviews", async () => {
+  const activeDocument = {
+    id: "doc-active",
+    number: 2,
+    title: "Active implementation",
+    summary: "Review work still has a linked worktree.",
+    tags: ["feature"],
+    dependencies: [],
+    status: "review_passed",
+    assignee: "Eric",
+    archived: false,
+    createdAt: "2026-03-20T10:00:00.000Z",
+    updatedAt: "2026-03-25T10:00:00.000Z",
+    historyCount: 2,
+  };
+  const mergedDocument = {
+    id: "doc-merged",
+    number: 3,
+    title: "Merged implementation",
+    summary: "Review work already landed.",
+    tags: ["feature"],
+    dependencies: [],
+    status: "done",
+    assignee: "Eric",
+    archived: false,
+    createdAt: "2026-03-20T10:00:00.000Z",
+    updatedAt: "2026-03-26T10:00:00.000Z",
+    historyCount: 3,
+  };
+
+  const markup = await renderWorktreeDetail({
+    activeTab: "review",
+    reviewView: "history",
+    projectManagementDocuments: [activeDocument, mergedDocument],
+    projectManagementWorktrees: [{
+      ...sampleWorktree,
+      linkedDocument: {
+        id: activeDocument.id,
+        number: activeDocument.number,
+        title: activeDocument.title,
+        summary: activeDocument.summary,
+        status: activeDocument.status,
+        archived: activeDocument.archived,
+      },
+    }],
+    projectManagementReviews: [{
+      documentId: activeDocument.id,
+      entries: [],
+    }, {
+      documentId: mergedDocument.id,
+      entries: [{
+        id: "review-merged",
+        documentId: mergedDocument.id,
+        kind: "activity",
+        source: "system",
+        eventType: "merge",
+        body: "Merged `feature/merged` into `main`.",
+        createdAt: "2026-03-26T11:30:00.000Z",
+        updatedAt: "2026-03-26T11:30:00.000Z",
+        authorName: "worktreeman",
+        authorEmail: "worktreeman@example.com",
+      }],
+    }],
+  });
+
+  assert.match(markup, /aria-label="Review view tabs"/);
+  assert.match(markup, />Current<\/button>/);
+  assert.match(markup, />History<\/button>/);
+  assert.match(markup, /Review history/);
+  assert.match(markup, /Browse every document review thread, including active worktrees and branches that have already landed\./);
+  assert.match(markup, /Active implementation/);
+  assert.match(markup, /Active review/);
+  assert.match(markup, /0 entries/);
+  assert.match(markup, /Merged implementation/);
+  assert.match(markup, /Merged review/);
+  assert.match(markup, /Merged <code>feature\/merged<\/code> into <code>main<\/code>\./);
 });
 
 test("Review tab collapses all but the latest three review entries by default", async () => {

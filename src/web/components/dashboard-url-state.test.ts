@@ -9,6 +9,7 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
     aiActivitySubTab: "log",
     selectedAiLogJobId: null,
     environmentSubTab: "terminal",
+    reviewView: "current",
     gitView: "graph",
     isTerminalVisible: false,
     systemSubTab: "performance",
@@ -26,6 +27,7 @@ test("readDashboardUrlState maps legacy shell and background tabs into Worktree 
     aiActivitySubTab: "log",
     selectedAiLogJobId: null,
     environmentSubTab: "background",
+    reviewView: "current",
     gitView: "graph",
     isTerminalVisible: true,
     systemSubTab: "performance",
@@ -47,6 +49,7 @@ test("readDashboardUrlState reads nested environment and project management stat
       aiActivitySubTab: "log",
       selectedAiLogJobId: null,
       environmentSubTab: "background",
+      reviewView: "current",
       gitView: "diff",
       isTerminalVisible: false,
       systemSubTab: "performance",
@@ -64,6 +67,10 @@ test("readDashboardUrlState reads the git history view", () => {
   assert.equal(readDashboardUrlState("?tab=git&git=history").gitView, "history");
 });
 
+test("readDashboardUrlState reads the review history view", () => {
+  assert.equal(readDashboardUrlState("?tab=review&review=history").reviewView, "history");
+});
+
 test("readDashboardUrlState maps legacy merge tab URLs into the git tab", () => {
   assert.deepEqual(
     readDashboardUrlState("?tab=merge&git=status&gitPr=doc-pr-9"),
@@ -73,6 +80,7 @@ test("readDashboardUrlState maps legacy merge tab URLs into the git tab", () => 
       aiActivitySubTab: "log",
       selectedAiLogJobId: null,
       environmentSubTab: "terminal",
+      reviewView: "current",
       gitView: "graph",
       isTerminalVisible: false,
       systemSubTab: "performance",
@@ -95,6 +103,7 @@ test("readDashboardUrlState reads the top-level AI tab and active-worktrees sub 
       aiActivitySubTab: "active-worktrees",
       selectedAiLogJobId: null,
       environmentSubTab: "terminal",
+      reviewView: "current",
       gitView: "graph",
       isTerminalVisible: false,
       systemSubTab: "performance",
@@ -121,6 +130,7 @@ test("readDashboardUrlState reads project management editor tab params", () => {
       aiActivitySubTab: "log",
       selectedAiLogJobId: "job-1",
       environmentSubTab: "terminal",
+      reviewView: "current",
       gitView: "graph",
       isTerminalVisible: false,
       systemSubTab: "performance",
@@ -141,6 +151,7 @@ test("readDashboardUrlState reads the top-level System tab and jobs sub tab", ()
     aiActivitySubTab: "log",
     selectedAiLogJobId: null,
     environmentSubTab: "terminal",
+    reviewView: "current",
     gitView: "graph",
     isTerminalVisible: false,
     systemSubTab: "jobs",
@@ -162,6 +173,7 @@ test("readDashboardUrlState infers page presentation from dedicated document pat
       aiActivitySubTab: "log",
       selectedAiLogJobId: null,
       environmentSubTab: "terminal",
+      reviewView: "current",
       gitView: "graph",
       isTerminalVisible: false,
       systemSubTab: "performance",

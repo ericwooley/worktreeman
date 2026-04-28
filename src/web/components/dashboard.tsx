@@ -18,7 +18,7 @@ import type { DashboardNotification } from "../hooks/use-dashboard-state";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import { MatrixBadge, MatrixModal } from "./matrix-primitives";
 import { useTheme } from "./theme-provider";
-import { WorktreeDetail, type GitView, type WorktreeEnvironmentSubTab } from "./worktree-detail";
+import { WorktreeDetail, type GitView, type ReviewView, type WorktreeEnvironmentSubTab } from "./worktree-detail";
 import { readDashboardUrlState, type DashboardActiveTab } from "./dashboard-url-state";
 import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from "./project-management-panel";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
@@ -403,6 +403,7 @@ export function Dashboard() {
   const [projectManagementCreateFormTab, setProjectManagementCreateFormTab] = useState<ProjectManagementDocumentFormViewMode>(
     initialUrlState.projectManagementCreateFormTab,
   );
+  const [reviewView, setReviewView] = useState<ReviewView>(initialUrlState.reviewView);
   const [gitView, setGitView] = useState<GitView>(initialUrlState.gitView);
   const [isTerminalVisible, setIsTerminalVisible] = useState(initialUrlState.isTerminalVisible);
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmationState | null>(null);
@@ -784,6 +785,12 @@ export function Dashboard() {
     }
     params.set("git", gitView);
 
+    if (activeTab === "review") {
+      params.set("review", reviewView);
+    } else {
+      params.delete("review");
+    }
+
     if (activeTab === "project-management") {
       params.set("pmTab", projectManagementSubTab);
       if (projectManagementSelectedDocumentId) {
@@ -874,6 +881,7 @@ export function Dashboard() {
     projectManagementEditFormTab,
     projectManagementSelectedDocumentId,
     projectManagementSubTab,
+    reviewView,
     selectedBranch,
     systemSubTab,
   ]);
@@ -886,6 +894,7 @@ export function Dashboard() {
       setAiActivitySubTab(nextUrlState.aiActivitySubTab);
       setSelectedAiLogJobId(nextUrlState.selectedAiLogJobId);
       setEnvironmentSubTab(nextUrlState.environmentSubTab);
+      setReviewView(nextUrlState.reviewView);
       setGitView(nextUrlState.gitView);
       setIsTerminalVisible(nextUrlState.isTerminalVisible);
       setSystemSubTab(nextUrlState.systemSubTab);
@@ -1812,6 +1821,8 @@ export function Dashboard() {
             onTabChange={setActiveTab}
             environmentSubTab={environmentSubTab}
             onEnvironmentSubTabChange={setEnvironmentSubTab}
+            reviewView={reviewView}
+            onReviewViewChange={setReviewView}
             gitView={gitView}
             onGitViewChange={setGitView}
             isTerminalVisible={isTerminalVisible}

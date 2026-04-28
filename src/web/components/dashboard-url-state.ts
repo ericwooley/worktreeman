@@ -3,7 +3,7 @@ import type { ProjectManagementDocumentViewMode, ProjectManagementSubTab } from 
 import type { AiActivitySubTab } from "./project-management-ai-tab";
 import type { ProjectManagementDocumentFormViewMode } from "./project-management-document-form";
 import { readProjectManagementDocumentPath, type ProjectManagementDocumentPresentation } from "./project-management-document-route";
-import type { GitView, WorktreeEnvironmentSubTab } from "./worktree-detail";
+import type { GitView, ReviewView, WorktreeEnvironmentSubTab } from "./worktree-detail";
 
 export type DashboardActiveTab = "environment" | "git" | "project-management" | "review" | "system" | "ai-log";
 
@@ -13,6 +13,7 @@ export interface DashboardUrlState {
   aiActivitySubTab: AiActivitySubTab;
   selectedAiLogJobId: string | null;
   environmentSubTab: WorktreeEnvironmentSubTab;
+  reviewView: ReviewView;
   gitView: GitView;
   isTerminalVisible: boolean;
   systemSubTab: SystemSubTab;
@@ -48,6 +49,10 @@ export function parseWorktreeEnvironmentSubTab(value: string | null): WorktreeEn
 
 export function parseGitView(value: string | null): GitView {
   return value === "diff" || value === "history" ? value : "graph";
+}
+
+export function parseReviewView(value: string | null): ReviewView {
+  return value === "history" ? "history" : "current";
 }
 
 export function parseAiActivitySubTab(value: string | null): AiActivitySubTab {
@@ -95,6 +100,7 @@ export function readDashboardUrlState(
       : tab === "shell"
       ? "terminal"
       : parseWorktreeEnvironmentSubTab(params.get("envTab")),
+    reviewView: parseReviewView(params.get("review")),
     gitView: parseGitView(params.get("git")),
     isTerminalVisible: params.get("terminal") === "open",
     systemSubTab: parseSystemSubTab(params.get("systemTab")),
