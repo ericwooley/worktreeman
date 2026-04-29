@@ -105,6 +105,27 @@ test("shouldNotifyAiJobCompletion skips focused windows and unrelated updates", 
   );
 });
 
+test("shouldNotifyAiJobCompletion skips non-actionable cleanup failures", () => {
+  for (const failureReason of ["startup-reconcile", "process-unavailable"] as const) {
+    assert.equal(
+      shouldNotifyAiJobCompletion({
+        previousJob: createAiJob(),
+        nextJob: createAiJob({
+          status: "failed",
+          error: "AI process was no longer available. The server may have restarted or the process may have crashed.",
+          failureReason,
+        }),
+        permission: "granted",
+        attentionState: {
+          visibilityState: "hidden",
+          hasFocus: false,
+        },
+      }),
+      false,
+    );
+  }
+});
+
 test("buildAiJobNotification formats completion and failure messages", () => {
   assert.deepEqual(
     buildAiJobNotification(createAiJob({ status: "completed", completedAt: "2026-03-27T12:01:00.000Z" })),

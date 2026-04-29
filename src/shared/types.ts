@@ -761,6 +761,7 @@ export interface AiCommandOrigin {
 }
 
 export type AiCommandJobStatus = "running" | "completed" | "failed";
+export type AiCommandJobFailureReason = "process-exited" | "process-unavailable" | "startup-reconcile";
 
 export interface AiCommandJob {
   jobId: string;
@@ -783,6 +784,7 @@ export interface AiCommandJob {
   processName?: string | null;
   worktreePath?: string | null;
   error?: string | null;
+  failureReason?: AiCommandJobFailureReason | null;
   origin?: AiCommandOrigin | null;
 }
 

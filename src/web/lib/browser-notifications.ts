@@ -1,4 +1,5 @@
 import type { AiCommandJob, AiCommandOriginKind } from "@shared/types";
+import { isAiCommandNonActionableCleanupFailure } from "@shared/ai-command-utils";
 
 export type BrowserNotificationPermission = NotificationPermission | "unsupported";
 
@@ -65,6 +66,10 @@ export function shouldNotifyAiJobCompletion(options: {
   }
 
   if (previousJob.status !== "running" || nextJob.status === "running") {
+    return false;
+  }
+
+  if (isAiCommandNonActionableCleanupFailure(nextJob)) {
     return false;
   }
 

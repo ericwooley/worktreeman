@@ -975,7 +975,8 @@ test("project-management document AI starts the review loop when requested", { c
       return createdWorktree != null;
     }, 15000);
     assert.ok(createdWorktree);
-    const createdWorktreeId = worktreeId(createdWorktree.worktreePath);
+    const checkedCreatedWorktree: { branch: string; worktreePath: string } = createdWorktree;
+    const createdWorktreeId = worktreeId(checkedCreatedWorktree.worktreePath);
 
     await waitForAiCommandJob(repo.repoRoot, createdWorktreeId, payload.job.jobId);
     await waitFor(async () => {

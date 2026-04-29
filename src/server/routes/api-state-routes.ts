@@ -442,6 +442,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
     try {
       let currentState = await context.loadState();
       let rebuilding = false;
+      let rebuildPromise: Promise<void> | null = null;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -493,7 +494,7 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
         }
 
         rebuilding = true;
-        void Promise.resolve().then(async () => {
+        rebuildPromise = Promise.resolve().then(async () => {
           if (isStreamClosed()) {
             return;
           }
@@ -515,8 +516,13 @@ export function registerApiStateRoutes(router: express.Router, context: ApiRoute
           }, "error");
         }).finally(() => {
           rebuilding = false;
+          rebuildPromise = null;
         });
       };
+
+      const unregisterCleanupTask = context.registerCleanupTask(async () => {
+        await rebuildPromise;
+      });
 
       const unsubscribe = context.subscribeToStateRefresh(rebuildAndEmit);
       const interval = setInterval(rebuildAndEmit, context.stateStreamFullRefreshIntervalMs);

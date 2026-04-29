@@ -734,6 +734,7 @@ export async function startApiServer(
         await stopAiCommandJobManager(repo.repoRoot);
         await stopOperationalStateStore(repo.repoRoot);
         await stopDatabaseSocketServer(repo.repoRoot).catch(() => undefined);
+        testContextRepoRoots.delete(repo.repoRoot);
       }
     },
   };

@@ -434,6 +434,7 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       }
 
       let currentJob = await getAiCommandJob(context.repoRoot, worktree.id, context.aiJobReadOptions);
+      let currentJobSnapshot = JSON.stringify(currentJob);
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -489,7 +490,13 @@ export function registerApiWorktreeRoutes(router: express.Router, context: ApiRo
       };
 
       const emitJob = (nextJob: typeof currentJob, type: "snapshot" | "update" = "update") => {
+        const nextJobSnapshot = JSON.stringify(nextJob);
+        if (type === "update" && nextJobSnapshot === currentJobSnapshot) {
+          return;
+        }
+
         currentJob = nextJob;
+        currentJobSnapshot = nextJobSnapshot;
         writeEvent(type, nextJob);
       };
 

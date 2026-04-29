@@ -96,6 +96,8 @@ type ManagedApiRouterContextEntry = {
   dispose: () => Promise<void>;
 };
 
+type ApiRouterCleanupTask = () => Promise<void>;
+
 const managedApiRouterContextsByRepo = new Map<string, Set<ManagedApiRouterContextEntry>>();
 
 function registerManagedApiRouterContext(repoRoot: string, entry: ManagedApiRouterContextEntry) {
@@ -153,6 +155,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
   const projectManagementUsersListeners = new Set<() => void>();
   const systemStatusListeners = new Set<() => void>();
   const tmuxClientsListenersByBranch = new Map<string, Set<() => void>>();
+  const cleanupTasks = new Set<ApiRouterCleanupTask>();
   const defaultAiProcesses: ApiAiProcesses = {
     startProcess: startAiCommandProcess,
     getProcess: getAiCommandProcess,
@@ -384,6 +387,9 @@ export function createApiRouterContext(options: ApiRouterOptions) {
         }
       }
       gitWatchers.clear();
+
+      await Promise.allSettled(Array.from(cleanupTasks, (task) => task()));
+      cleanupTasks.clear();
     })();
 
     return await disposePromise;
@@ -395,6 +401,13 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     gitComparisonListeners.add(listener);
     return () => {
       gitComparisonListeners.delete(listener);
+    };
+  };
+
+  const registerCleanupTask = (task: ApiRouterCleanupTask) => {
+    cleanupTasks.add(task);
+    return () => {
+      cleanupTasks.delete(task);
     };
   };
 
@@ -928,6 +941,7 @@ export function createApiRouterContext(options: ApiRouterOptions) {
     subscribeToSystemStatusRefresh,
     emitTmuxClientsRefresh,
     subscribeToTmuxClientsRefresh,
+    registerCleanupTask,
     commitConfigEdit,
     loadResolvedAiLog,
     writeImmediateAiFailureLog,

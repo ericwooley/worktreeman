@@ -461,6 +461,11 @@ test("stale persisted running AI jobs reconcile on the worktree stream and no lo
       assert.equal(snapshotJob?.status, "failed");
       assert.match(snapshotJob?.stderr ?? "", /no longer available/);
       assert.match(snapshotJob?.error ?? "", /no longer available/);
+
+      await assert.rejects(
+        () => stream.nextEvent(100),
+        /Timed out waiting for SSE chunk/,
+      );
     } finally {
       await stream.close();
     }

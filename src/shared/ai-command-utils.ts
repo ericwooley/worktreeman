@@ -1,5 +1,9 @@
 import type { AiCommandConfig, AiCommandId, AiCommandJob, AiCommandLogError, AiCommandOrigin } from "./types.js";
 
+export const AI_COMMAND_STARTUP_RECONCILE_FAILURE_REASON = "startup-reconcile" as const;
+export const AI_COMMAND_PROCESS_UNAVAILABLE_FAILURE_REASON = "process-unavailable" as const;
+export const AI_COMMAND_PROCESS_UNAVAILABLE_MESSAGE = "AI process was no longer available. The server may have restarted or the process may have crashed.";
+
 export function resolveAiCommandTemplate(aiCommands: AiCommandConfig, commandId: AiCommandId): string {
   return commandId === "simple" ? aiCommands.simple.trim() : aiCommands.smart.trim();
 }
@@ -22,6 +26,22 @@ export function cloneAiCommandJob(job: AiCommandJob | null): AiCommandJob | null
         }
       : job.origin ?? null,
   };
+}
+
+export function isAiCommandStartupReconciledFailure(job: AiCommandJob | null | undefined): boolean {
+  return job?.status === "failed" && job.failureReason === AI_COMMAND_STARTUP_RECONCILE_FAILURE_REASON;
+}
+
+export function isAiCommandNonActionableCleanupFailure(job: AiCommandJob | null | undefined): boolean {
+  if (job?.status !== "failed") {
+    return false;
+  }
+
+  if (job.failureReason === AI_COMMAND_STARTUP_RECONCILE_FAILURE_REASON || job.failureReason === AI_COMMAND_PROCESS_UNAVAILABLE_FAILURE_REASON) {
+    return true;
+  }
+
+  return job.error === AI_COMMAND_PROCESS_UNAVAILABLE_MESSAGE || job.stderr === AI_COMMAND_PROCESS_UNAVAILABLE_MESSAGE;
 }
 
 export function toAiCommandLogError(error: unknown): AiCommandLogError | null {

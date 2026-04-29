@@ -3,8 +3,12 @@ import test from "#test-runtime";
 import {
   appendDashboardNotification,
   dismissDashboardNotification,
+  shouldNotifyAiCommandJobFailure,
   type DashboardNotification,
 } from "./use-dashboard-state";
+import type { AiCommandJob } from "@shared/types";
+
+const WORKTREE_ID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as AiCommandJob["worktreeId"];
 
 function createNotification(id: string, tone: DashboardNotification["tone"], title: string, message: string): DashboardNotification {
   return {
@@ -13,6 +17,23 @@ function createNotification(id: string, tone: DashboardNotification["tone"], tit
     title,
     message,
     createdAt: `2026-04-24T12:00:0${id}.000Z`,
+  };
+}
+
+function createAiJob(overrides: Partial<AiCommandJob> = {}): AiCommandJob {
+  return {
+    jobId: "job-1",
+    fileName: "job-1.json",
+    worktreeId: WORKTREE_ID,
+    branch: "feature/zombie-ai",
+    commandId: "smart",
+    command: "runner --prompt $WTM_AI_INPUT",
+    input: "Run the task",
+    status: "failed",
+    startedAt: "2026-04-29T12:00:00.000Z",
+    stdout: "",
+    stderr: "",
+    ...overrides,
   };
 }
 
@@ -41,4 +62,23 @@ test("dismissDashboardNotification removes only the targeted notification", () =
   const next = dismissDashboardNotification(notifications, "2");
 
   assert.deepEqual(next.map((notification) => notification.id), ["1", "3"]);
+});
+
+test("shouldNotifyAiCommandJobFailure ignores non-actionable zombie cleanup failures", () => {
+  assert.equal(
+    shouldNotifyAiCommandJobFailure(null, createAiJob({ failureReason: "process-unavailable" })),
+    false,
+  );
+  assert.equal(
+    shouldNotifyAiCommandJobFailure(null, createAiJob({ failureReason: "startup-reconcile" })),
+    false,
+  );
+  assert.equal(
+    shouldNotifyAiCommandJobFailure("running", createAiJob({ failureReason: "process-exited", error: "Tests failed." })),
+    true,
+  );
+  assert.equal(
+    shouldNotifyAiCommandJobFailure("failed", createAiJob({ failureReason: "process-exited", error: "Tests failed." })),
+    false,
+  );
 });

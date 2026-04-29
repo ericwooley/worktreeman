@@ -16,6 +16,7 @@ import type {
   UpdateProjectManagementUsersRequest,
   WorktreeRecord,
 } from "@shared/types";
+import { isAiCommandNonActionableCleanupFailure } from "@shared/ai-command-utils";
 import { PROJECT_MANAGEMENT_DOCUMENT_STATUSES } from "@shared/constants";
 import { MatrixDropdown, type MatrixDropdownOption } from "./matrix-dropdown";
 import {
@@ -360,7 +361,7 @@ export function ProjectManagementPanel({
       return;
     }
 
-    if (aiJob.status === "failed") {
+    if (aiJob.status === "failed" && !isAiCommandNonActionableCleanupFailure(aiJob)) {
       setAiRunSummary(null);
       setAiFailureToast(aiJob.error || aiJob.stderr || "⚡ request failed. Check the AI logs for details.");
     }
@@ -376,7 +377,7 @@ export function ProjectManagementPanel({
       return;
     }
 
-    if (documentRunJob.status === "failed") {
+    if (documentRunJob.status === "failed" && !isAiCommandNonActionableCleanupFailure(documentRunJob)) {
       setDocumentRunSummary(null);
       setDocumentRunFailureToast(documentRunJob.error || documentRunJob.stderr || "Worktree AI request failed. Check the AI logs for details.");
     }
@@ -434,20 +435,35 @@ export function ProjectManagementPanel({
       ? documentRunJob
       : null;
     const matchingDocumentJob = aiJob?.documentId === document.id ? aiJob : null;
+    const visibleWorktreeJob = matchingWorktreeJob && !isAiCommandNonActionableCleanupFailure(matchingWorktreeJob)
+      ? matchingWorktreeJob
+      : null;
+    const visibleDocumentJob = matchingDocumentJob && !isAiCommandNonActionableCleanupFailure(matchingDocumentJob)
+      ? matchingDocumentJob
+      : null;
 
-    if (matchingDocumentJob?.status === "running") {
-      return { source: "document" as const, job: matchingDocumentJob, summary: aiRunSummary };
+    if (visibleWorktreeJob?.status === "running") {
+      return { source: "worktree" as const, job: visibleWorktreeJob, summary: documentRunSummary };
     }
 
-    if (matchingDocumentJob) {
-      return { source: "document" as const, job: matchingDocumentJob, summary: aiRunSummary };
+    if (visibleDocumentJob?.status === "running") {
+      return { source: "document" as const, job: visibleDocumentJob, summary: aiRunSummary };
+    }
+
+    if (visibleWorktreeJob) {
+      return { source: "worktree" as const, job: visibleWorktreeJob, summary: documentRunSummary };
+    }
+
+    if (visibleDocumentJob) {
+      return { source: "document" as const, job: visibleDocumentJob, summary: aiRunSummary };
     }
 
     return null;
-  }, [aiJob, aiRunSummary, document]);
+  }, [aiJob, aiRunSummary, document, documentRunJob, documentRunSummary, selectedWorktreeBranch]);
   const showInlineSelectedAiOutput = Boolean(
     document
     && selectedDocumentAiOutput
+    && selectedDocumentAiOutput.source === "document"
     && !(documentViewMode === "edit" && selectedDocumentAiOutput.source === "document" && aiRunning),
   );
   const inlineSelectedAiOutput = showInlineSelectedAiOutput ? selectedDocumentAiOutput : null;

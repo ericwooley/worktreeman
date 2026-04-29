@@ -780,6 +780,7 @@ interface WorktreeDetailProps {
     worktreeStrategy?: "new" | "continue-current";
     targetBranch?: string;
     worktreeName?: string;
+    autoReviewLoop?: boolean;
   }) => Promise<RunAiCommandResponse | null>;
   onCancelProjectManagementDocumentAiCommand: (branch: string) => Promise<AiCommandJob | null>;
   onCancelProjectManagementAiCommand: () => Promise<AiCommandJob | null>;

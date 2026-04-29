@@ -1,8 +1,9 @@
-import { PgBoss } from "pg-boss";
+import { PgBoss, type JobWithMetadata } from "pg-boss";
 import type { AiCommandConfig, AiCommandId, AiCommandJob, AiCommandOrigin } from "../../shared/types.js";
 import type { WorktreeId } from "../../shared/worktree-id.js";
 import { readAiSessionIdFromEnv } from "../routes/api-helpers.js";
-import { beginAiCommandJob, continueAiCommandJob, type StartedAiCommandJob } from "./ai-command-service.js";
+import { AI_COMMAND_STARTUP_RECONCILE_FAILURE_REASON } from "../../shared/ai-command-utils.js";
+import { beginAiCommandJob, continueAiCommandJob, getAiCommandJob, listAiCommandJobs, type StartedAiCommandJob } from "./ai-command-service.js";
 import { closeManagedDatabaseClient, getManagedDatabaseClient } from "./database-client-service.js";
 import { formatDurationMs, logServerEvent } from "../utils/server-logger.js";
 import { getAiCommandProcessName, startAiCommandProcess, waitForAiCommandProcess } from "./ai-command-process-service.js";
@@ -106,6 +107,69 @@ function describeError(error: unknown) {
   return {
     error: String(error),
   };
+}
+
+function isQueuedProjectManagementJob(queueJob: JobWithMetadata<ProjectManagementAiQueuePayload>): boolean {
+  return queueJob.state === "created" || queueJob.state === "retry";
+}
+
+async function hasQueuedProjectManagementJob(manager: ManagedAiCommandJobQueue, jobId: string): Promise<boolean> {
+  if (manager.inline || !manager.boss) {
+    return false;
+  }
+
+  const queueJobs = await manager.boss.findJobs<ProjectManagementAiQueuePayload>(PROJECT_MANAGEMENT_AI_QUEUE, {
+    data: { jobId },
+  });
+
+  return queueJobs.some((queueJob) => queueJob.data?.jobId === jobId && isQueuedProjectManagementJob(queueJob));
+}
+
+async function reconcileRunningAiJobsOnStartup(repoRoot: string, manager: ManagedAiCommandJobQueue): Promise<void> {
+  const persistedJobs = await listAiCommandJobs(repoRoot, { reconcile: false });
+  const runningJobs = persistedJobs.filter((job) => job.status === "running");
+
+  if (runningJobs.length === 0) {
+    return;
+  }
+
+  let keptQueued = 0;
+  let reconciled = 0;
+  let failed = 0;
+
+  for (const job of runningJobs) {
+    try {
+      if (await hasQueuedProjectManagementJob(manager, job.jobId)) {
+        keptQueued += 1;
+        continue;
+      }
+
+      const nextJob = await getAiCommandJob(repoRoot, job.worktreeId, {
+        treatProcessNameAsObserved: true,
+        missingProcessFailureReason: AI_COMMAND_STARTUP_RECONCILE_FAILURE_REASON,
+      });
+      if (nextJob?.status !== job.status || nextJob?.exitCode !== job.exitCode || nextJob?.pid !== job.pid) {
+        reconciled += 1;
+      }
+    } catch (error) {
+      failed += 1;
+      logServerEvent("ai-job-queue", "startup-reconcile-job-failed", {
+        repoRoot,
+        jobId: job.jobId,
+        worktreeId: job.worktreeId,
+        branch: job.branch,
+        ...describeError(error),
+      }, "error");
+    }
+  }
+
+  logServerEvent("ai-job-queue", "startup-reconcile-complete", {
+    repoRoot,
+    runningJobs: runningJobs.length,
+    keptQueued,
+    reconciled,
+    failed,
+  }, failed > 0 ? "warn" : "info");
 }
 
 async function runManagedAiProcess(options: {
@@ -329,6 +393,10 @@ export async function enqueueProjectManagementAiJob(options: {
 export async function startProjectManagementAiWorker(options: { repoRoot: string }): Promise<{ close: () => Promise<void> }> {
   const manager = await ensureJobManager(options.repoRoot);
   const pollingIntervalSeconds = resolveJobPollIntervalSeconds();
+
+  if (!manager.inline) {
+    await reconcileRunningAiJobsOnStartup(options.repoRoot, manager);
+  }
 
   const runHandler = async (queueJobId: string, payload: ProjectManagementAiQueuePayload) => {
     const startedAt = Date.now();

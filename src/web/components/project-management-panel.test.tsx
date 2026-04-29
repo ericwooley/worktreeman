@@ -816,6 +816,20 @@ test("running document edit view shows ordered mixed AI output in the editor are
   assert.match(markup, /Cancel AI/);
 });
 
+test("document viewer hides unavailable AI cleanup failures", () => {
+  const markup = renderProjectManagementPanel({
+    aiJob: createAiJob({
+      status: "failed",
+      stderr: "AI process was no longer available. The server may have restarted or the process may have crashed.",
+      error: "AI process was no longer available. The server may have restarted or the process may have crashed.",
+      failureReason: "process-unavailable",
+    }),
+  });
+
+  assert.doesNotMatch(markup, /Document AI output/);
+  assert.doesNotMatch(markup, /AI process was no longer available/);
+});
+
 test("AI stream viewer prefers persisted log output over an empty fallback job", () => {
   const fallbackJob = createAiJob({
     status: "failed",

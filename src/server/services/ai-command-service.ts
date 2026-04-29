@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { AiCommandId, AiCommandJob, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
-import { cloneAiCommandJob } from "../../shared/ai-command-utils.js";
+import type { AiCommandId, AiCommandJob, AiCommandJobFailureReason, AiCommandLogEntry, AiCommandOrigin, AiCommandOutputEvent } from "../../shared/types.js";
+import { AI_COMMAND_PROCESS_UNAVAILABLE_MESSAGE, cloneAiCommandJob } from "../../shared/ai-command-utils.js";
 import type { WorktreeId } from "../../shared/worktree-id.js";
 import { createOperationalStateStore } from "./operational-state-service.js";
 import {
@@ -221,7 +221,7 @@ function createAiCommandJobRecord(options: {
 
 function hasObservedAiCommandProcess(
   job: AiCommandJob,
-  options?: { treatProcessNameAsObserved?: boolean },
+  options?: { treatProcessNameAsObserved?: boolean; missingProcessFailureReason?: AiCommandJobFailureReason },
 ): boolean {
   return job.pid != null
     || job.exitCode != null
@@ -275,7 +275,7 @@ async function reconcileAiCommandJob(
   repoRoot: string,
   job: AiCommandJob | null,
   aiProcesses: AiCommandProcessAdapter = defaultAiCommandProcessAdapter,
-  options?: { treatProcessNameAsObserved?: boolean },
+  options?: { treatProcessNameAsObserved?: boolean; missingProcessFailureReason?: AiCommandJobFailureReason },
 ): Promise<AiCommandJob | null> {
   if (!job || job.status !== "running") {
     return cloneAiCommandJob(job);
@@ -360,7 +360,7 @@ async function reconcileAiCommandJob(
 
   const failureMessage = currentJob.error ?? (processInfo
     ? `AI process exited with code ${resolvedExitCode ?? "unknown"}.`
-    : "AI process was no longer available. The server may have restarted or the process may have crashed.");
+    : AI_COMMAND_PROCESS_UNAVAILABLE_MESSAGE);
 
   await ensureAiCommandLogEntry(repoRoot, currentJob);
   await appendAiCommandOutputChunk({
@@ -376,6 +376,7 @@ async function reconcileAiCommandJob(
     stderr: failureMessage,
     outputEvents: [],
     error: failureMessage,
+    failureReason: processInfo ? "process-exited" : options?.missingProcessFailureReason ?? "process-unavailable",
   };
 
   await persistJob(settledJob);
@@ -434,7 +435,7 @@ export async function beginAiCommandJob(options: {
 export async function getAiCommandJob(
   repoRoot: string,
   worktreeId: WorktreeId,
-  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean; treatProcessNameAsObserved?: boolean },
+  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean; treatProcessNameAsObserved?: boolean; missingProcessFailureReason?: AiCommandJobFailureReason },
 ): Promise<AiCommandJob | null> {
   const store = await createOperationalStateStore(repoRoot);
   const job = await store.getAiCommandJobById(worktreeId);
@@ -444,12 +445,13 @@ export async function getAiCommandJob(
 
   return await reconcileAiCommandJob(repoRoot, job, options?.aiProcesses, {
     treatProcessNameAsObserved: options?.treatProcessNameAsObserved,
+    missingProcessFailureReason: options?.missingProcessFailureReason,
   });
 }
 
 export async function listAiCommandJobs(
   repoRoot: string,
-  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean; treatProcessNameAsObserved?: boolean },
+  options?: { aiProcesses?: AiCommandProcessAdapter; reconcile?: boolean; treatProcessNameAsObserved?: boolean; missingProcessFailureReason?: AiCommandJobFailureReason },
 ): Promise<AiCommandJob[]> {
   const store = await createOperationalStateStore(repoRoot);
   const persistedJobs = await store.listAiCommandJobs();
@@ -462,6 +464,7 @@ export async function listAiCommandJobs(
   const jobs = await Promise.all(
     persistedJobs.map((job) => reconcileAiCommandJob(repoRoot, job, options?.aiProcesses, {
       treatProcessNameAsObserved: options?.treatProcessNameAsObserved,
+      missingProcessFailureReason: options?.missingProcessFailureReason,
     })),
   );
   return jobs

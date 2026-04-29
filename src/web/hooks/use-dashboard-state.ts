@@ -43,6 +43,7 @@ import type {
   UpdateProjectManagementStatusRequest,
   UpdateProjectManagementUsersRequest,
 } from "@shared/types";
+import { isAiCommandNonActionableCleanupFailure } from "@shared/ai-command-utils";
 import {
   addProjectManagementReviewEntry as addProjectManagementReviewEntryRequest,
   appendProjectManagementBatch as appendProjectManagementBatchRequest,
@@ -131,6 +132,10 @@ export function appendDashboardNotification(
 
 export function dismissDashboardNotification(current: DashboardNotification[], notificationId: string) {
   return current.filter((notification) => notification.id !== notificationId);
+}
+
+export function shouldNotifyAiCommandJobFailure(previousStatus: AiCommandJob["status"] | null, job: AiCommandJob | null | undefined): boolean {
+  return previousStatus !== "failed" && job?.status === "failed" && !isAiCommandNonActionableCleanupFailure(job);
 }
 
 type DashboardStateValue = ReturnType<typeof useDashboardStateInternal>;
@@ -361,6 +366,8 @@ function useDashboardStateInternal() {
   const projectManagementDocumentAiSubscriptionRef = useRef<(() => void) | null>(null);
   const trackedAiCommandBranchRef = useRef<string | null>(null);
   const trackedProjectManagementDocumentAiBranchRef = useRef<string | null>(null);
+  const trackedAiCommandJobStatusRef = useRef<AiCommandJob["status"] | null>(null);
+  const trackedProjectManagementDocumentAiJobStatusRef = useRef<AiCommandJob["status"] | null>(null);
 
   const pushNotification = useCallback((input: DashboardNotificationInput) => {
     notificationCountRef.current += 1;
@@ -570,6 +577,7 @@ function useDashboardStateInternal() {
     aiCommandSubscriptionRef.current?.();
     aiCommandSubscriptionRef.current = null;
     trackedAiCommandBranchRef.current = branch;
+    trackedAiCommandJobStatusRef.current = null;
     setAiCommandJob(null);
     setAiCommandRunningBranch(null);
 
@@ -578,12 +586,15 @@ function useDashboardStateInternal() {
     }
 
     aiCommandSubscriptionRef.current = subscribeToAiCommandJob(branch, (event) => {
+      const previousStatus = trackedAiCommandJobStatusRef.current;
+      trackedAiCommandJobStatusRef.current = event.job?.status ?? null;
       setAiCommandJob(event.job);
       setAiCommandRunningBranch(event.job?.status === "running" ? branch : null);
       upsertRunningAiJob(event.job);
 
-      if (event.job?.status === "failed") {
-        setError(event.job.error || event.job.stderr || `AI command failed for ${branch}.`);
+      const failedJob = event.job;
+      if (shouldNotifyAiCommandJobFailure(previousStatus, failedJob)) {
+        setError(failedJob?.error || failedJob?.stderr || `AI command failed for ${branch}.`);
       }
     });
   }, [upsertRunningAiJob]);
@@ -596,6 +607,7 @@ function useDashboardStateInternal() {
     projectManagementDocumentAiSubscriptionRef.current?.();
     projectManagementDocumentAiSubscriptionRef.current = null;
     trackedProjectManagementDocumentAiBranchRef.current = branch;
+    trackedProjectManagementDocumentAiJobStatusRef.current = null;
     setProjectManagementDocumentAiJob(null);
     setProjectManagementDocumentAiRunningBranch(null);
 
@@ -604,12 +616,15 @@ function useDashboardStateInternal() {
     }
 
     projectManagementDocumentAiSubscriptionRef.current = subscribeToAiCommandJob(branch, (event) => {
+      const previousStatus = trackedProjectManagementDocumentAiJobStatusRef.current;
+      trackedProjectManagementDocumentAiJobStatusRef.current = event.job?.status ?? null;
       setProjectManagementDocumentAiJob(event.job);
       setProjectManagementDocumentAiRunningBranch(event.job?.status === "running" ? branch : null);
       upsertRunningAiJob(event.job);
 
-      if (event.job?.status === "failed") {
-        setError(event.job.error || event.job.stderr || `AI command failed for ${branch}.`);
+      const failedJob = event.job;
+      if (shouldNotifyAiCommandJobFailure(previousStatus, failedJob)) {
+        setError(failedJob?.error || failedJob?.stderr || `AI command failed for ${branch}.`);
       }
     });
   }, [upsertRunningAiJob]);
@@ -623,6 +638,8 @@ function useDashboardStateInternal() {
       projectManagementDocumentAiSubscriptionRef.current = null;
       trackedAiCommandBranchRef.current = null;
       trackedProjectManagementDocumentAiBranchRef.current = null;
+      trackedAiCommandJobStatusRef.current = null;
+      trackedProjectManagementDocumentAiJobStatusRef.current = null;
     };
   }, [clearTrackedAiCommandLogSubscription]);
 
