@@ -56,7 +56,7 @@
     "@xyflow/react": "^12.10.1",
     "cmd-ts": "^0.14.1",
     "express": "^4.21.2",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^4.2.0",
     "marked": "^15.0.12",
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.0.0",
